@@ -1,14 +1,36 @@
 from __future__ import annotations
 
+import itertools
+
 import numpy as np
 from astropy.timeseries import BoxLeastSquares
 
 from skysift.config import Thresholds
 from skysift.detectors.base import register
+from skysift.lc.ops import circular_duration_days
 from skysift.models import LightCurve, Signal
 
 MIN_POINTS = 500
 DURATIONS_H = np.array([1, 1.5, 2, 3, 4, 6, 9, 12])
+ALIAS_RATIOS = (2.0, 3.0, 0.5, 1 / 3)
+
+
+def _band_durations(p_mid: float) -> np.ndarray:
+    """Trial durations (days) plausible for a circular orbit at p_mid: 0.3 to 3 times the central-transit duration."""
+    all_d = DURATIONS_H / 24.0
+    t_circ = circular_duration_days(p_mid)
+    keep = all_d[(all_d >= 0.3 * t_circ) & (all_d <= 3.0 * t_circ)]
+    if keep.size < 3:
+        keep = np.sort(all_d[np.argsort(np.abs(all_d - t_circ))[:3]])
+    return keep
+
+
+def _alias_of(period: float, earlier: list[Signal]) -> int | None:
+    for j, s in enumerate(earlier):
+        ratio = period / s.period
+        if any(abs(ratio / r - 1.0) < 0.01 for r in ALIAS_RATIOS):
+            return j
+    return None
 
 
 class BoxDip:
@@ -16,8 +38,8 @@ class BoxDip:
     version = "1"
     cost_class = "cpu_medium"
 
-    def __init__(self, top_k: int = 3, oversample: int = 5):
-        self.top_k, self.oversample = top_k, oversample
+    def __init__(self, top_k: int = 3, oversample: int = 3, n_bands: int = 8):
+        self.top_k, self.oversample, self.n_bands = top_k, oversample, n_bands
 
     def detect(self, lc: LightCurve, fnorm: np.ndarray, th: Thresholds) -> list[Signal]:
         m = np.isfinite(fnorm) & np.isfinite(lc.time)
@@ -31,16 +53,25 @@ class BoxDip:
         pmax = min(th.max_period_days, baseline / 3.0)
         if pmax <= th.min_period_days:
             return []
-        durations = DURATIONS_H / 24.0
-        # frequency grid fine enough that a transit drifts < duration/oversample across the baseline
-        q = durations.min() / baseline / self.oversample
-        freqs = np.arange(1 / pmax, 1 / th.min_period_days, q)
-        periods = 1 / freqs[::-1]
         # constant per-point uncertainty from the robust scatter, so depth_err (and snr) are in real units
         sigma = max(1.4826 * float(np.median(np.abs(y - np.median(y)))), 1e-12)
         model = BoxLeastSquares(t, y, dy=np.full(t.size, sigma))
-        res = model.power(periods, durations, objective="snr")
-        power = np.asarray(res.power)
+        # log-spaced period bands; in each, durations follow the circular-orbit transit duration and the
+        # frequency step keeps the transit drift over the baseline below duration/oversample (Ofir 2014)
+        edges = np.geomspace(th.min_period_days, pmax, self.n_bands + 1)
+        parts: dict[str, list[np.ndarray]] = {key: [] for key in ("period", "power", "duration", "t0", "depth", "err")}
+        for p_lo, p_hi in itertools.pairwise(edges):
+            durs = _band_durations(float(np.sqrt(p_lo * p_hi)))
+            q = durs.min() / baseline / self.oversample
+            periods = 1 / np.arange(1 / p_hi, 1 / p_lo, q)[::-1]
+            res = model.power(periods, durs, objective="snr")
+            parts["period"].append(periods)
+            parts["power"].append(np.asarray(res.power))
+            parts["duration"].append(np.asarray(res.duration))
+            parts["t0"].append(np.asarray(res.transit_time))
+            parts["depth"].append(np.asarray(res.depth))
+            parts["err"].append(np.asarray(res.depth_err))
+        periods, power, dur_all, t0_all, depth_all, err_all = (np.concatenate(parts[key]) for key in parts)
         pmed = np.median(power); pstd = 1.4826 * np.median(np.abs(power - pmed)) or 1e-12
         order = np.argsort(power)[::-1]
         out: list[Signal] = []
@@ -48,14 +79,16 @@ class BoxDip:
             p = float(periods[i])
             if any(abs(p - s.period) / s.period < 0.02 for s in out):
                 continue
-            dur = float(res.duration[i]); t0 = float(res.transit_time[i]); depth = float(res.depth[i])
+            dur = float(dur_all[i]); t0 = float(t0_all[i]); depth = float(depth_all[i])
             ph = (t - t0 + 0.5 * p) % p - 0.5 * p
             n_events = int(np.unique(np.round((t[np.abs(ph) < 0.5 * dur] - t0) / p)).size)
-            snr = float(depth / max(res.depth_err[i], 1e-12))
+            snr = float(depth / max(err_all[i], 1e-12))
             out.append(Signal(target_id=str(lc.meta.get("target_id", "")), detector=self.name, detector_version=self.version,
                               period=p, t0=t0, duration=dur, depth_ppm=depth * 1e6, snr=snr,
                               sde=float((power[i] - pmed) / pstd), n_events=n_events,
-                              extra={"baseline_days": baseline, "sde_spectrum_std": float(pstd), "alias_of": None}))
+                              extra={"baseline_days": baseline, "sde_spectrum_std": float(pstd),
+                                     "alias_of": _alias_of(p, out), "n_periods": int(periods.size),
+                                     "n_bands": self.n_bands}))
             if len(out) >= self.top_k:
                 break
         return out

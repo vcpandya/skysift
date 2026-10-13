@@ -105,3 +105,10 @@ def secondary_search(time, fnorm, period, t0, duration_days, phases=None):
         return float("nan"), float("nan"), float("nan")
     k = np.nanargmax(out[:, 2])
     return float(out[k, 0]), float(out[k, 1]), float(out[k, 2])
+
+
+def circular_duration_days(period_days: float, mass_msun: float = 0.5, radius_rsun: float = 0.5) -> float:
+    """Central-transit duration for a circular orbit: T = P/pi * asin(R*/a), a from Kepler's third law."""
+    a_au = (mass_msun * (period_days / 365.25) ** 2) ** (1 / 3)
+    a_rsun = a_au * 215.032
+    return period_days / np.pi * np.arcsin(min(1.0, radius_rsun / a_rsun))
