@@ -1,3 +1,5 @@
+import math
+
 import pytest
 
 from skysift.config import Thresholds
@@ -22,7 +24,10 @@ def test_kic5689121_signal_and_rungs_1_to_3():
     sig = BoxDip().detect(lc, fn, Thresholds())[0]
     assert abs(sig.period - 13.7695) < 0.002 and sig.sde > 9
     ed = event_depths(lc.time, fn, lc.quarter, P_PUB, T0_PUB, 0.0958)
-    assert abs(ed.mean - 1883) < 150 and ed.n >= 65
+    # Consistency with the published depth (1883 ppm, measured with a 1-day detrend window; the engine uses 2 days).
+    assert abs(ed.mean - 1883) < 3 * math.hypot(ed.err_scaled, 106) and ed.n >= 65
+    # Regression pin of the engine's own measurement on fixed data; update knowingly if detrending changes.
+    assert abs(ed.mean - 2037) < 50
     tgt = Target(source="kbonus_bkg", target_id="kic-005689121", ra=285.907827, dec=40.941988, gaia_id="2103792461826460288", kic=5689121,
                  meta={"mass": 0.505, "radius": 0.507})
     b = DataBundle(lc=lc, fnorm=fn, fnorm_alt=detrend(lc, flux=lc.flux_alt), target=tgt, thresholds=Thresholds())
