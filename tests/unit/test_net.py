@@ -25,8 +25,17 @@ def test_fetch_retries_then_succeeds(tmp_path):
 
 def test_fetch_gives_up(tmp_path):
     st = Store(f"sqlite:///{tmp_path.as_posix()}/t.db"); st.init_schema()
-    with pytest.raises(ServiceUnavailable):
-        fetch("https://x/y", service="t", store=st, session=FlakySession(99), retries=2, backoff=0.0)
+    sess = FlakySession(99)
+    with pytest.raises(ServiceUnavailable, match="after 3 attempts"):
+        fetch("https://x/y", service="t", store=st, session=sess, attempts=3, backoff=0.0)
+    assert sess.calls == 3
+
+
+def test_fetch_default_is_five_attempts_in_total():
+    sess = FlakySession(99)
+    with pytest.raises(ServiceUnavailable, match="after 5 attempts"):
+        fetch("https://x/y", service="t", session=sess, backoff=0.0)
+    assert sess.calls == 5
 
 
 def test_error_document_detection():

@@ -3,6 +3,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from skysift.cli import app
@@ -87,3 +88,31 @@ def test_vet_pins_artifacts_and_keeps_stdout_json(settings, monkeypatch):
     assert pinned == ["T1"] and json.loads(r.stdout)["signals"][0]["rungs"]["r1"]["x"] == 1
     assert Store(settings.database_url).counts()["queries"] == 1       # vet logs the rungs' catalogue queries
     assert "wrote" in r.stderr and (settings.data_dir / "vet" / "T1.json").exists()
+
+
+def test_run_rejects_a_bad_period_window(settings, monkeypatch):
+    from skysift import cli, pipeline
+
+    monkeypatch.setattr(pipeline, "run", lambda *a, **kw: pytest.fail("must not run"))
+    monkeypatch.setattr(cli, "_source", lambda name, store, blob: object())
+    for args in (["--min-period", "40", "--max-period", "5"], ["--min-period", "0"], ["--min-period", "-1"]):
+        r = CliRunner().invoke(app, ["run", "--source", "kbonus_bkg", *args])
+        assert r.exit_code == 2 and "min_period_days < max_period_days" in r.output, (args, r.output)
+        assert "Traceback" not in r.output
+
+
+def test_run_disk_budget_exceeded_prints_summary_and_exits_3(settings, monkeypatch):
+    from skysift import cli, pipeline
+    from skysift.store.retention import DiskBudgetExceeded
+
+    def boom(*a, **kw):
+        e = DiskBudgetExceeded("cache 20 B over budget 0 B")
+        e.summary = {"processed": 4, "skipped": 0, "gave_up": 0, "errors": 0, "signals": 2}
+        raise e
+
+    monkeypatch.setattr(pipeline, "run", boom)
+    monkeypatch.setattr(cli, "_source", lambda name, store, blob: object())
+    r = CliRunner().invoke(app, ["run", "--source", "kbonus_bkg"])
+    assert r.exit_code == 3 and not isinstance(r.exception, DiskBudgetExceeded)
+    assert json.loads(r.stdout)["processed"] == 4
+    assert "stopped: cache 20 B over budget 0 B" in r.stderr and "Traceback" not in r.output

@@ -230,3 +230,16 @@ def test_csv_parser_handles_trailing_blank_line_and_comments():
                                             (0, 0.0), ("0", 0.0), ("", 0.0), ("abc", 0.0), (None, 0.0), (float("nan"), 0.0)])
 def test_to_float(value, expected):
     assert _to_float(value) == expected
+
+
+def test_gaia_checks_run_only_for_a_numeric_source_id():
+    calls = []
+    r = Rung4Novelty().run(SIG, bundle(EMPTY, calls=calls))
+    assert r.status == TestStatus.PASS and "gaia_skipped" not in r.metrics
+    gaia = [p["query"] for s, p in calls if s == "gaia"]
+    assert len(gaia) == 2 and all(q.endswith("source_id=2103792461826460288") for q in gaia)
+    calls.clear()
+    tgt = TGT.model_copy(update={"gaia_id": "1 or 1=1"})
+    r = Rung4Novelty().run(SIG, bundle(EMPTY, calls=calls, target=tgt))
+    assert r.status == TestStatus.PASS and r.metrics["gaia_skipped"] == "non-numeric source_id"
+    assert not any(s == "gaia" for s, _ in calls)

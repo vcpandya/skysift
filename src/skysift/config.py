@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import yaml
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 DEFAULT_YAML = Path(__file__).resolve().parents[2] / "config" / "default.yaml"
@@ -21,6 +21,13 @@ class Thresholds(BaseModel):
     season_sigma: float = 3.0
     min_period_days: float = 0.5
     max_period_days: float = 200.0
+
+    @model_validator(mode="after")
+    def _period_window(self) -> Thresholds:
+        if not 0 < self.min_period_days < self.max_period_days:
+            raise ValueError(f"period window must satisfy 0 < min_period_days < max_period_days, got "
+                             f"{self.min_period_days} to {self.max_period_days}")
+        return self
 
 
 class Settings(BaseSettings):

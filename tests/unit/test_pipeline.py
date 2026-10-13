@@ -274,9 +274,10 @@ def test_disk_budget_exceeded_stops_run_after_planet_is_written(settings, monkey
                           THRESHOLDS__MIN_PERIOD_DAYS="5", THRESHOLDS__MAX_PERIOD_DAYS="15")
     planet = inject_transit(make_lightcurve(n_days=120, seed=1, noise_ppm=800), 7.3, 135.0, 0.1, 3000)
     src = ScriptedSource([_tgt("planet")], {"planet": planet}, store, blob)
-    with pytest.raises(DiskBudgetExceeded):
+    with pytest.raises(DiskBudgetExceeded) as exc:
         run(src, store, blob, s, filter={}, with_novelty=False)
     assert multiprocessing.active_children() == []
+    assert exc.value.summary["processed"] == 1 and exc.value.summary["signals"] >= 1     # reported by the CLI
     assert _runs(store)["planet"][0] == "done" and _states(store)["planet"] == "done"
     with store.session() as ss:
         assert ss.query(db.SignalRow).filter_by(final_status="candidate_stage1").count() >= 1

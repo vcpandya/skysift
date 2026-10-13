@@ -17,3 +17,15 @@ def test_env_overrides_yaml(monkeypatch, tmp_path):
     assert s.retention == "budget:50"
     assert s.data_dir == tmp_path
     assert s.thresholds.sde_min == 11.0
+
+
+def test_thresholds_require_a_positive_increasing_period_window():
+    import pytest
+    from pydantic import ValidationError
+
+    from skysift.config import Thresholds
+
+    assert Thresholds(min_period_days=0.5, max_period_days=1.0).max_period_days == 1.0
+    for lo, hi in ((0.0, 10.0), (-1.0, 10.0), (10.0, 10.0), (20.0, 10.0)):
+        with pytest.raises(ValidationError):
+            Thresholds(min_period_days=lo, max_period_days=hi)

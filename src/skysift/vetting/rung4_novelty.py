@@ -111,7 +111,10 @@ class Rung4Novelty:
             hit = scan("kepler_eb", parsed, "Per", lambda r: r.get("KIC"))
             if hit is not None:
                 return TestResult(rung=self.name, status=TestStatus.FAIL, metrics=metrics, reason=f"known:kepler_eb:{hit}")
-            if t.gaia_id:
+            if t.gaia_id and not str(t.gaia_id).isdigit():
+                # source_id is interpolated into ADQL: anything but digits is never sent
+                metrics["gaia_skipped"] = "non-numeric source_id"
+            elif t.gaia_id:
                 svc = "gaia"
                 for table, pcol, period in (("nss_two_body_orbit", "period", None), ("vari_eclipsing_binary", "frequency", _frequency_to_period)):
                     parsed = _csv_rows(self._get(b, "gaia", GAIA_TAP, {"request": "doQuery", "lang": "ADQL", "format": "csv",

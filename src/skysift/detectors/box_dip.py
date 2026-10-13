@@ -15,6 +15,7 @@ MIN_POINTS = 500
 DURATIONS_H = np.array([1, 1.5, 2, 3, 4, 6, 9, 12])
 ALIAS_RATIOS = (2.0, 3.0, 0.5, 1 / 3)
 MIN_BAND_PERIODS = 50
+MAX_DURATION_FRACTION = 0.9     # trial durations must stay below this fraction of the band's shortest period
 
 
 def _band_durations(p_mid: float) -> np.ndarray:
@@ -66,7 +67,11 @@ class BoxDip:
         parts: dict[str, list[np.ndarray]] = {key: [] for key in keys}
         for b, (p_lo, p_hi) in enumerate(itertools.pairwise(edges)):
             durs = _band_durations(float(np.sqrt(p_lo * p_hi)))
+            durs = durs[durs < MAX_DURATION_FRACTION * p_lo]     # astropy needs every duration below every period
             band_durs.append(durs)
+            if durs.size == 0:                                   # band shorter than any trial duration: nothing to do
+                for key in keys: parts[key].append(np.array([]))
+                continue
             df = durs.min() / (self.oversample * baseline * p_hi)
             periods = 1 / np.arange(1 / p_hi, 1 / p_lo, df)[::-1]
             res = model.power(periods, durs, objective="snr")
@@ -79,6 +84,7 @@ class BoxDip:
             parts["df"].append(np.full(periods.size, df))
             parts["band"].append(np.full(periods.size, b))
         spec = {key: np.concatenate(parts[key]) for key in keys}
+        spec["band"] = spec["band"].astype(int)                  # empty skipped bands concatenate as float
         # SDE normalisation per band: the noise level of the BLS spectrum rises with period, so each band gets its own
         # median and MAD-sigma; bands with fewer than MIN_BAND_PERIODS trial periods fall back to the global values.
         power = spec["power"]
@@ -126,6 +132,8 @@ class BoxDip:
         model = BoxLeastSquares(t, y, dy=np.full(t.size, sigma))
         spec = self._coarse_search(model, baseline, th, pmax)
         periods, power = spec["period"], spec["power"]
+        if periods.size == 0:
+            return []
         # selection and ranking use the per-band SDE, not raw power, so every band competes on the same scale
         order = np.argsort(spec["sde"])[::-1]
         # candidates: (period, power, duration, t0, depth, depth_err, band)

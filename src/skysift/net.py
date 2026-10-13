@@ -28,10 +28,13 @@ def looks_like_error_document(data: bytes) -> str | None:
     return None
 
 
-def fetch(url, *, params=None, service, store=None, session=None, timeout=60.0, retries=5, backoff=1.5) -> bytes:
+def fetch(url, *, params=None, service, store=None, session=None, timeout=60.0, attempts=5, backoff=1.5) -> bytes:
+    """GET with up to ``attempts`` tries in total (spec: 5), exponential backoff between them; 400/401/403/404 fail at
+    once. Every try is logged through ``store.log_query`` when a store (or a worker's recorder) is given."""
+    attempts = max(1, attempts)
     sess = session or requests.Session()
     last = ""
-    for attempt in range(retries + 1):
+    for attempt in range(attempts):
         try:
             r = sess.get(url, params=params, timeout=timeout)
             data = r.content
@@ -47,6 +50,6 @@ def fetch(url, *, params=None, service, store=None, session=None, timeout=60.0, 
         except Exception as e:  # noqa: BLE001  (connection errors, timeouts)
             last = repr(e)
             if store: store.log_query(service, url, params or {}, None, 0, None, error=last)
-        if attempt < retries:
+        if attempt < attempts - 1:
             time.sleep(backoff * (2 ** attempt))
-    raise ServiceUnavailable(f"{service} {url} failed after {retries + 1} attempts: {last}")
+    raise ServiceUnavailable(f"{service} {url} failed after {attempts} attempts: {last}")

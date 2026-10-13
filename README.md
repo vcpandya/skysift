@@ -30,10 +30,15 @@ machine, so use `python -m skysift` (the `skysift` entry point still exists for 
 ```bash
 python -m skysift --help
 python -m skysift sources
-python -m skysift run --source kbonus_bkg --limit 100 --min-period 0.2 --max-period 30
+python -m skysift run --source kbonus_bkg --limit 100 --min-period 0.5 --max-period 30
 python -m skysift status
 python -m skysift vet --source kbonus_bkg --target-id <ID>
 ```
+
+A sweep resumes where it stopped. Each target's job key holds the detector version plus a hash of the period window
+and search grid, so a run with a different `--min-period` or `--max-period` searches the same targets again. A target
+whose job fails three times is not retried; `run` counts it as `gave_up` and `status` reports it under
+`error_capped_targets`.
 
 ## Development setup
 
@@ -68,7 +73,7 @@ prefix (nested keys use `__`). Optional extras: `s3` (boto3, for an `s3://` blob
 * `stream`: delete each light-curve file once its target is vetted; evidence for kept signals is pinned.
 * `keep`: keep every downloaded file.
 * `budget:<GiB>` (for example `budget:50`): keep files until the cache exceeds the budget, then evict the least recently used
-  unpinned ones; the run stops if only pinned evidence is left and the budget is still exceeded.
+  unpinned ones; the run stops with exit code 3 if only pinned evidence is left and the budget is still exceeded.
 
 ## Docker and AWS
 
@@ -84,8 +89,8 @@ docker run --rm -v skysift-data:/data skysift:dev sources
 
 ## Golden tests
 
-The golden tests run the full pipeline on a real, published signal (KIC 5689121, period 13.77 d) and a
-quiet neighbour. They download two Kepler light curves from MAST on first use (cached in `tests/fixtures/cache/`) and
+The golden tests run the period search and vetting rungs 1 to 3 on real data: a published signal (KIC 5689121,
+period 13.77 d) and a quiet neighbour. They download two Kepler light curves from MAST on first use (cached in `tests/fixtures/cache/`) and
 skip when offline. The full period search takes several minutes.
 
 ```bash

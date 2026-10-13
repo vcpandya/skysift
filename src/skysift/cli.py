@@ -6,16 +6,17 @@ import pickle
 import sys
 
 import typer
+from pydantic import ValidationError
 from rich.console import Console
 from rich.table import Table as RTable
 from sqlalchemy import select
 
 from skysift import jsonutil
-from skysift.config import load_settings
+from skysift.config import Thresholds, load_settings
 from skysift.sources.base import load_registry
 from skysift.store.blob import blob_from_url
 from skysift.store.db import RunRow, SignalRow, Store
-from skysift.store.retention import Retention, RetentionPolicy
+from skysift.store.retention import DiskBudgetExceeded, Retention, RetentionPolicy
 
 app = typer.Typer(help="SkySift: archival time-series search and vetting engine")
 
@@ -84,16 +85,28 @@ def run(source: str = typer.Option(...), gmag_max: float = 19.0,
                         format="%(asctime)s %(levelname)s %(name)s %(message)s")
     console = _console(stderr=True)
     s, store, blob = _ctx(retention, workers_io, workers_cpu)
-    if min_period is not None: s.thresholds.min_period_days = min_period
-    if max_period is not None: s.thresholds.max_period_days = max_period
+    overrides = {k: v for k, v in (("min_period_days", min_period), ("max_period_days", max_period)) if v is not None}
+    if overrides:
+        try:
+            s.thresholds = Thresholds(**{**s.thresholds.model_dump(), **overrides})
+        except ValidationError as e:
+            msg = "; ".join(err["msg"] for err in e.errors())
+            raise typer.BadParameter(msg, param_hint="--min-period/--max-period") from e
     from skysift import pipeline
     src = _source(source, store, blob)
     _plain(console, f"period window: {s.thresholds.min_period_days:g} to {s.thresholds.max_period_days:g} days")
-    summary = pipeline.run(src, store, blob, s, filter={"gmag_max": gmag_max, "background_only": background_only,
-                                                       "psffrac_min": psffrac_min},
-                           detector_name=detector, max_targets=limit,
-                           progress=lambda sm: _plain(
-                               console, f"processed {sm['processed']} signals {sm['signals']} outcomes {sm['outcomes']}", end="\r"))
+    try:
+        summary = pipeline.run(src, store, blob, s, filter={"gmag_max": gmag_max, "background_only": background_only,
+                                                           "psffrac_min": psffrac_min},
+                               detector_name=detector, max_targets=limit,
+                               progress=lambda sm: _plain(
+                                   console, f"processed {sm['processed']} signals {sm['signals']} outcomes {sm['outcomes']}",
+                                   end="\r"))
+    except DiskBudgetExceeded as e:
+        # an operator condition, not a crash: the work done so far on stdout, a plain message, exit code 3
+        if getattr(e, "summary", None) is not None: _plain(_console(), jsonutil.dumps(e.summary, indent=1))
+        _plain(console, f"\nstopped: {e}")
+        raise typer.Exit(3) from None
     _plain(_console(), jsonutil.dumps(summary, indent=1))
 
 

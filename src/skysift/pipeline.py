@@ -18,7 +18,7 @@ from skysift.lc.ops import detrend
 from skysift.models import LightCurve, Target
 from skysift.store.blob import Blob
 from skysift.store.db import Store, make_job_key, utcnow
-from skysift.store.retention import Retention, RetentionPolicy
+from skysift.store.retention import DiskBudgetExceeded, Retention, RetentionPolicy
 from skysift.vetting.base import DataBundle, Ladder
 from skysift.vetting.rung1_detection import Rung1Detection
 from skysift.vetting.rung2_shape import Rung2Shape
@@ -212,9 +212,11 @@ def run(source, store: Store, blob: Blob, settings: Settings, filter: dict, dete
                 else: on_vetted(fut)
             done = fut = None                              # drop the last references to payloads and results
             top_up()
-    except BaseException:
-        # stop now: queued fetches and CPU jobs are dropped; their runs stay 'running' and are redone next time
+    except BaseException as e:
+        # stop now: queued fetches and CPU jobs are dropped; their runs stay 'running' (superseded when redone)
         io_pool.shutdown(wait=True, cancel_futures=True); cpu_pool.shutdown(wait=True, cancel_futures=True)
+        if isinstance(e, DiskBudgetExceeded):
+            e.summary = {**summary, "seconds": time.time() - start}       # the CLI still reports the work done
         raise
     io_pool.shutdown(); cpu_pool.shutdown()
     summary["seconds"] = time.time() - start

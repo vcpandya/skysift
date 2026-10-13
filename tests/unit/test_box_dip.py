@@ -64,3 +64,11 @@ def test_full_baseline_timing():
     elapsed = time.perf_counter() - t0
     assert sig and abs(sig[0].period - 13.769) < 0.002 and sig[0].sde > 9
     assert elapsed < 400
+
+
+def test_min_period_below_the_shortest_trial_duration_does_not_crash():
+    # 1 h is the shortest trial duration: a 0.03 d minimum period used to hand astropy duration >= period
+    lc = inject_transit(make_lightcurve(n_days=15, seed=2, noise_ppm=500), 0.7, 132.0, 0.05, 3000)
+    sig = BoxDip().detect(lc, detrend(lc), Thresholds(min_period_days=0.03, max_period_days=1.0))
+    assert sig and all(s.duration < 0.9 * s.period for s in sig)
+    assert any(abs(s.period / 0.7 - round(s.period / 0.7)) < 0.01 for s in sig)
