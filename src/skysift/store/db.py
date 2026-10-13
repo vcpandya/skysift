@@ -191,9 +191,17 @@ class Store:
                           artifacts=r.artifacts, reason=r.reason, duration_s=duration_s))
 
     def add_artifact(self, sha256, nbytes, url, local_path, target_id=None, pinned=False) -> None:
+        """Record a stored file. A known sha256 is resurrected: a row retention marked deleted describes a file that is
+        back on disk after a re-fetch, so it must be counted, released and evictable again."""
         with self.session() as s:
-            if s.get(ArtifactRow, sha256) is None:
+            row = s.get(ArtifactRow, sha256)
+            if row is None:
                 s.add(ArtifactRow(sha256=sha256, nbytes=nbytes, url=url, local_path=local_path, target_id=target_id, pinned=pinned))
+                return
+            if row.deleted_at is not None: row.pinned = False      # a deleted row's old pin protects nothing
+            row.deleted_at, row.local_path, row.nbytes, row.last_used = None, local_path, nbytes, utcnow()
+            if target_id is not None: row.target_id = target_id
+            if pinned: row.pinned = True
 
     def touch_artifact(self, sha256: str) -> None:
         with self.session() as s:
@@ -204,16 +212,21 @@ class Store:
         with self.session() as s:
             s.get(ArtifactRow, sha256).deleted_at = utcnow()
 
-    def unpinned_artifacts(self, target_id: str | None = None) -> list[dict]:
+    def unpinned_artifacts(self, target_id: str | None = None, exclude_targets: set[str] | None = None) -> list[dict]:
+        """Live unpinned artifacts, least recently used first; ``exclude_targets`` leaves out in-flight targets' files."""
         with self.session() as s:
             q = select(ArtifactRow).where(ArtifactRow.pinned.is_(False), ArtifactRow.deleted_at.is_(None))
             if target_id: q = q.where(ArtifactRow.target_id == target_id)
-            return [{"sha256": a.sha256, "nbytes": a.nbytes, "local_path": a.local_path, "url": a.url, "last_used": a.last_used}
+            if exclude_targets:
+                q = q.where(ArtifactRow.target_id.is_(None) | ArtifactRow.target_id.not_in(sorted(exclude_targets)))
+            return [{"sha256": a.sha256, "nbytes": a.nbytes, "local_path": a.local_path, "url": a.url,
+                     "last_used": a.last_used, "target_id": a.target_id}
                     for a in s.scalars(q.order_by(ArtifactRow.last_used))]
 
     def pin_target_artifacts(self, target_id: str) -> None:
         with self.session() as s:
-            for a in s.scalars(select(ArtifactRow).where(ArtifactRow.target_id == target_id)):
+            for a in s.scalars(select(ArtifactRow).where(ArtifactRow.target_id == target_id,
+                                                          ArtifactRow.deleted_at.is_(None))):
                 a.pinned = True
 
     def log_query(self, service, url, params: dict, status, nbytes, sha256=None, error="") -> None:

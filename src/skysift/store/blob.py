@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import hashlib
+import os
+import threading
 from pathlib import Path
 from typing import Protocol
 from urllib.parse import urlparse
@@ -27,14 +29,24 @@ class LocalBlob:
         return d / f"{sha}_{Path(name_hint).name}"
 
     def put(self, data, name_hint):
+        """Content-addressed and atomic: the bytes go to a private ``.part`` file that is renamed into place, so a file
+        at the final path is complete by construction and an existing one is never rewritten."""
         sha = _sha(data); p = self._path(sha, name_hint)
-        if not p.exists(): p.write_bytes(data)
+        if not p.exists():
+            part = p.with_name(f"{p.name}.{os.getpid()}.{threading.get_ident()}.part")   # private to this writer
+            try:
+                part.write_bytes(data); os.replace(part, p)
+            finally:
+                part.unlink(missing_ok=True)
         return sha, str(p)
 
     def get(self, location): return Path(location).read_bytes()
     def exists(self, location): return Path(location).exists()
     def delete(self, location): Path(location).unlink(missing_ok=True)
     def size(self, location): return Path(location).stat().st_size
+
+
+NOT_FOUND_CODES = {"404", "NoSuchKey", "NotFound"}
 
 
 class S3Blob:
@@ -54,8 +66,13 @@ class S3Blob:
 
     def get(self, location): return self.client.get_object(Bucket=self.bucket, Key=self._key(location))["Body"].read()
     def exists(self, location):
-        try: self.client.head_object(Bucket=self.bucket, Key=self._key(location)); return True
-        except Exception: return False  # noqa: BLE001  (any client error means "not there")
+        """False only for a not-found answer; throttling, auth and network errors propagate, never read as "gone"."""
+        try:
+            self.client.head_object(Bucket=self.bucket, Key=self._key(location)); return True
+        except Exception as e:
+            code = (getattr(e, "response", None) or {}).get("Error", {}).get("Code")
+            if str(code) in NOT_FOUND_CODES: return False
+            raise
     def delete(self, location): self.client.delete_object(Bucket=self.bucket, Key=self._key(location))
     def size(self, location): return int(self.client.head_object(Bucket=self.bucket, Key=self._key(location))["ContentLength"])
 

@@ -159,9 +159,11 @@ def run(source, store: Store, blob: Blob, settings: Settings, filter: dict, dete
         for k, v in counts.items(): summary["outcomes"][k] += v
         summary["signals"] += sum(counts.values()); summary["processed"] += 1
         if progress: progress(summary)
-        # after a vetted target only: in-flight targets have not pinned their evidence yet, so a budget sweep
-        # after a mere fetch could delete files a live signal is about to claim
-        retention.enforce_budget()                       # raises DiskBudgetExceeded -> stops the run
+        # after a vetted target only, and never touching in-flight targets: they have not pinned their evidence yet,
+        # so evicting their files could delete what a live signal is about to claim
+        in_flight = ({x[0].target_id for x in fetches.values()} | {x[0].target_id for x in ready}
+                     | {x[0].target_id for x in cpu_jobs.values()})
+        retention.enforce_budget(exclude_targets=in_flight)   # raises DiskBudgetExceeded -> stops the run
 
     def top_up() -> None:
         while ready and len(cpu_jobs) < max_cpu:
