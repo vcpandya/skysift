@@ -80,3 +80,26 @@ def test_long_duration_transit_recovered():
     ed = event_depths(lc.time, detrend(lc), lc.quarter, 60.0, 140.0, 0.5)
     assert ed.n >= 15
     assert abs(ed.mean - 2000) < 60
+
+
+USP_P, USP_T0, USP_DUR = 0.6, 132.0, 0.075      # duration/period 0.125: the 0.1/0.9 trial boxes reach the primary
+
+
+def _usp_lc(seed=0):
+    lc = make_lightcurve(n_days=90, cadence_min=30, noise_ppm=500, seed=seed)
+    return inject_transit(lc, USP_P, USP_T0, USP_DUR, 3000)
+
+
+def test_secondary_search_ignores_the_primary_of_an_ultra_short_period_planet():
+    for seed in (0, 1):
+        lc = _usp_lc(seed)
+        phase, _depth, sigma = secondary_search(lc.time, detrend(lc), USP_P, USP_T0, USP_DUR)
+        assert sigma < 5 and 0.1 <= phase <= 0.9, (seed, phase, sigma)
+    ed = event_depths(lc.time, detrend(lc), lc.quarter, USP_P, USP_T0, USP_DUR)
+    assert ed.control_rms < 100                      # control boxes no longer sit on the transit
+
+
+def test_secondary_search_still_finds_a_half_phase_eclipse_on_a_short_period():
+    lc = inject_transit(_usp_lc(0), USP_P, USP_T0 + 0.5 * USP_P, USP_DUR, 1500)
+    phase, _depth, sigma = secondary_search(lc.time, detrend(lc), USP_P, USP_T0, USP_DUR)
+    assert abs(phase - 0.5) < 0.03 and sigma > 5

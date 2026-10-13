@@ -47,6 +47,9 @@ class EventDepths:
     n: int
 
 
+PRIMARY_MASK_DURATIONS = 1.5    # off-primary searches ignore points this many transit durations from mid-transit
+
+
 def _box_depth(ph, fn, half, baseline="linear"):
     i = np.abs(ph) < 0.8 * half
     o = (np.abs(ph) > 1.5 * half) & (np.abs(ph) < max(0.5, 4 * half))
@@ -76,20 +79,31 @@ def event_depths(time, fnorm, quarter, period, t0, duration_days, local_baseline
     a = np.array(rows, dtype=float)
     w = 1 / a[:, 3] ** 2; mean = float(np.sum(w * a[:, 2]) / np.sum(w)); err = float(1 / np.sqrt(np.sum(w)))
     chi2 = float(np.sum(w * (a[:, 2] - mean) ** 2)); scaled = err * max(1.0, np.sqrt(chi2 / max(1, len(rows) - 1)))
+    # control boxes away from the primary: on short periods the 0.1/0.9 boxes and their baseline windows would
+    # otherwise overlap the transit itself, inflating control_rms
+    off_primary = np.abs(ph) >= PRIMARY_MASK_DURATIONS * duration_days
     ctrl = []
     for off in np.linspace(0.1, 0.9, 9):
-        p2 = fold_phase(time, period, t0 + off * period); r = _box_depth(p2, fnorm, half, local_baseline)
+        p2 = fold_phase(time[off_primary], period, t0 + off * period)
+        r = _box_depth(p2, fnorm[off_primary], half, local_baseline)
         if r: ctrl.append(r[0])
     return EventDepths(a[:, 0].astype(int), a[:, 1].astype(int), a[:, 2] * 1e6, a[:, 3] * 1e6, mean * 1e6, err * 1e6,
                        scaled * 1e6, float(np.std(ctrl) * 1e6) if ctrl else np.nan, len(rows))
 
 
 def secondary_search(time, fnorm, period, t0, duration_days, phases=None):
-    """Box depth at each trial phase; returns (best_phase, depth_ppm, sigma) excluding +-1.5 durations of the primary."""
+    """Box depth at each trial phase in 0.1..0.9; returns (best_phase, depth_ppm, sigma).
+
+    Points within 1.5 transit durations of the primary (|time folded on t0| < 1.5 * duration_days) are dropped
+    before the search, from the in-box and the baseline sets of every trial phase alike: for duration/period above
+    ~0.1, or periods under ~1 d where the baseline window spans the orbit, they would otherwise put the primary
+    transit itself into a trial box or its baseline. Trial phases whose box falls inside the mask give NaN."""
     if phases is None:
         step = min(0.01, 0.5 * duration_days / period)
         phases = np.arange(0.1, 0.9 + 1e-9, step)
     good = np.isfinite(fnorm); time, fnorm = time[good], fnorm[good]
+    keep = np.abs(fold_phase(time, period, t0)) >= PRIMARY_MASK_DURATIONS * duration_days
+    time, fnorm = time[keep], fnorm[keep]
     half = duration_days / 2.0
     out = []
     for p in phases:

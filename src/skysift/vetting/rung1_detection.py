@@ -25,9 +25,6 @@ class Rung1Detection:
 
     def run(self, s: Signal, b: DataBundle) -> TestResult:
         th = b.thresholds
-        if any(abs(s.period - p) / p < 0.01 for p in SYSTEMATIC_PERIODS):
-            return TestResult(rung=self.name, status=TestStatus.UNDETERMINED, reason="systematic_alias",
-                              metrics={"period": s.period})
         mass, mass_ok = _stellar_param(b.target.meta, "mass")
         radius, radius_ok = _stellar_param(b.target.meta, "radius")
         t_circ = circular_duration_days(s.period, mass, radius)
@@ -40,4 +37,9 @@ class Rung1Detection:
         if s.n_events < th.min_events: return TestResult(rung=self.name, status=TestStatus.FAIL, metrics=m, reason=f"n_events {s.n_events} < {th.min_events}")
         if not (th.duration_ratio_min <= ratio <= th.duration_ratio_max):
             return TestResult(rung=self.name, status=TestStatus.FAIL, metrics=m, reason=f"duration ratio {ratio:.2f} outside range")
+        # after the thresholds: a weak peak near a Kepler systematic is a plain FAIL, not an undetermined signal that
+        # pins its file and waits for review
+        if any(abs(s.period - p) / p < 0.01 for p in SYSTEMATIC_PERIODS):
+            return TestResult(rung=self.name, status=TestStatus.UNDETERMINED, reason="systematic_alias",
+                              metrics={**m, "period": s.period})
         return TestResult(rung=self.name, status=TestStatus.PASS, metrics=m)

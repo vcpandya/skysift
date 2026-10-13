@@ -123,3 +123,25 @@ def test_rung3_single_deviant_season_fails_with_one_outlier():
     # (see report); that count is not asserted.
     assert max(z, key=lambda k: abs(z[k])) == "3" and z["3"] > 9 and all(abs(v) < 4 for k, v in z.items() if k != "3")
     assert set(r.metrics["season_z"]) == {"0", "1", "2", "3"} and r.metrics["n_events"] > 4
+
+
+def test_rung2_passes_an_ultra_short_period_planet():
+    # 3000 ppm, P 0.6 d, 0.075 d transit: before the primary mask, the free-phase search found the transit itself
+    # at phase 0.1/0.9 and failed the planet as an eccentric_secondary
+    for seed in (0, 1):
+        lc = inject_transit(make_lightcurve(n_days=90, cadence_min=30, noise_ppm=500, seed=seed), 0.6, 132.0, 0.075, 3000)
+        s = Signal(target_id="t", detector="box_dip", detector_version="1", period=0.6, t0=132.0, duration=0.075,
+                   depth_ppm=3000, snr=50.0, sde=20.0, n_events=140)
+        r = Rung2Shape().run(s, bundle(lc))
+        assert r.status == TestStatus.PASS, (seed, r.reason, r.metrics["free_secondary_sigma"])
+        assert r.metrics["free_secondary_sigma"] < 5
+
+
+def test_rung1_applies_thresholds_before_the_systematic_alias_check():
+    lc = inject_transit(make_lightcurve(seed=1), P, T0, DUR, 2000)
+    weak = signal(2000).model_copy(update={"period": 46.6, "sde": 3.0, "snr": 1.0})
+    r = Rung1Detection().run(weak, bundle(lc))
+    assert r.status == TestStatus.FAIL and r.reason.startswith("sde ")
+    strong = signal(2000).model_copy(update={"period": 46.6})
+    r = Rung1Detection().run(strong, bundle(lc))
+    assert r.status == TestStatus.UNDETERMINED and r.reason == "systematic_alias" and r.metrics["period"] == 46.6
