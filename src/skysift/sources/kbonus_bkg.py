@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -35,6 +36,11 @@ def lc_url(t: Target) -> str:
     return f"{BASE}/lcs/{sid[:4]}/{sid}/{t.meta['file_name']}"
 
 
+def _floats(col) -> np.ndarray:
+    """Float array with masked entries as NaN."""
+    return np.ma.filled(np.ma.asarray(col).astype(float), np.nan)
+
+
 def _strings(col) -> np.ndarray:
     arr = np.asarray(col)
     return np.char.decode(arr, "utf-8") if arr.dtype.kind == "S" else arr.astype(str)
@@ -45,26 +51,31 @@ class KBonusBkg:
 
     def __init__(self, blob, store, fetch=net.fetch, catalog_path: Path | None = None):
         self.blob, self.store, self.fetch, self._catalog_path = blob, store, fetch, catalog_path
+        self._table: Table | None = None
 
     def catalog(self) -> Table:
-        if self._catalog_path is None:
-            data = self.fetch(CATALOG_URL, service="mast", store=self.store, timeout=600)
-            sha, loc = self.blob.put(data, "kbonus_source_catalog.fits")
-            if self.store: self.store.add_artifact(sha, len(data), CATALOG_URL, loc, None, pinned=True)
-            self._catalog_path = Path(loc)
-        return Table.read(self._catalog_path, format="fits")
+        if self._table is None:
+            if self._catalog_path is not None:
+                self._table = Table.read(self._catalog_path, format="fits")
+            else:
+                data = self.fetch(CATALOG_URL, service="mast", store=self.store, timeout=600)
+                sha, loc = self.blob.put(data, "kbonus_source_catalog.fits")
+                if self.store is not None: self.store.add_artifact(sha, len(data), CATALOG_URL, loc, None, pinned=True)
+                self._table = Table.read(io.BytesIO(data), format="fits")
+        return self._table
 
     def list_targets(self, filter: dict) -> Iterator[Target]:
         tab = self.catalog()
         gmag_max = filter.get("gmag_max", 19.0); psffrac_min = filter.get("psffrac_min", 0.5)
         background_only = filter.get("background_only", True); limit = filter.get("limit")
         # Columns become numpy arrays once; astropy row iteration is far too slow for 606,900 rows.
-        gmag = np.asarray(tab["phot_g_mean_mag"], dtype=float); psffrac = np.asarray(tab["psffrac"], dtype=float)
-        keep = ~(gmag > gmag_max) & ~(psffrac < psffrac_min)
+        gmag = _floats(tab["phot_g_mean_mag"]); psffrac = _floats(tab["psffrac"])
+        keep = np.isfinite(gmag) & np.isfinite(psffrac) & (gmag <= gmag_max) & (psffrac >= psffrac_min)
         kic_col = np.ma.asarray(tab["kic"])
         ra = np.asarray(tab["ra"], dtype=float); dec = np.asarray(tab["dec"], dtype=float)
         gaia_col = _strings(tab["gaia_designation"]); file_col = _strings(tab["file_name"])
         tpf_org = np.asarray(tab["tpf_org"]); crowdsap = np.asarray(tab["crowdsap"], dtype=float)
+        if limit is not None and limit <= 0: return
         n = 0
         for i in np.flatnonzero(keep):
             kic = _kic_of(kic_col[i])
@@ -76,7 +87,7 @@ class KBonusBkg:
                          meta={"file_name": str(file_col[i]), "tpf_org": int(tpf_org[i]), "crowdsap": float(crowdsap[i]),
                                "psffrac": float(psffrac[i])})
             n += 1
-            if limit and n >= limit: return
+            if limit is not None and n >= limit: return
 
     def fetch_lightcurve(self, target: Target) -> tuple[LightCurve, str, str]:
         url = lc_url(target)
@@ -84,6 +95,6 @@ class KBonusBkg:
         sha = hashlib.sha256(data).hexdigest()
         if self.blob is not None:
             _, loc = self.blob.put(data, Path(url).name)
-            if self.store: self.store.add_artifact(sha, len(data), url, loc, target.target_id)
+            if self.store is not None: self.store.add_artifact(sha, len(data), url, loc, target.target_id)
         lc = parse_kbonus_fits(data); lc.meta["target_id"] = target.target_id
         return lc, sha, url
