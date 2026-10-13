@@ -5,15 +5,15 @@ from skysift.config import Thresholds
 from skysift.models import LightCurve, Signal, Target, TestStatus
 from skysift.net import ServiceUnavailable
 from skysift.vetting.base import DataBundle
-from skysift.vetting.rung4_novelty import Rung4Novelty, _csv_rows, _tsv_rows
+from skysift.vetting.rung4_novelty import Rung4Novelty, _csv_rows, _to_float, _tsv_rows
 
 SIG = Signal(target_id="kic-005689121", detector="box_dip", detector_version="1", period=13.7695, t0=136.3, duration=0.09, depth_ppm=1883, snr=18, sde=14, n_events=69)
 TGT = Target(source="kbonus_bkg", target_id="kic-005689121", ra=285.907827, dec=40.941988, gaia_id="2103792461826460288", kic=5689121)
+# VizieR asu-tsv layout: comment lines, header, units, dashes, then rows
+EB_EMPTY = b"#RESOURCE=yCat_J/AJ/151/68\n#Name: J/AJ/151/68/kepeb\nKIC\tPer\n\td\n---\t---\n"
+EB_TSV = EB_EMPTY + b"5689121\t13.77\n"
 EMPTY = {"cumulative": b"kepid,kepoi_name,koi_period\n", "q1_q17_dr25_tce": b"kepid,tce_plnt_num,tce_period\n", "toi": b"tid,toi,pl_orbper\n",
-         "J/AJ/151/68": b"", "vari_summary": b"source_id\n", "nss_two_body_orbit": b"source_id,period\n"}
-EB_TSV = (b"#RESOURCE=yCat_J/AJ/151/68\n#Name: J/AJ/151/68/kepeb\n"
-          b"KIC\tPer\n\t\nd\td\n---\t---\n"
-          b"5689121\t13.77\n")
+         "J/AJ/151/68": EB_EMPTY, "vari_eclipsing_binary": b"source_id,frequency\n", "nss_two_body_orbit": b"source_id,period\n"}
 
 
 def bundle(responses, raise_for=None, calls=None, target=TGT):
@@ -54,6 +54,11 @@ def test_known_reason_names_table_and_identifier():
     assert Rung4Novelty().run(SIG, bundle(resp)).reason == "known:cumulative:K99999.01"
 
 
+def test_known_tce_reason_is_kepid_dot_planet_number():
+    resp = dict(EMPTY); resp["q1_q17_dr25_tce"] = b"kepid,tce_plnt_num,tce_period\n5689121,1,13.77\n"
+    assert Rung4Novelty().run(SIG, bundle(resp)).reason == "known:q1_q17_dr25_tce:5689121.1"
+
+
 @pytest.mark.parametrize("cat_period", [27.54, 6.885])  # 2x and 0.5x aliases of the signal period
 def test_alias_period_fails(cat_period):
     resp = dict(EMPTY); resp["toi"] = f"tid,toi,pl_orbper\n5689121,1234.01,{cat_period}\n".encode()
@@ -69,6 +74,22 @@ def test_other_period_passes_and_is_listed():
     assert r.metrics["other_period_objects"] == [("cumulative", "K99999.01", 3.1)]
 
 
+def test_other_period_lists_eb_and_gaia_rows_too():
+    resp = dict(EMPTY)
+    resp["J/AJ/151/68"] = EB_EMPTY + b"5689121\t5.0\n"
+    resp["nss_two_body_orbit"] = b"source_id,period\n2103792461826460288,7.0\n"
+    r = Rung4Novelty().run(SIG, bundle(resp))
+    assert r.status == TestStatus.PASS
+    assert ("kepler_eb", "5689121", 5.0) in r.metrics["other_period_objects"]
+    assert ("gaia_nss_two_body_orbit", "2103792461826460288", 7.0) in r.metrics["other_period_objects"]
+
+
+def test_unparseable_periods_are_not_listed():
+    resp = dict(EMPTY); resp["cumulative"] = b"kepid,kepoi_name,koi_period\n1,A,nan\n1,B,0\n1,C,\n1,D,abc\n"
+    r = Rung4Novelty().run(SIG, bundle(resp))
+    assert r.status == TestStatus.PASS and r.metrics["cumulative"] == 4 and r.metrics["other_period_objects"] == []
+
+
 def test_period_just_outside_tolerance_is_not_a_match():
     resp = dict(EMPTY); resp["cumulative"] = b"kepid,kepoi_name,koi_period\n5689121,K99999.01,13.95\n"  # 1.3 percent off
     assert Rung4Novelty().run(SIG, bundle(resp)).status == TestStatus.PASS
@@ -77,7 +98,12 @@ def test_period_just_outside_tolerance_is_not_a_match():
 def test_empty_catalogues_report_counts():
     r = Rung4Novelty().run(SIG, bundle(EMPTY))
     assert r.metrics["cumulative"] == r.metrics["q1_q17_dr25_tce"] == r.metrics["toi"] == 0
-    assert r.metrics["kepler_eb"] == 0 and r.metrics["gaia_vari_summary"] == 0 and r.metrics["gaia_nss_two_body_orbit"] == 0
+    assert r.metrics["kepler_eb"] == 0 and r.metrics["gaia_vari_eclipsing_binary"] == 0 and r.metrics["gaia_nss_two_body_orbit"] == 0
+
+
+def test_vizier_header_without_rows_is_a_legitimate_zero():
+    r = Rung4Novelty().run(SIG, bundle(EMPTY))
+    assert r.status == TestStatus.PASS and r.metrics["kepler_eb"] == 0
 
 
 def test_kepler_eb_match_fails():
@@ -92,7 +118,20 @@ def test_gaia_nss_orbit_match_fails():
     assert r.status == TestStatus.FAIL and r.reason == "known:gaia_nss_two_body_orbit:2103792461826460288"
 
 
-@pytest.mark.parametrize("key", ["cumulative", "q1_q17_dr25_tce", "J/AJ/151/68", "vari_summary"])
+def test_gaia_eclipsing_binary_frequency_match_fails():
+    resp = dict(EMPTY); resp["vari_eclipsing_binary"] = b"source_id,frequency\n2103792461826460288,0.0726\n"  # 1/0.0726 = 13.77 d
+    r = Rung4Novelty().run(SIG, bundle(resp))
+    assert r.status == TestStatus.FAIL and r.reason == "known:gaia_vari_eclipsing_binary:2103792461826460288"
+
+
+def test_gaia_eclipsing_binary_other_frequency_is_listed_as_period():
+    resp = dict(EMPTY); resp["vari_eclipsing_binary"] = b"source_id,frequency\n2103792461826460288,0.2\n"
+    r = Rung4Novelty().run(SIG, bundle(resp))
+    assert r.status == TestStatus.PASS
+    assert r.metrics["other_period_objects"] == [("gaia_vari_eclipsing_binary", "2103792461826460288", pytest.approx(5.0))]
+
+
+@pytest.mark.parametrize("key", ["cumulative", "q1_q17_dr25_tce", "J/AJ/151/68", "vari_eclipsing_binary"])
 def test_error_document_never_passes_whichever_service_returns_it(key):
     resp = dict(EMPTY); resp[key] = b'<VOTABLE><INFO name="QUERY_STATUS" value="ERROR">Boom: bad</INFO></VOTABLE>'
     r = Rung4Novelty().run(SIG, bundle(resp))
@@ -108,6 +147,31 @@ def test_html_error_page_is_undetermined():
 def test_outage_names_the_service():
     r = Rung4Novelty().run(SIG, bundle(EMPTY, raise_for="gaia"))
     assert r.status == TestStatus.UNDETERMINED and r.reason.startswith("outage:gaia")
+
+
+def test_empty_response_is_undetermined_not_pass():
+    resp = dict(EMPTY); resp["cumulative"] = b""
+    r = Rung4Novelty().run(SIG, bundle(resp))
+    assert r.status == TestStatus.UNDETERMINED and r.reason.startswith("schema:cumulative")
+
+
+@pytest.mark.parametrize("key", ["q1_q17_dr25_tce", "toi", "J/AJ/151/68", "vari_eclipsing_binary", "nss_two_body_orbit"])
+def test_empty_body_from_any_table_is_undetermined(key):
+    resp = dict(EMPTY); resp[key] = b""
+    r = Rung4Novelty().run(SIG, bundle(resp))
+    assert r.status == TestStatus.UNDETERMINED and r.reason.startswith("schema:") and "empty response" in r.reason
+
+
+def test_missing_period_column_is_undetermined_not_pass():
+    resp = dict(EMPTY); resp["cumulative"] = b"kepid,kepoi_name\n5689121,K1.01\n"
+    r = Rung4Novelty().run(SIG, bundle(resp))
+    assert r.status == TestStatus.UNDETERMINED and r.reason == "schema:cumulative:missing koi_period"
+
+
+def test_missing_frequency_column_is_undetermined():
+    resp = dict(EMPTY); resp["vari_eclipsing_binary"] = b"source_id\n2103792461826460288\n"
+    r = Rung4Novelty().run(SIG, bundle(resp))
+    assert r.status == TestStatus.UNDETERMINED and r.reason == "schema:gaia_vari_eclipsing_binary:missing frequency"
 
 
 def test_results_are_cached_across_signals_of_one_target():
@@ -145,15 +209,24 @@ def test_kic_target_queries_archive_by_kepid():
     assert "kepid=5689121" in queries[0] and "kepid=5689121" in queries[1] and "CIRCLE" in queries[2]
 
 
-def test_tsv_parser_is_tolerant():
-    assert _tsv_rows(b"") == []
-    assert _tsv_rows(b"#c\nKIC\tPer\n---\t---\n") == []          # fewer than 3 non-comment lines
-    short = b"KIC\tPer\n\t\nd\td\n---\t---\n1\t2\n3\n4\t5\n"      # one malformed row
-    assert _tsv_rows(short) == [{"KIC": "1", "Per": "2"}, {"KIC": "4", "Per": "5"}]
-    assert _tsv_rows(EB_TSV) == [{"KIC": "5689121", "Per": "13.77"}]
+def test_tsv_parser_anchors_on_separator_line():
+    assert _tsv_rows(b"") == (None, [])
+    assert _tsv_rows(b"#c\nKIC\tPer\n") == (None, [])                        # no separator line
+    assert _tsv_rows(b"KIC\tPer\n---\t---\n1\t2\n") == (None, [])             # separator without units line
+    assert _tsv_rows(EB_EMPTY) == (["KIC", "Per"], [])
+    short = b"KIC\tPer\n\td\n---\t---\n1\t2\n3\n4\t5\n"                       # one malformed row
+    assert _tsv_rows(short) == (["KIC", "Per"], [{"KIC": "1", "Per": "2"}, {"KIC": "4", "Per": "5"}])
+    assert _tsv_rows(EB_TSV) == (["KIC", "Per"], [{"KIC": "5689121", "Per": "13.77"}])
 
 
 def test_csv_parser_handles_trailing_blank_line_and_comments():
-    assert _csv_rows(b"a,b\n1,2\n\n") == [{"a": "1", "b": "2"}]
-    assert _csv_rows(b"# comment\na,b\n1,2\n") == [{"a": "1", "b": "2"}]
-    assert _csv_rows(b"") == []
+    assert _csv_rows(b"a,b\n1,2\n\n") == (["a", "b"], [{"a": "1", "b": "2"}])
+    assert _csv_rows(b"# comment\na,b\n1,2\n") == (["a", "b"], [{"a": "1", "b": "2"}])
+    assert _csv_rows(b"a,b\n") == (["a", "b"], [])
+    assert _csv_rows(b"") == (None, [])
+
+
+@pytest.mark.parametrize("value,expected", [("13.77", 13.77), (13.77, 13.77), ("nan", 0.0), ("inf", 0.0), ("-inf", 0.0), ("-3", 0.0),
+                                            (0, 0.0), ("0", 0.0), ("", 0.0), ("abc", 0.0), (None, 0.0), (float("nan"), 0.0)])
+def test_to_float(value, expected):
+    assert _to_float(value) == expected
