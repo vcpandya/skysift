@@ -38,7 +38,7 @@ python -m skysift vet --source kbonus_bkg --target-id <ID>
 A sweep resumes where it stopped. Each target's job key holds the detector version plus a hash of the period window
 and search grid, so a run with a different `--min-period` or `--max-period` searches the same targets again. A target
 whose job fails three times is not retried; `run` counts it as `gave_up` and `status` reports it under
-`error_capped_targets`.
+`error_capped_targets`. A failure caused by a service outage (MAST or a catalogue unreachable) is recorded but never counted as one of the three attempts.
 
 ## Development setup
 
@@ -73,7 +73,7 @@ prefix (nested keys use `__`). Optional extras: `s3` (boto3, for an `s3://` blob
 * `stream`: delete each light-curve file once its target is vetted; evidence for kept signals is pinned.
 * `keep`: keep every downloaded file.
 * `budget:<GiB>` (for example `budget:50`): keep files until the cache exceeds the budget, then evict the least recently used
-  unpinned ones; the run stops with exit code 3 if only pinned evidence is left and the budget is still exceeded.
+  unpinned ones; the run stops with exit code 3 if only pinned evidence (or files the OS would not let it delete) is left and the budget is still exceeded.
 
 ## Docker and AWS
 

@@ -37,6 +37,9 @@ class Base(DeclarativeBase):
     pass
 
 
+UNAVAILABLE_PREFIX = "unavailable:"      # run error text for a service outage; never counted as an attempt
+
+
 class TargetRow(Base):
     __tablename__ = "targets"
     target_id: Mapped[str] = mapped_column(String(64), primary_key=True)
@@ -60,6 +63,10 @@ class RunRow(Base):
     finished: Mapped[datetime | None] = mapped_column(DateTime)
     status: Mapped[str] = mapped_column(String(16), default="running")   # running|done|error
     error: Mapped[str] = mapped_column(Text, default="")
+
+
+# an 'error' run counts as an attempt unless it was superseded (interrupted sweep) or a service outage
+_ATTEMPT_FILTERS = (RunRow.error != "superseded", RunRow.error.not_like(f"{UNAVAILABLE_PREFIX}%"))
 
 
 class SignalRow(Base):
@@ -165,10 +172,12 @@ class Store:
             return s.scalar(select(func.count()).select_from(RunRow).where(RunRow.job_key == job_key, RunRow.status == "done")) > 0
 
     def attempts(self, job_key: str) -> int:
-        """Failed attempts of a job: its 'error' runs, not counting runs superseded after an interruption."""
+        """Failed attempts of a job: its 'error' runs, not counting runs superseded after an interruption nor runs
+        that failed because a service was unavailable (error text starting ``unavailable:``): an outage is not the
+        target's fault and must not use up its three tries."""
         with self.session() as s:
             return s.scalar(select(func.count()).select_from(RunRow).where(
-                RunRow.job_key == job_key, RunRow.status == "error", RunRow.error != "superseded"))
+                RunRow.job_key == job_key, RunRow.status == "error", *_ATTEMPT_FILTERS))
 
     def error_capped_targets(self, max_attempts: int) -> int:
         """Targets whose latest job key has at least ``max_attempts`` failed attempts and no done run."""
@@ -178,7 +187,7 @@ class Store:
             done = select(RunRow.job_key).where(RunRow.status == "done")
             capped = (select(RunRow.job_key)
                       .where(RunRow.job_key.in_(keys), RunRow.job_key.not_in(done), RunRow.status == "error",
-                             RunRow.error != "superseded")
+                             *_ATTEMPT_FILTERS)
                       .group_by(RunRow.job_key).having(func.count() >= max_attempts))
             return s.scalar(select(func.count()).select_from(capped.subquery()))
 

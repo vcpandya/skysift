@@ -116,3 +116,12 @@ def test_attempts_count_errors_but_not_superseded_runs(tmp_path):
     assert s.attempts("k") == 3 and s.error_capped_targets(3) == 1 and s.error_capped_targets(4) == 0
     s.start_run("k2", "t", "box_dip", "1+12345678", "1")      # the target's latest job key changed: not capped
     assert s.error_capped_targets(3) == 0
+
+
+def test_attempts_ignore_service_outages(tmp_path):
+    s = make_store(tmp_path)
+    for _ in range(3):
+        s.finish_run(s.start_run("k", "t", "box_dip", "1+abcdef01", "1"), "error", "unavailable: MAST HTTP 503")
+    assert s.attempts("k") == 0 and s.error_capped_targets(3) == 0     # outages are not the target's fault
+    s.finish_run(s.start_run("k", "t", "box_dip", "1+abcdef01", "1"), "error", "ValueError('bad fits')")
+    assert s.attempts("k") == 1

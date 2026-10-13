@@ -16,8 +16,9 @@ from skysift.config import Settings, Thresholds
 from skysift.detectors.base import get_detector
 from skysift.lc.ops import detrend
 from skysift.models import LightCurve, Target
+from skysift.net import ServiceUnavailable
 from skysift.store.blob import Blob
-from skysift.store.db import Store, make_job_key, utcnow
+from skysift.store.db import UNAVAILABLE_PREFIX, Store, make_job_key, utcnow
 from skysift.store.retention import DiskBudgetExceeded, Retention, RetentionPolicy
 from skysift.vetting.base import DataBundle, Ladder
 from skysift.vetting.rung1_detection import Rung1Detection
@@ -100,7 +101,8 @@ def _cpu_work(lc_pickle: bytes, target_json: str, thresholds_json: str, detector
         outcome, results = ladder.run(sig, bundle, on_result=lambda r, dt, ts=timings: ts.append(dt))
         out.append({"signal": sig.model_dump(), "outcome": outcome,
                     "tests": [r.model_dump() for r in results], "timings": timings})
-    return jsonutil.dumps({"signals": out, "queries": recorder.rows})
+    # default=str: an unexpected type in a metric must not error the target (and lose its query log)
+    return jsonutil.dumps({"signals": out, "queries": recorder.rows}, default=str)
 
 
 def _write_results(store: Store, run_id: int, target_id: str, payload: str) -> dict:
@@ -112,16 +114,31 @@ def _write_results(store: Store, run_id: int, target_id: str, payload: str) -> d
     return store.record_results(run_id, target_id, items, data["queries"], pin_evidence=pin)
 
 
+def _salvage_queries(store: Store, payload) -> None:
+    """When the result write failed, the worker's catalogue requests still happened: log them on their own so
+    the queries table keeps every HTTP request even for a target that ends in error."""
+    if not isinstance(payload, str): return
+    try:
+        for q in json.loads(payload).get("queries", []):
+            store.log_query(q["service"], q["url"], q.get("params") or {}, q.get("status"), q.get("nbytes", 0),
+                            q.get("sha256"), q.get("error") or "")
+    except Exception:  # best effort: the target is already being marked error
+        log.warning("could not salvage query log", exc_info=True)
+
+
 def _select_targets(source, store: Store, filter: dict, det, version: str, ladder_version: str,
                     max_targets: int | None) -> tuple[list[tuple[Target, str]], int, int]:
     """Enumerate the whole source, record every target (in batches), skip done job keys and keys that already
     errored MAX_ATTEMPTS times, and return (the top ``max_targets`` remaining targets by priority, highest first;
     skipped count; gave-up count)."""
     todo, skipped, gave_up = [], 0, 0
+    seen: set[str] = set()         # a source yielding one target twice must not start two runs of one job
     targets = iter(source.list_targets(filter))
     while batch := list(islice(targets, UPSERT_BATCH)):
         store.upsert_targets(batch)
         for t in batch:
+            if t.target_id in seen: continue
+            seen.add(t.target_id)
             key = make_job_key(t.target_id, det.name, version, ladder_version)
             if store.job_done(key): skipped += 1
             elif store.attempts(key) >= MAX_ATTEMPTS: gave_up += 1
@@ -155,7 +172,9 @@ def run(source, store: Store, blob: Blob, settings: Settings, filter: dict, dete
     cpu_jobs: dict[Future, tuple[Target, int]] = {}
 
     def fail(t: Target, rid: int | None, e: Exception) -> None:
-        if rid is not None: store.finish_run(rid, "error", repr(e))
+        # an outage (MAST down, TLS failure) is recorded but never counted toward the target's three attempts
+        text = f"{UNAVAILABLE_PREFIX} {e}" if isinstance(e, ServiceUnavailable) else repr(e)
+        if rid is not None: store.finish_run(rid, "error", text)
         store.set_target_state(t.target_id, "error")
         retention.release_target(t.target_id)            # nothing to pin: free whatever the fetch left behind
         summary["errors"] += 1
@@ -173,11 +192,14 @@ def run(source, store: Store, blob: Blob, settings: Settings, filter: dict, dete
 
     def on_vetted(fut: Future) -> None:
         t, rid = cpu_jobs.pop(fut)
+        payload = None
         try:
+            payload = fut.result()
             # one transaction: signals, tests, queries, evidence pins, finished run, target state
-            counts = _write_results(store, rid, t.target_id, fut.result())
+            counts = _write_results(store, rid, t.target_id, payload)
         except Exception as e:
             log.exception("processing failed for %s", t.target_id)
+            _salvage_queries(store, payload)
             fail(t, rid, e); return
         try:
             retention.release_target(t.target_id)            # pinned evidence stays; everything else goes

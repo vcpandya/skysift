@@ -364,3 +364,34 @@ def test_errors_are_retried_at_most_three_times(settings, monkeypatch):
     r = CliRunner().invoke(app, ["status"])
     assert r.exit_code == 0, r.output
     assert json.loads(r.stdout)["error_capped_targets"] == 1
+
+
+def test_service_outages_do_not_use_up_attempts(settings, monkeypatch):
+    from skysift.net import ServiceUnavailable
+
+    s, store, blob = _env(monkeypatch, settings)
+    lc = make_lightcurve(n_days=60, seed=4)
+    src = ScriptedSource([_tgt("down")], {"down": lc}, store, blob)
+    calls = []
+
+    def outage(t):
+        calls.append(t.target_id); raise ServiceUnavailable("mast https://x -> HTTP 503")
+    src.fetch_lightcurve = outage
+    for _ in range(MAX_ATTEMPTS + 2):
+        out = run(src, store, blob, s, filter={}, with_novelty=False)
+        assert out["errors"] == 1 and out["gave_up"] == 0
+    assert len(calls) == MAX_ATTEMPTS + 2                       # still retried: an outage is not an attempt
+    with store.session() as ss:
+        errors = {r.error for r in ss.query(db.RunRow)}
+    assert errors and all(e.startswith("unavailable:") for e in errors)
+
+
+def test_duplicate_target_ids_start_one_run(settings, monkeypatch):
+    s, store, blob = _env(monkeypatch, settings)
+    lc = make_lightcurve(n_days=15, seed=4)
+    t = _tgt("twin")
+    src = ScriptedSource([t, t], {"twin": lc}, store, blob)
+    out = run(src, store, blob, s, filter={}, with_novelty=False)
+    assert out["processed"] == 1 and out["errors"] == 0
+    with store.session() as ss:
+        assert ss.query(db.RunRow).count() == 1
