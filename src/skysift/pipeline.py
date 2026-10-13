@@ -5,7 +5,9 @@ import logging
 import multiprocessing
 import pickle
 import time
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+from collections import deque
+from concurrent.futures import FIRST_COMPLETED, Future, ProcessPoolExecutor, ThreadPoolExecutor, wait
+from itertools import islice
 
 from skysift.config import Settings, Thresholds
 from skysift.detectors.base import get_detector
@@ -13,7 +15,7 @@ from skysift.lc.ops import detrend
 from skysift.models import LightCurve, Signal, Target, TestResult
 from skysift.store.blob import Blob
 from skysift.store.db import Store, make_job_key
-from skysift.store.retention import DiskBudgetExceeded, Retention, RetentionPolicy
+from skysift.store.retention import Retention, RetentionPolicy
 from skysift.vetting.base import DataBundle, Ladder
 from skysift.vetting.rung1_detection import Rung1Detection
 from skysift.vetting.rung2_shape import Rung2Shape
@@ -22,6 +24,7 @@ from skysift.vetting.rung4_novelty import Rung4Novelty
 
 log = logging.getLogger(__name__)
 DEFAULT_LADDER_VERSION = "1"
+UPSERT_BATCH = 1000
 FINAL_STATUS = {"pass": "candidate_stage1", "fail": "rejected", "undetermined": "undetermined"}
 
 
@@ -49,7 +52,9 @@ def _cpu_work(lc_pickle: bytes, target_json: str, thresholds_json: str, detector
     The pickle comes only from this package's own main process (``_fetch``), never from outside data."""
     lc: LightCurve = pickle.loads(lc_pickle)
     target = Target.model_validate_json(target_json); th = Thresholds.model_validate_json(thresholds_json)
-    lc.meta.setdefault("target_id", target.target_id)     # sources such as KBonus set it; others may not
+    # KBonus and other adapters set target_id themselves; their value wins on purpose (setdefault), and sources
+    # that leave it out get the pipeline's target id so detector output names the right star
+    lc.meta.setdefault("target_id", target.target_id)
     fn = detrend(lc); fn_alt = detrend(lc, flux=lc.flux_alt) if lc.flux_alt is not None else None
     det = get_detector(detector_name)
     signals = det.detect(lc, fn, th)
@@ -86,26 +91,29 @@ def _write_results(store: Store, run_id: int, payload: str) -> dict:
 
 def _select_targets(source, store: Store, filter: dict, det, ladder_version: str,
                     max_targets: int | None) -> tuple[list[tuple[Target, str]], int]:
-    """Enumerate the source, record every target, skip done job keys; return (todo by priority, skipped count)."""
+    """Enumerate the whole source, record every target (in batches), skip done job keys and return
+    (the top ``max_targets`` not-done targets by priority, highest first; skipped count)."""
     todo, skipped = [], 0
-    for t in source.list_targets(filter):
-        key = make_job_key(t.target_id, det.name, det.version, ladder_version)
-        store.upsert_target(t)
-        if store.job_done(key):
-            skipped += 1; continue
-        todo.append((t, key))
-        if max_targets and len(todo) >= max_targets: break
-    todo.sort(key=lambda x: -priority_score(x[0]))
-    return todo, skipped
+    targets = iter(source.list_targets(filter))
+    while batch := list(islice(targets, UPSERT_BATCH)):
+        store.upsert_targets(batch)
+        for t in batch:
+            key = make_job_key(t.target_id, det.name, det.version, ladder_version)
+            if store.job_done(key): skipped += 1
+            else: todo.append((t, key))
+    todo.sort(key=lambda x: priority_score(x[0]), reverse=True)     # stable: ties keep source order
+    return (todo if max_targets is None else todo[:max_targets]), skipped
 
 
-def _fetch(source, t: Target) -> tuple[Target, bytes]:
+def _fetch(source, t: Target) -> bytes:
     lc, _sha, _url = source.fetch_lightcurve(t)       # the adapter records the artifact itself
-    return t, pickle.dumps(lc)
+    return pickle.dumps(lc)
 
 
 def run(source, store: Store, blob: Blob, settings: Settings, filter: dict, detector_name: str = "box_dip",
         max_targets: int | None = None, progress=None, with_novelty: bool = True) -> dict:
+    """Bounded two-pool scheduler: at most 2*workers_io fetches (fetched light curves waiting for a CPU slot
+    included) and 2*workers_cpu CPU jobs are in flight, so memory and disk stay flat however long the sweep."""
     det = get_detector(detector_name)
     retention = Retention(RetentionPolicy.parse(settings.retention), store, blob)
     ladder_version = DEFAULT_LADDER_VERSION
@@ -114,45 +122,67 @@ def run(source, store: Store, blob: Blob, settings: Settings, filter: dict, dete
     summary = {"processed": 0, "skipped": skipped, "errors": 0, "signals": 0,
                "outcomes": {"pass": 0, "fail": 0, "undetermined": 0}}
     start = time.time()
+    max_fetch, max_cpu = 2 * settings.workers_io, 2 * settings.workers_cpu
+    pending = iter(todo)
+    fetches: dict[Future, tuple[Target, str]] = {}
+    ready: deque[tuple[Target, int, bytes]] = deque()      # fetched, run started, waiting for a CPU slot
+    cpu_jobs: dict[Future, tuple[Target, int]] = {}
 
-    def fail(t: Target, rid: int, e: Exception) -> None:
-        store.finish_run(rid, "error", repr(e)); store.set_target_state(t.target_id, "error")
+    def fail(t: Target, rid: int | None, e: Exception) -> None:
+        if rid is not None: store.finish_run(rid, "error", repr(e))
+        store.set_target_state(t.target_id, "error")
+        retention.release_target(t.target_id)            # nothing to pin: free whatever the fetch left behind
         summary["errors"] += 1
+        if progress: progress(summary)
+
+    def on_fetched(fut: Future) -> None:
+        t, key = fetches.pop(fut)
+        rid = None
+        try:
+            rid = store.start_run(key, t.target_id, det.name, det.version, ladder_version)
+            ready.append((t, rid, fut.result()))
+        except Exception as e:
+            log.warning("fetch or run start failed for %s", t.target_id, exc_info=True)
+            fail(t, rid, e)
+
+    def on_vetted(fut: Future) -> None:
+        t, rid = cpu_jobs.pop(fut)
+        try:
+            counts = _write_results(store, rid, fut.result())
+            if counts["pass"] or counts["undetermined"]:
+                store.pin_target_artifacts(t.target_id)      # keep evidence for anything still alive
+            retention.release_target(t.target_id)
+            store.finish_run(rid, "done"); store.set_target_state(t.target_id, "done")
+        except Exception as e:
+            log.exception("processing failed for %s", t.target_id)
+            fail(t, rid, e); return
+        for k, v in counts.items(): summary["outcomes"][k] += v
+        summary["signals"] += sum(counts.values()); summary["processed"] += 1
+        if progress: progress(summary)
+        # after a vetted target only: in-flight targets have not pinned their evidence yet, so a budget sweep
+        # after a mere fetch could delete files a live signal is about to claim
+        retention.enforce_budget()                       # raises DiskBudgetExceeded -> stops the run
+
+    def top_up() -> None:
+        while ready and len(cpu_jobs) < max_cpu:
+            t, rid, lc_pickle = ready.popleft()
+            cpu_jobs[cpu_pool.submit(_cpu_work, lc_pickle, t.model_dump_json(), th_json, detector_name,
+                                     ladder_version, with_novelty)] = (t, rid)
+        while len(fetches) + len(ready) < max_fetch and (nxt := next(pending, None)) is not None:
+            fetches[io_pool.submit(_fetch, source, nxt[0])] = nxt
 
     # spawn everywhere (the Windows default): forking while the I/O threads run is unsafe on POSIX
     io_pool = ThreadPoolExecutor(settings.workers_io)
     cpu_pool = ProcessPoolExecutor(settings.workers_cpu, mp_context=multiprocessing.get_context("spawn"))
     try:
-        fetches = {io_pool.submit(_fetch, source, t): (t, key) for t, key in todo}
-        cpu_jobs = {}
-        for fut in as_completed(fetches):
-            t, key = fetches[fut]
-            rid = store.start_run(key, t.target_id, det.name, det.version, ladder_version)
-            try:
-                t, lc_pickle = fut.result()
-            except Exception as e:
-                log.warning("fetch failed for %s", t.target_id, exc_info=True)
-                fail(t, rid, e); continue
-            cpu_jobs[cpu_pool.submit(_cpu_work, lc_pickle, t.model_dump_json(), th_json, detector_name,
-                                     ladder_version, with_novelty)] = (t, rid)
-        for fut in as_completed(cpu_jobs):
-            t, rid = cpu_jobs[fut]
-            try:
-                counts = _write_results(store, rid, fut.result())
-                for k, v in counts.items(): summary["outcomes"][k] += v
-                summary["signals"] += sum(counts.values())
-                store.finish_run(rid, "done"); store.set_target_state(t.target_id, "done")
-                if counts["pass"] or counts["undetermined"]:
-                    store.pin_target_artifacts(t.target_id)      # keep evidence for anything still alive
-                retention.release_target(t.target_id)
-                retention.enforce_budget()                      # raises DiskBudgetExceeded -> stops the run
-                summary["processed"] += 1
-            except DiskBudgetExceeded:
-                raise
-            except Exception as e:
-                log.exception("processing failed for %s", t.target_id)
-                fail(t, rid, e)
-            if progress: progress(summary)
+        top_up()
+        while fetches or cpu_jobs:
+            done, _ = wait([*fetches, *cpu_jobs], return_when=FIRST_COMPLETED)
+            for fut in done:
+                if fut in fetches: on_fetched(fut)
+                else: on_vetted(fut)
+            done = fut = None                              # drop the last references to payloads and results
+            top_up()
     except BaseException:
         # stop now: queued fetches and CPU jobs are dropped; their runs stay 'running' and are redone next time
         io_pool.shutdown(wait=True, cancel_futures=True); cpu_pool.shutdown(wait=True, cancel_futures=True)

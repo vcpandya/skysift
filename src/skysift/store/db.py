@@ -4,7 +4,20 @@ import json
 from contextlib import contextmanager
 from datetime import UTC, datetime
 
-from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Integer, String, Text, create_engine, func, select
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    create_engine,
+    event,
+    func,
+    select,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 
 from skysift.models import Signal, Target, TestResult
@@ -106,7 +119,16 @@ class QueryRow(Base):
 
 class Store:
     def __init__(self, database_url: str):
-        self.engine = create_engine(database_url, future=True)
+        if database_url.startswith("sqlite"):
+            # I/O threads record artifacts while the main thread writes results: wait for locks, let readers through
+            self.engine = create_engine(database_url, future=True, connect_args={"timeout": 30})
+
+            @event.listens_for(self.engine, "connect")
+            def _sqlite_pragmas(dbapi_conn, _record):
+                cur = dbapi_conn.cursor()
+                cur.execute("PRAGMA journal_mode=WAL"); cur.execute("PRAGMA busy_timeout=30000"); cur.close()
+        else:
+            self.engine = create_engine(database_url, future=True)
 
     def init_schema(self) -> None:
         Base.metadata.create_all(self.engine)
@@ -117,13 +139,19 @@ class Store:
             yield s
 
     def upsert_target(self, t: Target) -> None:
+        self.upsert_targets([t])
+
+    def upsert_targets(self, targets: list[Target]) -> None:
+        """Insert or update many targets in one transaction."""
         with self.session() as s:
-            row = s.get(TargetRow, t.target_id)
-            if row is None:
-                s.add(TargetRow(target_id=t.target_id, source=t.source, ra=t.ra, dec=t.dec, gaia_id=t.gaia_id,
-                                kic=t.kic, gmag=t.gmag, meta=t.meta))
-            else:
-                row.ra, row.dec, row.gaia_id, row.kic, row.gmag, row.meta = t.ra, t.dec, t.gaia_id, t.kic, t.gmag, t.meta
+            for t in targets:
+                row = s.get(TargetRow, t.target_id)
+                if row is None:
+                    s.add(TargetRow(target_id=t.target_id, source=t.source, ra=t.ra, dec=t.dec, gaia_id=t.gaia_id,
+                                    kic=t.kic, gmag=t.gmag, meta=t.meta))
+                else:
+                    row.ra, row.dec, row.gaia_id, row.kic, row.gmag, row.meta = (t.ra, t.dec, t.gaia_id, t.kic, t.gmag,
+                                                                                 t.meta)
 
     def set_target_state(self, target_id: str, state: str) -> None:
         with self.session() as s:

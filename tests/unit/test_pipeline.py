@@ -2,11 +2,13 @@ import json
 import math
 import multiprocessing
 import pickle
+import threading
 import warnings
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from skysift.config import Thresholds, load_settings
 from skysift.detectors.base import get_detector
@@ -15,6 +17,7 @@ from skysift.pipeline import _cpu_work, _json_default, _write_results, build_lad
 from skysift.store import db
 from skysift.store.blob import LocalBlob
 from skysift.store.db import Store, make_job_key
+from skysift.store.retention import DiskBudgetExceeded
 from tests.synthetic import inject_transit, make_lightcurve
 
 
@@ -129,3 +132,125 @@ def test_run_end_to_end_with_fake_source_and_resume(settings, monkeypatch):
     out2 = run(src, store, blob, s, filter={}, max_targets=2)
     assert out2["skipped"] == 2 and out2["processed"] == 0 and store.counts()["signals"] == c["signals"]
     assert store.counts()["runs"] == 3
+
+
+class ScriptedSource(FakeSource):
+    """FakeSource with explicit targets, fetches that store a file and then fail, and a per-fetch hook."""
+
+    def __init__(self, targets, lcs, store, blob, bad_fetch=(), on_fetch=None):
+        super().__init__(lcs, store, blob)
+        self.targets, self.bad_fetch, self.on_fetch = targets, set(bad_fetch), on_fetch
+
+    def list_targets(self, filter):
+        yield from self.targets
+
+    def fetch_lightcurve(self, target):
+        out = super().fetch_lightcurve(target)        # the file lands on disk and is recorded first
+        if target.target_id in self.bad_fetch:
+            raise ConnectionError(f"truncated download for {target.target_id}")
+        if self.on_fetch: self.on_fetch(target)
+        return out
+
+
+def _env(monkeypatch, settings_fixture, **env):
+    """Settings + store + blob; the 30-40 d window on 60 d curves makes the detector return [] at once."""
+    env = {"WORKERS_CPU": "1", "THRESHOLDS__MIN_PERIOD_DAYS": "30", "THRESHOLDS__MAX_PERIOD_DAYS": "40", **env}
+    for k, v in env.items(): monkeypatch.setenv(f"SKYSIFT_{k}", v)
+    s = load_settings(); s.data_dir.mkdir(exist_ok=True)
+    store = Store(s.database_url); store.init_schema()
+    return s, store, LocalBlob(s.data_dir / "blobs")
+
+
+def _tgt(tid, gmag=16.5, psffrac=0.9, crowdsap=0.9, kic=None):
+    return Target(source="fake", target_id=tid, ra=0, dec=0, gmag=gmag, kic=kic,
+                  meta={"psffrac": psffrac, "crowdsap": crowdsap})
+
+
+def _runs(store):
+    with store.session() as ss:
+        return {r.target_id: (r.status, r.error) for r in ss.query(db.RunRow)}
+
+
+def _states(store):
+    with store.session() as ss:
+        return {r.target_id: r.state for r in ss.query(db.TargetRow)}
+
+
+def test_run_keeps_fetched_but_unwritten_targets_bounded(settings, monkeypatch):
+    s, store, blob = _env(monkeypatch, settings, WORKERS_IO="2")
+    assert (s.workers_io, s.workers_cpu) == (2, 1)
+    lc = make_lightcurve(n_days=60, seed=4)
+    targets = [_tgt(f"t{i:02d}") for i in range(20)]
+    lock, fetched, finished, peak = threading.Lock(), [0], [0], [0]
+
+    def on_fetch(_t):
+        with lock:
+            fetched[0] += 1; peak[0] = max(peak[0], fetched[0] - finished[0])
+
+    def progress(summary):
+        with lock: finished[0] = summary["processed"] + summary["errors"]
+
+    src = ScriptedSource(targets, {t.target_id: lc for t in targets}, store, blob, on_fetch=on_fetch)
+    out = run(src, store, blob, s, filter={}, with_novelty=False, progress=progress)
+    assert out["processed"] == 20 and out["errors"] == 0 and fetched[0] == 20
+    assert 1 <= peak[0] <= 2 * s.workers_io + 2 * s.workers_cpu + 1, peak[0]
+    assert {st for st, _ in _runs(store).values()} == {"done"} and len(_runs(store)) == 20
+    print(f"peak fetched-but-unwritten = {peak[0]} (bound {2 * s.workers_io + 2 * s.workers_cpu + 1})")
+
+
+def test_max_targets_takes_highest_priority_after_full_enumeration(settings, monkeypatch):
+    s, store, blob = _env(monkeypatch, settings)
+    # enumerated lowest priority first, so "first N enumerated" would pick the wrong two
+    targets = [_tgt("p_minus3", gmag=19.5, psffrac=0.3, crowdsap=0.3, kic=1), _tgt("p1", gmag=14, psffrac=0.3, crowdsap=0.3),
+               _tgt("p3", psffrac=0.3, crowdsap=0.3), _tgt("p5"), _tgt("p4", crowdsap=0.3)]
+    assert [priority_score(t) for t in targets] == [-3, 1, 3, 5, 4]
+    lc = make_lightcurve(n_days=60, seed=4)
+    src = ScriptedSource(targets, {t.target_id: lc for t in targets}, store, blob)
+    out0 = run(src, store, blob, s, filter={}, max_targets=0, with_novelty=False)
+    assert out0["processed"] == 0 and _runs(store) == {} and store.counts()["targets"] == 5
+    out = run(src, store, blob, s, filter={}, max_targets=2, with_novelty=False)
+    assert out["processed"] == 2 and set(_runs(store)) == {"p5", "p4"}
+
+
+def test_fetch_failure_marks_error_releases_file_and_continues(settings, monkeypatch):
+    s, store, blob = _env(monkeypatch, settings)
+    lc = make_lightcurve(n_days=60, seed=4)
+    src = ScriptedSource([_tgt("good"), _tgt("bad")], {"good": lc, "bad": lc}, store, blob, bad_fetch={"bad"})
+    seen = []
+    out = run(src, store, blob, s, filter={}, with_novelty=False, progress=lambda x: seen.append(dict(x)))
+    assert out["processed"] == 1 and out["errors"] == 1 and len(seen) == 2     # progress after the failure too
+    runs = _runs(store)
+    assert runs["good"][0] == "done" and runs["bad"][0] == "error" and "truncated download" in runs["bad"][1]
+    assert _states(store) == {"good": "done", "bad": "error"}
+    with store.session() as ss:
+        bad = ss.query(db.ArtifactRow).filter_by(target_id="bad").one()
+        assert not bad.pinned and bad.deleted_at is not None and not Path(bad.local_path).exists()
+    assert store.unpinned_artifacts() == []
+
+
+def test_worker_failure_marks_error_and_continues(settings, monkeypatch):
+    s, store, blob = _env(monkeypatch, settings)
+    good = make_lightcurve(n_days=60, seed=4)
+    broken = make_lightcurve(n_days=60, seed=5); broken.flux = broken.flux[:-7]     # length mismatch -> worker raises
+    src = ScriptedSource([_tgt("good"), _tgt("broken")], {"good": good, "broken": broken}, store, blob)
+    out = run(src, store, blob, s, filter={}, with_novelty=False)
+    assert out["processed"] == 1 and out["errors"] == 1
+    runs = _runs(store)
+    assert runs["good"][0] == "done" and runs["broken"][0] == "error" and runs["broken"][1]
+    assert _states(store) == {"good": "done", "broken": "error"}
+    assert store.unpinned_artifacts() == [] and multiprocessing.active_children() == []
+
+
+def test_disk_budget_exceeded_stops_run_after_planet_is_written(settings, monkeypatch):
+    s, store, blob = _env(monkeypatch, settings, RETENTION="budget:0",
+                          THRESHOLDS__MIN_PERIOD_DAYS="5", THRESHOLDS__MAX_PERIOD_DAYS="15")
+    planet = inject_transit(make_lightcurve(n_days=120, seed=1, noise_ppm=800), 7.3, 135.0, 0.1, 3000)
+    src = ScriptedSource([_tgt("planet")], {"planet": planet}, store, blob)
+    with pytest.raises(DiskBudgetExceeded):
+        run(src, store, blob, s, filter={}, with_novelty=False)
+    assert multiprocessing.active_children() == []
+    assert _runs(store)["planet"][0] == "done" and _states(store)["planet"] == "done"
+    with store.session() as ss:
+        assert ss.query(db.SignalRow).filter_by(final_status="candidate_stage1").count() >= 1
+        art = ss.query(db.ArtifactRow).one()
+        assert art.pinned and art.deleted_at is None and Path(art.local_path).exists()

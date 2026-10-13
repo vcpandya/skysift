@@ -59,3 +59,10 @@ def test_artifact_dedupe_lru_order_and_deleted_exclusion(tmp_path):
     assert [a["sha256"][0] for a in s.unpinned_artifacts()] == ["c", "a"]
     s.add_artifact("d" * 64, 4, "u4", "p4", "kic-3", pinned=True)
     assert "d" * 64 not in [a["sha256"] for a in s.unpinned_artifacts()]
+
+
+def test_file_sqlite_uses_wal_and_busy_timeout(tmp_path):
+    s = make_store(tmp_path)
+    with s.engine.connect() as c:
+        assert c.exec_driver_sql("PRAGMA journal_mode").scalar() == "wal"
+        assert c.exec_driver_sql("PRAGMA busy_timeout").scalar() == 30000
