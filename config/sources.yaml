@@ -1,0 +1,91 @@
+kbonus_bkg:
+  agency: NASA/MAST HLSP (Martinez-Palomera, Hedges, Dotson 2023)
+  status: live
+  n_lightcurves: 606900
+  baseline_days: 1430
+  cadence_min: 29.4
+  depth_limit_ppm: 300
+  fraction_searched: 0.33      # the 200,352 Kepler targets were searched by the Kepler pipeline; 406,548 background sources were not
+  known_candidate_density: 0.012
+  est_yield_per_10k: 2.0
+  bytes_per_star: 9000000
+  seconds_per_star: 250
+  notes: PSF-deblended; pixel files available for localisation; KIC 5689121 found here. Full-range BLS costs ~250 CPU-s per star; throughput scales with worker_cpu.
+kepler:
+  agency: NASA/MAST
+  status: planned
+  n_lightcurves: 200000
+  baseline_days: 1430
+  cadence_min: 29.4
+  depth_limit_ppm: 100
+  fraction_searched: 1.0
+  known_candidate_density: 0.02
+  est_yield_per_10k: 0.2
+  bytes_per_star: 6000000
+  seconds_per_star: 250
+  notes: Fully searched; useful for EB and variability catalogues and cross-checks.
+k2:
+  agency: NASA/MAST (EVEREST, K2SFF HLSP)
+  status: planned
+  n_lightcurves: 400000
+  baseline_days: 80
+  cadence_min: 29.4
+  depth_limit_ppm: 300
+  fraction_searched: 0.8
+  known_candidate_density: 0.003
+  est_yield_per_10k: 0.5
+  bytes_per_star: 2000000
+  seconds_per_star: 15
+  notes: Short campaigns; period range limited to < 40 d.
+tess_lc:
+  agency: NASA/MAST (SPOC, TESS-SPOC, QLP, TGLC, TARS)
+  status: planned
+  n_lightcurves: 20000000
+  baseline_days: 27
+  cadence_min: 10
+  depth_limit_ppm: 1000
+  fraction_searched: 0.6
+  known_candidate_density: 0.0004
+  est_yield_per_10k: 0.3
+  bytes_per_star: 2000000
+  seconds_per_star: 5
+  notes: Multi-sector stacking needed; faint stars noisy.
+exoarchive_bulk:
+  agency: NASA Exoplanet Archive bulk (SuperWASP 18M, KELT 229k, HATNet, CoRoT 149k, TrES, XO)
+  status: planned
+  n_lightcurves: 18500000
+  baseline_days: 1500
+  cadence_min: 10
+  depth_limit_ppm: 5000
+  fraction_searched: 0.9
+  known_candidate_density: 0.0002
+  est_yield_per_10k: 0.1
+  bytes_per_star: 500000
+  seconds_per_star: 20
+  notes: Ground-based; giant planets and EBs only.
+gaia_epoch:
+  agency: ESA Gaia (DR3 epoch photometry for 10M variables; DR4 all sources, expected December 2026)
+  status: planned
+  n_lightcurves: 10000000
+  baseline_days: 1000
+  cadence_min: 43200
+  depth_limit_ppm: 10000
+  fraction_searched: 0.1
+  known_candidate_density: 0.0001
+  est_yield_per_10k: 0.05
+  bytes_per_star: 20000
+  seconds_per_star: 1
+  notes: Sparse sampling; EBs and deep transits only.
+ztf:
+  agency: Caltech/IPAC IRSA
+  status: planned
+  n_lightcurves: 1000000000
+  baseline_days: 2500
+  cadence_min: 2880
+  depth_limit_ppm: 10000
+  fraction_searched: 0.2
+  known_candidate_density: 0.0001
+  est_yield_per_10k: 0.02
+  bytes_per_star: 100000
+  seconds_per_star: 2
+  notes: Cone API unreliable as of October 2026; use object-id retrieval.
