@@ -27,6 +27,7 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = ["golden: needs network to fetch cached fixtures", "slow: long running"]
+addopts = "-m 'not slow'"
 
 [tool.ruff]
 line-length = 120
