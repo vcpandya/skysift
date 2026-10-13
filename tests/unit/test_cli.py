@@ -1,3 +1,4 @@
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -32,3 +33,54 @@ def test_python_m_entry_point():
     r = subprocess.run([sys.executable, "-m", "skysift", "--help"], check=False, capture_output=True, text=True,
                        timeout=120, cwd=repo_root)
     assert r.returncode == 0 and "run" in r.stdout
+
+
+def test_run_passes_limit_as_max_targets_and_period_overrides(settings, monkeypatch):
+    from skysift import cli, pipeline
+
+    seen = {}
+
+    def stub(source, store, blob, settings, filter, **kw):
+        seen.update(settings=settings, filter=filter, **kw)
+        return {"processed": 0, "skipped": 0, "errors": 0, "signals": 0}
+
+    monkeypatch.setattr(pipeline, "run", stub)
+    monkeypatch.setattr(cli, "_source", lambda name, store, blob: object())
+    r = CliRunner().invoke(app, ["run", "--source", "kbonus_bkg", "--limit", "5", "--min-period", "5", "--max-period", "40"])
+    assert r.exit_code == 0, r.output
+    assert seen["max_targets"] == 5 and "limit" not in seen["filter"]
+    assert seen["settings"].thresholds.min_period_days == 5.0 and seen["settings"].thresholds.max_period_days == 40.0
+    assert json.loads(r.stdout)["processed"] == 0          # stdout is the JSON only
+    assert "period window: 5 to 40 days" in r.stderr
+
+
+def test_run_rejects_bad_retention(settings):
+    r = CliRunner().invoke(app, ["run", "--source", "kbonus_bkg", "--retention", "bogus"])
+    assert r.exit_code != 0 and "bad retention" in r.output
+
+
+def test_vet_pins_artifacts_and_keeps_stdout_json(settings, monkeypatch):
+    from skysift import cli, pipeline
+    from skysift.store.db import Store
+
+    class Target:
+        target_id = "T1"
+
+        def model_dump_json(self):
+            return "{}"
+
+    class Src:
+        def list_targets(self, flt):
+            return [Target()]
+
+        def fetch_lightcurve(self, target):
+            return {"lc": 1}, "abc", "http://example/lc"
+
+    pinned = []
+    monkeypatch.setattr(cli, "_source", lambda name, store, blob: Src())
+    monkeypatch.setattr(pipeline, "_cpu_work", lambda *a: '{"rungs": {"r1": {"x": 1}}}')
+    monkeypatch.setattr(Store, "pin_target_artifacts", lambda self, tid: pinned.append(tid))
+    r = CliRunner().invoke(app, ["vet", "--source", "kbonus_bkg", "--target-id", "T1"])
+    assert r.exit_code == 0, r.output
+    assert pinned == ["T1"] and json.loads(r.stdout)["rungs"]["r1"]["x"] == 1
+    assert "wrote" in r.stderr and (settings.data_dir / "vet" / "T1.json").exists()

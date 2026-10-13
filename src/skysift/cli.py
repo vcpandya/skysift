@@ -19,10 +19,12 @@ from skysift.store.retention import Retention, RetentionPolicy
 app = typer.Typer(help="SkySift: archival time-series search and vetting engine")
 
 
-def _console() -> Console:
+def _console(stderr: bool = False) -> Console:
     """On a real terminal rich uses the terminal width; piped (or under a test runner) it gets a wide fixed
-    width, so wide tables are not wrapped or truncated."""
-    return Console() if sys.stdout.isatty() else Console(width=200)
+    width, so wide tables are not wrapped or truncated. stderr=True is for progress and preamble lines, so
+    stdout carries only the machine-readable result."""
+    stream = sys.stderr if stderr else sys.stdout
+    return Console(stderr=stderr) if stream.isatty() else Console(stderr=stderr, width=200)
 
 
 def _plain(console: Console, text: str, **kw) -> None:
@@ -31,6 +33,11 @@ def _plain(console: Console, text: str, **kw) -> None:
 
 
 def _ctx(retention: str | None = None, workers_io: int | None = None, workers_cpu: int | None = None):
+    if retention:
+        try:
+            RetentionPolicy.parse(retention)
+        except ValueError as e:
+            raise typer.BadParameter(str(e), param_hint="--retention") from e
     s = load_settings()
     if retention: s.retention = retention
     if workers_io: s.workers_io = workers_io
@@ -65,7 +72,8 @@ def sources():
 @app.command()
 def run(source: str = typer.Option(...), gmag_max: float = 19.0,
         background_only: bool = typer.Option(True, "--background-only/--all"), psffrac_min: float = 0.5,
-        limit: int | None = None, detector: str = "box_dip", workers_io: int | None = None,
+        limit: int | None = typer.Option(None, help="Process the N highest-priority targets not yet done."),
+        detector: str = "box_dip", workers_io: int | None = None,
         workers_cpu: int | None = None, retention: str | None = None,
         min_period: float | None = typer.Option(None, help="Override the minimum search period (days)."),
         max_period: float | None = typer.Option(None, help="Override the maximum search period (days)."),
@@ -73,7 +81,7 @@ def run(source: str = typer.Option(...), gmag_max: float = 19.0,
     """Sweep a source: fetch, detect, vet, store, release files."""
     logging.basicConfig(level=logging.INFO if verbose else logging.WARNING,
                         format="%(asctime)s %(levelname)s %(name)s %(message)s")
-    console = _console()
+    console = _console(stderr=True)
     s, store, blob = _ctx(retention, workers_io, workers_cpu)
     if min_period is not None: s.thresholds.min_period_days = min_period
     if max_period is not None: s.thresholds.max_period_days = max_period
@@ -81,11 +89,11 @@ def run(source: str = typer.Option(...), gmag_max: float = 19.0,
     src = _source(source, store, blob)
     _plain(console, f"period window: {s.thresholds.min_period_days:g} to {s.thresholds.max_period_days:g} days")
     summary = pipeline.run(src, store, blob, s, filter={"gmag_max": gmag_max, "background_only": background_only,
-                                                       "psffrac_min": psffrac_min, "limit": limit},
+                                                       "psffrac_min": psffrac_min},
                            detector_name=detector, max_targets=limit,
                            progress=lambda sm: _plain(
                                console, f"processed {sm['processed']} signals {sm['signals']} outcomes {sm['outcomes']}", end="\r"))
-    _plain(console, json.dumps(summary, indent=1))
+    _plain(_console(), json.dumps(summary, indent=1))
 
 
 @app.command()
@@ -113,7 +121,7 @@ def status():
 @app.command()
 def vet(source: str = typer.Option(...), target_id: str = typer.Option(...), detector: str = "box_dip"):
     """Run detection and the full ladder on one target and print every metric (files are kept)."""
-    console = _console()
+    console = _console(stderr=True)
     s, store, blob = _ctx(retention="keep")
     src = _source(source, store, blob)
     from skysift.pipeline import DEFAULT_LADDER_VERSION, _cpu_work
@@ -122,6 +130,7 @@ def vet(source: str = typer.Option(...), target_id: str = typer.Option(...), det
     if target is None:
         raise typer.BadParameter(f"target {target_id} not found in source {source}")
     lc, sha, url = src.fetch_lightcurve(target)
+    store.pin_target_artifacts(target.target_id)      # the kept file must survive a later budget sweep
     _plain(console, f"fetched {url} sha256={sha}")
     out = _cpu_work(pickle.dumps(lc), target.model_dump_json(), s.thresholds.model_dump_json(), detector,
                     DEFAULT_LADDER_VERSION, True)
@@ -129,7 +138,7 @@ def vet(source: str = typer.Option(...), target_id: str = typer.Option(...), det
     path = s.data_dir / "vet" / f"{target_id}.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
-    _plain(console, text)
+    _plain(_console(), text)
     _plain(console, f"wrote {path}")
 
 
