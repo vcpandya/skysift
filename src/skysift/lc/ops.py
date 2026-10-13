@@ -13,10 +13,11 @@ def _segments(time: np.ndarray, gap_days: float):
     return np.split(np.arange(time.size), breaks)
 
 
-def detrend(lc: LightCurve, window_days: float = 1.0, gap_days: float = 1.0, flux: np.ndarray | None = None) -> np.ndarray:
+def detrend(lc: LightCurve, window_days: float = 2.0, gap_days: float = 1.0, flux: np.ndarray | None = None) -> np.ndarray:
     """Divide by a running median per contiguous segment. Returns normalised flux aligned with lc.time (NaN where bad)."""
     m = lc.good_mask()
     f = (lc.flux if flux is None else flux)
+    m = m & np.isfinite(f)
     out = np.full(lc.time.size, np.nan)
     t, y, idx = lc.time[m], f[m], np.where(m)[0]
     for seg in _segments(t, gap_days):
@@ -48,7 +49,7 @@ class EventDepths:
 
 def _box_depth(ph, fn, half, baseline="linear"):
     i = np.abs(ph) < 0.8 * half
-    o = (np.abs(ph) > 1.5 * half) & (np.abs(ph) < 0.5)
+    o = (np.abs(ph) > 1.5 * half) & (np.abs(ph) < max(0.5, 4 * half))
     if i.sum() < 3 or o.sum() < 20:
         return None
     if baseline == "linear":
@@ -85,17 +86,22 @@ def event_depths(time, fnorm, quarter, period, t0, duration_days, local_baseline
 
 def secondary_search(time, fnorm, period, t0, duration_days, phases=None):
     """Box depth at each trial phase; returns (best_phase, depth_ppm, sigma) excluding +-1.5 durations of the primary."""
-    phases = np.linspace(0.1, 0.9, 81) if phases is None else phases
+    if phases is None:
+        step = min(0.01, 0.5 * duration_days / period)
+        phases = np.arange(0.1, 0.9 + 1e-9, step)
     good = np.isfinite(fnorm); time, fnorm = time[good], fnorm[good]
     half = duration_days / 2.0
     out = []
     for p in phases:
         ph = fold_phase(time, period, t0 + p * period)
-        i = np.abs(ph) < 0.8 * half; o = (np.abs(ph) > 1.5 * half) & (np.abs(ph) < 0.5)
+        i = np.abs(ph) < 0.8 * half; o = (np.abs(ph) > 1.5 * half) & (np.abs(ph) < max(0.5, 4 * half))
         if i.sum() < 5 or o.sum() < 50:
             out.append((p, np.nan, np.nan)); continue
         base = np.median(fnorm[o]); scat = 1.4826 * np.median(np.abs(fnorm[o] - base))
         d = 1 - np.mean(fnorm[i]) / base
         out.append((p, d * 1e6, d / (scat / np.sqrt(i.sum()))))
-    out = np.array(out); k = np.nanargmax(out[:, 2])
+    out = np.array(out)
+    if out.size == 0 or not np.isfinite(out[:, 2]).any():
+        return float("nan"), float("nan"), float("nan")
+    k = np.nanargmax(out[:, 2])
     return float(out[k, 0]), float(out[k, 1]), float(out[k, 2])
