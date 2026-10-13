@@ -106,3 +106,13 @@ def test_record_results_writes_everything_in_one_transaction(tmp_path):
     assert s.record_results(rid, "t", items, [q], pin_evidence=True) == {"pass": 0, "fail": 0, "undetermined": 1}
     assert s.job_done("k") and s.unpinned_artifacts() == []
     c = s.counts(); assert (c["signals"], c["tests"], c["queries"]) == (1, 1, 1)
+
+
+def test_attempts_count_errors_but_not_superseded_runs(tmp_path):
+    s = make_store(tmp_path)
+    s.start_run("k", "t", "box_dip", "1+abcdef01", "1")       # interrupted, then superseded by the next start
+    for _ in range(3):
+        s.finish_run(s.start_run("k", "t", "box_dip", "1+abcdef01", "1"), "error", "boom")
+    assert s.attempts("k") == 3 and s.error_capped_targets(3) == 1 and s.error_capped_targets(4) == 0
+    s.start_run("k2", "t", "box_dip", "1+12345678", "1")      # the target's latest job key changed: not capped
+    assert s.error_capped_targets(3) == 0

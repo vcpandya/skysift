@@ -13,7 +13,15 @@ from skysift import jsonutil
 from skysift.config import Thresholds, load_settings
 from skysift.detectors.base import get_detector
 from skysift.models import Signal, Target, TestResult, TestStatus
-from skysift.pipeline import _cpu_work, _write_results, build_ladder, priority_score, run
+from skysift.pipeline import (
+    MAX_ATTEMPTS,
+    _cpu_work,
+    _write_results,
+    build_ladder,
+    priority_score,
+    run,
+    search_version,
+)
 from skysift.store import db
 from skysift.store.blob import LocalBlob
 from skysift.store.db import Store, make_job_key
@@ -127,12 +135,15 @@ def test_run_end_to_end_with_fake_source_and_resume(settings, monkeypatch):
     assert out["processed"] == 2 and out["errors"] == 0 and out["skipped"] == 0 and len(seen) == 2
     assert c["targets"] == 2 and c["runs"] == 2 and c["signals"] >= 1 and c["tests"] >= 3
     assert out["signals"] == c["signals"] and sum(out["outcomes"].values()) == c["signals"]
-    det = get_detector("box_dip")
-    planet_key = make_job_key("planet", "box_dip", det.version, "1")
-    assert store.job_done(planet_key) and store.job_done(make_job_key("noise", "box_dip", det.version, "1"))
+    det = get_detector("box_dip"); ver = search_version(det, s.thresholds)
+    assert ver.startswith(det.version + "+") and len(ver) == len(det.version) + 9
+    planet_key = make_job_key("planet", "box_dip", ver, "1")
+    assert store.job_done(planet_key) and store.job_done(make_job_key("noise", "box_dip", ver, "1"))
     with store.session() as ss:
         assert {r.state for r in ss.query(db.TargetRow)} == {"done"}
         planet_sigs = ss.query(db.SignalRow).filter_by(target_id="planet").all()
+        assert all(r.detector_version == search_version(get_detector("box_dip"), s.thresholds) for r in planet_sigs)
+        assert all(r.extra["search_window"] == {"min_period_days": 5, "max_period_days": 40} for r in planet_sigs)
         assert any(abs(r.period - 13.769) < 0.05 for r in planet_sigs)
         assert all(r.final_status in ("candidate_stage1", "rejected", "undetermined") for r in ss.query(db.SignalRow))
         alive = {r.target_id for r in ss.query(db.SignalRow) if r.final_status != "rejected"}
@@ -143,7 +154,7 @@ def test_run_end_to_end_with_fake_source_and_resume(settings, monkeypatch):
     for tid, (pinned, deleted_at, path) in arts.items():
         assert pinned == (tid in alive) and (deleted_at is None) == pinned and Path(path).exists() == pinned
     # an interrupted rerun leaves a 'running' row; the earlier done run still checkpoints the target
-    store.start_run(planet_key, "planet", "box_dip", det.version, "1")
+    store.start_run(planet_key, "planet", "box_dip", ver, "1")
     assert store.job_done(planet_key)
     # resume: second run skips both
     out2 = run(src, store, blob, s, filter={}, max_targets=2)
@@ -312,3 +323,43 @@ def test_result_write_is_atomic_and_a_rerun_does_not_duplicate(settings, monkeyp
         assert len(sigs) == out2["signals"] and len({r.run_id for r in sigs}) == 1
         assert len({round(r.period, 4) for r in sigs}) == len(sigs)
         assert all(r.final_status != "pending" for r in sigs)
+
+
+def test_job_key_depends_on_the_search_window(settings, monkeypatch):
+    s, store, blob = _env(monkeypatch, settings, THRESHOLDS__MIN_PERIOD_DAYS="5", THRESHOLDS__MAX_PERIOD_DAYS="40")
+    lc = make_lightcurve(n_days=15, seed=4)            # 13.5 d baseline: a 5-40 d window is empty, 0.5-40 is cheap
+    src = ScriptedSource([_tgt("t1")], {"t1": lc}, store, blob)
+    assert run(src, store, blob, s, filter={}, with_novelty=False)["processed"] == 1
+    s.thresholds.min_period_days = 0.5                  # a wider window is new work, not a done job
+    out = run(src, store, blob, s, filter={}, with_novelty=False)
+    assert out["processed"] == 1 and out["skipped"] == 0
+    out = run(src, store, blob, s, filter={}, with_novelty=False)            # same window again: done
+    assert out["processed"] == 0 and out["skipped"] == 1
+    det = get_detector("box_dip")
+    v_narrow = search_version(det, Thresholds(min_period_days=5, max_period_days=40))
+    assert v_narrow != search_version(det, s.thresholds) and v_narrow == search_version(det, Thresholds(
+        min_period_days=5, max_period_days=40, sde_min=12))           # vetting thresholds are not search config
+    with store.session() as ss:
+        assert {r.detector_version for r in ss.query(db.RunRow)} == {v_narrow, search_version(det, s.thresholds)}
+
+
+def test_errors_are_retried_at_most_three_times(settings, monkeypatch):
+    from typer.testing import CliRunner
+
+    from skysift.cli import app
+
+    s, store, blob = _env(monkeypatch, settings)
+    lc = make_lightcurve(n_days=60, seed=4)
+    src = ScriptedSource([_tgt("bad")], {"bad": lc}, store, blob, bad_fetch={"bad"})
+    calls = []
+    real_fetch = src.fetch_lightcurve
+    src.fetch_lightcurve = lambda t: (calls.append(t.target_id), real_fetch(t))[1]
+    for _ in range(MAX_ATTEMPTS):
+        out = run(src, store, blob, s, filter={}, with_novelty=False)
+        assert out["errors"] == 1 and out["gave_up"] == 0
+    assert len(calls) == MAX_ATTEMPTS == 3
+    out = run(src, store, blob, s, filter={}, with_novelty=False)
+    assert out["gave_up"] == 1 and out["errors"] == 0 and out["processed"] == 0 and len(calls) == 3
+    r = CliRunner().invoke(app, ["status"])
+    assert r.exit_code == 0, r.output
+    assert json.loads(r.stdout)["error_capped_targets"] == 1

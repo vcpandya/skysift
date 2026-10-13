@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import importlib
 import json
 import logging
@@ -27,6 +28,8 @@ from skysift.vetting.rung4_novelty import Rung4Novelty
 log = logging.getLogger(__name__)
 DEFAULT_LADDER_VERSION = "1"
 UPSERT_BATCH = 1000
+MAX_ATTEMPTS = 3            # spec section 9: a target that errors three times is left for a human
+SEARCH_CONFIG_KEYS = ("oversample", "n_bands", "n_refine", "refine_oversample", "two_stage")
 
 
 def priority_score(t: Target) -> float:
@@ -38,6 +41,16 @@ def priority_score(t: Target) -> float:
     if t.meta.get("crowdsap", 0) >= 0.8: s += 1
     if not t.kic: s += 1
     return s
+
+
+def search_version(det, thresholds: Thresholds) -> str:
+    """Detector version plus an 8-hex hash of the search configuration (period window and the detector's grid
+    knobs), so a run with a different window or grid is a different job: a narrow-window run never marks a target
+    done for a later full-window run. Used in the job key, the run row and every signal's detector_version."""
+    cfg = {"min_period_days": thresholds.min_period_days, "max_period_days": thresholds.max_period_days,
+           **{k: getattr(det, k, None) for k in SEARCH_CONFIG_KEYS}}
+    h = hashlib.sha1(json.dumps(cfg, sort_keys=True).encode()).hexdigest()[:8]
+    return f"{det.version}+{h}"
 
 
 def build_ladder(version: str = DEFAULT_LADDER_VERSION, with_novelty: bool = True) -> Ladder:
@@ -74,13 +87,15 @@ def _cpu_work(lc_pickle: bytes, target_json: str, thresholds_json: str, detector
     fn = detrend(lc); fn_alt = detrend(lc, flux=lc.flux_alt) if lc.flux_alt is not None else None
     det = get_detector(detector_name)
     signals = det.detect(lc, fn, th)
+    version = search_version(det, th)
     ladder = build_ladder(ladder_version, with_novelty=with_novelty)
     recorder = _QueryRecorder()
     fetch = importlib.import_module(fetch_module).fetch if fetch_module else net.fetch
     bundle = DataBundle(lc=lc, fnorm=fn, fnorm_alt=fn_alt, target=target, thresholds=th, store=recorder, fetch=fetch)
     out = []
     for sig in signals:
-        sig.target_id = target.target_id
+        sig.target_id, sig.detector_version = target.target_id, version
+        sig.extra["search_window"] = {"min_period_days": th.min_period_days, "max_period_days": th.max_period_days}
         timings = []
         outcome, results = ladder.run(sig, bundle, on_result=lambda r, dt, ts=timings: ts.append(dt))
         out.append({"signal": sig.model_dump(), "outcome": outcome,
@@ -97,20 +112,22 @@ def _write_results(store: Store, run_id: int, target_id: str, payload: str) -> d
     return store.record_results(run_id, target_id, items, data["queries"], pin_evidence=pin)
 
 
-def _select_targets(source, store: Store, filter: dict, det, ladder_version: str,
-                    max_targets: int | None) -> tuple[list[tuple[Target, str]], int]:
-    """Enumerate the whole source, record every target (in batches), skip done job keys and return
-    (the top ``max_targets`` not-done targets by priority, highest first; skipped count)."""
-    todo, skipped = [], 0
+def _select_targets(source, store: Store, filter: dict, det, version: str, ladder_version: str,
+                    max_targets: int | None) -> tuple[list[tuple[Target, str]], int, int]:
+    """Enumerate the whole source, record every target (in batches), skip done job keys and keys that already
+    errored MAX_ATTEMPTS times, and return (the top ``max_targets`` remaining targets by priority, highest first;
+    skipped count; gave-up count)."""
+    todo, skipped, gave_up = [], 0, 0
     targets = iter(source.list_targets(filter))
     while batch := list(islice(targets, UPSERT_BATCH)):
         store.upsert_targets(batch)
         for t in batch:
-            key = make_job_key(t.target_id, det.name, det.version, ladder_version)
+            key = make_job_key(t.target_id, det.name, version, ladder_version)
             if store.job_done(key): skipped += 1
+            elif store.attempts(key) >= MAX_ATTEMPTS: gave_up += 1
             else: todo.append((t, key))
     todo.sort(key=lambda x: priority_score(x[0]), reverse=True)     # stable: ties keep source order
-    return (todo if max_targets is None else todo[:max_targets]), skipped
+    return (todo if max_targets is None else todo[:max_targets]), skipped, gave_up
 
 
 def _fetch(source, t: Target) -> bytes:
@@ -126,8 +143,9 @@ def run(source, store: Store, blob: Blob, settings: Settings, filter: dict, dete
     retention = Retention(RetentionPolicy.parse(settings.retention), store, blob)
     ladder_version = DEFAULT_LADDER_VERSION
     th_json = settings.thresholds.model_dump_json()
-    todo, skipped = _select_targets(source, store, filter, det, ladder_version, max_targets)
-    summary = {"processed": 0, "skipped": skipped, "errors": 0, "signals": 0,
+    version = search_version(det, settings.thresholds)
+    todo, skipped, gave_up = _select_targets(source, store, filter, det, version, ladder_version, max_targets)
+    summary = {"processed": 0, "skipped": skipped, "gave_up": gave_up, "errors": 0, "signals": 0,
                "outcomes": {"pass": 0, "fail": 0, "undetermined": 0}}
     start = time.time()
     max_fetch, max_cpu = 2 * settings.workers_io, 2 * settings.workers_cpu
@@ -147,7 +165,7 @@ def run(source, store: Store, blob: Blob, settings: Settings, filter: dict, dete
         t, key = fetches.pop(fut)
         rid = None
         try:
-            rid = store.start_run(key, t.target_id, det.name, det.version, ladder_version)
+            rid = store.start_run(key, t.target_id, det.name, version, ladder_version)
             ready.append((t, rid, fut.result()))
         except Exception as e:
             log.warning("fetch or run start failed for %s", t.target_id, exc_info=True)

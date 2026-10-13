@@ -100,6 +100,7 @@ def run(source: str = typer.Option(...), gmag_max: float = 19.0,
 @app.command()
 def status():
     """Counts, outcomes, throughput, cache usage, recent errors."""
+    from skysift.pipeline import MAX_ATTEMPTS
     s, store, blob = _ctx()
     c = store.counts()
     policy = RetentionPolicy.parse(s.retention)
@@ -113,6 +114,7 @@ def status():
         hours = max(1e-9, seconds / 3600)
         out = {"counts": c, "signal_outcomes": outcomes, "targets_per_hour": round(len(done) / hours, 1),
                "mean_seconds_per_run": round(seconds / len(done), 2) if done else None,
+               "error_capped_targets": store.error_capped_targets(MAX_ATTEMPTS),
                "cache_bytes": ret.cached_bytes(), "retention": s.retention,
                "cache_budget_bytes": policy.budget_bytes if policy.mode == "budget" else None,
                "last_errors": [{"target": e.target_id, "error": e.error[:200]} for e in errors]}

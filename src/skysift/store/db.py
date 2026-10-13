@@ -54,7 +54,7 @@ class RunRow(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     job_key: Mapped[str] = mapped_column(String(160), index=True)
     target_id: Mapped[str] = mapped_column(String(64), index=True)
-    detector: Mapped[str] = mapped_column(String(32)); detector_version: Mapped[str] = mapped_column(String(16))
+    detector: Mapped[str] = mapped_column(String(32)); detector_version: Mapped[str] = mapped_column(String(32))
     ladder_version: Mapped[str] = mapped_column(String(16))
     started: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     finished: Mapped[datetime | None] = mapped_column(DateTime)
@@ -67,7 +67,7 @@ class SignalRow(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     run_id: Mapped[int] = mapped_column(ForeignKey("runs.id"), index=True)
     target_id: Mapped[str] = mapped_column(String(64), index=True)
-    detector: Mapped[str] = mapped_column(String(32)); detector_version: Mapped[str] = mapped_column(String(16))
+    detector: Mapped[str] = mapped_column(String(32)); detector_version: Mapped[str] = mapped_column(String(32))
     period: Mapped[float] = mapped_column(Float); t0: Mapped[float] = mapped_column(Float)
     duration: Mapped[float] = mapped_column(Float); depth_ppm: Mapped[float] = mapped_column(Float)
     snr: Mapped[float] = mapped_column(Float); sde: Mapped[float] = mapped_column(Float)
@@ -163,6 +163,24 @@ class Store:
     def job_done(self, job_key: str) -> bool:
         with self.session() as s:
             return s.scalar(select(func.count()).select_from(RunRow).where(RunRow.job_key == job_key, RunRow.status == "done")) > 0
+
+    def attempts(self, job_key: str) -> int:
+        """Failed attempts of a job: its 'error' runs, not counting runs superseded after an interruption."""
+        with self.session() as s:
+            return s.scalar(select(func.count()).select_from(RunRow).where(
+                RunRow.job_key == job_key, RunRow.status == "error", RunRow.error != "superseded"))
+
+    def error_capped_targets(self, max_attempts: int) -> int:
+        """Targets whose latest job key has at least ``max_attempts`` failed attempts and no done run."""
+        with self.session() as s:
+            latest = select(func.max(RunRow.id)).group_by(RunRow.target_id)
+            keys = select(RunRow.job_key).where(RunRow.id.in_(latest))
+            done = select(RunRow.job_key).where(RunRow.status == "done")
+            capped = (select(RunRow.job_key)
+                      .where(RunRow.job_key.in_(keys), RunRow.job_key.not_in(done), RunRow.status == "error",
+                             RunRow.error != "superseded")
+                      .group_by(RunRow.job_key).having(func.count() >= max_attempts))
+            return s.scalar(select(func.count()).select_from(capped.subquery()))
 
     def start_run(self, job_key, target_id, detector, detector_version, ladder_version) -> int:
         """Start a run. Earlier runs of the same job still marked 'running' were interrupted (a crash or a stopped
