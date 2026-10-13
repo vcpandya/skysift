@@ -1,0 +1,6 @@
+services:
+  skysift:
+    build: {context: .., dockerfile: docker/Dockerfile}
+    volumes: ["../data:/data"]
+    env_file: ["../.env"]
+    command: ["run", "--source", "kbonus_bkg", "--limit", "100"]
