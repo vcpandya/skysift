@@ -1,0 +1,10 @@
+data/
+cache/
+packs/
+*.db
+.env
+__pycache__/
+*.pyc
+.venv/
+venv*/
+
