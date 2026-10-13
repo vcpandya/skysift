@@ -46,13 +46,20 @@ class Ladder:
             t0 = time.perf_counter()
             try:
                 r = rung.run(signal, bundle)
+                if not isinstance(r, TestResult):
+                    log.error("rung %s returned %s, not a TestResult", rung.name, type(r).__name__)
+                    r = TestResult(rung=rung.name, status=TestStatus.UNDETERMINED,
+                                   reason=f"exception: rung returned {type(r).__name__}")
             except Exception as e:  # a broken test must never pass a signal or kill the sweep
                 log.exception("rung %s raised", rung.name)
                 r = TestResult(rung=rung.name, status=TestStatus.UNDETERMINED, reason=f"exception: {e!r}")
             dt = time.perf_counter() - t0
             results.append(r)
             if on_result:
-                on_result(r, dt)
+                try:
+                    on_result(r, dt)
+                except Exception:  # a failing progress callback must not abort the vetting of a signal
+                    log.exception("on_result callback raised for rung %s", rung.name)
             if r.status == TestStatus.FAIL:
                 return "fail", results
             if r.status == TestStatus.UNDETERMINED:

@@ -17,7 +17,7 @@ class Rung3Stability:
         lc, fn = b.lc, b.fnorm
         ed = event_depths(lc.time, fn, lc.quarter, s.period, s.t0, s.duration)
         if ed.n < 4:
-            return TestResult(rung=self.name, status=TestStatus.UNDETERMINED, reason="too few events")
+            return TestResult(rung=self.name, status=TestStatus.UNDETERMINED, reason="too few events", metrics={"n_events": ed.n})
         seasons = ed.quarters % 4
         means, errs = {}, {}
         for sn in np.unique(seasons):
@@ -25,16 +25,28 @@ class Rung3Stability:
             mu = np.sum(w * ed.depths[k]) / np.sum(w); e = 1 / np.sqrt(np.sum(w))
             c2 = np.sum(w * (ed.depths[k] - mu) ** 2); e *= max(1.0, np.sqrt(c2 / max(1, k.sum() - 1)))
             means[int(sn)], errs[int(sn)] = float(mu), float(e)
-        mu_all = ed.mean
-        z = {k: (means[k] - mu_all) / errs[k] for k in means}
+        # Leave-one-out z per season: each season is compared with the weighted mean of the *other* seasons, so a
+        # single deviant season cannot drag the reference and flag every other season. The summed z^2 is only
+        # approximately chi-square distributed with n_seasons - 1 dof (the z_k are correlated), which is adequate
+        # for a conservative 3-sigma gate.
+        keys = sorted(means)
+        z = {}
+        for k in keys:
+            others = [j for j in keys if j != k]
+            if not others:
+                z[k] = 0.0
+                continue
+            w = np.array([1 / errs[j] ** 2 for j in others]); mu_o = float(np.sum(w * [means[j] for j in others]) / np.sum(w))
+            e_o = float(1 / np.sqrt(np.sum(w)))
+            z[k] = (means[k] - mu_o) / float(np.hypot(errs[k], e_o))
         chi2 = float(sum(v ** 2 for v in z.values())); dof = max(1, len(z) - 1)
         p = float(chi2_dist.sf(chi2, dof))
-        n_outliers = sum(abs(v) > th.season_sigma for v in z.values())
         ratio = np.nan
         if b.fnorm_alt is not None:
             alt = event_depths(lc.time, b.fnorm_alt, lc.quarter, s.period, s.t0, s.duration)
             if alt.n and ed.mean: ratio = float(alt.mean / ed.mean)
-        m = {"season_depths": means, "season_errs": errs, "season_z": z, "chi2": chi2, "dof": dof, "p_value": p, "sap_psf_ratio": ratio}
-        if p < 0.0027 and n_outliers >= 2 and len(z) >= 3:
+        m = {"season_depths": {str(k): v for k, v in means.items()}, "season_errs": {str(k): v for k, v in errs.items()},
+             "season_z": {str(k): v for k, v in z.items()}, "chi2": chi2, "dof": dof, "p_value": p, "n_events": ed.n, "sap_psf_ratio": ratio}
+        if p < 0.0027 and any(abs(v) > th.season_sigma for v in z.values()) and len(z) >= 3:
             return TestResult(rung=self.name, status=TestStatus.FAIL, metrics=m, reason=f"season-dependent depth (p={p:.1e})")
         return TestResult(rung=self.name, status=TestStatus.PASS, metrics=m)

@@ -29,3 +29,24 @@ def test_exception_becomes_undetermined():
     ladder = Ladder([R("a", 1, TestStatus.PASS, boom=True)], "1")
     outcome, results = ladder.run(SIG, None)
     assert outcome == "undetermined" and results[0].reason.startswith("exception")
+
+
+def test_non_testresult_return_becomes_undetermined():
+    class Bad:
+        name, cost = "bad", 1
+
+        def run(self, signal, bundle):
+            return "pass"   # a plain string must never be read as a pass
+
+    outcome, results = Ladder([Bad(), R("b", 2, TestStatus.PASS)], "1").run(SIG, None)
+    assert outcome == "undetermined"
+    assert results[0].status == TestStatus.UNDETERMINED and results[0].reason == "exception: rung returned str"
+    assert results[1].rung == "b"
+
+
+def test_failing_on_result_callback_does_not_abort():
+    def boom(r, dt):
+        raise RuntimeError("callback")
+
+    outcome, results = Ladder([R("a", 1, TestStatus.PASS), R("b", 2, TestStatus.PASS)], "1").run(SIG, None, on_result=boom)
+    assert outcome == "pass" and [r.rung for r in results] == ["a", "b"]

@@ -35,6 +35,13 @@ class Rung2Shape:
             return TestResult(rung=self.name, status=TestStatus.FAIL, metrics=m, reason=f"odd_even {parity_sigma:.1f} sigma")
         if sec_sigma > th.secondary_sigma:
             return TestResult(rung=self.name, status=TestStatus.FAIL, metrics=m, reason=f"secondary_at_0.5 {sec_sigma:.1f} sigma")
-        if free_sigma > th.free_secondary_sigma and abs(free_phase - 0.5) > 0.02:
+        if not np.isfinite(free_sigma) or not np.isfinite(free_phase):
+            return TestResult(rung=self.name, status=TestStatus.UNDETERMINED, metrics=m, reason="free_secondary_undetermined")
+        if free_sigma > th.free_secondary_sigma:
+            # A secondary within one transit duration of phase 0.5 is a circular-orbit eclipse the phase-0.5 box
+            # (+-0.8 half-durations) can narrowly miss; anything further out routes to the EB branch.
+            if abs(free_phase - 0.5) * s.period <= s.duration:
+                return TestResult(rung=self.name, status=TestStatus.FAIL, metrics=m,
+                                  reason=f"secondary_at_0.5 {free_sigma:.1f} sigma (free-phase search, phase {free_phase:.3f})")
             return TestResult(rung=self.name, status=TestStatus.FAIL, metrics=m, reason="eccentric_secondary")
         return TestResult(rung=self.name, status=TestStatus.PASS, metrics=m)
