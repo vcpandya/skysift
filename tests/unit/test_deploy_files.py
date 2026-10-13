@@ -8,10 +8,16 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def test_dockerfile_is_editable_and_uses_python_m():
     text = (ROOT / "docker" / "Dockerfile").read_text()
-    assert '-e ".[s3]"' in text
+    assert '-e ".[s3,pg]"' in text
     assert 'ENTRYPOINT ["python", "-m", "skysift"]' in text
     assert "skysift.exe" not in text
     assert "chown skysift:skysift /data" in text and "PYTHONUNBUFFERED=1" in text
+
+
+def test_dockerfile_installs_the_postgres_extra():
+    # the AWS template points SKYSIFT_DATABASE_URL at Postgres: the image needs the driver
+    text = (ROOT / "docker" / "Dockerfile").read_text()
+    assert ".[s3,pg]" in text
 
 
 def test_windows_task_script_never_uses_the_console_exe():

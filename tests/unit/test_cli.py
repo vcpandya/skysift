@@ -78,9 +78,12 @@ def test_vet_pins_artifacts_and_keeps_stdout_json(settings, monkeypatch):
 
     pinned = []
     monkeypatch.setattr(cli, "_source", lambda name, store, blob: Src())
-    monkeypatch.setattr(pipeline, "_cpu_work", lambda *a: '{"rungs": {"r1": {"x": 1}}}')
+    payload = {"signals": [{"rungs": {"r1": {"x": 1}}}],
+               "queries": [{"service": "vizier", "url": "https://v", "params": {}, "status": 200, "nbytes": 3}]}
+    monkeypatch.setattr(pipeline, "_cpu_work", lambda *a: json.dumps(payload))
     monkeypatch.setattr(Store, "pin_target_artifacts", lambda self, tid: pinned.append(tid))
     r = CliRunner().invoke(app, ["vet", "--source", "kbonus_bkg", "--target-id", "T1"])
     assert r.exit_code == 0, r.output
-    assert pinned == ["T1"] and json.loads(r.stdout)["rungs"]["r1"]["x"] == 1
+    assert pinned == ["T1"] and json.loads(r.stdout)["signals"][0]["rungs"]["r1"]["x"] == 1
+    assert Store(settings.database_url).counts()["queries"] == 1       # vet logs the rungs' catalogue queries
     assert "wrote" in r.stderr and (settings.data_dir / "vet" / "T1.json").exists()

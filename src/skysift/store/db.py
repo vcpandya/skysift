@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from contextlib import contextmanager
 from datetime import UTC, datetime
 
@@ -20,7 +19,10 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 
+from skysift import jsonutil
 from skysift.models import Signal, Target, TestResult
+
+FINAL_STATUS = {"pass": "candidate_stage1", "fail": "rejected", "undetermined": "undetermined"}
 
 
 def utcnow() -> datetime:
@@ -121,14 +123,15 @@ class Store:
     def __init__(self, database_url: str):
         if database_url.startswith("sqlite"):
             # I/O threads record artifacts while the main thread writes results: wait for locks, let readers through
-            self.engine = create_engine(database_url, future=True, connect_args={"timeout": 30})
+            self.engine = create_engine(database_url, future=True, connect_args={"timeout": 30},
+                                        json_serializer=jsonutil.dumps)
 
             @event.listens_for(self.engine, "connect")
             def _sqlite_pragmas(dbapi_conn, _record):
                 cur = dbapi_conn.cursor()
                 cur.execute("PRAGMA journal_mode=WAL"); cur.execute("PRAGMA busy_timeout=30000"); cur.close()
         else:
-            self.engine = create_engine(database_url, future=True)
+            self.engine = create_engine(database_url, future=True, json_serializer=jsonutil.dumps)
 
     def init_schema(self) -> None:
         Base.metadata.create_all(self.engine)
@@ -162,7 +165,12 @@ class Store:
             return s.scalar(select(func.count()).select_from(RunRow).where(RunRow.job_key == job_key, RunRow.status == "done")) > 0
 
     def start_run(self, job_key, target_id, detector, detector_version, ladder_version) -> int:
+        """Start a run. Earlier runs of the same job still marked 'running' were interrupted (a crash or a stopped
+        sweep); they become 'error' / 'superseded' so status shows them and their pending rows are never mistaken
+        for live work."""
         with self.session() as s:
+            for old in s.scalars(select(RunRow).where(RunRow.job_key == job_key, RunRow.status == "running")):
+                old.status, old.error, old.finished = "error", "superseded", utcnow()
             r = RunRow(job_key=job_key, target_id=target_id, detector=detector, detector_version=detector_version,
                        ladder_version=ladder_version)
             s.add(r); s.flush(); return r.id
@@ -187,8 +195,41 @@ class Store:
 
     def add_test(self, signal_id: int, r: TestResult, duration_s: float) -> None:
         with self.session() as s:
-            s.add(TestRow(signal_id=signal_id, rung=r.rung, status=r.status.value, metrics=r.metrics,
-                          artifacts=r.artifacts, reason=r.reason, duration_s=duration_s))
+            self._add_test_row(s, signal_id, r, duration_s)
+
+    def _add_test_row(self, s: Session, signal_id: int, r: TestResult, duration_s: float) -> None:
+        s.add(TestRow(signal_id=signal_id, rung=r.rung, status=r.status.value, metrics=r.metrics,
+                      artifacts=r.artifacts, reason=r.reason, duration_s=duration_s))
+
+    def record_results(self, run_id: int, target_id: str, items: list[dict], queries: list[dict],
+                       pin_evidence: bool) -> dict:
+        """Write one target's outcome in ONE transaction: signals with their tests and final statuses, the catalogue
+        queries the worker made, evidence pins, the finished run and the target state. Either all of it lands or
+        none does, so an exception or crash never leaves pending signals that a rerun would duplicate.
+
+        ``items`` are the worker's signal entries ({"signal", "outcome", "tests", "timings"}); ``queries`` are the
+        keyword arguments of ``log_query`` (plus an optional ISO ``utc``). Returns counts per outcome."""
+        counts = {"pass": 0, "fail": 0, "undetermined": 0}
+        with self.session() as s:
+            for item in items:
+                sig = Signal(**item["signal"])
+                row = SignalRow(run_id=run_id, final_status=FINAL_STATUS[item["outcome"]], **sig.model_dump())
+                s.add(row); s.flush()
+                for r, dt in zip(item["tests"], item["timings"], strict=True):
+                    self._add_test_row(s, row.id, TestResult(**r), dt)
+                counts[item["outcome"]] += 1
+            for q in queries:
+                utc = datetime.fromisoformat(q["utc"]) if q.get("utc") else utcnow()
+                s.add(QueryRow(service=q["service"], url=q["url"], params=jsonutil.dumps(q.get("params") or {}, default=str),
+                               status=q.get("status"), nbytes=q.get("nbytes") or 0, sha256=q.get("sha256"),
+                               error=q.get("error") or "", utc=utc))
+            if pin_evidence:
+                for a in s.scalars(select(ArtifactRow).where(ArtifactRow.target_id == target_id,
+                                                              ArtifactRow.deleted_at.is_(None))):
+                    a.pinned = True
+            run = s.get(RunRow, run_id); run.status, run.error, run.finished = "done", "", utcnow()
+            s.get(TargetRow, target_id).state = "done"
+        return counts
 
     def add_artifact(self, sha256, nbytes, url, local_path, target_id=None, pinned=False) -> None:
         """Record a stored file. A known sha256 is resurrected: a row retention marked deleted describes a file that is
@@ -231,7 +272,7 @@ class Store:
 
     def log_query(self, service, url, params: dict, status, nbytes, sha256=None, error="") -> None:
         with self.session() as s:
-            s.add(QueryRow(service=service, url=url, params=json.dumps(params, default=str), status=status,
+            s.add(QueryRow(service=service, url=url, params=jsonutil.dumps(params, default=str), status=status,
                            nbytes=nbytes, sha256=sha256, error=error))
 
     def counts(self) -> dict:

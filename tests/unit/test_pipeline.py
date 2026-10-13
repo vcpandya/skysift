@@ -1,5 +1,4 @@
 import json
-import math
 import multiprocessing
 import pickle
 import threading
@@ -10,10 +9,11 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from skysift import jsonutil
 from skysift.config import Thresholds, load_settings
 from skysift.detectors.base import get_detector
 from skysift.models import Signal, Target, TestResult, TestStatus
-from skysift.pipeline import _cpu_work, _json_default, _write_results, build_ladder, priority_score, run
+from skysift.pipeline import _cpu_work, _write_results, build_ladder, priority_score, run
 from skysift.store import db
 from skysift.store.blob import LocalBlob
 from skysift.store.db import Store, make_job_key
@@ -63,12 +63,28 @@ def test_write_results_keeps_nan_and_numpy_metrics(settings):
                  depth_ppm=500, snr=10, sde=12, n_events=5)
     r = TestResult(rung="shape", status=TestStatus.PASS, metrics={"nan": float("nan"), "np": np.float64(2.5),
                                                                   "arr": np.arange(3)})
-    payload = json.dumps([{"signal": sig.model_dump(), "outcome": "pass", "tests": [r.model_dump()], "timings": [0.1]}],
-                         default=_json_default)
-    assert _write_results(store, rid, payload) == {"pass": 1, "fail": 0, "undetermined": 0}
+    query = {"service": "exoarchive", "url": "https://x/TAP", "params": {"radius": np.float64(0.01)}, "status": 200,
+             "nbytes": 10, "sha256": "ab" * 32, "error": "", "utc": "2026-10-14T00:00:00+00:00"}
+    payload = jsonutil.dumps({"signals": [{"signal": sig.model_dump(), "outcome": "pass", "tests": [r.model_dump()],
+                                           "timings": [0.1]}], "queries": [query]})
+    assert _write_results(store, rid, "t1", payload) == {"pass": 1, "fail": 0, "undetermined": 0}
     with store.session() as s:
         m = s.query(db.TestRow).one().metrics
-    assert math.isnan(m["nan"]) and m["np"] == 2.5 and m["arr"] == [0, 1, 2]
+        q = s.query(db.QueryRow).one()
+        assert (q.service, q.status, json.loads(q.params)) == ("exoarchive", 200, {"radius": 0.01})
+        assert (s.get(db.RunRow, rid).status, s.get(db.TargetRow, "t1").state) == ("done", "done")
+    assert m["nan"] is None and m["np"] == 2.5 and m["arr"] == [0, 1, 2]
+    # stored as strict JSON: no NaN/Infinity tokens a Postgres JSON column or a strict parser would reject
+    with store.engine.connect() as c:
+        raw = c.exec_driver_sql("select metrics from tests").scalar()
+
+    def reject(token): raise ValueError(f"non-standard JSON token {token}")
+    assert json.loads(raw, parse_constant=reject)["nan"] is None
+    # a raw NaN written through the ORM is sanitized by the engine's serializer too
+    store.add_test(1, TestResult(rung="x", status=TestStatus.PASS, metrics={"inf": float("inf")}), 0.0)
+    with store.engine.connect() as c:
+        raws = [row[0] for row in c.exec_driver_sql("select metrics from tests")]
+    assert all("NaN" not in x and "Infinity" not in x for x in raws)
 
 
 def _test_modules_in_worker() -> str:
@@ -84,7 +100,8 @@ def test_cpu_work_runs_in_spawned_worker_without_test_modules():
                           False).result()
         leaked = pool.submit(eval, _test_modules_in_worker()).result()
     assert leaked == []
-    items = json.loads(out)
+    items = json.loads(out)["signals"]
+    assert json.loads(out)["queries"] == []               # rungs 1-3 make no catalogue queries
     assert items and all(i["signal"]["target_id"] == "w1" for i in items)
     ratios = [i["signal"]["period"] / 7.3 for i in items]     # 120 d holds few events: the 2x alias may win
     assert any(abs(r - round(r)) < 0.01 and round(r) in (1, 2) for r in ratios)
@@ -254,3 +271,44 @@ def test_disk_budget_exceeded_stops_run_after_planet_is_written(settings, monkey
         assert ss.query(db.SignalRow).filter_by(final_status="candidate_stage1").count() >= 1
         art = ss.query(db.ArtifactRow).one()
         assert art.pinned and art.deleted_at is None and Path(art.local_path).exists()
+
+
+def test_rung4_catalogue_queries_are_logged_during_a_sweep(settings, monkeypatch):
+    s, store, blob = _env(monkeypatch, settings, THRESHOLDS__MIN_PERIOD_DAYS="5", THRESHOLDS__MAX_PERIOD_DAYS="15")
+    planet = inject_transit(make_lightcurve(n_days=120, seed=1, noise_ppm=800), 7.3, 135.0, 0.1, 3000)
+    src = ScriptedSource([_tgt("planet")], {"planet": planet}, store, blob)
+    out = run(src, store, blob, s, filter={}, with_novelty=True, fetch_module="tests.unit.fake_fetch")
+    assert out["processed"] == 1 and out["errors"] == 0 and out["outcomes"]["pass"] >= 1
+    assert store.counts()["queries"] > 0
+    with store.session() as ss:
+        rows = ss.query(db.QueryRow).all()
+        assert {r.service for r in rows} == {"exoarchive", "vizier"}
+        assert all(r.url.startswith("https://") and r.status == 200 and r.sha256 for r in rows)
+        rung4 = ss.query(db.TestRow).filter_by(rung="rung4_novelty").all()
+        assert rung4 and all(t.status == "pass" for t in rung4)
+
+
+def test_result_write_is_atomic_and_a_rerun_does_not_duplicate(settings, monkeypatch):
+    s, store, blob = _env(monkeypatch, settings, THRESHOLDS__MIN_PERIOD_DAYS="5", THRESHOLDS__MAX_PERIOD_DAYS="15")
+    planet = inject_transit(make_lightcurve(n_days=120, seed=1, noise_ppm=800), 7.3, 135.0, 0.1, 3000)
+    src = ScriptedSource([_tgt("planet")], {"planet": planet}, store, blob)
+    real, calls = Store._add_test_row, [0]
+
+    def flaky(self, *a, **kw):              # fails midway: after a signal row and its first test row were added
+        calls[0] += 1
+        if calls[0] == 2: raise RuntimeError("database went away")
+        return real(self, *a, **kw)
+
+    monkeypatch.setattr(Store, "_add_test_row", flaky)
+    out = run(src, store, blob, s, filter={}, with_novelty=False)
+    assert out["errors"] == 1 and out["processed"] == 0
+    assert store.counts()["signals"] == 0 and store.counts()["tests"] == 0
+    assert _runs(store)["planet"][0] == "error" and _states(store)["planet"] == "error"
+    monkeypatch.setattr(Store, "_add_test_row", real)
+    out2 = run(src, store, blob, s, filter={}, with_novelty=False)
+    assert out2["processed"] == 1 and out2["signals"] >= 1
+    with store.session() as ss:
+        sigs = ss.query(db.SignalRow).filter_by(target_id="planet").all()
+        assert len(sigs) == out2["signals"] and len({r.run_id for r in sigs}) == 1
+        assert len({round(r.period, 4) for r in sigs}) == len(sigs)
+        assert all(r.final_status != "pending" for r in sigs)

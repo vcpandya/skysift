@@ -10,6 +10,7 @@ from rich.console import Console
 from rich.table import Table as RTable
 from sqlalchemy import select
 
+from skysift import jsonutil
 from skysift.config import load_settings
 from skysift.sources.base import load_registry
 from skysift.store.blob import blob_from_url
@@ -93,7 +94,7 @@ def run(source: str = typer.Option(...), gmag_max: float = 19.0,
                            detector_name=detector, max_targets=limit,
                            progress=lambda sm: _plain(
                                console, f"processed {sm['processed']} signals {sm['signals']} outcomes {sm['outcomes']}", end="\r"))
-    _plain(_console(), json.dumps(summary, indent=1))
+    _plain(_console(), jsonutil.dumps(summary, indent=1))
 
 
 @app.command()
@@ -115,7 +116,7 @@ def status():
                "cache_bytes": ret.cached_bytes(), "retention": s.retention,
                "cache_budget_bytes": policy.budget_bytes if policy.mode == "budget" else None,
                "last_errors": [{"target": e.target_id, "error": e.error[:200]} for e in errors]}
-    _plain(_console(), json.dumps(out, indent=1, default=str))
+    _plain(_console(), jsonutil.dumps(out, indent=1, default=str))
 
 
 @app.command()
@@ -134,7 +135,11 @@ def vet(source: str = typer.Option(...), target_id: str = typer.Option(...), det
     _plain(console, f"fetched {url} sha256={sha}")
     out = _cpu_work(pickle.dumps(lc), target.model_dump_json(), s.thresholds.model_dump_json(), detector,
                     DEFAULT_LADDER_VERSION, True)
-    text = json.dumps(json.loads(out), indent=1)
+    data = json.loads(out)
+    for q in data.get("queries", []):                 # provenance: every catalogue request the rungs made
+        store.log_query(q["service"], q["url"], q.get("params") or {}, q.get("status"), q.get("nbytes") or 0,
+                        q.get("sha256"), error=q.get("error") or "")
+    text = jsonutil.dumps(data, indent=1)
     path = s.data_dir / "vet" / f"{target_id}.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")

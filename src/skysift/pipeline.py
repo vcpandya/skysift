@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import json
 import logging
 import multiprocessing
@@ -9,12 +10,13 @@ from collections import deque
 from concurrent.futures import FIRST_COMPLETED, Future, ProcessPoolExecutor, ThreadPoolExecutor, wait
 from itertools import islice
 
+from skysift import jsonutil, net
 from skysift.config import Settings, Thresholds
 from skysift.detectors.base import get_detector
 from skysift.lc.ops import detrend
-from skysift.models import LightCurve, Signal, Target, TestResult
+from skysift.models import LightCurve, Target
 from skysift.store.blob import Blob
-from skysift.store.db import Store, make_job_key
+from skysift.store.db import Store, make_job_key, utcnow
 from skysift.store.retention import Retention, RetentionPolicy
 from skysift.vetting.base import DataBundle, Ladder
 from skysift.vetting.rung1_detection import Rung1Detection
@@ -25,7 +27,6 @@ from skysift.vetting.rung4_novelty import Rung4Novelty
 log = logging.getLogger(__name__)
 DEFAULT_LADDER_VERSION = "1"
 UPSERT_BATCH = 1000
-FINAL_STATUS = {"pass": "candidate_stage1", "fail": "rejected", "undetermined": "undetermined"}
 
 
 def priority_score(t: Target) -> float:
@@ -45,11 +46,26 @@ def build_ladder(version: str = DEFAULT_LADDER_VERSION, with_novelty: bool = Tru
     return Ladder(rungs, version)
 
 
-def _cpu_work(lc_pickle: bytes, target_json: str, thresholds_json: str, detector_name: str, ladder_version: str,
-              with_novelty: bool) -> str:
-    """Runs in a worker process: detect + vet. Returns JSON of signals and their test results.
+class _QueryRecorder:
+    """Stands in for the Store inside a worker process: ``net.fetch`` calls ``log_query`` on it, and the recorded rows
+    travel back with the results so the main process writes them in the target's results transaction."""
 
-    The pickle comes only from this package's own main process (``_fetch``), never from outside data."""
+    def __init__(self):
+        self.rows: list[dict] = []
+
+    def log_query(self, service, url, params, status, nbytes, sha256=None, error="") -> None:
+        self.rows.append({"service": service, "url": url, "params": dict(params or {}), "status": status,
+                          "nbytes": nbytes, "sha256": sha256, "error": error, "utc": utcnow().isoformat()})
+
+
+def _cpu_work(lc_pickle: bytes, target_json: str, thresholds_json: str, detector_name: str, ladder_version: str,
+              with_novelty: bool, fetch_module: str | None = None) -> str:
+    """Runs in a worker process: detect + vet. Returns strict JSON {"signals": [...], "queries": [...]}: each signal
+    with its outcome, test results and timings, and every catalogue query the rungs made.
+
+    ``fetch_module`` names a module whose ``fetch`` replaces ``net.fetch`` for the rungs (tests use it to keep rung 4
+    off the network; a monkeypatch in the parent never reaches a spawned worker). The pickle comes only from this
+    package's own main process (``_fetch``), never from outside data."""
     lc: LightCurve = pickle.loads(lc_pickle)
     target = Target.model_validate_json(target_json); th = Thresholds.model_validate_json(thresholds_json)
     # KBonus and other adapters set target_id themselves; their value wins on purpose (setdefault), and sources
@@ -59,7 +75,9 @@ def _cpu_work(lc_pickle: bytes, target_json: str, thresholds_json: str, detector
     det = get_detector(detector_name)
     signals = det.detect(lc, fn, th)
     ladder = build_ladder(ladder_version, with_novelty=with_novelty)
-    bundle = DataBundle(lc=lc, fnorm=fn, fnorm_alt=fn_alt, target=target, thresholds=th)
+    recorder = _QueryRecorder()
+    fetch = importlib.import_module(fetch_module).fetch if fetch_module else net.fetch
+    bundle = DataBundle(lc=lc, fnorm=fn, fnorm_alt=fn_alt, target=target, thresholds=th, store=recorder, fetch=fetch)
     out = []
     for sig in signals:
         sig.target_id = target.target_id
@@ -67,26 +85,16 @@ def _cpu_work(lc_pickle: bytes, target_json: str, thresholds_json: str, detector
         outcome, results = ladder.run(sig, bundle, on_result=lambda r, dt, ts=timings: ts.append(dt))
         out.append({"signal": sig.model_dump(), "outcome": outcome,
                     "tests": [r.model_dump() for r in results], "timings": timings})
-    return json.dumps(out, default=_json_default)
+    return jsonutil.dumps({"signals": out, "queries": recorder.rows})
 
 
-def _json_default(o):
-    """numpy scalars and arrays inside rung metrics must survive the trip back to the main process."""
-    import numpy as np
-    if isinstance(o, np.generic): return o.item()
-    if isinstance(o, np.ndarray): return o.tolist()
-    return str(o)
-
-
-def _write_results(store: Store, run_id: int, payload: str) -> dict:
-    counts = {"pass": 0, "fail": 0, "undetermined": 0}
-    for item in json.loads(payload):
-        sig = Signal(**item["signal"]); sid = store.add_signal(sig, run_id)
-        for r, dt in zip(item["tests"], item["timings"], strict=True):
-            store.add_test(sid, TestResult(**r), dt)
-        store.set_signal_status(sid, FINAL_STATUS[item["outcome"]])
-        counts[item["outcome"]] += 1
-    return counts
+def _write_results(store: Store, run_id: int, target_id: str, payload: str) -> dict:
+    """Parse a worker payload and write it atomically (``Store.record_results``); evidence is pinned when any
+    signal passed or is undetermined. Returns counts per outcome."""
+    data = json.loads(payload)
+    items = data["signals"]
+    pin = any(i["outcome"] in ("pass", "undetermined") for i in items)
+    return store.record_results(run_id, target_id, items, data["queries"], pin_evidence=pin)
 
 
 def _select_targets(source, store: Store, filter: dict, det, ladder_version: str,
@@ -111,7 +119,7 @@ def _fetch(source, t: Target) -> bytes:
 
 
 def run(source, store: Store, blob: Blob, settings: Settings, filter: dict, detector_name: str = "box_dip",
-        max_targets: int | None = None, progress=None, with_novelty: bool = True) -> dict:
+        max_targets: int | None = None, progress=None, with_novelty: bool = True, fetch_module: str | None = None) -> dict:
     """Bounded two-pool scheduler: at most 2*workers_io fetches (fetched light curves waiting for a CPU slot
     included) and 2*workers_cpu CPU jobs are in flight, so memory and disk stay flat however long the sweep."""
     det = get_detector(detector_name)
@@ -148,14 +156,15 @@ def run(source, store: Store, blob: Blob, settings: Settings, filter: dict, dete
     def on_vetted(fut: Future) -> None:
         t, rid = cpu_jobs.pop(fut)
         try:
-            counts = _write_results(store, rid, fut.result())
-            if counts["pass"] or counts["undetermined"]:
-                store.pin_target_artifacts(t.target_id)      # keep evidence for anything still alive
-            retention.release_target(t.target_id)
-            store.finish_run(rid, "done"); store.set_target_state(t.target_id, "done")
+            # one transaction: signals, tests, queries, evidence pins, finished run, target state
+            counts = _write_results(store, rid, t.target_id, fut.result())
         except Exception as e:
             log.exception("processing failed for %s", t.target_id)
             fail(t, rid, e); return
+        try:
+            retention.release_target(t.target_id)            # pinned evidence stays; everything else goes
+        except Exception:                                    # the results are committed: the target stays done
+            log.warning("releasing files of %s failed; a later sweep retries", t.target_id, exc_info=True)
         for k, v in counts.items(): summary["outcomes"][k] += v
         summary["signals"] += sum(counts.values()); summary["processed"] += 1
         if progress: progress(summary)
@@ -169,7 +178,7 @@ def run(source, store: Store, blob: Blob, settings: Settings, filter: dict, dete
         while ready and len(cpu_jobs) < max_cpu:
             t, rid, lc_pickle = ready.popleft()
             cpu_jobs[cpu_pool.submit(_cpu_work, lc_pickle, t.model_dump_json(), th_json, detector_name,
-                                     ladder_version, with_novelty)] = (t, rid)
+                                     ladder_version, with_novelty, fetch_module)] = (t, rid)
         while len(fetches) + len(ready) < max_fetch and (nxt := next(pending, None)) is not None:
             fetches[io_pool.submit(_fetch, source, nxt[0])] = nxt
 

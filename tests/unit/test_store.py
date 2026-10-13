@@ -81,3 +81,28 @@ def test_file_sqlite_uses_wal_and_busy_timeout(tmp_path):
     with s.engine.connect() as c:
         assert c.exec_driver_sql("PRAGMA journal_mode").scalar() == "wal"
         assert c.exec_driver_sql("PRAGMA busy_timeout").scalar() == 30000
+
+
+def test_start_run_supersedes_interrupted_runs_of_the_same_job(tmp_path):
+    s = make_store(tmp_path)
+    r1 = s.start_run("k", "t", "box_dip", "1", "1"); other = s.start_run("k2", "t", "box_dip", "1", "1")
+    r2 = s.start_run("k", "t", "box_dip", "1", "1")
+    with s.session() as ss:
+        from skysift.store.db import RunRow
+        st = {r.id: (r.status, r.error) for r in ss.query(RunRow)}
+    assert st[r1] == ("error", "superseded") and st[r2] == ("running", "") and st[other] == ("running", "")
+
+
+def test_record_results_writes_everything_in_one_transaction(tmp_path):
+    s = make_store(tmp_path)
+    s.upsert_target(Target(source="x", target_id="t", ra=0, dec=0))
+    s.add_artifact("a" * 64, 5, "u", "p", "t")
+    rid = s.start_run("k", "t", "box_dip", "1", "1")
+    sig = Signal(target_id="t", detector="box_dip", detector_version="1", period=3.0, t0=1.0, duration=0.1,
+                 depth_ppm=500, snr=10, sde=12, n_events=5).model_dump()
+    tests = [TestResult(rung="r1", status=TestStatus.PASS).model_dump()]
+    items = [{"signal": sig, "outcome": "undetermined", "tests": tests, "timings": [0.1]}]
+    q = {"service": "vizier", "url": "https://v", "params": {"a": 1}, "status": 200, "nbytes": 3}
+    assert s.record_results(rid, "t", items, [q], pin_evidence=True) == {"pass": 0, "fail": 0, "undetermined": 1}
+    assert s.job_done("k") and s.unpinned_artifacts() == []
+    c = s.counts(); assert (c["signals"], c["tests"], c["queries"]) == (1, 1, 1)
