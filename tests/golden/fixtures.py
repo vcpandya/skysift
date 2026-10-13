@@ -1,4 +1,5 @@
 import hashlib
+import os
 from pathlib import Path
 
 import pytest
@@ -13,14 +14,26 @@ FIXTURES = {
 
 
 def fixture_bytes(name: str) -> bytes:
+    import requests
+
+    from skysift.net import ServiceUnavailable, fetch
+
     url, sha = FIXTURES[name]
     CACHE.mkdir(parents=True, exist_ok=True); p = CACHE / name
     if not p.exists():
+        part = p.with_suffix(".part")
         try:
-            from skysift.net import fetch
-            p.write_bytes(fetch(url, service="mast", timeout=300))
-        except Exception as e:  # noqa: BLE001 - any fetch failure means offline: skip, never fail
+            part.write_bytes(fetch(url, service="mast", timeout=300))
+            os.replace(part, p)
+        except (requests.ConnectionError, requests.Timeout, OSError) as e:
             pytest.skip(f"fixture {name} unavailable offline: {e!r}")
+        except ServiceUnavailable as e:
+            # fetch() retries network errors and then wraps them; an HTTP status in the message means the
+            # archive answered, which is a real failure and must not be hidden as a skip.
+            if "HTTP " in str(e):
+                raise
+            pytest.skip(f"fixture {name} unavailable offline: {e}")
     data = p.read_bytes()
-    assert hashlib.sha256(data).hexdigest() == sha, f"fixture {name} hash mismatch"
+    if hashlib.sha256(data).hexdigest() != sha:
+        pytest.fail(f"fixture {name} hash mismatch; delete {p} and re-run")
     return data

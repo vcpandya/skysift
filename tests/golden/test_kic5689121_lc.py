@@ -19,24 +19,34 @@ P_PUB, T0_PUB = 13.769448251493595, 2455630.245430646 - 2454833.0
 
 def test_kic5689121_signal_and_rungs_1_to_3():
     lc = parse_kbonus_fits(fixture_bytes("kbonus_005689121.fits"))
-    assert lc.meta["kic"] == 5689121 and lc.meta["gaia_id"] == "2103792461826460288"
+    assert lc.meta["kic"] == 5689121, lc.meta["kic"]
+    assert lc.meta["gaia_id"] == "2103792461826460288", lc.meta["gaia_id"]
     fn = detrend(lc)
-    sig = BoxDip().detect(lc, fn, Thresholds())[0]
-    assert abs(sig.period - 13.7695) < 0.002 and sig.sde > 9
+    signals = BoxDip().detect(lc, fn, Thresholds())
+    assert len(signals) >= 1, "detector returned no signal"
+    sig = signals[0]
+    assert abs(sig.period - 13.7695) < 0.002, f"period {sig.period}"
+    assert sig.sde > 9, f"sde {sig.sde}"
     ed = event_depths(lc.time, fn, lc.quarter, P_PUB, T0_PUB, 0.0958)
     # Consistency with the published depth (1883 ppm, measured with a 1-day detrend window; the engine uses 2 days).
-    assert abs(ed.mean - 1883) < 3 * math.hypot(ed.err_scaled, 106) and ed.n >= 65
+    assert abs(ed.mean - 1883) < 3 * math.hypot(ed.err_scaled, 106), f"depth {ed.mean} +/- {ed.err_scaled}"
+    assert ed.n >= 65, f"n events {ed.n}"
     # Regression pin of the engine's own measurement on fixed data; update knowingly if detrending changes.
-    assert abs(ed.mean - 2037) < 50
+    assert abs(ed.mean - 2037) < 50, f"depth {ed.mean} drifted from the pinned 2037"
     tgt = Target(source="kbonus_bkg", target_id="kic-005689121", ra=285.907827, dec=40.941988, gaia_id="2103792461826460288", kic=5689121,
                  meta={"mass": 0.505, "radius": 0.507})
     b = DataBundle(lc=lc, fnorm=fn, fnorm_alt=detrend(lc, flux=lc.flux_alt), target=tgt, thresholds=Thresholds())
-    assert Rung1Detection().run(sig, b).status == TestStatus.PASS
-    r2 = Rung2Shape().run(sig, b); assert r2.status == TestStatus.PASS and r2.metrics["parity_sigma"] < 2
-    r3 = Rung3Stability().run(sig, b); assert r3.status == TestStatus.PASS
+    r1 = Rung1Detection().run(sig, b)
+    assert r1.status == TestStatus.PASS, f"rung 1: {r1.status} {r1.reason}"
+    r2 = Rung2Shape().run(sig, b)
+    assert r2.status == TestStatus.PASS, f"rung 2: {r2.status} {r2.reason} {r2.metrics}"
+    assert r2.metrics["parity_sigma"] < 2, f"parity sigma {r2.metrics['parity_sigma']}"
+    r3 = Rung3Stability().run(sig, b)
+    assert r3.status == TestStatus.PASS, f"rung 3: {r3.status} {r3.reason} {r3.metrics}"
 
 
 def test_neighbour_kic5689116_shows_no_dip():
     lc = parse_kbonus_fits(fixture_bytes("kbonus_005689116.fits"))
     ed = event_depths(lc.time, detrend(lc), lc.quarter, P_PUB, T0_PUB, 0.0958)
-    assert abs(ed.mean) < 3 * ed.err_scaled and ed.mean < 150
+    assert abs(ed.mean) < 3 * ed.err_scaled, f"neighbour depth {ed.mean} +/- {ed.err_scaled}"
+    assert ed.mean < 150, f"neighbour depth {ed.mean}"
