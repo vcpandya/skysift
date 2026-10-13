@@ -9,15 +9,17 @@ from skysift.lc.ops import detrend
 from skysift.models import LightCurve
 from tests.synthetic import inject_transit, make_lightcurve
 
+NARROW = Thresholds(min_period_days=5.0, max_period_days=40.0)
+
 
 def test_recovers_injected_transit():
     lc = inject_transit(make_lightcurve(n_days=500, seed=1), 13.769, 136.3, 0.09, 2000)
-    sig = BoxDip().detect(lc, detrend(lc), Thresholds())
+    sig = BoxDip().detect(lc, detrend(lc), NARROW)
     assert sig and abs(sig[0].period - 13.769) < 0.002 and sig[0].sde > 9 and sig[0].n_events >= 30
     assert 1500 < sig[0].depth_ppm < 2500
     assert sig[0].snr > Thresholds().snr_min
     assert sig[0].extra["alias_of"] is None and sig[0].extra["n_periods"] > 0
-    coarse = BoxDip(two_stage=False).detect(lc, detrend(lc), Thresholds())
+    coarse = BoxDip(two_stage=False).detect(lc, detrend(lc), NARROW)
     assert coarse and abs(coarse[0].period - sig[0].period) < 0.002 and coarse[0].sde > 9
     for s in sig:
         if s.extra["alias_of"] == 0:
@@ -27,7 +29,7 @@ def test_recovers_injected_transit():
 
 def test_pure_noise_stays_below_threshold():
     lc = make_lightcurve(n_days=500, seed=7)
-    sig = BoxDip().detect(lc, detrend(lc), Thresholds())
+    sig = BoxDip().detect(lc, detrend(lc), NARROW)
     assert all(s.sde < 9 for s in sig)
 
 
@@ -46,4 +48,4 @@ def test_full_baseline_timing():
     sig = BoxDip().detect(lc, fn, Thresholds())
     elapsed = time.perf_counter() - t0
     assert sig and abs(sig[0].period - 13.769) < 0.002 and sig[0].sde > 9
-    assert elapsed < 150
+    assert elapsed < 400

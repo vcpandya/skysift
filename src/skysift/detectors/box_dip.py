@@ -1,3 +1,4 @@
+"""Complete BLS search over 0.5 to 200 d on a 4-year Kepler baseline costs ~250 s single-core (astropy BLS passes over every point per trial period); throughput comes from the process pool; `oversample` and `n_refine` are the knobs for a faster, less complete sweep, to be judged by injection-recovery."""
 from __future__ import annotations
 
 import itertools
