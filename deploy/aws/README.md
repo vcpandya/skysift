@@ -25,8 +25,12 @@ The image runs `python -m skysift` as its entry point, so the job `command` star
    ```
    Override the sweep per submission with `--container-overrides command=run,--source,kbonus_bkg,--limit,1000`.
 
-## Permissions and secrets
+## Permissions, secrets and networking
 
 * The job role needs `s3:GetObject`, `s3:PutObject`, `s3:DeleteObject` and `s3:ListBucket` on the bucket, and nothing else.
-* Do not put database passwords in the job definition. Store them in AWS Secrets Manager and inject them as environment
-  variables with the `secrets` block of `containerProperties` (the `USER:PASS` in the template is a placeholder).
+* The database URL is not in the template's `environment`: it is injected from AWS Secrets Manager through the
+  `secrets` entry `SKYSIFT_DATABASE_URL` (replace the placeholder ARN). The task execution role
+  (`executionRoleArn`) needs `secretsmanager:GetSecretValue` on that secret.
+* The job needs outbound internet access (a public IP or a NAT gateway) to pull the image from ECR and to reach MAST.
+* The template assumes the `pg` extra is installed (`pip install -e ".[s3,pg]"` in a derived image, or edit the
+  Dockerfile's install line). With the default SQLite database, remove the `secrets` entry.

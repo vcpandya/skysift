@@ -11,17 +11,22 @@ def test_dockerfile_is_editable_and_uses_python_m():
     assert '-e ".[s3]"' in text
     assert 'ENTRYPOINT ["python", "-m", "skysift"]' in text
     assert "skysift.exe" not in text
+    assert "chown skysift:skysift /data" in text and "PYTHONUNBUFFERED=1" in text
 
 
 def test_windows_task_script_never_uses_the_console_exe():
     text = (ROOT / "deploy" / "windows" / "register-task.ps1").read_text()
-    assert "python.exe" in text and "-m skysift" in text
+    assert "python.exe" in text and "-m skysift run" in text and "Test-Path" in text
+    assert r'.venv\Scripts\python.exe' in text
     assert "skysift.exe" not in text
 
 
 def test_batch_job_definition_is_valid_json_with_run_command():
     job = json.loads((ROOT / "deploy" / "aws" / "batch-job-definition.json").read_text())
-    assert job["containerProperties"]["command"][0] == "run"
+    cp = job["containerProperties"]
+    assert cp["command"][0] == "run"
+    assert any(x["name"] == "SKYSIFT_DATABASE_URL" for x in cp["secrets"])
+    assert not any(x["name"] == "SKYSIFT_DATABASE_URL" for x in cp["environment"])
 
 
 def test_ci_workflow_parses_as_yaml():
@@ -36,3 +41,8 @@ def test_compose_file_parses_and_runs_a_sweep():
 
 def test_pyproject_declares_the_postgres_extra():
     assert "psycopg" in (ROOT / "pyproject.toml").read_text()
+
+
+def test_dockerignore_excludes_environment_and_venv():
+    text = (ROOT / ".dockerignore").read_text()
+    assert ".venv" in text and ".env" in text

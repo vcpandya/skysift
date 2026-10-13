@@ -2,18 +2,25 @@
 
 Archival time-series search and vetting engine. See docs/superpowers/specs/.
 
+## Purpose
 
-## Development setup
+SkySift searches archival Kepler and TESS light curves for transit, eclipse and lensing candidates. A sweep fetches each
+target's light curve, runs a detector, pushes every signal through a ladder of vetting tests, and stores the outcome, so
+that only the targets that survive need follow-up. Milestone 1 ships the transit box-dip detector and vetting ladder
+rungs 1 to 4; the eclipsing-binary and lensing branches are planned.
+
+## Quick start
 
 ```bash
 python -m venv .venv
-pip install -e ".[dev]"
-python -m pytest -m "not golden and not slow" -q
-ruff check src tests
+.venv/Scripts/python.exe -m pip install -e ".[dev]"      # on Linux or macOS: .venv/bin/python
+.venv/Scripts/python.exe -m skysift sources
+.venv/Scripts/python.exe -m skysift run --source kbonus_bkg --limit 50
+.venv/Scripts/python.exe -m skysift status
+.venv/Scripts/python.exe -m skysift vet --source kbonus_bkg --target-id kic-005689121
 ```
 
-Configuration lives in `config/default.yaml`; any value can be overridden with a `SKYSIFT_` environment
-variable (nested keys use `__`, e.g. `SKYSIFT_THRESHOLDS__SDE_MIN=11`). See `.env.example`.
+With the virtual environment activated you can shorten each command to `python -m skysift ...`.
 
 ## Running the CLI
 
@@ -28,27 +35,23 @@ python -m skysift status
 python -m skysift vet --source kbonus_bkg --target-id <ID>
 ```
 
-## Purpose
-
-SkySift searches archival Kepler and TESS light curves for transit, eclipse and lensing candidates. A sweep fetches each
-target's light curve, runs a detector (a box-shaped dip search), pushes every signal through a ladder of vetting tests,
-and stores the outcome, so that only the targets that survive need follow-up.
-
-## Quick start
+## Development setup
 
 ```bash
 python -m venv .venv
-.venv/Scripts/python.exe -m pip install -e ".[dev]"      # on Linux or macOS: .venv/bin/python
-python -m skysift sources
-python -m skysift run --source kbonus_bkg --limit 50
-python -m skysift status
-python -m skysift vet --source kbonus_bkg --target-id kic-005689121
+pip install -e ".[dev]"
+python -m pytest -m "not golden and not slow" -q
+ruff check src tests
 ```
+
+Configuration lives in `config/default.yaml`; any value can be overridden with a `SKYSIFT_` environment
+variable (nested keys use `__`, e.g. `SKYSIFT_THRESHOLDS__SDE_MIN=11`). See `.env.example`.
 
 ## Configuration
 
 Defaults come from `config/default.yaml`; any value can be overridden by an environment variable with the `SKYSIFT_`
-prefix (nested keys use `__`).
+prefix (nested keys use `__`). Optional extras: `s3` (boto3, for an `s3://` blob store) and `pg` (psycopg, for a
+`postgresql` database URL), for example `pip install -e ".[s3,pg]"`.
 
 | Setting | Environment variable | Default | Meaning |
 | --- | --- | --- | --- |
@@ -73,6 +76,11 @@ prefix (nested keys use `__`).
 100-target sweep with `./data` mounted at `/data`. For AWS Batch, S3 storage and IAM permissions see
 `deploy/aws/README.md`. On Windows, `deploy/windows/register-task.ps1` registers a nightly scheduled task that runs
 `.venv\Scripts\python.exe -m skysift run ...`.
+
+```bash
+docker build -f docker/Dockerfile -t skysift:dev .
+docker run --rm -v skysift-data:/data skysift:dev sources
+```
 
 ## Golden tests
 
