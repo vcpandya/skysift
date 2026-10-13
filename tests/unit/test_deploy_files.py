@@ -32,3 +32,7 @@ def test_ci_workflow_parses_as_yaml():
 def test_compose_file_parses_and_runs_a_sweep():
     doc = yaml.safe_load((ROOT / "docker" / "docker-compose.yml").read_text())
     assert doc["services"]["skysift"]["command"][0] == "run"
+
+
+def test_pyproject_declares_the_postgres_extra():
+    assert "psycopg" in (ROOT / "pyproject.toml").read_text()

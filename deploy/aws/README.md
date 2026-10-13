@@ -12,8 +12,8 @@ The image runs `python -m skysift` as its entry point, so the job `command` star
 2. **Create an S3 bucket** for the blob store and set `SKYSIFT_BLOB_URL=s3://YOUR-BUCKET/blobs`. The image installs the
    `s3` extra (boto3).
 3. **Optional: RDS Postgres** for the results database. Set `SKYSIFT_DATABASE_URL=postgresql+psycopg://...`. The image
-   does not bundle a Postgres driver: add `pip install "psycopg[binary]"` to a derived image before using a
-   `postgresql` URL. Without it, keep the default SQLite file on an attached volume.
+   does not bundle a Postgres driver: for a `postgresql` URL install the `pg` extra (`pip install -e ".[s3,pg]"`,
+   or a derived image that runs it). Without it, keep the default SQLite file on an attached volume.
 4. **Register the job definition** after replacing the `ACCOUNT`, `REGION`, `YOUR-BUCKET` and role placeholders in
    `deploy/aws/batch-job-definition.json`:
    ```bash
