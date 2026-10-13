@@ -1,0 +1,131 @@
+import json
+import math
+import multiprocessing
+import pickle
+import warnings
+from concurrent.futures import ProcessPoolExecutor
+from pathlib import Path
+
+import numpy as np
+
+from skysift.config import Thresholds, load_settings
+from skysift.detectors.base import get_detector
+from skysift.models import Signal, Target, TestResult, TestStatus
+from skysift.pipeline import _cpu_work, _json_default, _write_results, build_ladder, priority_score, run
+from skysift.store import db
+from skysift.store.blob import LocalBlob
+from skysift.store.db import Store, make_job_key
+from tests.synthetic import inject_transit, make_lightcurve
+
+
+class FakeSource:
+    """Mirrors a real adapter: fetch_lightcurve records the downloaded file as an artifact itself."""
+    name = "fake"
+
+    def __init__(self, lcs, store=None, blob=None):
+        self.lcs, self.store, self.blob = lcs, store, blob
+
+    def list_targets(self, filter):
+        for tid in self.lcs:
+            yield Target(source="fake", target_id=tid, ra=0, dec=0, gmag=16.5, meta={"psffrac": 0.9, "crowdsap": 0.9})
+
+    def fetch_lightcurve(self, target):
+        if self.blob is not None:
+            data = f"raw light curve bytes for {target.target_id}".encode()
+            sha, loc = self.blob.put(data, f"{target.target_id}.fits")
+            self.store.add_artifact(sha, len(data), f"https://fake/{target.target_id}", loc, target.target_id)
+            return self.lcs[target.target_id], sha, f"https://fake/{target.target_id}"
+        return self.lcs[target.target_id], "0" * 64, f"https://fake/{target.target_id}"
+
+
+def test_priority_prefers_faint_unsearched_clean():
+    a = Target(source="x", target_id="a", ra=0, dec=0, gmag=16.5, meta={"psffrac": 0.9, "crowdsap": 0.9})
+    b = Target(source="x", target_id="b", ra=0, dec=0, gmag=19.5, kic=1, meta={"psffrac": 0.3, "crowdsap": 0.3})
+    assert priority_score(a) > priority_score(b)
+    assert priority_score(a) == 5 and priority_score(b) == -3
+
+
+def test_build_ladder_orders_rungs_and_drops_novelty_on_request():
+    costs = [r.cost for r in build_ladder().rungs]
+    assert costs == sorted(costs) and build_ladder().rungs[-1].name == "rung4_novelty"
+    assert len(build_ladder().rungs) == 4 and len(build_ladder(with_novelty=False).rungs) == 3
+    assert build_ladder("7").version == "7"
+
+
+def test_write_results_keeps_nan_and_numpy_metrics(settings):
+    store = Store(settings.database_url); store.init_schema()
+    t = Target(source="fake", target_id="t1", ra=0, dec=0); store.upsert_target(t)
+    rid = store.start_run(make_job_key("t1", "box_dip", "1", "1"), "t1", "box_dip", "1", "1")
+    sig = Signal(target_id="t1", detector="box_dip", detector_version="1", period=3.0, t0=1.0, duration=0.1,
+                 depth_ppm=500, snr=10, sde=12, n_events=5)
+    r = TestResult(rung="shape", status=TestStatus.PASS, metrics={"nan": float("nan"), "np": np.float64(2.5),
+                                                                  "arr": np.arange(3)})
+    payload = json.dumps([{"signal": sig.model_dump(), "outcome": "pass", "tests": [r.model_dump()], "timings": [0.1]}],
+                         default=_json_default)
+    assert _write_results(store, rid, payload) == {"pass": 1, "fail": 0, "undetermined": 0}
+    with store.session() as s:
+        m = s.query(db.TestRow).one().metrics
+    assert math.isnan(m["nan"]) and m["np"] == 2.5 and m["arr"] == [0, 1, 2]
+
+
+def _test_modules_in_worker() -> str:
+    return "sorted(m for m in __import__('sys').modules if m == 'tests' or m.startswith('tests.'))"
+
+
+def test_cpu_work_runs_in_spawned_worker_without_test_modules():
+    lc = inject_transit(make_lightcurve(n_days=120, seed=3, noise_ppm=500), 7.3, 135.0, 0.1, 3000)
+    target = Target(source="fake", target_id="w1", ra=0, dec=0, gmag=16.5)
+    th = Thresholds(min_period_days=5, max_period_days=15)
+    with ProcessPoolExecutor(1, mp_context=multiprocessing.get_context("spawn")) as pool:
+        out = pool.submit(_cpu_work, pickle.dumps(lc), target.model_dump_json(), th.model_dump_json(), "box_dip", "1",
+                          False).result()
+        leaked = pool.submit(eval, _test_modules_in_worker()).result()
+    assert leaked == []
+    items = json.loads(out)
+    assert items and all(i["signal"]["target_id"] == "w1" for i in items)
+    ratios = [i["signal"]["period"] / 7.3 for i in items]     # 120 d holds few events: the 2x alias may win
+    assert any(abs(r - round(r)) < 0.01 and round(r) in (1, 2) for r in ratios)
+    assert all(len(i["tests"]) == len(i["timings"]) >= 1 for i in items)
+
+
+def test_run_end_to_end_with_fake_source_and_resume(settings, monkeypatch):
+    monkeypatch.setenv("SKYSIFT_WORKERS_CPU", "1")
+    monkeypatch.setenv("SKYSIFT_THRESHOLDS__MIN_PERIOD_DAYS", "5")
+    monkeypatch.setenv("SKYSIFT_THRESHOLDS__MAX_PERIOD_DAYS", "40")
+    s = load_settings(); s.data_dir.mkdir(exist_ok=True)
+    assert s.thresholds.min_period_days == 5 and s.thresholds.max_period_days == 40 and s.retention == "stream"
+    store = Store(s.database_url); store.init_schema(); blob = LocalBlob(s.data_dir / "blobs")
+    lcs = {"planet": inject_transit(make_lightcurve(n_days=500, seed=1, noise_ppm=800), 13.769, 136.3, 0.09, 2000),
+           "noise": make_lightcurve(n_days=500, seed=9)}
+    src = FakeSource(lcs, store, blob)
+    seen = []
+    # rung 4 would hit the network: with_novelty=False runs rungs 1-3 only (a monkeypatch would not reach the worker process)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", ResourceWarning)
+        out = run(src, store, blob, s, filter={}, max_targets=2, with_novelty=False, progress=lambda x: seen.append(dict(x)))
+    c = store.counts()
+    assert out["processed"] == 2 and out["errors"] == 0 and out["skipped"] == 0 and len(seen) == 2
+    assert c["targets"] == 2 and c["runs"] == 2 and c["signals"] >= 1 and c["tests"] >= 3
+    assert out["signals"] == c["signals"] and sum(out["outcomes"].values()) == c["signals"]
+    det = get_detector("box_dip")
+    planet_key = make_job_key("planet", "box_dip", det.version, "1")
+    assert store.job_done(planet_key) and store.job_done(make_job_key("noise", "box_dip", det.version, "1"))
+    with store.session() as ss:
+        assert {r.state for r in ss.query(db.TargetRow)} == {"done"}
+        planet_sigs = ss.query(db.SignalRow).filter_by(target_id="planet").all()
+        assert any(abs(r.period - 13.769) < 0.05 for r in planet_sigs)
+        assert all(r.final_status in ("candidate_stage1", "rejected", "undetermined") for r in ss.query(db.SignalRow))
+        alive = {r.target_id for r in ss.query(db.SignalRow) if r.final_status != "rejected"}
+        arts = {a.target_id: (a.pinned, a.deleted_at, a.local_path) for a in ss.query(db.ArtifactRow)}
+    assert "planet" in alive
+    # stream retention: nothing unpinned is left on disk; live signals keep their evidence pinned
+    assert store.unpinned_artifacts() == []
+    for tid, (pinned, deleted_at, path) in arts.items():
+        assert pinned == (tid in alive) and (deleted_at is None) == pinned and Path(path).exists() == pinned
+    # an interrupted rerun leaves a 'running' row; the earlier done run still checkpoints the target
+    store.start_run(planet_key, "planet", "box_dip", det.version, "1")
+    assert store.job_done(planet_key)
+    # resume: second run skips both
+    out2 = run(src, store, blob, s, filter={}, max_targets=2)
+    assert out2["skipped"] == 2 and out2["processed"] == 0 and store.counts()["signals"] == c["signals"]
+    assert store.counts()["runs"] == 3
