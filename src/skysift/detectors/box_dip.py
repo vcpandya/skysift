@@ -88,7 +88,8 @@ class BoxDip:
             if pw.size >= MIN_BAND_PERIODS:
                 band_med[b] = np.median(pw)
                 band_std[b] = 1.4826 * float(np.median(np.abs(pw - band_med[b]))) or 1e-12
-        spec.update(band_durs=band_durs, band_med=band_med, band_std=band_std)
+        spec.update(band_durs=band_durs, band_med=band_med, band_std=band_std,
+                    sde=(power - band_med[spec["band"]]) / band_std[spec["band"]])
         return spec
 
     def _refine(self, model: BoxLeastSquares, spec: dict, i: int) -> tuple:
@@ -125,7 +126,8 @@ class BoxDip:
         model = BoxLeastSquares(t, y, dy=np.full(t.size, sigma))
         spec = self._coarse_search(model, baseline, th, pmax)
         periods, power = spec["period"], spec["power"]
-        order = np.argsort(power)[::-1]
+        # selection and ranking use the per-band SDE, not raw power, so every band competes on the same scale
+        order = np.argsort(spec["sde"])[::-1]
         # candidates: (period, power, duration, t0, depth, depth_err, band)
         if self.two_stage:
             cands = [self._refine(model, spec, i) for i in _separated(order, periods, self.n_refine)]
@@ -136,16 +138,17 @@ class BoxDip:
                      for i in _separated(order, periods, self.top_k)]
             n_refined = 0
         cp = np.array([c[0] for c in cands])
-        keep = _separated(np.argsort([c[1] for c in cands])[::-1], cp, self.top_k)
+        sdes = [(c[1] - spec["band_med"][c[6]]) / spec["band_std"][c[6]] for c in cands]
+        keep = _separated(np.argsort(sdes)[::-1], cp, self.top_k)
         out: list[Signal] = []
         for ci in keep:
-            p, pw, dur, t0, depth, err, b = cands[ci]
-            bmed, bstd = float(spec["band_med"][b]), float(spec["band_std"][b])
+            p, _pw, dur, t0, depth, err, b = cands[ci]
+            bstd = float(spec["band_std"][b])
             ph = (t - t0 + 0.5 * p) % p - 0.5 * p
             n_events = int(np.unique(np.round((t[np.abs(ph) < 0.5 * dur] - t0) / p)).size)
             out.append(Signal(target_id=str(lc.meta.get("target_id", "")), detector=self.name, detector_version=self.version,
                               period=p, t0=t0, duration=dur, depth_ppm=depth * 1e6, snr=float(depth / max(err, 1e-12)),
-                              sde=(pw - bmed) / bstd, n_events=n_events,
+                              sde=float(sdes[ci]), n_events=n_events,
                               extra={"baseline_days": baseline, "sde_spectrum_std": bstd, "band": b,
                                      "alias_of": _alias_of(p, out), "n_periods": int(periods.size),
                                      "n_bands": self.n_bands, "two_stage": self.two_stage, "n_refined": n_refined}))

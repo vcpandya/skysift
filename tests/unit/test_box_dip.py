@@ -1,3 +1,4 @@
+import itertools
 import time
 
 import numpy as np
@@ -34,6 +35,7 @@ def test_recovers_deep_transit():
     sig = BoxDip().detect(lc, detrend(lc), NARROW)
     assert sig and abs(sig[0].period - 13.769) < 0.002
     assert abs(sig[0].depth_ppm - 20000) < 0.15 * 20000 and sig[0].n_events >= 30
+    assert all(a.sde >= b.sde for a, b in itertools.pairwise(sig))
 
 
 @pytest.mark.parametrize("seed", [7, 11, 21])
