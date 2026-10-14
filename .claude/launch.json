@@ -1,0 +1,16 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "skysift-ui",
+      "runtimeExecutable": ".venv/Scripts/python.exe",
+      "runtimeArgs": ["-m", "skysift", "ui", "--no-browser", "--port", "8765"],
+      "port": 8765,
+      "env": {
+        "SKYSIFT_DATA_DIR": ".superpowers/ui-seed",
+        "SKYSIFT_BLOB_URL": "file://.superpowers/ui-seed/blobs",
+        "SKYSIFT_DATABASE_URL": "sqlite:///.superpowers/ui-seed/engine.db"
+      }
+    }
+  ]
+}

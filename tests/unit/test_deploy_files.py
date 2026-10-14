@@ -64,3 +64,9 @@ def test_compose_has_a_loopback_ui_service():
     doc = yaml.safe_load((ROOT / "docker" / "docker-compose.yml").read_text(encoding="utf-8"))
     ui = doc["services"]["ui"]
     assert ui["ports"] == ["127.0.0.1:8765:8765"] and ui["command"][:3] == ["ui", "--host", "0.0.0.0"]
+
+
+def test_readme_documents_the_dashboard():
+    text = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert "python -m skysift ui" in text and "127.0.0.1:8765" in text and "--periodogram" in text
+    assert "SKYSIFT_STORE_PERIODOGRAM" in (ROOT / ".env.example").read_text(encoding="utf-8")

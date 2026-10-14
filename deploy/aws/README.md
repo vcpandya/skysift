@@ -34,3 +34,5 @@ The image runs `python -m skysift` as its entry point, so the job `command` star
 * The job needs outbound internet access (a public IP or a NAT gateway) to pull the image from ECR and to reach MAST.
 * The template assumes the `pg` extra is installed (`pip install -e ".[s3,pg]"` in a derived image, or edit the
   Dockerfile's install line). With the default SQLite database, remove the `secrets` entry.
+* The dashboard (`python -m skysift ui`) is a local tool with no authentication. Do not expose it from AWS. To review
+  results held in RDS, run it on your own machine against the database through an SSH tunnel or a bastion host.

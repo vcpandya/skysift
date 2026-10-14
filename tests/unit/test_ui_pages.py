@@ -396,3 +396,21 @@ def test_plots_endpoint_maps_only_integrity_errors_to_409(settings, tmp_path, mo
     monkeypatch.setitem(plots_mod.PARSERS, "kbonus_bkg", lambda b: (_ for _ in ()).throw(ValueError("bad header")))
     r = client.get(f"/api/signals/{ids['candidate']}/plots.json")
     assert r.status_code == 409 and "cannot be read" in r.json()["detail"]
+
+
+def test_pages_render_on_a_migrated_m1_database(settings, tmp_path):
+    from sqlalchemy import text
+
+    from skysift.store.db import Base
+    store = Store(settings.database_url); Base.metadata.create_all(store.engine)
+    with store.engine.begin() as c:                      # strip what milestone 2 added, as test_migrations does
+        c.execute(text("ALTER TABLE runs DROP COLUMN periodogram_sha256"))
+        c.execute(text("ALTER TABLE candidates DROP COLUMN decided_at"))
+        c.execute(text("DROP INDEX ix_queries_target_id")); c.execute(text("ALTER TABLE queries DROP COLUMN target_id"))
+        c.execute(text("ALTER TABLE artifacts DROP COLUMN kind")); c.execute(text("DROP TABLE decisions"))
+    store = Store(settings.database_url); store.init_schema()
+    seed(store, blob_from_url(settings.blob_url))
+    client = TestClient(create_app(settings, store=store, blob=blob_from_url(settings.blob_url),
+                                   launcher=SweepLauncher(tmp_path, command=SLEEPER)), base_url=BASE)
+    for path in ("/", "/live", "/candidates", "/candidates?status=all", "/approved"):
+        assert client.get(path).status_code == 200, path

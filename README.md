@@ -40,6 +40,43 @@ and search grid, so a run with a different `--min-period` or `--max-period` sear
 whose job fails three times is not retried; `run` counts it as `gave_up` and `status` reports it under
 `error_capped_targets`. A failure caused by a service outage (MAST or a catalogue unreachable) is recorded but never counted as one of the three attempts.
 
+## Dashboard
+
+```bash
+python -m skysift ui
+```
+
+The dashboard is a local review tool, not a public service. Start it on the machine that holds the data directory.
+It opens http://127.0.0.1:8765/ in the browser. It binds to the loopback interface only and has no authentication.
+The `ui` command refuses any other `--host`. The one exception is a container, where `SKYSIFT_UI_ALLOW_CONTAINER=1`
+allows `0.0.0.0`. To reach it from another machine, use an SSH tunnel
+(`ssh -L 8765:127.0.0.1:8765 <host>`). Each page carries a per-process CSRF token, and every POST must send it back.
+
+Pages:
+
+* **Sources**: the registry with yield, CPU hours and GB per 10,000 stars, and progress per live source. It also holds
+  the Start sweep form (limit, period window, retention, workers, periodogram storage). The sweep runs as a child
+  `python -m skysift run` process. Only one sweep runs per data directory at a time, and it can only be launched from
+  this page.
+* **Live**: targets per state, signal outcomes, rung verdicts, throughput, cache against budget, and the running
+  sweep's log. The page refreshes while a sweep runs. A Stop button ends the sweep.
+* **Candidates**: the review queue sorted by SDE. A signal's page shows the ladder with the metrics that matter per
+  rung. It also shows the periodogram (per-band SDE envelope with threshold, aliases and systematic periods), the
+  detrended curve, the phase fold with the box model, odd against even, the phase 0.5 window and per-season depths.
+  Approve, Reject (a note is required) and Needs data append a row to the `decisions` table. Decisions are append-only,
+  so nothing is deleted and the full history stays visible. Keys: `a`, `r`, `n`, `j` for next, `k` for previous.
+* **Approved**: current decisions by status. Each signal has a `review.json` download with the signal, every test,
+  every query, the artifacts and the decision history.
+
+HTMX is vendored in the package. Plotly is downloaded once on the first start into `<data_dir>/ui/assets/` and its
+SHA-256 is verified. Afterwards the dashboard works offline. If Plotly cannot be fetched, the plots are disabled and
+the page shows a notice.
+
+Every sweep stores a periodogram summary per target (the SDE envelope over 2,048 log-period bins, about 8 kB) unless
+told otherwise. `skysift run --periodogram all|signals|off` sets this for one sweep. `SKYSIFT_STORE_PERIODOGRAM`
+(`all`, `signals` or `off`, default `all`) sets the default. The envelopes of targets without a signal form the null
+set for calibrating `sde_min`. `skysift vet --spectrum` also writes the raw BLS spectrum for one target.
+
 ## Development setup
 
 ```bash
