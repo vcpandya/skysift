@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}SkySift · Live{% endblock %}
+{% block content %}
+<h1>Live</h1>
+<div id="cards" hx-get="/partials/live/cards" hx-trigger="every 5s [document.querySelector('#sweep [data-active]')], sweep-finished from:body" hx-swap="innerHTML">
+{% include "partials/live_cards.html" %}
+</div>
+<div id="sweep">
+{% include "partials/live_sweep.html" %}
+</div>
+{% endblock %}

@@ -185,3 +185,64 @@ def test_form_echo_is_html_escaped(settings, tmp_path):
         assert r.status_code == 400 and "<script>alert" not in r.text and "&lt;script&gt;" in r.text
     finally:
         launcher.stop()
+
+
+def test_live_page_cards_and_idle_state(settings, tmp_path):
+    client, _app, _ids, _launcher = make_seeded_client(settings, tmp_path)
+    r = client.get("/live")
+    assert r.status_code == 200 and "rung4_novelty" in r.text and "idle" in r.text
+    cards = client.get("/partials/live/cards")
+    assert cards.status_code == 200 and "candidate_stage1" in cards.text and "<html" not in cards.text
+    assert 'hx-trigger="every 5s"' not in client.get("/partials/live/sweep").text      # no polling while idle
+
+
+def test_live_page_shows_active_sweep_and_tail(settings, tmp_path):
+    import time
+    client, app, _ids, launcher = make_seeded_client(settings, tmp_path)
+    try:
+        r = client.post("/sweeps", data={"source": "kbonus_bkg", "_token": app.state.token}, follow_redirects=False)
+        assert r.status_code == 303
+        for _ in range(50):
+            if launcher.tail(): break
+            time.sleep(0.1)
+        r = client.get("/partials/live/sweep")
+        assert "started" in r.text and "Stop" in r.text and 'hx-trigger="every 5s"' in r.text
+        assert "stopping" not in r.text
+        launcher.stop()
+        r = client.get("/partials/live/sweep")
+        assert "idle" in r.text and r.headers.get("HX-Trigger") == "sweep-finished"
+        assert "HX-Trigger" not in client.get("/partials/live/sweep").headers        # only on the transition
+    finally:
+        launcher.stop()
+
+
+def test_live_sweep_shows_stopping_state_without_second_stop_button(settings, tmp_path, monkeypatch):
+    client, app, _ids, launcher = make_seeded_client(settings, tmp_path)
+    try:
+        client.post("/sweeps", data={"source": "kbonus_bkg", "_token": app.state.token}, follow_redirects=False)
+        assert launcher.active() is not None
+        monkeypatch.setattr(launcher, "stop", lambda: False)                  # the child is slow to exit
+        r = client.post("/sweeps/stop", data={"_token": app.state.token}, follow_redirects=False)
+        assert r.status_code == 303 and app.state.stop_requested_pid == launcher.active()["pid"]
+        r = client.get("/partials/live/sweep")
+        assert "stopping, waiting for the sweep to exit" in r.text and "<button" not in r.text
+        assert 'hx-trigger="every 5s"' in r.text                              # keep polling until it is gone
+        monkeypatch.setattr(launcher, "stop", lambda: True)
+        client.post("/sweeps/stop", data={"_token": app.state.token}, follow_redirects=False)
+        assert app.state.stop_requested_pid is None
+        assert "Stop" in client.get("/partials/live/sweep").text
+    finally:
+        monkeypatch.undo()
+        launcher.stop()
+
+
+def test_live_idle_shows_past_sweeps_with_engine_summary(settings, tmp_path):
+    client, app, _ids, launcher = make_seeded_client(
+        settings, tmp_path, command=[sys.executable, "-c", "import json; print(json.dumps({'processed': 7, 'signals': 3}))"])
+    client.post("/sweeps", data={"source": "kbonus_bkg", "_token": app.state.token}, follow_redirects=False)
+    import time
+    for _ in range(100):
+        if launcher.active() is None: break
+        time.sleep(0.1)
+    r = client.get("/partials/live/sweep")
+    assert "Past sweeps" in r.text and "processed 7" in r.text and "signals 3" in r.text

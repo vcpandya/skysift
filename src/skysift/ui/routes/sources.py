@@ -83,5 +83,10 @@ async def start_sweep(request: Request):
 
 @router.post("/sweeps/stop", dependencies=[Depends(require_token)])
 def stop_sweep(request: Request):
-    request.app.state.launcher.stop()          # False means the child is still shutting down; /live shows that state
+    st = request.app.state
+    before = st.launcher.active()
+    stopped = st.launcher.stop()
+    # False with a sweep still holding the lock means the child is still shutting down: /live shows "stopping"
+    still = None if stopped else st.launcher.active()
+    st.stop_requested_pid = still["pid"] if (still and before and still["pid"] == before["pid"]) else None
     return _go_live(request)

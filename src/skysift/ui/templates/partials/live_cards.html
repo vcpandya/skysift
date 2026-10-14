@@ -1,0 +1,17 @@
+<div class="cards">
+  {% for state, n in summary.targets_by_state.items() %}<div class="card"><div class="label">targets {{ state }}</div><div class="value">{{ n | fmt }}</div></div>{% endfor %}
+  {% for status, n in summary.signal_outcomes.items() %}<div class="card"><div class="label">signals {{ status }}</div><div class="value">{{ n | fmt }}</div></div>{% endfor %}
+  <div class="card"><div class="label">targets / hour</div><div class="value">{{ summary.targets_per_hour | fmt(1) }}</div></div>
+  <div class="card"><div class="label">mean s / run</div><div class="value">{{ summary.mean_seconds_per_run | fmt(1) }}</div></div>
+  <div class="card"><div class="label">cache</div><div class="value">{{ (summary.cache_bytes / 1e9) | fmt(2) }} GB{% if summary.cache_budget_bytes %} / {{ (summary.cache_budget_bytes / 1e9) | fmt(0) }}{% endif %}</div></div>
+  <div class="card"><div class="label">error-capped targets</div><div class="value">{{ summary.error_capped_targets | fmt }}</div></div>
+  <div class="card"><div class="label">queries logged</div><div class="value">{{ summary.queries | fmt }}</div></div>
+</div>
+<h2>Rung verdicts</h2>
+<table><thead><tr><th>rung</th><th class="num">pass</th><th class="num">fail</th><th class="num">undetermined</th></tr></thead><tbody>
+{% for rung, c in summary.rung_counts.items() %}<tr><td>{{ rung }}</td><td class="num status-pass">{{ c.pass | fmt }}</td><td class="num status-fail">{{ c.fail | fmt }}</td><td class="num status-undetermined">{{ c.undetermined | fmt }}</td></tr>{% endfor %}
+</tbody></table>
+{% if summary.last_errors %}<h2>Last errors</h2>
+<table><thead><tr><th>target</th><th>when</th><th>error</th></tr></thead><tbody>
+{% for e in summary.last_errors %}<tr><td><code>{{ e.target }}</code></td><td class="muted">{{ e.finished }}</td><td>{{ e.error }}</td></tr>{% endfor %}
+</tbody></table>{% endif %}
