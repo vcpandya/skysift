@@ -3,6 +3,7 @@ plots show exactly what the rungs measured. The loader serves the pinned raw fil
 through the adapter with a SHA-256 check when retention released it (parent spec, data flow step 5)."""
 from __future__ import annotations
 
+import hashlib
 import logging
 import math
 
@@ -13,6 +14,7 @@ from skysift.detectors.periodogram import PeriodogramSummary
 from skysift.lc.kbonus import parse_kbonus_fits
 from skysift.lc.ops import fold_phase
 from skysift.models import LightCurve, Target
+from skysift.net import ServiceUnavailable
 from skysift.sources.factory import make_source
 from skysift.store.db import ArtifactRow, Store
 from skysift.vetting.rung1_detection import SYSTEMATIC_PERIODS
@@ -24,6 +26,37 @@ PANEL_POINTS = 4_000        # each scatter in the fold, odd/even and secondary p
 BIN_MINUTES = 15.0
 ALIAS_FACTORS = (0.5, 2.0, 3.0)
 TARGET_FIELDS = ("source", "target_id", "ra", "dec", "gaia_id", "kic", "gmag")
+
+
+class IntegrityError(ValueError):
+    """The light curve on hand cannot be trusted as the evidence: the archive file changed since the sweep, or the stored
+    raw file does not parse. Distinct from other ValueErrors so the API never reports a bug as an integrity failure."""
+
+
+class _HoldBlob:
+    """Stands in for the blob while the adapter re-fetches: keeps the bytes in memory and stores nothing, so the loader
+    can verify the hash before anything is recorded."""
+
+    def __init__(self):
+        self.data: bytes | None = None
+        self.name = "lightcurve.fits"
+
+    def put(self, data: bytes, name_hint: str) -> tuple[str, str]:
+        self.data, self.name = data, name_hint
+        return hashlib.sha256(data).hexdigest(), f"held:{name_hint}"
+
+
+class _ProvenanceStore:
+    """The real store for the query log (MAST provenance) but with artifact recording switched off."""
+
+    def __init__(self, store: Store):
+        self._store = store
+
+    def __getattr__(self, name):
+        return getattr(self._store, name)
+
+    def add_artifact(self, *args, **kwargs) -> None:
+        return None
 
 
 class LightCurveLoader:
@@ -44,34 +77,36 @@ class LightCurveLoader:
         rows = self._raw_rows(tid)
         for row in rows:
             if row.deleted_at is None and self.blob.exists(row.local_path):
-                lc = parse(self.blob.get(row.local_path)); lc.meta.setdefault("target_id", tid)
+                try:
+                    lc = parse(self.blob.get(row.local_path))
+                except ServiceUnavailable:
+                    raise
+                except Exception as e:
+                    raise IntegrityError(f"the stored raw file {row.sha256[:12]} for {tid} cannot be read: {e}") from e
+                lc.meta.setdefault("target_id", tid)
+                self.store.pin_target_artifacts(tid)      # budget retention must not evict the file being viewed
                 return lc
-        # released by retention (or never fetched): re-fetch through the adapter, which records the artifact row again
-        src = self.source_factory(source, self.store, self.blob)
+        # released by retention (or never fetched): re-fetch with nothing stored, verify, then record
+        hold = _HoldBlob()
+        try:
+            src = self.source_factory(source, _ProvenanceStore(self.store), hold)
+        except ValueError as e:                            # make_source: the source is not live
+            raise ServiceUnavailable(f"no live adapter for source {source}: {e}") from e
         tgt = (Target(**{k: target[k] for k in TARGET_FIELDS if target.get(k) is not None},
                       meta=target.get("meta") or {}) if "ra" in target else target)
-        lc, sha, _url = src.fetch_lightcurve(tgt)
+        lc, sha, url = src.fetch_lightcurve(tgt)
         known = {r.sha256 for r in rows}
         if known and sha not in known:
-            self._discard(sha, tid)                      # the adapter stored it; never serve it from the blob
-            raise ValueError(f"re-fetched file sha256 {sha[:12]} differs from the recorded {min(known)[:12]}; "
-                             "the archive file changed since the sweep")
-        self.store.pin_target_artifacts(tid)              # evidence the operator is looking at stays
+            raise IntegrityError(f"re-fetched file sha256 {sha[:12]} differs from the recorded {min(known)[:12]}; "
+                                 "the archive file changed since the sweep")
+        if hold.data is not None:
+            _, loc = self.blob.put(hold.data, hold.name)
+            self.store.add_artifact(sha, len(hold.data), url, loc, tid, kind="raw")
+            self.store.pin_target_artifacts(tid)          # evidence the operator is looking at stays
+        else:
+            log.warning("adapter for %s returned no bytes; the re-fetched file for %s was not stored", source, tid)
         lc.meta.setdefault("target_id", tid)
         return lc
-
-    def _discard(self, sha: str, target_id: str) -> None:
-        """Forget a re-fetched file whose hash does not match the evidence: delete the blob and the row the adapter just
-        recorded, so the next load repeats the check instead of serving (or trusting) the mismatching file."""
-        try:
-            with self.store.session() as s:
-                row = s.get(ArtifactRow, sha)
-                if row is None or row.target_id != target_id: return
-                path = row.local_path
-                s.delete(row)
-            self.blob.delete(path)
-        except Exception:                                  # best effort; the integrity error is what the caller needs
-            log.warning("could not discard the mismatching file %s", sha[:12], exc_info=True)
 
 
 def _lst(a, nd: int | None = None) -> list:
@@ -99,6 +134,17 @@ def _bin(x: np.ndarray, y: np.ndarray, hi: float, width: float):
     return centres, means
 
 
+def _full_selection(t: np.ndarray, period: float, t0: float, dur: float) -> np.ndarray:
+    """Indices for the full-curve panel: every point within one duration of a predicted transit (so individual dips stay
+    visible) and a stride over the rest, at most MAX_POINTS in all."""
+    near = np.abs(fold_phase(t, period, t0)) <= dur
+    keep = np.flatnonzero(near); rest = np.flatnonzero(~near)
+    if keep.size > MAX_POINTS // 2: keep = keep[::math.ceil(keep.size / (MAX_POINTS // 2))]
+    budget = MAX_POINTS - keep.size
+    if rest.size > budget: rest = rest[::math.ceil(rest.size / budget)]
+    return np.sort(np.concatenate([keep, rest]))
+
+
 def _fold_hours(t, period, t0):
     return fold_phase(t, period, t0) * 24.0
 
@@ -117,8 +163,8 @@ def build_plots(lc: LightCurve, fnorm: np.ndarray, signal: dict, tests: list[dic
 
     # full curve with the transit epochs that fall inside the observed span
     epochs = np.arange(math.ceil((t.min() - t0) / period), math.floor((t.max() - t0) / period) + 1) if t.size else np.array([])
-    sl = _stride(t.size, MAX_POINTS)
-    full = {"time": _lst(t[sl], 5), "flux": _lst(f[sl], 7), "transit_times": _lst(t0 + epochs * period, 5)}
+    sel = _full_selection(t, period, t0, dur)
+    full = {"time": _lst(t[sel], 5), "flux": _lst(f[sel], 7), "transit_times": _lst(t0 + epochs * period, 5)}
     # primary fold (dip at phase 0) with bins and the box model
     ph = _fold_hours(t, period, t0)
     window = min(max(6 * dur * 24.0, 6.0), 0.5 * period * 24.0)

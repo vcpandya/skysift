@@ -7,11 +7,12 @@ import pytest
 from skysift import jsonutil
 from skysift.config import Thresholds
 from skysift.detectors.periodogram import PeriodogramSummary
-from skysift.lc.ops import detrend
+from skysift.lc.ops import detrend, fold_phase
+from skysift.models import LightCurve
 from skysift.net import ServiceUnavailable
 from skysift.store.blob import LocalBlob
 from skysift.store.db import ArtifactRow, Store
-from skysift.ui.plots import LightCurveLoader, build_plots
+from skysift.ui.plots import IntegrityError, LightCurveLoader, build_plots
 from tests.synthetic import inject_transit, make_lightcurve
 
 
@@ -71,13 +72,48 @@ def test_odd_even_split_follows_epoch_parity():
     assert np.nanmin(odd) < 1 - 2000e-6 and np.nanmin(even) < 1 - 2000e-6                  # both parities carry the dip
     assert abs(len(oe["odd_flux"]) - len(oe["even_flux"])) < 0.2 * len(oe["even_flux"])
 
+def _eb_curve(t0, p_true_dur=0.1, even_ppm=4000.0, odd_ppm=2000.0):
+    """Eclipsing-binary-like curve folded at the half period P: even epochs (from t0) are 4000 ppm, odd 2000 ppm."""
+    lc = make_lightcurve(n_days=600, seed=5, noise_ppm=300)
+    ep = np.round((lc.time - t0) / 7.3).astype(int)
+    ph = (lc.time - t0 - ep * 7.3)
+    f = lc.flux.copy()
+    inside = np.abs(ph) < 0.5 * p_true_dur
+    f[inside & (ep % 2 == 0)] *= 1 - even_ppm * 1e-6
+    f[inside & (ep % 2 == 1)] *= 1 - odd_ppm * 1e-6
+    return LightCurve(lc.time, f, lc.flux_err, lc.quality, lc.quarter, lc.flux_alt, dict(lc.meta))
+
+
+@pytest.mark.parametrize("t0", [135.0, 135.0 + 7.3 * 40, 135.0 + 7.3 * 41])      # epochs positive, negative, parity flipped
+def test_odd_even_depths_recover_the_injected_values_and_are_not_swapped(t0):
+    lc = _eb_curve(t0)
+    oe = build_plots(lc, detrend(lc), _signal(t0=t0), [], None, Thresholds())["oddeven"]
+    centre = np.abs(np.array(oe["bin_phase_h"], float)) < 0.6                              # flat bottom of a 2.4 h dip
+    odd = 1 - np.nanmean(np.array(oe["odd_bin"], float)[centre])
+    even = 1 - np.nanmean(np.array(oe["even_bin"], float)[centre])
+    # epochs are counted from t0, so even is the t0 transit's parity whatever the sign of the epoch numbers
+    assert even == pytest.approx(4000e-6, rel=0.1) and odd == pytest.approx(2000e-6, rel=0.1)
+
+
+def test_full_curve_keeps_in_transit_points_when_decimated():
+    lc = inject_transit(make_lightcurve(n_days=1400, seed=4, noise_ppm=500), 7.3, 135.0, 0.1, 3000)
+    fn = detrend(lc)
+    out = build_plots(lc, fn, _signal(), [], None, Thresholds())["full"]
+    n_good = int(np.isfinite(fn).sum())
+    assert len(out["time"]) <= 20000 and len(out["time"]) < n_good                          # stride > 1 for the rest
+    ph = np.abs(fold_phase(lc.time[np.isfinite(fn)], 7.3, 135.0))
+    ph_out = np.abs(fold_phase(np.array(out["time"]), 7.3, 135.0))
+    assert int((ph_out <= 0.09).sum()) >= int((ph <= 0.09).sum())                           # every in-transit point survives
+    assert min(out["flux"]) < 1 - 2000e-6                                                   # so the dips are visible
+
 
 class _Source:
+    """Adapter stand-in that, like KBonusBkg, hands its bytes to the blob and store it was constructed with."""
+
     def __init__(self, lc, data, store, blob, fail=False):
-        self.lc, self.data, self.store, self.blob, self.fail, self.calls = lc, data, store, blob, fail, 0
+        self.lc, self.data, self.store, self.blob, self.fail = lc, data, store, blob, fail
 
     def fetch_lightcurve(self, target):
-        self.calls += 1
         if self.fail: raise ServiceUnavailable("mast down")
         sha = hashlib.sha256(self.data).hexdigest()
         _, loc = self.blob.put(self.data, "w1.fits")
@@ -85,37 +121,94 @@ class _Source:
         return self.lc, sha, "https://mast/w1.fits"
 
 
-def test_loader_refetches_released_file_and_verifies_sha(tmp_path):
+def _factory(lc, data, calls, fail=False):
+    def make(name, store, blob):
+        calls.append(name)
+        return _Source(lc, data, store, blob, fail=fail)
+    return make
+
+
+def _store_blob(tmp_path):
     store = Store(f"sqlite:///{tmp_path.as_posix()}/t.db"); store.init_schema()
-    blob = LocalBlob(tmp_path / "blobs")
+    return store, LocalBlob(tmp_path / "blobs")
+
+
+def test_loader_refetches_released_file_and_verifies_sha(tmp_path):
+    store, blob = _store_blob(tmp_path)
     lc = make_lightcurve(n_days=30, seed=1)
     data = b"FITS-like bytes"
     sha = hashlib.sha256(data).hexdigest()
     _, loc = blob.put(data, "w1.fits"); store.add_artifact(sha, len(data), "https://mast/w1.fits", loc, "w1")
     blob.delete(loc); store.mark_artifact_deleted(sha)                       # stream retention released it
-    src = _Source(lc, data, store, blob)
-    loader = LightCurveLoader(store, blob, source_factory=lambda name, st, bl: src, parsers={"fake": lambda b: lc})
+    calls = []
+    loader = LightCurveLoader(store, blob, source_factory=_factory(lc, data, calls), parsers={"fake": lambda b: lc})
     target = {"target_id": "w1", "source": "fake"}
-    assert loader.load(target) is lc and src.calls == 1
+    assert loader.load(target) is lc and len(calls) == 1
     with store.session() as s:
         row = s.get(ArtifactRow, sha)
-        assert row.deleted_at is None and row.pinned                          # resurrected and pinned as evidence
-    assert loader.load(target) is lc and src.calls == 1                      # now served from the blob
-    bad = _Source(lc, b"different bytes", store, blob)
+        assert row.deleted_at is None and row.pinned and row.kind == "raw"    # recorded again and pinned as evidence
+        assert blob.exists(row.local_path) and blob.get(row.local_path) == data
+    assert loader.load(target) is lc and len(calls) == 1                     # now served from the blob
+
+
+def test_loader_mismatch_stores_nothing_and_repeats_the_check(tmp_path):
+    store, blob = _store_blob(tmp_path)
+    lc = make_lightcurve(n_days=30, seed=1)
+    data = b"FITS-like bytes"
+    sha = hashlib.sha256(data).hexdigest()
+    _, loc = blob.put(data, "w1.fits"); store.add_artifact(sha, len(data), "https://mast/w1.fits", loc, "w1")
     blob.delete(loc); store.mark_artifact_deleted(sha)
-    loader2 = LightCurveLoader(store, blob, source_factory=lambda name, st, bl: bad, parsers={"fake": lambda b: lc})
-    with pytest.raises(ValueError, match="sha256"):
-        loader2.load(target)
-    # the mismatching file is discarded, so the next call repeats the check instead of serving it
-    with pytest.raises(ValueError, match="sha256"):
-        loader2.load(target)
-    assert bad.calls == 2
+    calls = []
+    loader = LightCurveLoader(store, blob, source_factory=_factory(lc, b"different bytes", calls),
+                              parsers={"fake": lambda b: lc})
+    target = {"target_id": "w1", "source": "fake"}
+    for n in (1, 2):                                                          # the second call repeats the check
+        with pytest.raises(IntegrityError, match="sha256"):
+            loader.load(target)
+        assert len(calls) == n
+    other = hashlib.sha256(b"different bytes").hexdigest()
+    with store.session() as s:
+        assert s.get(ArtifactRow, other) is None                              # no row for the unverified file
+        assert s.get(ArtifactRow, sha).deleted_at is not None                 # the evidence row is untouched
+    assert not any(p.is_file() for p in (tmp_path / "blobs").rglob("*"))      # and nothing was written to the blob
+
+
+def test_loader_pins_when_serving_from_the_blob(tmp_path):
+    store, blob = _store_blob(tmp_path)
+    lc = make_lightcurve(n_days=30, seed=1)
+    data = b"FITS-like bytes"
+    sha = hashlib.sha256(data).hexdigest()
+    _, loc = blob.put(data, "w1.fits"); store.add_artifact(sha, len(data), "https://mast/w1.fits", loc, "w1")
+    with store.session() as s:
+        assert not s.get(ArtifactRow, sha).pinned
+    loader = LightCurveLoader(store, blob, source_factory=_factory(lc, data, []), parsers={"fake": lambda b: lc})
+    assert loader.load({"target_id": "w1", "source": "fake"}) is lc
+    with store.session() as s:
+        assert s.get(ArtifactRow, sha).pinned                                 # retention cannot evict what is on screen
+    assert store.unpinned_artifacts("w1") == []
+
+
+def test_loader_reports_a_corrupt_local_file_as_integrity_error(tmp_path):
+    store, blob = _store_blob(tmp_path)
+    data = b"truncated"
+    sha, loc = blob.put(data, "w1.fits"); store.add_artifact(sha, len(data), "https://mast/w1.fits", loc, "w1")
+
+    def broken(b):
+        raise OSError("not a FITS file")
+    loader = LightCurveLoader(store, blob, source_factory=_factory(None, b"", []), parsers={"fake": broken})
+    with pytest.raises(IntegrityError, match="cannot be read"):
+        loader.load({"target_id": "w1", "source": "fake"})
 
 
 def test_loader_reports_outage(tmp_path):
-    store = Store(f"sqlite:///{tmp_path.as_posix()}/t.db"); store.init_schema()
-    blob = LocalBlob(tmp_path / "blobs")
-    src = _Source(None, b"", store, blob, fail=True)
-    loader = LightCurveLoader(store, blob, source_factory=lambda name, st, bl: src)
+    store, blob = _store_blob(tmp_path)
+    loader = LightCurveLoader(store, blob, source_factory=_factory(None, b"", [], fail=True))
     with pytest.raises(ServiceUnavailable):
         loader.load({"target_id": "w1", "source": "kbonus_bkg"})
+
+
+def test_loader_reports_a_source_that_is_not_live_as_unavailable(tmp_path):
+    store, blob = _store_blob(tmp_path)
+    loader = LightCurveLoader(store, blob)                                    # the real make_source
+    with pytest.raises(ServiceUnavailable, match="not live"):
+        loader.load({"target_id": "w1", "source": "tess_spoc"})

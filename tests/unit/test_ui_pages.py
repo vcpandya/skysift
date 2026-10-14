@@ -383,3 +383,16 @@ def test_plots_periodogram_tolerates_evicted_missing_and_corrupt_summaries(setti
     r = client.get(f"/api/signals/{ids['candidate']}/plots.json")
     assert r.status_code == 200 and "NaN" not in r.text
     assert (r.json()["periodogram"] is not None) is (case == "present")
+
+
+def test_plots_endpoint_maps_only_integrity_errors_to_409(settings, tmp_path, monkeypatch):
+    from skysift.ui import plots as plots_mod
+    client, _app, ids, _launcher = make_seeded_client(settings, tmp_path)
+    monkeypatch.setitem(plots_mod.PARSERS, "kbonus_bkg",
+                        lambda b: (_ for _ in ()).throw(plots_mod.IntegrityError("sha256 changed")))
+    r = client.get(f"/api/signals/{ids['candidate']}/plots.json")
+    assert r.status_code == 409 and r.json()["error"] == "integrity" and "sha256 changed" in r.json()["detail"]
+    # any parse failure of the stored raw file is an integrity failure too (the loader wraps it)
+    monkeypatch.setitem(plots_mod.PARSERS, "kbonus_bkg", lambda b: (_ for _ in ()).throw(ValueError("bad header")))
+    r = client.get(f"/api/signals/{ids['candidate']}/plots.json")
+    assert r.status_code == 409 and "cannot be read" in r.json()["detail"]

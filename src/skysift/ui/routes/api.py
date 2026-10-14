@@ -11,7 +11,7 @@ from skysift.lc.ops import detrend
 from skysift.net import ServiceUnavailable
 from skysift.store.db import ArtifactRow
 from skysift.ui import queries
-from skysift.ui.plots import LightCurveLoader, build_plots
+from skysift.ui.plots import IntegrityError, LightCurveLoader, build_plots
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -49,7 +49,7 @@ def plots_json(request: Request, signal_id: int):
         lc = LightCurveLoader(st.store, st.blob).load(d["target"])
     except ServiceUnavailable as e:
         return JSONResponse({"error": "outage", "detail": str(e)}, status_code=503)
-    except ValueError as e:
+    except IntegrityError as e:
         return JSONResponse({"error": "integrity", "detail": str(e)}, status_code=409)
     out = build_plots(lc, detrend(lc), d["signal"], d["tests"], _periodogram(request, d["run"]), st.settings.thresholds)
     text = jsonutil.dumps(out)
