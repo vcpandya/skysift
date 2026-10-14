@@ -31,11 +31,62 @@ def test_ensure_plotly_downloads_verifies_and_caches(tmp_path, monkeypatch):
 
 def test_ensure_plotly_rejects_bad_hash_and_survives_offline(tmp_path, monkeypatch):
     monkeypatch.setattr(assets, "PLOTLY_SHA256", "0" * 64)
-    assert ensure_plotly(tmp_path, fetch=lambda url, *, service, **kw: b"tampered") is None
-    assert not (tmp_path / "ui" / "assets" / "plotly.min.js").exists()
+    calls = []
+
+    def tampered(url, *, service, **kw):
+        calls.append(url); return b"tampered"
+    assert ensure_plotly(tmp_path, fetch=tampered) is None
+    assert len(calls) == 1 and not (tmp_path / "ui").exists()
 
     def offline(url, *, service, **kw): raise ServiceUnavailable("no network")
     assert ensure_plotly(tmp_path, fetch=offline) is None
+    assert not (tmp_path / "ui").exists()
+
+
+def test_ensure_plotly_survives_write_failure_and_leaves_no_part_file(tmp_path, monkeypatch):
+    body = b"/* plotly stub */ window.Plotly = {};"
+    monkeypatch.setattr(assets, "PLOTLY_SHA256", hashlib.sha256(body).hexdigest())
+    fetch = lambda url, *, service, **kw: body
+
+    def boom(src, dst): raise PermissionError("antivirus holds the file")
+    monkeypatch.setattr(assets.os, "replace", boom)
+    assert ensure_plotly(tmp_path, fetch=fetch) is None
+    folder = tmp_path / "ui" / "assets"
+    assert not (folder / "plotly.min.js").exists() and not list(folder.glob("*.part"))
+    monkeypatch.undo()
+    monkeypatch.setattr(assets, "PLOTLY_SHA256", hashlib.sha256(body).hexdigest())
+
+    def no_write(self, data): raise OSError("disk full")
+    monkeypatch.setattr(assets.Path, "write_bytes", no_write)
+    assert ensure_plotly(tmp_path, fetch=fetch) is None
+    assert not (folder / "plotly.min.js").exists() and not list(folder.glob("*.part"))
+
+
+def test_ensure_plotly_removes_stale_part_files(tmp_path, monkeypatch):
+    body = b"/* plotly stub */ window.Plotly = {};"
+    monkeypatch.setattr(assets, "PLOTLY_SHA256", hashlib.sha256(body).hexdigest())
+    folder = tmp_path / "ui" / "assets"; folder.mkdir(parents=True)
+    (folder / "plotly.min.99999.part").write_bytes(b"half a download")
+    path = ensure_plotly(tmp_path, fetch=lambda url, *, service, **kw: body)
+    assert path is not None and not list(folder.glob("*.part"))
+
+
+def test_ensure_plotly_replaces_a_corrupt_cache(tmp_path, monkeypatch):
+    body = b"/* plotly stub */ window.Plotly = {};"
+    monkeypatch.setattr(assets, "PLOTLY_SHA256", hashlib.sha256(body).hexdigest())
+    target = tmp_path / "ui" / "assets" / "plotly.min.js"
+    target.parent.mkdir(parents=True); target.write_bytes(b"junk")
+    calls = []
+
+    def fetch(url, *, service, **kw):
+        calls.append(url); return body
+    assert ensure_plotly(tmp_path, fetch=fetch) == target
+    assert target.read_bytes() == body and calls == [assets.PLOTLY_URL]
+    # a corrupt cache with no network: discarded, never served
+    target.write_bytes(b"junk")
+
+    def offline(url, *, service, **kw): raise ServiceUnavailable("no network")
+    assert ensure_plotly(tmp_path, fetch=offline) is None and not target.exists()
 
 
 def test_vendor_mount_serves_plotly_and_static_still_serves_htmx(settings, tmp_path):

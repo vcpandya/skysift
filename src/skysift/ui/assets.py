@@ -22,7 +22,19 @@ def ensure_plotly(data_dir: Path, fetch=net.fetch) -> Path | None:
     unavailable or the download does not match the recorded hash; the dashboard then runs without plots."""
     target = Path(data_dir) / "ui" / "assets" / "plotly.min.js"
     if target.exists():
-        return target
+        try:
+            cached = hashlib.sha256(target.read_bytes()).hexdigest()
+        except OSError as e:
+            log.warning("cached Plotly %s is unreadable (%s); fetching it again", target, e)
+            cached = None
+        if cached == PLOTLY_SHA256:
+            return target
+        log.error("cached Plotly %s does not match the recorded hash; discarding it", target)
+        try:
+            target.unlink()
+        except OSError as e:
+            log.warning("could not remove the corrupt cached Plotly (%s); plots are disabled", e)
+            return None
     try:
         data = fetch(PLOTLY_URL, service="plotly-cdn", timeout=120)
     except Exception as e:  # noqa: BLE001  (offline is a normal condition for the dashboard)
@@ -32,7 +44,18 @@ def ensure_plotly(data_dir: Path, fetch=net.fetch) -> Path | None:
     if digest != PLOTLY_SHA256:
         log.error("Plotly download hash %s does not match the recorded %s; refusing to serve it", digest, PLOTLY_SHA256)
         return None
-    target.parent.mkdir(parents=True, exist_ok=True)
     tmp = target.with_suffix(f".{os.getpid()}.part")
-    tmp.write_bytes(data); os.replace(tmp, target)
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        for stale in target.parent.glob("plotly.min.*.part"):   # left behind by an interrupted earlier start
+            stale.unlink(missing_ok=True)
+        tmp.write_bytes(data)
+        os.replace(tmp, target)
+    except OSError as e:
+        log.warning("could not store Plotly under %s (%s); plots are disabled until the next start", target.parent, e)
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return None
     return target
