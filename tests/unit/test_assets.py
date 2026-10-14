@@ -1,0 +1,51 @@
+import hashlib
+
+from fastapi.testclient import TestClient
+
+from skysift.net import ServiceUnavailable
+from skysift.store.blob import blob_from_url
+from skysift.store.db import Store
+from skysift.ui import assets
+from skysift.ui.app import create_app
+from skysift.ui.assets import ensure_plotly
+
+HERE_STATIC = assets.STATIC
+
+
+def test_htmx_is_vendored():
+    js = (HERE_STATIC / "htmx.min.js").read_text(encoding="utf-8")
+    assert "htmx" in js and len(js) > 20_000
+
+
+def test_ensure_plotly_downloads_verifies_and_caches(tmp_path, monkeypatch):
+    body = b"/* plotly stub */ window.Plotly = {};"
+    monkeypatch.setattr(assets, "PLOTLY_SHA256", hashlib.sha256(body).hexdigest())
+    calls = []
+
+    def fetch(url, *, service, **kw):
+        calls.append(url); return body
+    path = ensure_plotly(tmp_path, fetch=fetch)
+    assert path == tmp_path / "ui" / "assets" / "plotly.min.js" and path.read_bytes() == body
+    assert ensure_plotly(tmp_path, fetch=fetch) == path and calls == [assets.PLOTLY_URL]      # cached, one download
+
+
+def test_ensure_plotly_rejects_bad_hash_and_survives_offline(tmp_path, monkeypatch):
+    monkeypatch.setattr(assets, "PLOTLY_SHA256", "0" * 64)
+    assert ensure_plotly(tmp_path, fetch=lambda url, *, service, **kw: b"tampered") is None
+    assert not (tmp_path / "ui" / "assets" / "plotly.min.js").exists()
+
+    def offline(url, *, service, **kw): raise ServiceUnavailable("no network")
+    assert ensure_plotly(tmp_path, fetch=offline) is None
+
+
+def test_vendor_mount_serves_plotly_and_static_still_serves_htmx(settings, tmp_path):
+    """Pins the mount order in create_app: /static/vendor must come before /static."""
+    plotly = tmp_path / "plotly.min.js"
+    plotly.write_bytes(b"/* plotly stub */ window.Plotly = {};")
+    store = Store(settings.database_url); store.init_schema()
+    app = create_app(settings, store=store, blob=blob_from_url(settings.blob_url), plotly_path=plotly)
+    client = TestClient(app, base_url="http://127.0.0.1")
+    r = client.get("/static/vendor/plotly.min.js")
+    assert r.status_code == 200 and r.content == plotly.read_bytes()
+    r = client.get("/static/htmx.min.js")
+    assert r.status_code == 200 and r.content == (HERE_STATIC / "htmx.min.js").read_bytes()
