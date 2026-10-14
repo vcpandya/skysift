@@ -39,7 +39,7 @@ log = logging.getLogger(__name__)
 DEFAULT_LADDER_VERSION = "1"
 UPSERT_BATCH = 1000
 MAX_ATTEMPTS = 3            # spec section 9: a target that errors three times is left for a human
-SEARCH_CONFIG_KEYS = ("oversample", "n_bands", "n_refine", "refine_oversample", "two_stage")
+SEARCH_CONFIG_KEYS = ("oversample", "n_bands", "n_refine", "refine_oversample", "two_stage", "mask_iterations")
 
 
 def priority_score(t: Target) -> float:

@@ -7,7 +7,7 @@ Archival time-series search and vetting engine. See docs/superpowers/specs/.
 SkySift searches archival Kepler and TESS light curves for transit, eclipse and lensing candidates. A sweep fetches each
 target's light curve, runs a detector, pushes every signal through a ladder of vetting tests, and stores the outcome, so
 that only the targets that survive need follow-up. Milestone 1 ships the transit box-dip detector and vetting ladder
-rungs 1 to 4; the eclipsing-binary and lensing branches are planned.
+rungs 1 to 4; the eclipsing-binary and lensing branches are planned. The detector keeps its three strongest peaks and, when the strongest clears the detection threshold, masks that signal and searches the remaining points once more, so a dominant variable does not hide a second, independent signal on the same star.
 
 ## Quick start
 

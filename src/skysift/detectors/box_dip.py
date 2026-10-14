@@ -45,6 +45,42 @@ def _alias_of(period: float, earlier: list[Signal]) -> int | None:
     return None
 
 
+# every ratio p/q with 1 <= p, q <= MASK_ALIAS_ORDER: the harmonics and sub-harmonics a masked periodic signal (and the
+# window function its mask leaves behind) can still raise in the second-pass spectrum
+MASK_ALIAS_ORDER = 4
+MASK_ALIAS_RATIOS = tuple(sorted({p / q for p in range(1, MASK_ALIAS_ORDER + 1) for q in range(1, MASK_ALIAS_ORDER + 1)}))
+MASK_WINDOW_DURATIONS = 0.75    # half-width of the mask in durations (a 1.5-duration window) around the primary and
+                                # around phase 0.5; wider windows swallow a short-period curve entirely
+
+
+COMBINATION_ORDER = 2           # m f_i - n f_j with m, n up to this, plus f_i + f_j
+COMBINATION_RESOLUTION = 2.0    # frequency tolerance for a combination match, in units of 1/baseline
+
+
+def _is_alias(period: float, earlier_periods: list[float], baseline: float | None = None) -> bool:
+    """True when ``period`` sits within 1 percent of a small-integer ratio (p/q, p and q up to 4) of an earlier period,
+    or, given the baseline, within COMBINATION_RESOLUTION/baseline in frequency of a combination of two earlier
+    frequencies (m f_i - n f_j with m, n up to COMBINATION_ORDER, or f_i + f_j). A multi-periodic variable (pulsation,
+    differential rotation) raises sidelobes at exactly those combination frequencies, equally spaced in frequency with
+    its main peaks, and masking the strongest peak only promotes the next sidelobe (gaia-dr3-2075988698983795072:
+    1.574, 1.386 and 1.762 per day, spaced by 0.188)."""
+    if any(abs(period / e / r - 1.0) < 0.01 for e in earlier_periods for r in MASK_ALIAS_RATIOS):
+        return True
+    if baseline is None or len(earlier_periods) < 2:
+        return False
+    f, tol = 1.0 / period, COMBINATION_RESOLUTION / baseline
+    freqs = [1.0 / e for e in earlier_periods]
+    combos = [fi + fj for i, fi in enumerate(freqs) for fj in freqs[i + 1:]]
+    combos += [m * fi - n * fj for fi in freqs for fj in freqs if fi != fj
+               for m in range(1, COMBINATION_ORDER + 1) for n in range(1, COMBINATION_ORDER + 1)]
+    return any(c > 0 and abs(f - c) < tol for c in combos)
+
+
+def _in_window(t: np.ndarray, period: float, t0: float, half_width: float) -> np.ndarray:
+    ph = (t - t0 + 0.5 * period) % period - 0.5 * period
+    return np.abs(ph) < half_width
+
+
 def _separated(order: np.ndarray, periods: np.ndarray, k: int) -> list[int]:
     """Indices from `order` (best first) whose periods differ by more than 2 percent from every earlier pick."""
     picked: list[int] = []
@@ -62,9 +98,12 @@ class BoxDip:
     cost_class = "cpu_medium"
 
     def __init__(self, top_k: int = 3, oversample: float = 1.5, n_bands: int = 24, refine_oversample: float = 6.0,
-                 n_refine: int = 40, two_stage: bool = True):
+                 n_refine: int = 40, two_stage: bool = True, mask_iterations: int = 1):
         self.top_k, self.oversample, self.n_bands = top_k, oversample, n_bands
         self.refine_oversample, self.n_refine, self.two_stage = refine_oversample, n_refine, two_stage
+        # after a first pass whose top peak clears the detection threshold, mask that signal (primary and phase 0.5)
+        # and search the remaining points once more, so a dominant variable cannot hide an independent signal
+        self.mask_iterations = mask_iterations
 
     def _coarse_search(self, model: BoxLeastSquares, baseline: float, thresholds: Thresholds, pmax: float) -> dict:
         """Coarse stage. Log-spaced period bands; in each, durations follow the circular-orbit transit duration and the
@@ -118,6 +157,61 @@ class BoxDip:
         return (float(rp[j]), float(res.power[j]), float(res.duration[j]), float(res.transit_time[j]),
                 float(res.depth[j]), float(res.depth_err[j]), b)
 
+    def _rank(self, model: BoxLeastSquares, spec: dict) -> tuple[list[tuple], list[float], int]:
+        """Candidates ``(period, power, duration, t0, depth, depth_err, band)`` with their per-band SDE. Selection and
+        ranking use the SDE, not raw power, so every band competes on the same scale."""
+        periods, power = spec["period"], spec["power"]
+        order = np.argsort(spec["sde"])[::-1]
+        if self.two_stage:
+            cands = [self._refine(model, spec, i) for i in _separated(order, periods, self.n_refine)]
+            n_refined = len(cands)
+        else:
+            cands = [(float(periods[i]), float(power[i]), float(spec["duration"][i]), float(spec["t0"][i]),
+                      float(spec["depth"][i]), float(spec["err"][i]), int(spec["band"][i]))
+                     for i in _separated(order, periods, self.top_k)]
+            n_refined = 0
+        sdes = [float((c[1] - spec["band_med"][c[6]]) / spec["band_std"][c[6]]) for c in cands]
+        return cands, sdes, n_refined
+
+    def _signal(self, lc: LightCurve, t: np.ndarray, spec: dict, cand: tuple, sde: float, baseline: float,
+                n_refined: int) -> Signal:
+        p, _pw, dur, t0, depth, err, b = cand
+        n_events = int(np.unique(np.round((t[_in_window(t, p, t0, 0.5 * dur)] - t0) / p)).size)
+        return Signal(target_id=str(lc.meta.get("target_id", "")), detector=self.name, detector_version=self.version,
+                      period=p, t0=t0, duration=dur, depth_ppm=depth * 1e6, snr=float(depth / max(err, 1e-12)),
+                      sde=sde, n_events=n_events,
+                      extra={"baseline_days": baseline, "sde_spectrum_std": float(spec["band_std"][b]), "band": b,
+                             "alias_of": None, "n_periods": int(spec["period"].size),
+                             "n_bands": self.n_bands, "two_stage": self.two_stage, "n_refined": n_refined})
+
+    def _masked_pass(self, lc: LightCurve, t: np.ndarray, y: np.ndarray, sigma: float, baseline: float,
+                     th: Thresholds, pmax: float, first: list[Signal]) -> list[Signal]:
+        """Second pass with the strongest first-pass signal masked: its points within MASK_WINDOW_DURATIONS durations of
+        every primary and of every phase-0.5 secondary are dropped, the same grid is searched again, and the strongest
+        remaining peak is kept when it clears the detection threshold on the masked spectrum and is not a small-integer
+        alias of any first-pass period. One iteration, at most one extra signal: the cost is one more coarse search."""
+        top = first[0]
+        half = MASK_WINDOW_DURATIONS * top.duration
+        keep = ~_in_window(t, top.period, top.t0, half) & ~_in_window(t, top.period, top.t0 + 0.5 * top.period, half)
+        if keep.sum() < MIN_POINTS:
+            return []
+        t2, y2 = t[keep], y[keep]
+        model = BoxLeastSquares(t2, y2, dy=np.full(t2.size, sigma))
+        spec = self._coarse_search(model, baseline, th, pmax)
+        if spec["period"].size == 0:
+            return []
+        cands, sdes, n_refined = self._rank(model, spec)
+        earlier = [s.period for s in first]
+        for ci in np.argsort(sdes)[::-1]:
+            if sdes[ci] < th.sde_min:
+                return []
+            if _is_alias(cands[ci][0], earlier, baseline):
+                continue
+            sig = self._signal(lc, t2, spec, cands[ci], sdes[ci], baseline, n_refined)
+            sig.extra.update({"pass": 2, "masked_period": top.period, "masked_points": int((~keep).sum())})
+            return [sig]
+        return []
+
     def detect(self, lc: LightCurve, fnorm: np.ndarray, thresholds: Thresholds) -> list[Signal]:
         return self.search(lc, fnorm, thresholds).signals
 
@@ -148,34 +242,20 @@ class BoxDip:
         periods, power = spec["period"], spec["power"]
         if periods.size == 0:
             return SearchResult()
-        # selection and ranking use the per-band SDE, not raw power, so every band competes on the same scale
-        order = np.argsort(spec["sde"])[::-1]
-        # candidates: (period, power, duration, t0, depth, depth_err, band)
-        if self.two_stage:
-            cands = [self._refine(model, spec, i) for i in _separated(order, periods, self.n_refine)]
-            n_refined = len(cands)
-        else:
-            cands = [(float(periods[i]), float(power[i]), float(spec["duration"][i]), float(spec["t0"][i]),
-                      float(spec["depth"][i]), float(spec["err"][i]), int(spec["band"][i]))
-                     for i in _separated(order, periods, self.top_k)]
-            n_refined = 0
+        cands, sdes, n_refined = self._rank(model, spec)
         cp = np.array([c[0] for c in cands])
-        sdes = [(c[1] - spec["band_med"][c[6]]) / spec["band_std"][c[6]] for c in cands]
         keep = _separated(np.argsort(sdes)[::-1], cp, self.top_k)
         out: list[Signal] = []
         for ci in keep:
-            p, _pw, dur, t0, depth, err, b = cands[ci]
-            bstd = float(spec["band_std"][b])
-            ph = (t - t0 + 0.5 * p) % p - 0.5 * p
-            n_events = int(np.unique(np.round((t[np.abs(ph) < 0.5 * dur] - t0) / p)).size)
-            out.append(Signal(target_id=str(lc.meta.get("target_id", "")), detector=self.name, detector_version=self.version,
-                              period=p, t0=t0, duration=dur, depth_ppm=depth * 1e6, snr=float(depth / max(err, 1e-12)),
-                              sde=float(sdes[ci]), n_events=n_events,
-                              extra={"baseline_days": baseline, "sde_spectrum_std": bstd, "band": b,
-                                     "alias_of": _alias_of(p, out), "n_periods": int(periods.size),
-                                     "n_bands": self.n_bands, "two_stage": self.two_stage, "n_refined": n_refined}))
+            sig = self._signal(lc, t, spec, cands[ci], float(sdes[ci]), baseline, n_refined)
+            sig.extra["alias_of"] = _alias_of(sig.period, out)
+            out.append(sig)
+        # the periodogram summary and its peaks describe the first-pass spectrum only; a second-pass signal has its
+        # own SDE on the masked spectrum and is not drawn on this envelope
         edges = np.geomspace(th.min_period_days, pmax, self.n_bands + 1)
         peaks = [{"period": s.period, "sde": s.sde, "duration": s.duration, "rank": i} for i, s in enumerate(out)]
+        if self.mask_iterations and out and out[0].sde >= th.sde_min:
+            out.extend(self._masked_pass(lc, t, y, sigma, baseline, th, pmax, out))
         summary = PeriodogramSummary.from_spectrum(periods, spec["sde"], th.min_period_days, pmax, edges, peaks)
         spectrum = ({"period": periods, "power": power, "sde": spec["sde"], "duration": spec["duration"]}
                     if keep_spectrum else None)
