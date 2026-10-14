@@ -8,3 +8,10 @@ __pycache__/
 .venv/
 venv*/
 
+.superpowers/
+tests/fixtures/cache/
+.pytest_cache/
+.ruff_cache/
+dist/
+build/
+*.egg-info/

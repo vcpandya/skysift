@@ -1,0 +1,10 @@
+param([string]$Source = "kbonus_bkg", [int]$Limit = 2000, [string]$At = "02:00")
+# Run the module through the virtualenv interpreter; never register a console-script launcher
+# (antivirus software sandboxes freshly built executables).
+$root = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
+$py = Join-Path $root ".venv\Scripts\python.exe"
+if (-not (Test-Path $py)) { throw "venv python not found at $py; create .venv first" }
+$action = New-ScheduledTaskAction -Execute $py -Argument "-m skysift run --source `"$Source`" --limit $Limit" -WorkingDirectory $root
+$trigger = New-ScheduledTaskTrigger -Daily -At $At
+$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+Register-ScheduledTask -TaskName "SkySift nightly sweep" -Action $action -Trigger $trigger -Settings $settings -Description "SkySift archival sweep" -Force

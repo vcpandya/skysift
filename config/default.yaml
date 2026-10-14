@@ -1,0 +1,18 @@
+data_dir: ./data
+blob_url: file://./data/blobs
+database_url: sqlite:///./data/engine.db
+workers_io: 8
+workers_cpu: 2
+retention: stream
+thresholds:
+  sde_min: 9.0
+  snr_min: 7.0
+  min_events: 3
+  duration_ratio_min: 0.3
+  duration_ratio_max: 3.0
+  parity_sigma: 3.0
+  secondary_sigma: 3.0
+  free_secondary_sigma: 5.0
+  season_sigma: 3.0
+  min_period_days: 0.5
+  max_period_days: 200.0

@@ -1,0 +1,47 @@
+{
+  "jobDefinitionName": "skysift-sweep",
+  "type": "container",
+  "platformCapabilities": [
+    "FARGATE"
+  ],
+  "containerProperties": {
+    "image": "ACCOUNT.dkr.ecr.REGION.amazonaws.com/skysift:latest",
+    "command": [
+      "run",
+      "--source",
+      "kbonus_bkg",
+      "--limit",
+      "5000",
+      "--workers-cpu",
+      "4"
+    ],
+    "resourceRequirements": [
+      {
+        "type": "VCPU",
+        "value": "4"
+      },
+      {
+        "type": "MEMORY",
+        "value": "8192"
+      }
+    ],
+    "environment": [
+      {
+        "name": "SKYSIFT_BLOB_URL",
+        "value": "s3://YOUR-BUCKET/blobs"
+      },
+      {
+        "name": "SKYSIFT_RETENTION",
+        "value": "stream"
+      }
+    ],
+    "secrets": [
+      {
+        "name": "SKYSIFT_DATABASE_URL",
+        "valueFrom": "arn:aws:secretsmanager:REGION:ACCOUNT:secret:skysift/database-url"
+      }
+    ],
+    "executionRoleArn": "arn:aws:iam::ACCOUNT:role/ecsTaskExecutionRole",
+    "jobRoleArn": "arn:aws:iam::ACCOUNT:role/skysift-job"
+  }
+}
