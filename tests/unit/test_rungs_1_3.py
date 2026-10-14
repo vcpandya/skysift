@@ -145,3 +145,34 @@ def test_rung1_applies_thresholds_before_the_systematic_alias_check():
     strong = signal(2000).model_copy(update={"period": 46.6})
     r = Rung1Detection().run(strong, bundle(lc))
     assert r.status == TestStatus.UNDETERMINED and r.reason == "systematic_alias" and r.metrics["period"] == 46.6
+
+
+def _sinusoid(lc, period, t0, amp_ppm):
+    """Smooth variability (pulsation or spots) with its minimum at t0."""
+    f = lc.flux * (1 - amp_ppm * 1e-6 * np.cos(2 * np.pi * (lc.time - t0) / period))
+    return LightCurve(lc.time, f, lc.flux_err, lc.quality, lc.quarter, f.copy())
+
+
+def test_rung2_rejects_a_sinusoidal_variable():
+    """A pulsator or spotted rotator folds into a smooth wave, so a two-harmonic sine explains the fold at least as well
+    as a box: rung 2 fails it as `sinusoidal`. The 0.5677 d second-pass peak of gaia-dr3-2075988698983795072 (a
+    frequency-comb sidelobe of a 0.64 d variable) passed every rung before this test existed."""
+    per, t0 = 0.5677, 132.0
+    var = _sinusoid(make_lightcurve(n_days=200, cadence_min=30, noise_ppm=500, seed=5), per, t0, 1500)
+    s = Signal(target_id="t", detector="box_dip", detector_version="1", period=per, t0=t0, duration=0.2 * per,
+               depth_ppm=1400, snr=40.0, sde=40.0, n_events=350)
+    r = Rung2Shape().run(s, bundle(var))
+    assert r.status == TestStatus.FAIL and r.reason == "sinusoidal"
+    assert r.metrics["sine_chi2"] < r.metrics["box_chi2"] and r.metrics["shape_n"] >= 50
+
+
+def test_rung2_box_beats_sine_for_a_transit_on_a_variable_star():
+    """A transit folds to a flat baseline with a dip even when the star varies at another period: the box wins."""
+    var = _sinusoid(make_lightcurve(n_days=200, cadence_min=30, noise_ppm=500, seed=6), 0.7, 132.0, 1500)
+    lc = inject_transit(var, 9.9, 133.1, 2.5 / 24, 2500)
+    s = Signal(target_id="t", detector="box_dip", detector_version="1", period=9.9, t0=133.1, duration=2.5 / 24,
+               depth_ppm=2500, snr=20.0, sde=15.0, n_events=20)
+    r = Rung2Shape().run(s, bundle(lc))
+    assert r.metrics["box_chi2"] < r.metrics["sine_chi2"] and r.reason != "sinusoidal"
+    clean = inject_transit(make_lightcurve(n_days=200, cadence_min=30, noise_ppm=500, seed=6), 9.9, 133.1, 2.5 / 24, 2500)
+    assert Rung2Shape().run(s, bundle(clean)).status == TestStatus.PASS

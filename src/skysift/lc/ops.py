@@ -121,6 +121,48 @@ def secondary_search(time, fnorm, period, t0, duration_days, phases=None):
     return float(out[k, 0]), float(out[k, 1]), float(out[k, 2])
 
 
+SHAPE_BINS_PER_DURATION = 4     # fold bins across one transit duration, so the box edges are resolved
+SHAPE_MIN_BINS, SHAPE_MAX_BINS, SHAPE_MIN_PER_BIN = 50, 2000, 5
+
+
+def shape_contrast(time, fnorm, period, t0, duration_days) -> tuple[float, float, int]:
+    """Chi-square of a box (one level inside |phase| < duration/2, another outside) and of a two-harmonic sinusoid,
+    both weighted least-squares fits to the binned fold, each bin weighted by the standard error of its own points.
+
+    A transit folds to a flat baseline with a dip, which the box fits and a smooth wave cannot; a pulsator, a spotted
+    rotator or a contact binary folds to a wave that the sinusoid explains at least as well as any box, however many
+    harmonics or sidelobes of the true period the search landed on. Binning with empirical errors matters: variability
+    at other periods is incoherent on this fold and averages out, so the contrast measures the mean fold shape rather
+    than drowning in the per-point scatter. Returns ``(box_chi2, sine_chi2, n_bins)``; NaN, NaN, 0 when the fold has
+    too few populated bins inside or outside the box to compare."""
+    good = np.isfinite(fnorm) & np.isfinite(time)
+    cycles = fold_phase(time[good], period, t0) / period          # [-0.5, 0.5)
+    y = fnorm[good]
+    width = duration_days / period
+    n_bins = int(min(SHAPE_MAX_BINS, max(SHAPE_MIN_BINS, round(SHAPE_BINS_PER_DURATION / width))))
+    idx = np.minimum(((cycles + 0.5) * n_bins).astype(int), n_bins - 1)
+    counts = np.bincount(idx, minlength=n_bins)
+    sums = np.bincount(idx, weights=y, minlength=n_bins)
+    sq = np.bincount(idx, weights=y * y, minlength=n_bins)
+    ok = counts >= SHAPE_MIN_PER_BIN
+    mean = sums[ok] / counts[ok]
+    var = np.maximum(sq[ok] / counts[ok] - mean ** 2, 0.0)
+    centre = (np.arange(n_bins)[ok] + 0.5) / n_bins - 0.5
+    inbox = np.abs(centre) < 0.5 * width
+    if inbox.sum() < 1 or (~inbox).sum() < 10:
+        return float("nan"), float("nan"), 0
+    floor = 1.4826 * float(np.median(np.abs(y - np.median(y)))) or 1e-12
+    err = np.sqrt(np.maximum(var, (0.5 * floor) ** 2) / counts[ok])     # never below half the robust point scatter
+    wts = 1.0 / err
+    box = np.where(inbox, np.average(mean[inbox], weights=wts[inbox] ** 2), np.average(mean[~inbox], weights=wts[~inbox] ** 2))
+    w = 2 * np.pi * centre
+    design = np.column_stack([np.ones(centre.size), np.cos(w), np.sin(w), np.cos(2 * w), np.sin(2 * w)])
+    coef, *_ = np.linalg.lstsq(design * wts[:, None], mean * wts, rcond=None)
+    box_chi2 = float(np.sum(((mean - box) * wts) ** 2))
+    sine_chi2 = float(np.sum(((mean - design @ coef) * wts) ** 2))
+    return box_chi2, sine_chi2, int(ok.sum())
+
+
 def circular_duration_days(period_days: float, mass_msun: float = 0.5, radius_rsun: float = 0.5) -> float:
     """Central-transit duration for a circular orbit: T = P/pi * asin(R*/a), a from Kepler's third law."""
     a_au = (mass_msun * (period_days / 365.25) ** 2) ** (1 / 3)

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from skysift.lc.ops import event_depths, secondary_search
+from skysift.lc.ops import event_depths, secondary_search, shape_contrast
 from skysift.models import Signal, TestResult, TestStatus
 from skysift.vetting.base import DataBundle
 
@@ -24,11 +24,17 @@ class Rung2Shape:
         parity_sigma = abs(d_odd.mean - d_even.mean) / np.hypot(d_odd.err_scaled, d_even.err_scaled)
         sec_sigma = d_sec.mean / d_sec.err_scaled if d_sec.n else 0.0
         timing_rms_min = float(np.nan)
+        box_chi2, sine_chi2, shape_n = shape_contrast(lc.time, fn, s.period, s.t0, s.duration)
         m = {"depth_ppm": all_d.mean, "depth_err_ppm": all_d.err_scaled, "n_events": all_d.n,
              "odd_ppm": d_odd.mean, "even_ppm": d_even.mean,
              "parity_sigma": float(parity_sigma), "secondary_ppm": d_sec.mean, "secondary_sigma": float(sec_sigma),
              "free_secondary_phase": free_phase, "free_secondary_ppm": free_depth, "free_secondary_sigma": free_sigma,
-             "control_rms_ppm": all_d.control_rms, "timing_rms_min": timing_rms_min}
+             "control_rms_ppm": all_d.control_rms, "timing_rms_min": timing_rms_min,
+             "box_chi2": box_chi2, "sine_chi2": sine_chi2, "shape_n": shape_n}
+        # the stacked fold has every point, so this verdict holds even when the per-event tests below are undetermined
+        # (about two points per event for sub-day periods at 30-minute cadence)
+        if np.isfinite(sine_chi2) and sine_chi2 <= box_chi2:
+            return TestResult(rung=self.name, status=TestStatus.FAIL, metrics=m, reason="sinusoidal")
         if not np.isfinite(parity_sigma) or d_odd.n < 2 or d_even.n < 2:
             return TestResult(rung=self.name, status=TestStatus.UNDETERMINED, metrics=m, reason="too few odd/even events")
         if parity_sigma > th.parity_sigma:
