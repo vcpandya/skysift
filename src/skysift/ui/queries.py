@@ -72,11 +72,13 @@ def _last_test_subquery():
             .join(last_id, TestRow.id == last_id.c.tid)).subquery()
 
 
-def _queue_select(status: str, sort: str, desc: bool):
+def _queue_select(status: str, sort: str, desc: bool, ids_only: bool = False):
     last = _last_test_subquery()
     col = SORT_COLUMNS.get(sort, SignalRow.sde)
-    q = (select(SignalRow, TargetRow, CandidateRow.status.label("decision"), last.c.rung, last.c.status.label("verdict"),
-                last.c.reason)
+    cols = ([SignalRow.id] if ids_only else
+            [SignalRow, TargetRow, CandidateRow.status.label("decision"), last.c.rung, last.c.status.label("verdict"),
+             last.c.reason])
+    q = (select(*cols).select_from(SignalRow)
          .join(TargetRow, TargetRow.target_id == SignalRow.target_id)
          .outerjoin(CandidateRow, CandidateRow.signal_id == SignalRow.id)
          .outerjoin(last, last.c.signal_id == SignalRow.id)
@@ -100,7 +102,7 @@ def review_queue(store: Store, status: str = "candidate_stage1", sort: str = "sd
 
 def neighbours(store: Store, signal_id: int, status: str, sort: str, desc: bool) -> tuple[int | None, int | None]:
     with store.session() as s:
-        ids = [row[0].id for row in s.execute(_queue_select(status, sort, desc)).all()]
+        ids = list(s.scalars(_queue_select(status, sort, desc, ids_only=True)))
     if signal_id not in ids:
         return None, None
     i = ids.index(signal_id)

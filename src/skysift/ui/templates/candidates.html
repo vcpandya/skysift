@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}SkySift · Candidates{% endblock %}
+{% block content %}
+<h1>Candidates</h1>
+<p>
+{% for s in statuses %}<a href="/candidates?status={{ s }}&sort={{ view.sort }}&dir={{ view.dir }}" class="{{ 'status-running' if s == view.status else 'muted' }}">{{ s }}</a>{% if not loop.last %} · {% endif %}{% endfor %}
+</p>
+<table>
+<thead><tr>
+{% for key, label in columns %}{% set is_sorted = view.sort == key %}
+<th class="{{ 'num' if key != 'target_id' else '' }}"><a class="{{ 'sorted' if is_sorted else '' }} {{ 'asc' if is_sorted and view.dir == 'asc' else '' }}" href="/candidates?status={{ view.status }}&sort={{ key }}&dir={{ 'asc' if is_sorted and view.dir == 'desc' else 'desc' }}">{{ label }}</a></th>
+{% endfor %}
+<th>last rung</th><th>verdict</th><th>reason</th><th>decision</th></tr></thead>
+<tbody>
+{% for r in rows %}
+<tr class="row-link" data-href="/signals/{{ r.id }}?status={{ view.status }}&sort={{ view.sort }}&dir={{ view.dir }}">
+  <td><code>{{ r.target_id }}</code>{% if r.kic %} <span class="muted">KIC {{ r.kic }}</span>{% endif %}</td>
+  <td class="num">{{ r.period | fmt(4) }}</td><td class="num">{{ r.depth_ppm | fmt(0) }}</td><td class="num">{{ r.duration_h | fmt(2) }}</td>
+  <td class="num">{{ r.sde | fmt(1) }}</td><td class="num">{{ r.snr | fmt(1) }}</td><td class="num">{{ r.n_events | fmt }}</td><td class="num muted">#{{ r.id }}</td>
+  <td>{{ r.last_rung or '–' }}</td><td class="status-{{ r.verdict }}">{{ r.verdict or '–' }}</td><td class="muted">{{ r.reason }}</td><td class="status-{{ r.decision }}">{{ r.decision or '' }}</td>
+</tr>
+{% else %}<tr><td colspan="12" class="muted">Nothing in this queue.</td></tr>{% endfor %}
+</tbody></table>
+{% endblock %}

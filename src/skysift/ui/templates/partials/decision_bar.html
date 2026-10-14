@@ -1,0 +1,16 @@
+<div class="decision-bar">
+  <form hx-post="/signals/{{ signal_id }}/decide" hx-target="#decision" hx-swap="innerHTML" style="display:contents">
+    <input type="hidden" name="_token" value="{{ token }}">
+    <textarea name="note" placeholder="note (required for reject)">{{ d.candidate.note if d.candidate else '' }}</textarea>
+    <button id="btn-approve" class="primary" name="decision" value="approve">Approve (a)</button>
+    <button id="btn-reject" class="danger" name="decision" value="reject">Reject (r)</button>
+    <button id="btn-needs-data" name="decision" value="needs_data">Needs data (n)</button>
+  </form>
+  {% if error %}<span class="error">{{ error }}</span>{% endif %}
+  {% if d.candidate %}<span>current: <strong class="status-{{ d.candidate.status }}">{{ d.candidate.status }}</strong> <span class="muted">{{ d.candidate.decided_at }}</span></span>{% else %}<span class="muted">no decision yet</span>{% endif %}
+</div>
+{% if d.decisions %}
+<table><thead><tr><th>when</th><th>decision</th><th>who</th><th>note</th></tr></thead><tbody>
+{% for h in d.decisions %}<tr class="history-row"><td class="muted">{{ h.utc }}</td><td class="status-{{ 'approved' if h.decision == 'approve' else ('rejected' if h.decision == 'reject' else 'review') }}">{{ h.decision }}</td><td>{{ h.who }}</td><td>{{ h.note }}</td></tr>{% endfor %}
+</tbody></table>
+{% endif %}

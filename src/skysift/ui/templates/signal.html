@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}SkySift · {{ d.signal.target_id }}{% endblock %}
+{% block content %}
+<h1><code>{{ d.signal.target_id }}</code> <span class="muted">P = {{ d.signal.period | fmt(5) }} d · depth {{ d.signal.depth_ppm | fmt(0) }} ppm · SDE {{ d.signal.sde | fmt(1) }}</span></h1>
+<p class="muted">
+  {% for label, href in links %}<a href="{{ href }}" target="_blank" rel="noopener">{{ label }}</a> · {% endfor %}
+  G {{ d.target.gmag | fmt(2) }} · RA {{ d.target.ra | fmt(5) }} Dec {{ d.target.dec | fmt(5) }} · source {{ d.target.source }}
+  · detector {{ d.signal.detector }} {{ d.signal.detector_version }}{% if d.run %} · run #{{ d.run.id }} {{ d.run.finished or '' }}{% endif %}
+</p>
+<p><a href="/candidates?status={{ view.status }}&sort={{ view.sort }}&dir={{ view.dir }}">← queue</a>
+{% if prev_url %} · <a id="link-prev" href="{{ prev_url }}">previous (k)</a>{% endif %}{% if next_url %} · <a id="link-next" href="{{ next_url }}">next (j)</a>{% endif %}</p>
+
+<h2>Ladder</h2>
+<table><thead><tr><th>rung</th><th>status</th><th>reason</th><th class="num">s</th><th>metrics</th></tr></thead><tbody>
+{% for t in ladder %}
+<tr><td>{{ t.rung }}</td><td class="status-{{ t.status }}">{{ t.status }}</td><td>{{ t.reason }}</td><td class="num">{{ t.duration_s | fmt(2) }}</td>
+<td>{% for k, v in t.shown %}<span class="muted">{{ k }}</span> {{ v | fmt(2) }}&nbsp;&nbsp;{% endfor %}
+<details class="raw"><summary class="muted">raw</summary><pre>{{ t.raw }}</pre></details></td></tr>
+{% endfor %}
+</tbody></table>
+
+<h2>Plots</h2>
+<div id="plots" data-signal="{{ signal_id }}"><p class="muted">{% if plotly_url %}Loading light curve…{% else %}Plots are unavailable: the Plotly bundle could not be fetched. Start the dashboard once with network access to download it.{% endif %}</p></div>
+<script src="/static/plots.js" defer></script>
+
+<div id="decision">{% include "partials/decision_bar.html" %}</div>
+{% endblock %}
