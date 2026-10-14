@@ -150,3 +150,14 @@ def test_ui_brackets_an_ipv6_host_in_the_printed_url(settings, monkeypatch):
     r = CliRunner().invoke(app, ["ui", "--host", "::1", "--no-browser"])
     assert r.exit_code == 0, r.output
     assert "http://[::1]:8765/" in r.output
+
+
+def test_status_reports_rungs_and_states(settings, tmp_path):
+    from skysift.store.blob import LocalBlob
+    from skysift.store.db import Store
+    from tests.unit.ui_seed import seed
+    store = Store(settings.database_url); store.init_schema(); seed(store, LocalBlob(tmp_path / "blobs"))
+    r = CliRunner().invoke(app, ["status"])
+    assert r.exit_code == 0, r.output
+    out = json.loads(r.stdout)
+    assert out["targets_by_state"] == {"done": 3} and out["rung_counts"]["rung1_detection"]["pass"] == 3

@@ -9,13 +9,12 @@ import typer
 from pydantic import ValidationError
 from rich.console import Console
 from rich.table import Table as RTable
-from sqlalchemy import select
 
 from skysift import jsonutil
 from skysift.config import Thresholds, load_settings
 from skysift.sources.base import load_registry
 from skysift.store.blob import blob_from_url
-from skysift.store.db import RunRow, SignalRow, Store
+from skysift.store.db import Store
 from skysift.store.retention import DiskBudgetExceeded, Retention, RetentionPolicy
 
 app = typer.Typer(help="SkySift: archival time-series search and vetting engine")
@@ -112,26 +111,11 @@ def run(source: str = typer.Option(...), gmag_max: float = 19.0,
 
 @app.command()
 def status():
-    """Counts, outcomes, throughput, cache usage, recent errors."""
-    from skysift.pipeline import MAX_ATTEMPTS
+    """Counts, targets per state, outcomes, rung verdicts, throughput, cache usage, recent errors."""
+    from skysift.ui import queries
     s, store, blob = _ctx()
-    c = store.counts()
-    policy = RetentionPolicy.parse(s.retention)
-    ret = Retention(policy, store, blob)
-    with store.session() as ses:
-        errors = ses.scalars(select(RunRow).where(RunRow.status == "error").order_by(RunRow.id.desc()).limit(5)).all()
-        done = ses.scalars(select(RunRow).where(RunRow.status == "done")).all()
-        outcomes: dict[str, int] = {}
-        for row in ses.scalars(select(SignalRow)): outcomes[row.final_status] = outcomes.get(row.final_status, 0) + 1
-        seconds = sum((r.finished - r.started).total_seconds() for r in done if r.finished)
-        hours = max(1e-9, seconds / 3600)
-        out = {"counts": c, "signal_outcomes": outcomes, "targets_per_hour": round(len(done) / hours, 1),
-               "mean_seconds_per_run": round(seconds / len(done), 2) if done else None,
-               "error_capped_targets": store.error_capped_targets(MAX_ATTEMPTS),
-               "cache_bytes": ret.cached_bytes(), "retention": s.retention,
-               "cache_budget_bytes": policy.budget_bytes if policy.mode == "budget" else None,
-               "last_errors": [{"target": e.target_id, "error": e.error[:200]} for e in errors]}
-    _plain(_console(), jsonutil.dumps(out, indent=1, default=str))
+    ret = Retention(RetentionPolicy.parse(s.retention), store, blob)
+    _plain(_console(), jsonutil.dumps(queries.summary(store, ret, s), indent=1, default=str))
 
 
 @app.command()
