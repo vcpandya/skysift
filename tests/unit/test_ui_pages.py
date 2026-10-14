@@ -1,5 +1,6 @@
 import sys
 
+import pytest
 from fastapi import Request
 from fastapi.testclient import TestClient
 
@@ -327,3 +328,58 @@ def test_live_idle_renders_a_corrupt_lock_history_record(settings, tmp_path):
     for url in ("/live", "/partials/live/sweep"):
         r = client.get(url)
         assert r.status_code == 200 and "Past sweeps" in r.text, url
+
+
+def test_plots_endpoint_reports_outage_without_breaking_the_page(settings, tmp_path, monkeypatch):
+    from skysift.net import ServiceUnavailable
+    from skysift.ui import plots as plots_mod
+    client, _app, ids, _launcher = make_seeded_client(settings, tmp_path)
+    # the seeded artifacts hold fake bytes, not FITS: make the parser raise an outage-like error to exercise the path
+    monkeypatch.setitem(plots_mod.PARSERS, "kbonus_bkg", lambda b: (_ for _ in ()).throw(ServiceUnavailable("mast down")))
+    r = client.get(f"/api/signals/{ids['candidate']}/plots.json")
+    assert r.status_code == 503 and "mast down" in r.json()["detail"]
+    assert client.get(f"/signals/{ids['candidate']}").status_code in (200, 404)   # the page route arrives in Task 11
+    assert client.get("/api/signals/999999/plots.json").status_code == 404
+
+
+def test_plots_json_is_strict(settings, tmp_path, monkeypatch):
+    from skysift.ui import plots as plots_mod
+    from tests.synthetic import inject_transit, make_lightcurve
+    client, _app, ids, _launcher = make_seeded_client(settings, tmp_path)
+    lc = inject_transit(make_lightcurve(n_days=400, seed=3, noise_ppm=500), 13.7695, 136.3, 0.096, 1800)
+    monkeypatch.setitem(plots_mod.PARSERS, "kbonus_bkg", lambda b: lc)
+    r = client.get(f"/api/signals/{ids['candidate']}/plots.json")
+    assert r.status_code == 200 and "NaN" not in r.text
+    body = r.json()
+    assert body["periodogram"] is None and body["seasons"]["season"] == [0, 1, 2, 3] and len(body["fold"]["bin_flux"]) > 10
+    assert client.get(f"/api/signals/{ids['candidate']}/plots.json").json() == body     # cached per signal id
+
+
+@pytest.mark.parametrize("case", ["present", "missing", "deleted", "corrupt"])
+def test_plots_periodogram_tolerates_evicted_missing_and_corrupt_summaries(settings, tmp_path, monkeypatch, case):
+    import hashlib
+    from pathlib import Path
+
+    import numpy as np
+
+    from skysift.detectors.periodogram import PeriodogramSummary
+    from skysift.store.db import ArtifactRow, RunRow, utcnow
+    from skysift.ui import plots as plots_mod
+    from tests.synthetic import inject_transit, make_lightcurve
+    lc = inject_transit(make_lightcurve(n_days=400, seed=3, noise_ppm=500), 13.7695, 136.3, 0.096, 1800)
+    monkeypatch.setitem(plots_mod.PARSERS, "kbonus_bkg", lambda b: lc)
+    client, app, ids, _launcher = make_seeded_client(settings, tmp_path)
+    good = PeriodogramSummary.from_spectrum(np.array([13.7695, 6.88]), np.array([21.0, 8.0]), 0.5, 200.0, [0.5, 200.0],
+                                            [{"period": 13.7695, "sde": 21.0, "duration": 0.096, "rank": 0}],
+                                            n_bins=64).to_npz()
+    data = b"not an npz" if case == "corrupt" else good
+    sha = hashlib.sha256(data).hexdigest()
+    st = app.state
+    loc = str(Path(settings.data_dir) / "nowhere.npz") if case == "missing" else st.blob.put(data, "pg.npz")[1]
+    st.store.add_artifact(sha, len(data), "skysift://periodogram/kic-005689121", loc, "kic-005689121", kind="periodogram")
+    with st.store.session() as s:
+        if case == "deleted": s.get(ArtifactRow, sha).deleted_at = utcnow()
+        s.get(RunRow, ids["run_ids"]["candidate"]).periodogram_sha256 = sha
+    r = client.get(f"/api/signals/{ids['candidate']}/plots.json")
+    assert r.status_code == 200 and "NaN" not in r.text
+    assert (r.json()["periodogram"] is not None) is (case == "present")
