@@ -463,3 +463,80 @@ def test_salvaged_queries_carry_the_target_id(settings, monkeypatch):
     with store.session() as ss:
         rows = ss.query(db.QueryRow).all()
         assert rows and all(r.target_id == "planet" for r in rows)       # salvaged, and still tied to their target
+
+
+def test_graceful_stop_finishes_in_flight_targets_and_supersedes_nothing(settings, monkeypatch):
+    """A stop requested mid-sweep: the targets whose fetch was already submitted are vetted and written as done,
+    nothing else is started, the summary says so, and the next sweep picks up the rest with no superseded run."""
+    s, store, blob = _env(monkeypatch, settings, WORKERS_IO="2")
+    lc = make_lightcurve(n_days=60, seed=4)
+    targets = [_tgt(f"t{i:02d}") for i in range(20)]
+    flag = threading.Event()
+    src = ScriptedSource(targets, {t.target_id: lc for t in targets}, store, blob, on_fetch=lambda _t: flag.set())
+    out = run(src, store, blob, s, filter={}, with_novelty=False, stop_requested=flag.is_set)
+    in_flight = 2 * s.workers_io                       # the first top-up fills every fetch slot before any fetch lands
+    assert out["stopped"] == "graceful" and out["processed"] == in_flight and out["errors"] == 0
+    runs = _runs(store)
+    assert len(runs) == in_flight and {st for st, _ in runs.values()} == {"done"}
+    assert multiprocessing.active_children() == []
+    out2 = run(src, store, blob, s, filter={}, with_novelty=False)
+    assert "stopped" not in out2 and out2["skipped"] == in_flight and out2["processed"] == 20 - in_flight
+    runs = _runs(store)
+    assert len(runs) == 20 and {st for st, _ in runs.values()} == {"done"}      # no 'superseded' anywhere
+
+
+def test_default_stop_check_is_the_stop_file_under_the_data_dir(settings, monkeypatch):
+    from skysift.config import stop_request_path
+    s, store, blob = _env(monkeypatch, settings)
+    path = stop_request_path(s.data_dir)
+    assert path == s.data_dir / "ui" / "sweeps" / "stop.request"
+    path.parent.mkdir(parents=True, exist_ok=True); path.write_text("now", encoding="utf-8")
+    lc = make_lightcurve(n_days=60, seed=4)
+    src = ScriptedSource([_tgt("t1"), _tgt("t2")], {"t1": lc, "t2": lc}, store, blob)
+    out = run(src, store, blob, s, filter={}, with_novelty=False)
+    assert out["stopped"] == "graceful" and out["processed"] == 0 and _runs(store) == {}
+    assert path.exists()                                # the launcher owns the file; the engine only reads it
+
+
+def test_cpu_workers_ignore_sigint_so_a_terminal_ctrl_c_reaches_only_the_scheduler(settings):
+    import signal
+
+    from skysift.pipeline import _cpu_pool
+    s = load_settings()
+    pool = _cpu_pool(s)
+    try:
+        assert pool.submit(signal.getsignal, signal.SIGINT).result(timeout=60) == signal.SIG_IGN
+    finally:
+        pool.shutdown()
+
+
+def test_terminate_workers_makes_the_hard_stop_immediate():
+    import time
+
+    from skysift.pipeline import _cpu_pool, _terminate_workers
+    pool = _cpu_pool(load_settings())
+    fut = pool.submit(time.sleep, 60)
+    t0 = time.monotonic()
+    _terminate_workers(pool)
+    pool.shutdown(wait=True, cancel_futures=True)
+    assert time.monotonic() - t0 < 20 and fut.done() and multiprocessing.active_children() == []
+
+
+def test_second_interrupt_drops_in_flight_work_for_the_next_sweep_to_supersede(settings, monkeypatch):
+    s, store, blob = _env(monkeypatch, settings, WORKERS_IO="2")
+    lc = make_lightcurve(n_days=60, seed=4)
+    targets = [_tgt(f"t{i:02d}") for i in range(6)]
+    src = ScriptedSource(targets, {t.target_id: lc for t in targets}, store, blob)
+
+    def second_ctrl_c(_summary):
+        raise KeyboardInterrupt
+    with pytest.raises(KeyboardInterrupt):
+        run(src, store, blob, s, filter={}, with_novelty=False, progress=second_ctrl_c)
+    assert multiprocessing.active_children() == []
+    runs = _runs(store)
+    assert runs and sum(st == "done" for st, _ in runs.values()) == 1 and "running" in {st for st, _ in runs.values()}
+    out = run(src, store, blob, s, filter={}, with_novelty=False)
+    assert out["processed"] == 5 and out["skipped"] == 1
+    with store.session() as ss:
+        assert ss.query(db.RunRow).filter_by(error="superseded").count() >= 1
+    assert {st for st, _ in _runs(store).values()} == {"done"}

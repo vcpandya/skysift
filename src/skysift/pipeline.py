@@ -6,13 +6,15 @@ import json
 import logging
 import multiprocessing
 import pickle
+import signal
 import time
 from collections import deque
+from collections.abc import Callable
 from concurrent.futures import FIRST_COMPLETED, Future, ProcessPoolExecutor, ThreadPoolExecutor, wait
 from itertools import islice
 
 from skysift import jsonutil, net
-from skysift.config import Settings, Thresholds
+from skysift.config import Settings, Thresholds, stop_request_path
 from skysift.detectors.base import get_detector
 from skysift.detectors.periodogram import PeriodogramSummary
 from skysift.lc.ops import detrend
@@ -192,11 +194,43 @@ def _fetch(source, t: Target) -> bytes:
     return pickle.dumps(lc)
 
 
+def _ignore_sigint() -> None:
+    """Worker initializer: a terminal's Ctrl+C reaches every process in the foreground group, and a worker that died
+    on it would break the pool and lose the target it was vetting. Only the scheduler decides what an interrupt means
+    (graceful or immediate stop); the dashboard's hard stop terminates the scheduler, and orphaned workers exit on
+    their own after their current target."""
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+
+
+def _terminate_workers(pool: ProcessPoolExecutor) -> None:
+    """The hard stop: kill the pool's worker processes so shutdown() returns at once instead of after their current
+    target (up to a few minutes of BLS). The workers ignore SIGINT, so a terminal's Ctrl+C alone does not end them."""
+    for proc in list(getattr(pool, "_processes", {}).values()):     # the executor keeps no public handle on them
+        try: proc.terminate()
+        except OSError: pass
+
+
+def _cpu_pool(settings: Settings) -> ProcessPoolExecutor:
+    # spawn everywhere (the Windows default): forking while the I/O threads run is unsafe on POSIX
+    return ProcessPoolExecutor(settings.workers_cpu, mp_context=multiprocessing.get_context("spawn"),
+                               initializer=_ignore_sigint)
+
+
 def run(source, store: Store, blob: Blob, settings: Settings, filter: dict, detector_name: str = "box_dip",
-        max_targets: int | None = None, progress=None, with_novelty: bool = True, fetch_module: str | None = None) -> dict:
+        max_targets: int | None = None, progress=None, with_novelty: bool = True, fetch_module: str | None = None,
+        stop_requested: Callable[[], bool] | None = None) -> dict:
     """Bounded two-pool scheduler: at most 2*workers_io fetches (fetched light curves waiting for a CPU slot
-    included) and 2*workers_cpu CPU jobs are in flight, so memory and disk stay flat however long the sweep."""
+    included) and 2*workers_cpu CPU jobs are in flight, so memory and disk stay flat however long the sweep.
+
+    ``stop_requested`` is polled between submissions (by default: does the stop file under the data directory
+    exist). Once it answers True no further fetch is started; every target already fetched or being fetched is still
+    vetted and written, and the summary carries ``"stopped": "graceful"``. Nothing is left 'running' for the next
+    sweep to supersede. An exception (Ctrl+C a second time, a disk budget breach) is the hard stop: in-flight work is
+    dropped and the interrupted runs are superseded when redone."""
     det = get_detector(detector_name)
+    if stop_requested is None:
+        stop_path = stop_request_path(settings.data_dir)
+        stop_requested = stop_path.exists
     retention = Retention(RetentionPolicy.parse(settings.retention), store, blob)
     ladder_version = DEFAULT_LADDER_VERSION
     th_json = settings.thresholds.model_dump_json()
@@ -207,6 +241,7 @@ def run(source, store: Store, blob: Blob, settings: Settings, filter: dict, dete
     start = time.time()
     max_fetch, max_cpu = 2 * settings.workers_io, 2 * settings.workers_cpu
     pending = iter(todo)
+    stopping = False
     fetches: dict[Future, tuple[Target, str]] = {}
     ready: deque[tuple[Target, int, bytes]] = deque()      # fetched, run started, waiting for a CPU slot
     cpu_jobs: dict[Future, tuple[Target, int]] = {}
@@ -255,16 +290,22 @@ def run(source, store: Store, blob: Blob, settings: Settings, filter: dict, dete
         retention.enforce_budget(exclude_targets=in_flight)   # raises DiskBudgetExceeded -> stops the run
 
     def top_up() -> None:
+        nonlocal stopping
+        # fetched targets always go on to the CPU pool: their run has started and the file is on disk
         while ready and len(cpu_jobs) < max_cpu:
             t, rid, lc_pickle = ready.popleft()
             cpu_jobs[cpu_pool.submit(_cpu_work, lc_pickle, t.model_dump_json(), th_json, detector_name,
                                      ladder_version, with_novelty, fetch_module, settings.store_periodogram)] = (t, rid)
-        while len(fetches) + len(ready) < max_fetch and (nxt := next(pending, None)) is not None:
+        if not stopping and stop_requested():
+            stopping = True
+            summary["stopped"] = "graceful"
+            log.warning("stop requested: finishing %d in-flight targets, starting no more",
+                        len(fetches) + len(ready) + len(cpu_jobs))
+        while not stopping and len(fetches) + len(ready) < max_fetch and (nxt := next(pending, None)) is not None:
             fetches[io_pool.submit(_fetch, source, nxt[0])] = nxt
 
-    # spawn everywhere (the Windows default): forking while the I/O threads run is unsafe on POSIX
     io_pool = ThreadPoolExecutor(settings.workers_io)
-    cpu_pool = ProcessPoolExecutor(settings.workers_cpu, mp_context=multiprocessing.get_context("spawn"))
+    cpu_pool = _cpu_pool(settings)
     try:
         top_up()
         while fetches or cpu_jobs:
@@ -276,6 +317,7 @@ def run(source, store: Store, blob: Blob, settings: Settings, filter: dict, dete
             top_up()
     except BaseException as e:
         # stop now: queued fetches and CPU jobs are dropped; their runs stay 'running' (superseded when redone)
+        if isinstance(e, KeyboardInterrupt): _terminate_workers(cpu_pool)     # "stop now" means now
         io_pool.shutdown(wait=True, cancel_futures=True); cpu_pool.shutdown(wait=True, cancel_futures=True)
         if isinstance(e, DiskBudgetExceeded):
             e.summary = {**summary, "seconds": time.time() - start}       # the CLI still reports the work done

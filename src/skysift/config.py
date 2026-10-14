@@ -49,6 +49,12 @@ class Settings(BaseSettings):
         return self
 
 
+def stop_request_path(data_dir: Path) -> Path:
+    """The file whose presence asks a running sweep to stop gracefully (finish what is in flight, start nothing new).
+    The dashboard's launcher writes and removes it; the engine only polls it."""
+    return Path(data_dir) / "ui" / "sweeps" / "stop.request"
+
+
 def load_settings(yaml_path: Path | None = None) -> Settings:
     """YAML gives defaults; environment variables (SKYSIFT_*) override them."""
     path = yaml_path or DEFAULT_YAML

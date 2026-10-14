@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 import logging
 import pickle
+import signal
 import sys
+from pathlib import Path
 
 import typer
 from pydantic import ValidationError
@@ -11,7 +13,7 @@ from rich.console import Console
 from rich.table import Table as RTable
 
 from skysift import jsonutil
-from skysift.config import Thresholds, load_settings
+from skysift.config import Thresholds, load_settings, stop_request_path
 from skysift.sources.base import load_registry
 from skysift.store.blob import blob_from_url
 from skysift.store.db import Store
@@ -71,6 +73,23 @@ def sources():
     _console().print(t)
 
 
+class InterruptOnce:
+    """Ctrl+C handling for a sweep. The first SIGINT asks the engine for a graceful stop (finish the targets in
+    flight, start no more) and says so; the second raises KeyboardInterrupt, the hard stop. ``check`` is the engine's
+    stop poll: the Ctrl+C request or a stop file written by the dashboard."""
+
+    def __init__(self, say, stop_file: Path):
+        self.say, self.stop_file, self.requested = say, stop_file, False
+
+    def __call__(self, signum, frame) -> None:
+        if self.requested: raise KeyboardInterrupt
+        self.requested = True
+        self.say("stop requested: finishing in-flight targets, press Ctrl+C again to stop now")
+
+    def check(self) -> bool:
+        return self.requested or self.stop_file.exists()
+
+
 @app.command()
 def run(source: str = typer.Option(...), gmag_max: float = 19.0,
         background_only: bool = typer.Option(True, "--background-only/--all"), psffrac_min: float = 0.5,
@@ -101,18 +120,28 @@ def run(source: str = typer.Option(...), gmag_max: float = 19.0,
     from skysift import pipeline
     src = _source(source, store, blob)
     _plain(console, f"period window: {s.thresholds.min_period_days:g} to {s.thresholds.max_period_days:g} days")
+    interrupt = InterruptOnce(lambda text: _plain(console, f"\n{text}"), stop_request_path(s.data_dir))
+    try:
+        previous = signal.signal(signal.SIGINT, interrupt)
+    except ValueError:                                  # not the main thread (embedding): Ctrl+C keeps its default
+        previous = None
     try:
         summary = pipeline.run(src, store, blob, s, filter={"gmag_max": gmag_max, "background_only": background_only,
                                                            "psffrac_min": psffrac_min},
                                detector_name=detector, max_targets=limit,
                                progress=lambda sm: _plain(
                                    console, f"processed {sm['processed']} signals {sm['signals']} outcomes {sm['outcomes']}",
-                                   end="\r"))
+                                   end="\r"),
+                               stop_requested=interrupt.check)
     except DiskBudgetExceeded as e:
         # an operator condition, not a crash: the work done so far on stdout, a plain message, exit code 3
         if getattr(e, "summary", None) is not None: _plain(_console(), jsonutil.dumps(e.summary, indent=1))
         _plain(console, f"\nstopped: {e}")
         raise typer.Exit(3) from None
+    finally:
+        if previous is not None: signal.signal(signal.SIGINT, previous)
+    if summary.get("stopped"):
+        _plain(console, "\nstopped early: the same command resumes with the targets not yet done")
     _plain(_console(), jsonutil.dumps(summary, indent=1))
 
 

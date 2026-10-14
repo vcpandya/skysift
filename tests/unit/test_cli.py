@@ -180,3 +180,44 @@ def test_status_reports_rungs_and_states(settings, tmp_path):
     assert r.exit_code == 0, r.output
     out = json.loads(r.stdout)
     assert out["targets_by_state"] == {"done": 3} and out["rung_counts"]["rung1_detection"]["pass"] == 3
+
+
+def test_run_passes_a_stop_check_that_sees_the_stop_file_and_the_first_ctrl_c(settings, monkeypatch):
+    import signal
+
+    from skysift import cli, pipeline
+    from skysift.config import stop_request_path
+
+    seen = {}
+
+    def stub(source, store, blob, settings, filter, **kw):
+        seen.update(**kw)
+        seen["handler"] = signal.getsignal(signal.SIGINT)        # installed while the sweep runs
+        return {"processed": 0, "skipped": 0, "errors": 0, "signals": 0}
+
+    monkeypatch.setattr(pipeline, "run", stub)
+    monkeypatch.setattr(cli, "_source", lambda name, store, blob: object())
+    before = signal.getsignal(signal.SIGINT)
+    r = CliRunner().invoke(app, ["run", "--source", "kbonus_bkg"])
+    assert r.exit_code == 0, r.output
+    assert signal.getsignal(signal.SIGINT) is before                  # restored after the sweep
+    check, handler = seen["stop_requested"], seen["handler"]
+    assert isinstance(handler, cli.InterruptOnce) and check() is False
+    handler(signal.SIGINT, None)                                       # first Ctrl+C: ask for a graceful stop
+    assert check() is True
+    with pytest.raises(KeyboardInterrupt):                             # second Ctrl+C: the hard stop
+        handler(signal.SIGINT, None)
+    path = stop_request_path(settings.data_dir)
+    path.parent.mkdir(parents=True, exist_ok=True); path.write_text("x", encoding="utf-8")
+    assert cli.InterruptOnce(lambda text: None, path).requested is False and seen["stop_requested"]() is True
+
+
+def test_first_ctrl_c_explains_itself(settings):
+    import signal
+
+    from skysift import cli
+    lines = []
+    h = cli.InterruptOnce(lines.append, settings.data_dir / "no-such-file")
+    h(signal.SIGINT, None)
+    assert h.requested and lines == ["stop requested: finishing in-flight targets, press Ctrl+C again to stop now"]
+    assert h.check() is True
