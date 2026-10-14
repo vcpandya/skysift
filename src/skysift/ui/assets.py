@@ -18,22 +18,31 @@ PLOTLY_SHA256 = "6d21266ce1bd7d9e5ab4e115989c70c20de0382fd973a8f26ab58619eba4d60
 
 
 def ensure_plotly(data_dir: Path, fetch=net.fetch) -> Path | None:
-    """Return the local Plotly file, downloading it on first use. Returns None (and logs why) when the network is
-    unavailable or the download does not match the recorded hash; the dashboard then runs without plots."""
+    """Return the local Plotly file, downloading it on first use. Never raises: returns None (and logs why) when the
+    network is unavailable, the download does not match the recorded hash or the data directory is unusable; the
+    dashboard then runs without plots."""
+    try:
+        return _ensure_plotly(data_dir, fetch)
+    except Exception:   # a missing plot bundle must never stop the dashboard from starting
+        log.exception("Plotly bundle unavailable; plots disabled")
+        return None
+
+
+def _ensure_plotly(data_dir: Path, fetch) -> Path | None:
     target = Path(data_dir) / "ui" / "assets" / "plotly.min.js"
     if target.exists():
         try:
             cached = hashlib.sha256(target.read_bytes()).hexdigest()
         except OSError as e:
             log.warning("cached Plotly %s is unreadable (%s); fetching it again", target, e)
-            cached = None
-        if cached == PLOTLY_SHA256:
-            return target
-        log.error("cached Plotly %s does not match the recorded hash; discarding it", target)
+        else:
+            if cached == PLOTLY_SHA256:
+                return target
+            log.error("cached Plotly %s does not match the recorded hash; discarding it", target)
         try:
             target.unlink()
         except OSError as e:
-            log.warning("could not remove the corrupt cached Plotly (%s); plots are disabled", e)
+            log.warning("could not remove the cached Plotly (%s); plots are disabled", e)
             return None
     try:
         data = fetch(PLOTLY_URL, service="plotly-cdn", timeout=120)
@@ -48,7 +57,10 @@ def ensure_plotly(data_dir: Path, fetch=net.fetch) -> Path | None:
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
         for stale in target.parent.glob("plotly.min.*.part"):   # left behind by an interrupted earlier start
-            stale.unlink(missing_ok=True)
+            try:
+                stale.unlink(missing_ok=True)
+            except OSError as e:
+                log.warning("could not remove stale partial download %s (%s); leaving it", stale, e)
         tmp.write_bytes(data)
         os.replace(tmp, target)
     except OSError as e:

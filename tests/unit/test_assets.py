@@ -89,6 +89,17 @@ def test_ensure_plotly_replaces_a_corrupt_cache(tmp_path, monkeypatch):
     assert ensure_plotly(tmp_path, fetch=offline) is None and not target.exists()
 
 
+def test_ensure_plotly_never_raises_even_when_the_data_dir_is_unusable(tmp_path, monkeypatch):
+    def no_access(self): raise PermissionError("data dir denied")
+    monkeypatch.setattr(assets.Path, "exists", no_access)
+    assert ensure_plotly(tmp_path, fetch=lambda url, *, service, **kw: b"x") is None
+    monkeypatch.undo()
+    blocker = tmp_path / "not-a-dir"; blocker.write_bytes(b"")     # ui/assets cannot be created under a file
+    body = b"/* plotly stub */ window.Plotly = {};"
+    monkeypatch.setattr(assets, "PLOTLY_SHA256", hashlib.sha256(body).hexdigest())
+    assert ensure_plotly(blocker, fetch=lambda url, *, service, **kw: body) is None
+
+
 def test_vendor_mount_serves_plotly_and_static_still_serves_htmx(settings, tmp_path):
     """Pins the mount order in create_app: /static/vendor must come before /static."""
     plotly = tmp_path / "plotly.min.js"
