@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}SkySift · Sources{% endblock %}
+{% block content %}
+<h1>Data sources</h1>
+{% if active %}<p class="status-running">A sweep of <strong>{{ active.request.source }}</strong> is running (pid {{ active.pid }}). <a href="/live">Watch it</a>.</p>{% endif %}
+<table>
+<thead><tr><th>source</th><th>status</th><th class="num">light curves</th><th class="num">baseline d</th><th class="num">cadence min</th>
+<th class="num">depth ppm</th><th class="num">searched</th><th class="num">yield/10k</th><th class="num">CPU h/10k</th><th class="num">GB/10k</th>
+<th>progress</th><th></th></tr></thead>
+<tbody>
+{% for r in rows %}
+<tr class="{{ 'muted' if r.info.status != 'live' else '' }}">
+  <td><strong>{{ r.info.name }}</strong><div class="muted">{{ r.info.agency }}</div></td>
+  <td>{{ r.info.status }}</td>
+  <td class="num">{{ r.info.n_lightcurves | fmt }}</td><td class="num">{{ r.info.baseline_days | fmt(0) }}</td>
+  <td class="num">{{ r.info.cadence_min | fmt(1) }}</td><td class="num">{{ r.info.depth_limit_ppm | fmt(0) }}</td>
+  <td class="num">{{ (r.info.fraction_searched * 100) | fmt(0) }}%</td><td class="num">{{ r.info.est_yield_per_10k | fmt(1) }}</td>
+  <td class="num">{{ r.cpu_h_per_10k | fmt(0) }}</td><td class="num">{{ r.gb_per_10k | fmt(1) }}</td>
+  <td>{% if r.info.status == 'live' %}{{ r.progress.done | fmt }} done · {{ r.progress.error | fmt }} error · {{ r.remaining | fmt }} remaining{% else %}<span class="muted">{{ r.info.notes }}</span>{% endif %}</td>
+  <td>{% if r.info.status == 'live' and not active %}<button hx-get="/partials/sweep-form?source={{ r.info.name }}" hx-target="#sweep-form" hx-swap="innerHTML">Start sweep</button>{% endif %}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+<div id="sweep-form"></div>
+{% endblock %}

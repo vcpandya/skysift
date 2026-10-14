@@ -11,3 +11,7 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "j") act("link-next");
   if (e.key === "k") act("link-prev");
 });
+// htmx does not swap 4xx responses by default; the start-sweep form answers 400/409 with the form plus its error message
+document.body.addEventListener("htmx:beforeSwap", (e) => {
+  if (e.detail.xhr.status === 400 || e.detail.xhr.status === 409) { e.detail.shouldSwap = true; e.detail.isError = false; }
+});

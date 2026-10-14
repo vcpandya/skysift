@@ -49,10 +49,11 @@ def _ctx(retention: str | None = None, workers_io: int | None = None, workers_cp
 
 
 def _source(name: str, store, blob):
-    if name == "kbonus_bkg":
-        from skysift.sources.kbonus_bkg import KBonusBkg
-        return KBonusBkg(blob, store)
-    raise typer.BadParameter(f"source {name} is not live yet; see `skysift sources`")
+    from skysift.sources.factory import make_source
+    try:
+        return make_source(name, store, blob)
+    except ValueError as e:
+        raise typer.BadParameter(str(e)) from e
 
 
 @app.command()
