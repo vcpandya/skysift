@@ -125,3 +125,11 @@ def test_attempts_ignore_service_outages(tmp_path):
     assert s.attempts("k") == 0 and s.error_capped_targets(3) == 0     # outages are not the target's fault
     s.finish_run(s.start_run("k", "t", "box_dip", "1+abcdef01", "1"), "error", "ValueError('bad fits')")
     assert s.attempts("k") == 1
+
+
+def test_log_query_records_target(tmp_path):
+    s = make_store(tmp_path)
+    s.log_query("mast", "https://x", {}, 200, 5, target_id="kic-1")
+    with s.session() as ses:
+        from skysift.store.db import QueryRow
+        assert ses.query(QueryRow).one().target_id == "kic-1"

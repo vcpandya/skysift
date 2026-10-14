@@ -63,6 +63,7 @@ class RunRow(Base):
     finished: Mapped[datetime | None] = mapped_column(DateTime)
     status: Mapped[str] = mapped_column(String(16), default="running")   # running|done|error
     error: Mapped[str] = mapped_column(Text, default="")
+    periodogram_sha256: Mapped[str | None] = mapped_column(String(64))
 
 
 # an 'error' run counts as an attempt unless it was superseded (interrupted sweep) or a service outage
@@ -104,6 +105,18 @@ class CandidateRow(Base):
     status: Mapped[str] = mapped_column(String(16), default="review")   # review|approved|rejected|published
     pack_path: Mapped[str] = mapped_column(Text, default=""); doi: Mapped[str] = mapped_column(String(64), default="")
     note: Mapped[str] = mapped_column(Text, default="")
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
+class DecisionRow(Base):
+    """Append-only operator decisions; the candidate row carries only the current state."""
+    __tablename__ = "decisions"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    signal_id: Mapped[int] = mapped_column(ForeignKey("signals.id"), index=True)
+    decision: Mapped[str] = mapped_column(String(16))        # approve|reject|needs_data
+    note: Mapped[str] = mapped_column(Text, default="")
+    who: Mapped[str] = mapped_column(String(64), default="operator")
+    utc: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
 class ArtifactRow(Base):
@@ -115,6 +128,7 @@ class ArtifactRow(Base):
     created: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     last_used: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime)
+    kind: Mapped[str] = mapped_column(String(16), default="raw", server_default="raw")
 
 
 class QueryRow(Base):
@@ -124,6 +138,7 @@ class QueryRow(Base):
     params: Mapped[str] = mapped_column(Text); utc: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     status: Mapped[int | None] = mapped_column(Integer); nbytes: Mapped[int] = mapped_column(Integer, default=0)
     sha256: Mapped[str | None] = mapped_column(String(64)); error: Mapped[str] = mapped_column(Text, default="")
+    target_id: Mapped[str | None] = mapped_column(String(64), index=True)
 
 
 class Store:
@@ -141,7 +156,9 @@ class Store:
             self.engine = create_engine(database_url, future=True, json_serializer=jsonutil.dumps)
 
     def init_schema(self) -> None:
+        from skysift.store import migrations
         Base.metadata.create_all(self.engine)
+        migrations.migrate(self.engine)
 
     @contextmanager
     def session(self):
@@ -249,7 +266,7 @@ class Store:
                 utc = datetime.fromisoformat(q["utc"]) if q.get("utc") else utcnow()
                 s.add(QueryRow(service=q["service"], url=q["url"], params=jsonutil.dumps(q.get("params") or {}, default=str),
                                status=q.get("status"), nbytes=q.get("nbytes") or 0, sha256=q.get("sha256"),
-                               error=q.get("error") or "", utc=utc))
+                               error=q.get("error") or "", utc=utc, target_id=target_id))
             if pin_evidence:
                 for a in s.scalars(select(ArtifactRow).where(ArtifactRow.target_id == target_id,
                                                               ArtifactRow.deleted_at.is_(None))):
@@ -258,18 +275,22 @@ class Store:
             s.get(TargetRow, target_id).state = "done"
         return counts
 
-    def add_artifact(self, sha256, nbytes, url, local_path, target_id=None, pinned=False) -> None:
+    def add_artifact(self, sha256, nbytes, url, local_path, target_id=None, pinned=False, kind="raw") -> None:
         """Record a stored file. A known sha256 is resurrected: a row retention marked deleted describes a file that is
         back on disk after a re-fetch, so it must be counted, released and evictable again."""
         with self.session() as s:
-            row = s.get(ArtifactRow, sha256)
-            if row is None:
-                s.add(ArtifactRow(sha256=sha256, nbytes=nbytes, url=url, local_path=local_path, target_id=target_id, pinned=pinned))
-                return
-            if row.deleted_at is not None: row.pinned = False      # a deleted row's old pin protects nothing
-            row.deleted_at, row.local_path, row.nbytes, row.last_used = None, local_path, nbytes, utcnow()
-            if target_id is not None: row.target_id = target_id
-            if pinned: row.pinned = True
+            self._upsert_artifact(s, sha256, nbytes, url, local_path, target_id, pinned, kind)
+
+    def _upsert_artifact(self, s: Session, sha256, nbytes, url, local_path, target_id, pinned, kind) -> None:
+        row = s.get(ArtifactRow, sha256)
+        if row is None:
+            s.add(ArtifactRow(sha256=sha256, nbytes=nbytes, url=url, local_path=local_path, target_id=target_id,
+                              pinned=pinned, kind=kind))
+            return
+        if row.deleted_at is not None: row.pinned = False      # a deleted row's old pin protects nothing
+        row.deleted_at, row.local_path, row.nbytes, row.last_used, row.kind = None, local_path, nbytes, utcnow(), kind
+        if target_id is not None: row.target_id = target_id
+        if pinned: row.pinned = True
 
     def touch_artifact(self, sha256: str) -> None:
         with self.session() as s:
@@ -280,15 +301,17 @@ class Store:
         with self.session() as s:
             s.get(ArtifactRow, sha256).deleted_at = utcnow()
 
-    def unpinned_artifacts(self, target_id: str | None = None, exclude_targets: set[str] | None = None) -> list[dict]:
+    def unpinned_artifacts(self, target_id: str | None = None, exclude_targets: set[str] | None = None,
+                           kind: str | None = None) -> list[dict]:
         """Live unpinned artifacts, least recently used first; ``exclude_targets`` leaves out in-flight targets' files."""
         with self.session() as s:
             q = select(ArtifactRow).where(ArtifactRow.pinned.is_(False), ArtifactRow.deleted_at.is_(None))
             if target_id: q = q.where(ArtifactRow.target_id == target_id)
             if exclude_targets:
                 q = q.where(ArtifactRow.target_id.is_(None) | ArtifactRow.target_id.not_in(sorted(exclude_targets)))
+            if kind: q = q.where(ArtifactRow.kind == kind)
             return [{"sha256": a.sha256, "nbytes": a.nbytes, "local_path": a.local_path, "url": a.url,
-                     "last_used": a.last_used, "target_id": a.target_id}
+                     "last_used": a.last_used, "target_id": a.target_id, "kind": a.kind}
                     for a in s.scalars(q.order_by(ArtifactRow.last_used))]
 
     def pin_target_artifacts(self, target_id: str) -> None:
@@ -297,10 +320,10 @@ class Store:
                                                           ArtifactRow.deleted_at.is_(None))):
                 a.pinned = True
 
-    def log_query(self, service, url, params: dict, status, nbytes, sha256=None, error="") -> None:
+    def log_query(self, service, url, params: dict, status, nbytes, sha256=None, error="", target_id=None) -> None:
         with self.session() as s:
             s.add(QueryRow(service=service, url=url, params=jsonutil.dumps(params, default=str), status=status,
-                           nbytes=nbytes, sha256=sha256, error=error))
+                           nbytes=nbytes, sha256=sha256, error=error, target_id=target_id))
 
     def counts(self) -> dict:
         with self.session() as s:

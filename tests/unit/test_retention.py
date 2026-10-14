@@ -83,3 +83,13 @@ def test_budget_evicts_lru_and_raises_when_all_pinned(tmp_path):
     put(st, b, "t4", b"d" * 20); st.pin_target_artifacts("t4")
     with pytest.raises(DiskBudgetExceeded):
         r.enforce_budget()
+
+
+def test_stream_keeps_summary_artifacts(tmp_path):
+    st, b, r = setup(tmp_path, "stream")
+    _, raw = put(st, b, "t1", b"raw" * 10)
+    sha, loc = b.put(b"npz" * 10, "t1_periodogram.npz")
+    st.add_artifact(sha, 30, "skysift://periodogram/t1", loc, "t1", kind="summary")
+    assert r.release_target("t1") == 30 and not b.exists(raw) and b.exists(loc)
+    assert [a["kind"] for a in st.unpinned_artifacts("t1")] == ["summary"]
+    assert st.unpinned_artifacts("t1", kind="raw") == []

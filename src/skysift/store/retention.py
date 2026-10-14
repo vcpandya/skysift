@@ -47,9 +47,11 @@ class Retention:
         return art["nbytes"]
 
     def release_target(self, target_id: str) -> int:
+        """Stream mode: delete the target's unpinned raw files once its run is written. Summaries (periodogram
+        envelopes, a few kB) stay: they are the null set the threshold calibration needs and are evicted only by budget."""
         if self.policy.mode != "stream":
             return 0
-        return sum(self._delete(a) for a in self.store.unpinned_artifacts(target_id))
+        return sum(self._delete(a) for a in self.store.unpinned_artifacts(target_id, kind="raw"))
 
     def cached_bytes(self) -> int:
         return sum(a["nbytes"] for a in self.store.unpinned_artifacts()) + self._pinned_bytes()
