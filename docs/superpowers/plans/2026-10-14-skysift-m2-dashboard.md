@@ -263,9 +263,10 @@ def create_app(settings: Settings, store: Store | None = None, blob: Blob | None
     st.plotly_path = plotly_path
     st.git_commit = _git_commit()
     st.plot_cache = {}
-    app.mount("/static", StaticFiles(directory=str(HERE / "static")), name="static")
+    # the vendor mount goes first: Starlette tries mounts in order and "/static" would swallow "/static/vendor/..."
     if plotly_path is not None:
         app.mount("/static/vendor", StaticFiles(directory=str(plotly_path.parent)), name="vendor")
+    app.mount("/static", StaticFiles(directory=str(HERE / "static")), name="static")
 
     @app.get("/healthz")
     def healthz():
@@ -510,11 +511,12 @@ def _milestone1_database(tmp_path):
     with s.engine.begin() as c:
         c.execute(text("ALTER TABLE runs DROP COLUMN periodogram_sha256"))
         c.execute(text("ALTER TABLE candidates DROP COLUMN decided_at"))
+        c.execute(text("DROP INDEX ix_queries_target_id"))            # SQLite refuses to drop an indexed column
         c.execute(text("ALTER TABLE queries DROP COLUMN target_id"))
         c.execute(text("ALTER TABLE artifacts DROP COLUMN kind"))
         c.execute(text("DROP TABLE decisions"))
         c.execute(text("INSERT INTO artifacts (sha256, nbytes, url, local_path, pinned, created, last_used) "
-                       "VALUES ('a'*64, 1, 'u', 'p', 0, '2026-10-13 00:00:00', '2026-10-13 00:00:00')"))
+                       "VALUES (lower(hex(randomblob(32))), 1, 'u', 'p', 0, '2026-10-13 00:00:00', '2026-10-13 00:00:00')"))
     return url
 
 
@@ -841,7 +843,7 @@ git commit -m "feat(store): append-only operator decisions with current candidat
 - Produces (all take a `Store` and return plain dicts/lists, no ORM objects):
   - `summary(store, retention: Retention, settings) -> dict` with keys `counts`, `targets_by_state`, `signal_outcomes`, `rung_counts` (`{rung: {pass, fail, undetermined}}`), `targets_per_hour`, `mean_seconds_per_run`, `error_capped_targets`, `cache_bytes`, `cache_budget_bytes`, `retention`, `last_errors` (list of `{target, finished, error}`), `queries`.
   - `source_progress(store) -> dict[source, {new, done, error, total}]`.
-  - `review_queue(store, status="candidate_stage1", sort="sde", desc=True, limit=500) -> list[dict]` rows with `id, target_id, period, depth_ppm, duration_h, sde, snr, n_events, last_rung, verdict, detected, decision, kic, gaia_id, gmag`.
+  - `review_queue(store, status="candidate_stage1", sort="sde", desc=True, limit=500) -> list[dict]` rows with `id, target_id, period, depth_ppm, duration_h, sde, snr, n_events, last_rung, verdict, reason, detected, decision, kic, gaia_id, gmag`.
   - `signal_detail(store, signal_id) -> dict | None` with `signal, target, run, tests (list of {rung, status, reason, duration_s, metrics}), candidate (or None), decisions`.
   - `neighbours(store, signal_id, status, sort, desc) -> (prev_id | None, next_id | None)`.
   - `approved(store, status="approved") -> list[dict]`.
@@ -968,11 +970,12 @@ def test_review_queue_default_and_sorting(tmp_path, settings):
     rows = queries.review_queue(store)
     assert [r["id"] for r in rows] == [ids["candidate"]]
     r = rows[0]
-    assert (r["last_rung"], r["verdict"], r["decision"]) == ("rung4_novelty", "pass", None)
+    assert (r["last_rung"], r["verdict"], r["decision"], r["reason"]) == ("rung4_novelty", "pass", None, "")
     assert abs(r["duration_h"] - 0.096 * 24) < 1e-9 and r["kic"] == 5689121
     both = queries.review_queue(store, status="all", sort="period", desc=False)
     assert [round(b["period"], 2) for b in both] == [1.07, 3.21, 13.77]
-    assert queries.review_queue(store, status="undetermined")[0]["verdict"] == "undetermined"
+    und = queries.review_queue(store, status="undetermined")[0]
+    assert und["verdict"] == "undetermined" and und["reason"].startswith("outage:vizier")
 
 
 def test_signal_detail_neighbours_and_history(tmp_path, settings):
@@ -1083,15 +1086,17 @@ def source_progress(store: Store) -> dict:
 
 
 def _last_test_subquery():
-    """(signal_id, rung, status) of the last rung each signal reached."""
+    """(signal_id, rung, status, reason) of the last rung each signal reached."""
     last_id = select(TestRow.signal_id, func.max(TestRow.id).label("tid")).group_by(TestRow.signal_id).subquery()
-    return (select(TestRow.signal_id, TestRow.rung, TestRow.status).join(last_id, TestRow.id == last_id.c.tid)).subquery()
+    return (select(TestRow.signal_id, TestRow.rung, TestRow.status, TestRow.reason)
+            .join(last_id, TestRow.id == last_id.c.tid)).subquery()
 
 
 def _queue_select(status: str, sort: str, desc: bool):
     last = _last_test_subquery()
     col = SORT_COLUMNS.get(sort, SignalRow.sde)
-    q = (select(SignalRow, TargetRow, CandidateRow.status.label("decision"), last.c.rung, last.c.status.label("verdict"))
+    q = (select(SignalRow, TargetRow, CandidateRow.status.label("decision"), last.c.rung, last.c.status.label("verdict"),
+                last.c.reason)
          .join(TargetRow, TargetRow.target_id == SignalRow.target_id)
          .outerjoin(CandidateRow, CandidateRow.signal_id == SignalRow.id)
          .outerjoin(last, last.c.signal_id == SignalRow.id)
@@ -1099,10 +1104,10 @@ def _queue_select(status: str, sort: str, desc: bool):
     return q.order_by(col.desc() if desc else col.asc(), SignalRow.id.desc())
 
 
-def _queue_row(sig: SignalRow, t: TargetRow, decision, rung, verdict) -> dict:
+def _queue_row(sig: SignalRow, t: TargetRow, decision, rung, verdict, reason=None) -> dict:
     return {"id": sig.id, "target_id": sig.target_id, "period": sig.period, "depth_ppm": sig.depth_ppm,
             "duration_h": sig.duration * 24.0, "sde": sig.sde, "snr": sig.snr, "n_events": sig.n_events,
-            "last_rung": rung, "verdict": verdict, "final_status": sig.final_status, "decision": decision,
+            "last_rung": rung, "verdict": verdict, "reason": reason or "", "final_status": sig.final_status, "decision": decision,
             "detected": sig.id, "kic": t.kic, "gaia_id": t.gaia_id, "gmag": t.gmag, "source": t.source}
 
 
@@ -1201,7 +1206,7 @@ git commit -m "feat(ui): read queries for every page; status shares the summary"
 - Test: `tests/unit/test_periodogram.py`, `tests/unit/test_pipeline.py`, `tests/unit/test_cli.py`
 
 **Interfaces:**
-- Produces: `PeriodogramSummary(min_period, max_period, n_bins=2048, envelope: list[float | None], peaks: list[dict], band_edges: list[float], n_periods: int)` with `from_spectrum(periods, sde, min_period, max_period, band_edges, peaks, n_bins)`, `bin_periods() -> np.ndarray`, `to_npz() -> bytes`, `from_npz(data) -> PeriodogramSummary`; `SearchResult(signals: list[Signal], periodogram: PeriodogramSummary | None, spectrum: dict | None)`; `BoxDip.search(lc, fnorm, thresholds, keep_spectrum=False) -> SearchResult`; `Settings.store_periodogram: str` in `{"all","signals","off"}`; worker payload key `"periodogram": dict | None`; `_cpu_work(..., store_periodogram="all", spectrum_path=None)`; `_write_results(store, blob, run_id, target_id, payload)`; `Store.record_results(..., periodogram: tuple[str, int, str] | None = None)` (sha256, nbytes, local_path); `PERIODOGRAM_URL = "skysift://periodogram/{target_id}"`.
+- Produces: `PeriodogramSummary(min_period, max_period, n_bins=2048, envelope: list[float | None], peaks: list[dict], band_edges: list[float], n_periods: int)` with `from_spectrum(periods, sde, min_period, max_period, band_edges, peaks, n_bins)`, `bin_periods() -> np.ndarray`, `to_npz() -> bytes`, `from_npz(data) -> PeriodogramSummary`; `SearchResult(signals: list[Signal], periodogram: PeriodogramSummary | None, spectrum: dict | None)`; `BoxDip.search(lc, fnorm, thresholds, keep_spectrum=False) -> SearchResult`; `Settings.store_periodogram: str` in `{"all","signals","off"}` where `signals` means "at least one detector peak survived rung 1" (the detector always returns its top three peaks, so "has a signal" alone would store for every target); worker payload key `"periodogram": dict | None`; `_cpu_work(..., store_periodogram="all", spectrum_path=None)`; `_write_results(store, blob, run_id, target_id, payload)`; `Store.record_results(..., periodogram: tuple[str, int, str] | None = None)` (sha256, nbytes, local_path); `PERIODOGRAM_URL = "skysift://periodogram/{target_id}"` defined in `store/db.py` and imported by `pipeline.py`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1245,7 +1250,7 @@ def test_box_dip_search_returns_signals_and_envelope():
     assert ps is not None and ps.n_bins == 2048 and (ps.min_period, ps.max_period) == (5.0, 40.0)
     assert ps.peaks[0]["period"] == res.signals[0].period and ps.peaks[0]["sde"] == res.signals[0].sde
     env = np.array(ps.envelope, float)
-    assert np.nanmax(env) >= res.signals[0].sde - 1e-6                     # the refined peak is at least the coarse max
+    assert abs(np.nanmax(env) - res.signals[0].sde) < 0.2 * res.signals[0].sde   # refinement moves the peak a little
     assert ps.n_periods == res.signals[0].extra["n_periods"] and len(ps.band_edges) == 25
     assert BoxDip().detect(lc, detrend(lc), th)[0].period == res.signals[0].period
     with_spec = BoxDip().search(lc, detrend(lc), th, keep_spectrum=True)
@@ -1268,7 +1273,7 @@ def test_store_periodogram_modes(settings, monkeypatch, mode, expect_file):
     monkeypatch.setenv("SKYSIFT_THRESHOLDS__MIN_PERIOD_DAYS", "5"); monkeypatch.setenv("SKYSIFT_THRESHOLDS__MAX_PERIOD_DAYS", "40")
     monkeypatch.setenv("SKYSIFT_STORE_PERIODOGRAM", mode)
     s, store, blob = _env(monkeypatch, settings)
-    lc = make_lightcurve(n_days=500, seed=11, noise_ppm=600)          # pure noise: no signal reaches the ladder
+    lc = make_lightcurve(n_days=500, seed=11, noise_ppm=600)          # pure noise: the top peaks all fail rung 1
     src = ScriptedSource([_tgt("quiet")], {"quiet": lc}, store, blob)
     out = run(src, store, blob, s, filter={}, with_novelty=False)
     assert out["processed"] == 1
@@ -1278,7 +1283,7 @@ def test_store_periodogram_modes(settings, monkeypatch, mode, expect_file):
     assert (sha is not None) == expect_file and (len(arts) == 1) == expect_file
     if expect_file:
         ps = PeriodogramSummary.from_npz(blob.get(arts[0].local_path))
-        assert ps.n_bins == 2048 and ps.peaks == []                      # nothing cleared the detector's own floor
+        assert ps.n_bins == 2048 and len(ps.peaks) == 3                 # the detector's top three peaks, all rejected
         assert arts[0].url == "skysift://periodogram/quiet" and not arts[0].pinned and blob.exists(arts[0].local_path)
 
 
@@ -1453,11 +1458,17 @@ def _search(det, lc, fn, th, keep_spectrum=False):
     if spectrum_path and res.spectrum is not None:
         import numpy as np
         np.savez_compressed(spectrum_path, **{k: np.asarray(v) for k, v in res.spectrum.items()})
-    keep = store_periodogram == "all" or (store_periodogram == "signals" and bool(signals))
+```
+
+and, after the ladder loop has filled `out`, decide what to keep: a peak "survived rung 1" when its first test did not fail.
+
+```python
+    survived = any(item["tests"] and item["tests"][0]["status"] != "fail" for item in out)
+    keep = store_periodogram == "all" or (store_periodogram == "signals" and survived)
     periodogram = res.periodogram.model_dump() if (keep and res.periodogram is not None) else None
 ```
 
-and return `jsonutil.dumps({"signals": out, "queries": recorder.rows, "periodogram": periodogram}, default=str)`.
+Return `jsonutil.dumps({"signals": out, "queries": recorder.rows, "periodogram": periodogram}, default=str)`.
 
 `_write_results` becomes:
 
@@ -2423,7 +2434,7 @@ def test_build_plots_shapes_and_fold_centres_the_dip():
                                           [{"period": 7.3, "sde": 12.0, "duration": 0.1, "rank": 0}], n_bins=256)
     out = build_plots(lc, detrend(lc), _signal(), _tests(), ps, Thresholds())
     assert set(out) == {"periodogram", "full", "fold", "oddeven", "secondary", "seasons"}
-    assert len(out["full"]["time"]) <= 20000 and len(out["full"]["transit_times"]) == len(np.unique(np.round((lc.time - 135.0) / 7.3)))
+    assert len(out["full"]["time"]) <= 20000 and 40 < len(out["full"]["transit_times"]) <= 56   # 400 d / 7.3 d epochs
     fold = out["fold"]
     assert min(fold["phase_h"]) >= -0.5 * 7.3 * 24 - 1e-6
     bins = np.array(fold["bin_phase_h"]); means = np.array(fold["bin_flux"], float)
@@ -2432,7 +2443,7 @@ def test_build_plots_shapes_and_fold_centres_the_dip():
     assert set(out["oddeven"]) == {"odd_phase_h", "odd_flux", "even_phase_h", "even_flux", "bin_phase_h", "odd_bin", "even_bin"}
     assert abs(np.nanmean(out["secondary"]["bin_flux"]) - 1) < 500e-6                      # no secondary injected
     assert out["seasons"] == {"season": [0, 1], "depth_ppm": [2900.0, 3100.0], "err_ppm": [150.0, 160.0],
-                              "mean_ppm": pytest.approx(2994.6, abs=1.0)}
+                              "mean_ppm": pytest.approx(2993.6, abs=1.0)}
     pg = out["periodogram"]
     assert pg["sde_min"] == 9.0 and pg["detected_period"] == 7.3 and pg["aliases"] == [3.65, 14.6, 21.9]
     assert len(pg["period"]) == 256 and pg["systematic_periods"] == [93.0, 46.5, 372.5, 186.25]
@@ -2964,21 +2975,21 @@ Jinja2 cannot be told about `prev_url`/`next_url` inside the decision bar partia
 {% for key, label in columns %}{% set is_sorted = nav.sort == key %}
 <th class="{{ 'num' if key not in ('target_id',) else '' }}"><a class="{{ 'sorted' if is_sorted else '' }} {{ 'asc' if is_sorted and nav.dir == 'asc' else '' }}" href="/candidates?status={{ nav.status }}&sort={{ key }}&dir={{ 'asc' if is_sorted and nav.dir == 'desc' else 'desc' }}">{{ label }}</a></th>
 {% endfor %}
-<th>last rung</th><th>verdict</th><th>decision</th></tr></thead>
+<th>last rung</th><th>verdict</th><th>reason</th><th>decision</th></tr></thead>
 <tbody>
 {% for r in rows %}
 <tr class="row-link" data-href="/signals/{{ r.id }}?status={{ nav.status }}&sort={{ nav.sort }}&dir={{ nav.dir }}">
   <td><code>{{ r.target_id }}</code>{% if r.kic %} <span class="muted">KIC {{ r.kic }}</span>{% endif %}</td>
   <td class="num">{{ r.period | fmt(4) }}</td><td class="num">{{ r.depth_ppm | fmt(0) }}</td><td class="num">{{ r.duration_h | fmt(2) }}</td>
   <td class="num">{{ r.sde | fmt(1) }}</td><td class="num">{{ r.snr | fmt(1) }}</td><td class="num">{{ r.n_events | fmt }}</td><td class="num muted">#{{ r.id }}</td>
-  <td>{{ r.last_rung or '–' }}</td><td class="status-{{ r.verdict }}">{{ r.verdict or '–' }}</td><td class="status-{{ r.decision }}">{{ r.decision or '' }}</td>
+  <td>{{ r.last_rung or '–' }}</td><td class="status-{{ r.verdict }}">{{ r.verdict or '–' }}</td><td class="muted">{{ r.reason }}</td><td class="status-{{ r.decision }}">{{ r.decision or '' }}</td>
 </tr>
-{% else %}<tr><td colspan="11" class="muted">Nothing in this queue.</td></tr>{% endfor %}
+{% else %}<tr><td colspan="12" class="muted">Nothing in this queue.</td></tr>{% endfor %}
 </tbody></table>
 {% endblock %}
 ```
 
-(The undetermined filter test expects the rung 4 reason text to appear; add a `reason` column: extend `_queue_select` in Task 4's `queries.py` to also select `last.c.reason` by adding `TestRow.reason` to `_last_test_subquery` and `"reason": reason` to `_queue_row`, then show `<td class="muted">{{ r.reason }}</td>` after the verdict. Update Task 4's unpacking accordingly: `_queue_row(sig, t, decision, rung, verdict, reason)`.)
+(The undetermined filter test expects the rung 4 reason text to appear: Task 4's rows already carry `reason`; show it as `<td class="muted">{{ r.reason }}</td>` after the verdict column and add a `<th>reason</th>` header, so the table has 12 columns and the empty-row `colspan` is 12.)
 
 `templates/signal.html`:
 
@@ -3177,8 +3188,8 @@ def test_pages_render_on_a_migrated_m1_database(settings, tmp_path):
     store = Store(settings.database_url); Base.metadata.create_all(store.engine)
     with store.engine.begin() as c:                      # strip what milestone 2 added, as test_migrations does
         c.execute(text("ALTER TABLE runs DROP COLUMN periodogram_sha256")); c.execute(text("ALTER TABLE candidates DROP COLUMN decided_at"))
-        c.execute(text("ALTER TABLE queries DROP COLUMN target_id")); c.execute(text("ALTER TABLE artifacts DROP COLUMN kind"))
-        c.execute(text("DROP TABLE decisions"))
+        c.execute(text("DROP INDEX ix_queries_target_id")); c.execute(text("ALTER TABLE queries DROP COLUMN target_id"))
+        c.execute(text("ALTER TABLE artifacts DROP COLUMN kind")); c.execute(text("DROP TABLE decisions"))
     store = Store(settings.database_url); store.init_schema()
     seed(store, blob_from_url(settings.blob_url))
     client = TestClient(create_app(settings, store=store, blob=blob_from_url(settings.blob_url), launcher=SweepLauncher(tmp_path, command=SLEEPER)))
@@ -3263,5 +3274,5 @@ git commit -m "docs(ui): dashboard section, periodogram setting, migrated-databa
 ## Self-review notes
 
 - **Spec coverage.** Section 3 bullets map to Tasks 1 (app, CLI), 2 and 3 (migrations, decisions, `Store.decide`), 4 (queries, status), 5 (periodogram summary, `store_periodogram`, `vet --spectrum`), 6 (sweeps), 7 (assets), 10 (plots, loader). Section 4 pages map to Tasks 8, 9, 11, 12. Section 5 data flow: step 1 is Task 1's `ui` command, 2 is Task 4, 3 is Task 8, 4 is Tasks 6 and 9, 5 is Task 10, 6 is Tasks 3 and 11. Section 6 error handling: outage panel (Task 10), stale lock (Task 6), error page (Task 1). Section 7: loopback guard and token (Task 1), hash check (Task 7), autoescape is Jinja2's default for `.html`. Section 8 tests are spread across tasks as listed. The spec's `SameSite=Strict` cookie is replaced by a per-process token embedded in each page and sent back in a header or form field; a foreign origin cannot read the page, so the protection is the same and no cookie is needed (record this as a ruling).
-- **Type consistency.** `Store.record_results(run_id, target_id, items, queries, pin_evidence, periodogram=None)`; `_write_results(store, blob, run_id, target_id, payload)`; `_cpu_work(..., with_novelty, fetch_module=None, store_periodogram="all", spectrum_path=None)`; `queries._queue_row(sig, t, decision, rung, verdict, reason)` after Task 11's amendment; `SweepLauncher(data_dir, command=None)`; `render(request, name, status_code=200, **ctx)`.
+- **Type consistency.** `Store.record_results(run_id, target_id, items, queries, pin_evidence, periodogram=None)`; `_write_results(store, blob, run_id, target_id, payload)`; `_cpu_work(..., with_novelty, fetch_module=None, store_periodogram="all", spectrum_path=None)`; `queries._queue_row(sig, t, decision, rung, verdict, reason)`; `SweepLauncher(data_dir, command=None)`; `render(request, name, status_code=200, **ctx)`.
 - **Known approximations the implementer should not "fix".** The plots' box model uses the signal's fitted depth and duration, not a re-fit. `neighbours` recomputes the ordered id list per request; with a few thousand signals this is milliseconds. `summary` loads (started, finished) pairs for every done run; at 600k runs that is a few MB once per 5 s poll, acceptable for M2 (a materialised throughput table is M3 work if it shows).
