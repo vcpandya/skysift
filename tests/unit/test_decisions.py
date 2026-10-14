@@ -1,0 +1,57 @@
+import pytest
+
+from skysift.models import Signal, Target
+from skysift.store.db import CandidateRow, DecisionRow, SignalRow, Store, make_job_key
+
+
+def _store_with_signal(tmp_path):
+    s = Store(f"sqlite:///{tmp_path.as_posix()}/t.db"); s.init_schema()
+    s.upsert_target(Target(source="kbonus_bkg", target_id="kic-1", ra=0, dec=0))
+    rid = s.start_run(make_job_key("kic-1", "box_dip", "1+0", "1"), "kic-1", "box_dip", "1+0", "1")
+    sig = Signal(target_id="kic-1", detector="box_dip", detector_version="1+0", period=3.0, t0=1.0, duration=0.1,
+                 depth_ppm=800, snr=12, sde=11, n_events=9)
+    sid = s.add_signal(sig, rid); s.set_signal_status(sid, "candidate_stage1")
+    return s, sid
+
+
+def test_approve_creates_candidate_and_history(tmp_path):
+    s, sid = _store_with_signal(tmp_path)
+    out = s.decide(sid, "approve", "clean fold, no secondary")
+    assert out["status"] == "approved" and out["final_status"] == "candidate_stage1" and out["decided_at"]
+    with s.session() as ses:
+        c = ses.query(CandidateRow).one()
+        assert (c.status, c.note, c.branch) == ("approved", "clean fold, no secondary", "planet") and c.decided_at
+        assert ses.query(DecisionRow).count() == 1
+    assert s.decisions(sid)[0]["decision"] == "approve"
+
+
+def test_reject_requires_note_and_marks_signal(tmp_path):
+    s, sid = _store_with_signal(tmp_path)
+    with pytest.raises(ValueError):
+        s.decide(sid, "reject", "   ")
+    s.decide(sid, "reject", "odd/even differ by 4 sigma")
+    with s.session() as ses:
+        assert ses.get(SignalRow, sid).final_status == "rejected"
+        assert ses.query(CandidateRow).one().status == "rejected"
+
+
+def test_revisit_appends_history_and_moves_state(tmp_path):
+    s, sid = _store_with_signal(tmp_path)
+    s.decide(sid, "reject", "looked like an EB")
+    s.decide(sid, "approve", "secondary was a data gap artefact")
+    hist = s.decisions(sid)
+    assert [h["decision"] for h in hist] == ["approve", "reject"]          # newest first
+    with s.session() as ses:
+        assert ses.query(CandidateRow).count() == 1                          # one candidate row per signal
+        assert ses.query(CandidateRow).one().status == "approved"
+        assert ses.get(SignalRow, sid).final_status == "candidate_stage1"   # back in the queue's status space
+    s.decide(sid, "needs_data", "wait for rung 5")
+    with s.session() as ses:
+        assert ses.query(CandidateRow).one().status == "review"
+    assert len(s.decisions(sid)) == 3
+
+
+def test_unknown_decision_or_signal(tmp_path):
+    s, sid = _store_with_signal(tmp_path)
+    with pytest.raises(ValueError): s.decide(sid, "delete")
+    with pytest.raises(KeyError): s.decide(sid + 99, "approve")

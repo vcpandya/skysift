@@ -1,5 +1,5 @@
 from skysift.models import Signal, Target, TestResult, TestStatus
-from skysift.store.db import Store, make_job_key
+from skysift.store.db import ArtifactRow, Store, make_job_key
 
 
 def make_store(tmp_path):
@@ -133,3 +133,18 @@ def test_log_query_records_target(tmp_path):
     with s.session() as ses:
         from skysift.store.db import QueryRow
         assert ses.query(QueryRow).one().target_id == "kic-1"
+
+
+def test_readd_without_kind_keeps_summary(tmp_path):
+    s = make_store(tmp_path)
+    sha = "cd" * 32
+    s.add_artifact(sha, 10, "https://x/s.json", "/tmp/s.json", "kic-1", kind="summary")
+    s.add_artifact(sha, 12, "https://x/s.json", "/tmp/s.json", "kic-1")        # kind not given: keep it
+    with s.session() as ses:
+        assert ses.get(ArtifactRow, sha).kind == "summary"
+    s.add_artifact(sha, 12, "https://x/s.json", "/tmp/s.json", "kic-1", kind="raw")
+    with s.session() as ses:
+        assert ses.get(ArtifactRow, sha).kind == "raw"
+    s.add_artifact("ef" * 32, 1, "u", "p", "kic-1")
+    with s.session() as ses:
+        assert ses.get(ArtifactRow, "ef" * 32).kind == "raw"                      # new rows default to raw

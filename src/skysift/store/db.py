@@ -23,6 +23,7 @@ from skysift import jsonutil
 from skysift.models import Signal, Target, TestResult
 
 FINAL_STATUS = {"pass": "candidate_stage1", "fail": "rejected", "undetermined": "undetermined"}
+DECISION_STATUS = {"approve": "approved", "reject": "rejected", "needs_data": "review"}
 
 
 def utcnow() -> datetime:
@@ -237,6 +238,38 @@ class Store:
             row = s.get(SignalRow, signal_id); row.final_status = final_status
             if branch: row.branch = branch
 
+    def decide(self, signal_id: int, decision: str, note: str = "", who: str = "operator") -> dict:
+        """Record an operator decision in one transaction: append a decisions row and move the candidate row to
+        the new current state. Nothing is deleted; a later decision appends another row. A rejection needs a note
+        and marks the signal rejected; approving or asking for data after a rejection returns the signal to the
+        candidate status so the queue and the approved list agree."""
+        if decision not in DECISION_STATUS:
+            raise ValueError(f"unknown decision {decision!r}; one of {sorted(DECISION_STATUS)}")
+        if decision == "reject" and not note.strip():
+            raise ValueError("a rejection needs a note saying why")
+        now = utcnow()
+        with self.session() as s:
+            sig = s.get(SignalRow, signal_id)
+            if sig is None:
+                raise KeyError(signal_id)
+            s.add(DecisionRow(signal_id=signal_id, decision=decision, note=note, who=who, utc=now))
+            cand = s.scalars(select(CandidateRow).where(CandidateRow.signal_id == signal_id)).first()
+            if cand is None:
+                cand = CandidateRow(signal_id=signal_id, branch=sig.branch); s.add(cand)
+            cand.status, cand.note, cand.decided_at = DECISION_STATUS[decision], note, now
+            if decision == "reject":
+                sig.final_status = "rejected"
+            elif sig.final_status == "rejected":
+                sig.final_status = "candidate_stage1"
+            return {"signal_id": signal_id, "decision": decision, "status": cand.status, "final_status": sig.final_status,
+                    "note": note, "who": who, "decided_at": now.isoformat()}
+
+    def decisions(self, signal_id: int) -> list[dict]:
+        with self.session() as s:
+            rows = s.scalars(select(DecisionRow).where(DecisionRow.signal_id == signal_id)
+                             .order_by(DecisionRow.id.desc()))
+            return [{"decision": d.decision, "note": d.note, "who": d.who, "utc": d.utc.isoformat()} for d in rows]
+
     def add_test(self, signal_id: int, r: TestResult, duration_s: float) -> None:
         with self.session() as s:
             self._add_test_row(s, signal_id, r, duration_s)
@@ -275,20 +308,24 @@ class Store:
             s.get(TargetRow, target_id).state = "done"
         return counts
 
-    def add_artifact(self, sha256, nbytes, url, local_path, target_id=None, pinned=False, kind="raw") -> None:
+    def add_artifact(self, sha256, nbytes, url, local_path, target_id=None, pinned=False,
+                     kind: str | None = None) -> None:
         """Record a stored file. A known sha256 is resurrected: a row retention marked deleted describes a file that is
-        back on disk after a re-fetch, so it must be counted, released and evictable again."""
+        back on disk after a re-fetch, so it must be counted, released and evictable again. `kind` is "raw" for a new row
+        and changes an existing row only when given, so a plain re-add never turns a summary into evictable raw."""
         with self.session() as s:
             self._upsert_artifact(s, sha256, nbytes, url, local_path, target_id, pinned, kind)
 
-    def _upsert_artifact(self, s: Session, sha256, nbytes, url, local_path, target_id, pinned, kind) -> None:
+    def _upsert_artifact(self, s: Session, sha256, nbytes, url, local_path, target_id, pinned,
+                         kind: str | None) -> None:
         row = s.get(ArtifactRow, sha256)
         if row is None:
             s.add(ArtifactRow(sha256=sha256, nbytes=nbytes, url=url, local_path=local_path, target_id=target_id,
-                              pinned=pinned, kind=kind))
+                              pinned=pinned, kind=kind or "raw"))
             return
         if row.deleted_at is not None: row.pinned = False      # a deleted row's old pin protects nothing
-        row.deleted_at, row.local_path, row.nbytes, row.last_used, row.kind = None, local_path, nbytes, utcnow(), kind
+        row.deleted_at, row.local_path, row.nbytes, row.last_used = None, local_path, nbytes, utcnow()
+        if kind is not None: row.kind = kind
         if target_id is not None: row.target_id = target_id
         if pinned: row.pinned = True
 
