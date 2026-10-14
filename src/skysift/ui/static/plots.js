@@ -15,6 +15,7 @@ async function skysiftPlots(signalId) {
     data = await r.json();
     if (!r.ok) { msg(`Light curve unavailable (${data.error}): ${data.detail}`, true); return; }
   } catch (e) { msg(`Could not load plot data: ${e}`); return; }
+  root.replaceChildren();                       // drop the "Loading light curve…" placeholder before the panels
   const fg = getComputedStyle(document.documentElement).getPropertyValue("--fg").trim();
   const muted = getComputedStyle(document.documentElement).getPropertyValue("--muted").trim();
   const base = { paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)", font: { color: fg, size: 11 },
