@@ -8,7 +8,7 @@ from astropy.table import MaskedColumn, Table
 
 from skysift.models import Target
 from skysift.sources.base import load_registry
-from skysift.sources.kbonus_bkg import CATALOG_URL, KBonusBkg, _kic_of, lc_url
+from skysift.sources.kbonus_bkg import BASE, CATALOG_URL, KBonusBkg, _kic_of, lc_url
 from skysift.store.db import ArtifactRow, Store
 
 
@@ -41,8 +41,8 @@ def _catalog_table(kic, gmag=(15.0, 18.5, 17.0), psffrac=(0.9, 0.9, 0.3)):
     return Table({"gaia_designation": np.array(["Gaia DR3 1", "Gaia DR3 2", "Gaia DR3 3"], dtype="U32"),
                  "ra": [1.0, 2.0, 3.0], "dec": [1.0, 2.0, 3.0],
                  "phot_g_mean_mag": gmag, "psffrac": psffrac, "kic": kic,
-                 "file_name": np.array(["a.fits", "b.fits", "c.fits"], dtype="U32"),
-                 "tpf_org": [1, 1, 1], "crowdsap": [0.9, 0.8, 0.7]})
+                 "fname": np.array(["kic-000000123", "gaia-dr3-2", "gaia-dr3-3"], dtype="S28"),   # real column names (v1.0 catalogue)
+                 "tpforg": [1, 1, 1], "crowdsap": [0.9, 0.8, 0.7]})
 
 
 def _write_catalog(path, kic, **kw):
@@ -64,7 +64,9 @@ def test_list_targets_kic_targets_limit_and_fields(tmp_path):
     ts = list(src.list_targets({"gmag_max": 19.0, "background_only": False, "psffrac_min": 0.0}))
     assert [t.target_id for t in ts] == ["kic-000000123", "gaia-dr3-2", "gaia-dr3-3"]
     assert ts[0].kic == 123 and ts[0].gaia_id == "1" and ts[1].kic is None
-    assert ts[1].gmag == 18.5 and ts[1].meta == {"file_name": "b.fits", "tpf_org": 1, "crowdsap": 0.8, "psffrac": 0.9}
+    assert ts[1].gmag == 18.5 and ts[1].meta == {"file_name": "hlsp_kbonus-bkg_kepler_kepler_gaia-dr3-2_kepler_v1.0_lc.fits",
+                                                 "tpf_org": 1, "crowdsap": 0.8, "psffrac": 0.9}
+    assert lc_url(ts[0]) == f"{BASE}/lcs/0000/000000123/hlsp_kbonus-bkg_kepler_kepler_kic-000000123_kepler_v1.0_lc.fits"
     assert [t.target_id for t in src.list_targets({"gmag_max": 19.0, "background_only": False, "psffrac_min": 0.0, "limit": 2})] \
         == ["kic-000000123", "gaia-dr3-2"]
 

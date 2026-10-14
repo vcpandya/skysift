@@ -14,6 +14,7 @@ from skysift.models import LightCurve, Target
 
 BASE = "https://archive.stsci.edu/hlsps/kbonus-bkg"
 CATALOG_URL = f"{BASE}/catalogs/hlsp_kbonus-bkg_kepler_kepler_source-catalog_kepler_v1.0_cat.fits"
+FILE_TEMPLATE = "hlsp_kbonus-bkg_kepler_kepler_{fname}_kepler_v1.0_lc.fits"   # verified against MAST, October 2026
 
 
 def _kic_of(value) -> int | None:
@@ -73,8 +74,10 @@ class KBonusBkg:
         keep = np.isfinite(gmag) & np.isfinite(psffrac) & (gmag <= gmag_max) & (psffrac >= psffrac_min)
         kic_col = np.ma.asarray(tab["kic"])
         ra = np.asarray(tab["ra"], dtype=float); dec = np.asarray(tab["dec"], dtype=float)
-        gaia_col = _strings(tab["gaia_designation"]); file_col = _strings(tab["file_name"])
-        tpf_org = np.asarray(tab["tpf_org"]); crowdsap = np.asarray(tab["crowdsap"], dtype=float)
+        # The v1.0 source catalogue names each target by its ``fname`` stem (``kic-003357387`` or
+        # ``gaia-dr3-2049134982905809664``); the light-curve file name is derived from it (see FILE_TEMPLATE).
+        gaia_col = _strings(tab["gaia_designation"]); fname_col = _strings(tab["fname"])
+        tpf_org = np.asarray(tab["tpforg"]); crowdsap = np.asarray(tab["crowdsap"], dtype=float)
         if limit is not None and limit <= 0: return
         n = 0
         for i in np.flatnonzero(keep):
@@ -84,7 +87,8 @@ class KBonusBkg:
             tid = f"kic-{kic:09d}" if kic else f"gaia-dr3-{gaia}"
             yield Target(source=self.name, target_id=tid, ra=float(ra[i]), dec=float(dec[i]), gaia_id=gaia, kic=kic,
                          gmag=float(gmag[i]),
-                         meta={"file_name": str(file_col[i]), "tpf_org": int(tpf_org[i]), "crowdsap": float(crowdsap[i]),
+                         meta={"file_name": FILE_TEMPLATE.format(fname=str(fname_col[i]).strip()), "tpf_org": int(tpf_org[i]),
+                               "crowdsap": float(crowdsap[i]),
                                "psffrac": float(psffrac[i])})
             n += 1
             if limit is not None and n >= limit: return
