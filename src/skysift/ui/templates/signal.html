@@ -11,13 +11,13 @@
 {% if prev_url %} · <a id="link-prev" href="{{ prev_url }}">previous (k)</a>{% endif %}{% if next_url %} · <a id="link-next" href="{{ next_url }}">next (j)</a>{% endif %}</p>
 
 <h2>Ladder</h2>
-<table><thead><tr><th>rung</th><th>status</th><th>reason</th><th class="num">s</th><th>metrics</th></tr></thead><tbody>
+<div class="table-wrap"><table><thead><tr><th>rung</th><th>status</th><th>reason</th><th class="num">s</th><th>metrics</th></tr></thead><tbody>
 {% for t in ladder %}
-<tr><td>{{ t.rung }}</td><td class="status-{{ t.status }}">{{ t.status }}</td><td>{{ t.reason }}</td><td class="num">{{ t.duration_s | fmt(2) }}</td>
-<td>{% for k, v in t.shown %}<span class="muted">{{ k }}</span> {{ v | fmt(2) }}&nbsp;&nbsp;{% endfor %}
+<tr><td>{{ t.rung }}</td><td class="status-{{ t.status }}">{{ t.status }}</td><td class="wrap">{{ t.reason }}</td><td class="num">{{ t.duration_s | fmt(2) }}</td>
+<td class="wrap metrics">{% for k, v in t.shown %}<span class="metric"><span class="muted">{{ k }}</span> {{ v | fmt(2) }}</span>{% endfor %}
 <details class="raw"><summary class="muted">raw</summary><pre>{{ t.raw }}</pre></details></td></tr>
 {% endfor %}
-</tbody></table>
+</tbody></table></div>
 
 <h2>Plots</h2>
 <div id="plots" data-signal="{{ signal_id }}"><p class="muted">{% if plotly_url %}Loading light curve…{% else %}Plots are unavailable: the Plotly bundle could not be fetched. Start the dashboard once with network access to download it.{% endif %}</p></div>

@@ -3,7 +3,7 @@
 {% block content %}
 <h1>Decisions</h1>
 <p>{% for s in statuses %}<a href="/approved?status={{ s }}" class="{{ 'status-running' if s == status else 'muted' }}">{{ s }}</a>{% if not loop.last %} · {% endif %}{% endfor %}</p>
-<table><thead><tr><th>target</th><th class="num">period d</th><th class="num">depth ppm</th><th class="num">SDE</th><th>decided</th><th>note</th><th>DOI</th><th></th></tr></thead><tbody>
+<div class="table-wrap"><table><thead><tr><th>target</th><th class="num">period d</th><th class="num">depth ppm</th><th class="num">SDE</th><th>decided</th><th>note</th><th>DOI</th><th></th></tr></thead><tbody>
 {% for r in rows %}
 <tr class="row-link" data-href="/signals/{{ r.id }}?status=all">
   <td><code>{{ r.target_id }}</code></td><td class="num">{{ r.period | fmt(4) }}</td><td class="num">{{ r.depth_ppm | fmt(0) }}</td><td class="num">{{ r.sde | fmt(1) }}</td>
@@ -11,5 +11,5 @@
   <td><a href="/signals/{{ r.id }}/review.json">review JSON</a></td>
 </tr>
 {% else %}<tr><td colspan="8" class="muted">No candidate has this status.</td></tr>{% endfor %}
-</tbody></table>
+</tbody></table></div>
 {% endblock %}

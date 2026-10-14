@@ -5,7 +5,7 @@
 <p>
 {% for s in statuses %}<a href="/candidates?status={{ s }}&sort={{ view.sort }}&dir={{ view.dir }}" class="{{ 'status-running' if s == view.status else 'muted' }}">{{ s }}</a>{% if not loop.last %} · {% endif %}{% endfor %}
 </p>
-<table>
+<div class="table-wrap"><table>
 <thead><tr>
 {% for key, label in columns %}{% set is_sorted = view.sort == key %}
 <th class="{{ 'num' if key != 'target_id' else '' }}"><a class="{{ 'sorted' if is_sorted else '' }} {{ 'asc' if is_sorted and view.dir == 'asc' else '' }}" href="/candidates?status={{ view.status }}&sort={{ key }}&dir={{ 'asc' if is_sorted and view.dir == 'desc' else 'desc' }}">{{ label }}</a></th>
@@ -20,5 +20,5 @@
   <td>{{ r.last_rung or '–' }}</td><td class="status-{{ r.verdict }}">{{ r.verdict or '–' }}</td><td class="muted">{{ r.reason }}</td><td class="status-{{ r.decision }}">{{ r.decision or '' }}</td>
 </tr>
 {% else %}<tr><td colspan="12" class="muted">Nothing in this queue.</td></tr>{% endfor %}
-</tbody></table>
+</tbody></table></div>
 {% endblock %}

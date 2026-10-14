@@ -8,10 +8,10 @@
   <div class="card"><div class="label">queries logged</div><div class="value">{{ summary.queries | fmt }}</div></div>
 </div>
 <h2>Rung verdicts</h2>
-<table><thead><tr><th>rung</th><th class="num">pass</th><th class="num">fail</th><th class="num">undetermined</th></tr></thead><tbody>
+<div class="table-wrap"><table><thead><tr><th>rung</th><th class="num">pass</th><th class="num">fail</th><th class="num">undetermined</th></tr></thead><tbody>
 {% for rung, c in summary.rung_counts.items() %}<tr><td>{{ rung }}</td><td class="num status-pass">{{ c.pass | fmt }}</td><td class="num status-fail">{{ c.fail | fmt }}</td><td class="num status-undetermined">{{ c.undetermined | fmt }}</td></tr>{% endfor %}
-</tbody></table>
+</tbody></table></div>
 {% if summary.last_errors %}<h2>Last errors</h2>
-<table><thead><tr><th>target</th><th>when</th><th>error</th></tr></thead><tbody>
+<div class="table-wrap"><table><thead><tr><th>target</th><th>when</th><th>error</th></tr></thead><tbody>
 {% for e in summary.last_errors %}<tr><td><code>{{ e.target }}</code></td><td class="muted">{{ e.finished }}</td><td>{{ e.error }}</td></tr>{% endfor %}
-</tbody></table>{% endif %}
+</tbody></table></div>{% endif %}
