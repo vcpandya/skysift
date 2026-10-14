@@ -106,6 +106,27 @@ def test_vizier_header_without_rows_is_a_legitimate_zero():
     assert r.status == TestStatus.PASS and r.metrics["kepler_eb"] == 0
 
 
+EB_METADATA_ONLY = (b"#\n#   VizieR Astronomical Server vizier.cds.unistra.fr\n#RESOURCE=yCat_51510068\n#Name: J/AJ/151/68\n"
+                    b"#Table\tJ_AJ_151_68_catalog:\n#Name: J/AJ/151/68/catalog\n"
+                    b"#Column\tKIC\t(A8)\tKepler Input Catalog number\t[ucd=meta.id;meta.main]\n"
+                    b"#Column\tPer\t(F12.7)\tOrbital period\t[ucd=time.period]\n")
+
+
+def test_vizier_metadata_only_response_is_a_legitimate_zero():
+    """A VizieR cone search with no match sends only the table metadata (no header, units or separator line);
+    that is zero known binaries, not an outage, and the column names come from the #Column lines."""
+    assert _tsv_rows(EB_METADATA_ONLY) == (["KIC", "Per"], [])
+    resp = dict(EMPTY); resp["J/AJ/151/68"] = EB_METADATA_ONLY
+    r = Rung4Novelty().run(SIG, bundle(resp))
+    assert r.status == TestStatus.PASS and r.metrics["kepler_eb"] == 0
+
+
+def test_vizier_source_is_the_catalog_table():
+    calls = []
+    Rung4Novelty().run(SIG, bundle(EMPTY, calls=calls))
+    assert [p["-source"] for s, p in calls if s == "vizier"] == ["J/AJ/151/68/catalog"]
+
+
 def test_kepler_eb_match_fails():
     resp = dict(EMPTY); resp["J/AJ/151/68"] = EB_TSV
     r = Rung4Novelty().run(SIG, bundle(resp))
@@ -198,15 +219,36 @@ def test_target_without_kic_or_gaia_queries_by_cone():
     r = Rung4Novelty().run(SIG, bundle(EMPTY, calls=calls, target=tgt))
     assert r.status == TestStatus.PASS
     queries = [p["query"] for s, p in calls if s == "exoarchive"]
-    assert len(queries) == 3 and all("CIRCLE" in q for q in queries)
+    assert len(queries) == 3 and all("ra between" in q and "dec between" in q and "CONTAINS" not in q for q in queries)
     assert not any(s == "gaia" for s, _ in calls)
+
+
+def test_box_query_rows_outside_the_circle_are_dropped():
+    """The archive's Cloudflare filter rejects ADQL cone searches, so the cone is a box plus an exact circle on the
+    rows: a KOI at the signal's period 25 arcsec away (inside the 20 arcsec box corner, outside the circle) must not
+    count as known, while one 10 arcsec away must."""
+    NL = "\n"
+    far = "kepid,kepoi_name,koi_period,ra,dec" + NL + f"1,K1.01,13.7695,{TGT.ra + 25 / 3600 / 0.7555},{TGT.dec}" + NL   # cos(40.94 deg)
+    near = "kepid,kepoi_name,koi_period,ra,dec" + NL + f"1,K1.01,13.7695,{TGT.ra},{TGT.dec + 10 / 3600}" + NL
+    tgt = TGT.model_copy(update={"kic": None, "gaia_id": None, "target_id": "tic-1"})
+    r = Rung4Novelty().run(SIG, bundle({**EMPTY, "cumulative": far.encode()}, target=tgt))
+    assert r.status == TestStatus.PASS and r.metrics["cumulative"] == 0
+    r = Rung4Novelty().run(SIG, bundle({**EMPTY, "cumulative": near.encode()}, target=tgt))
+    assert r.status == TestStatus.FAIL and r.reason == "known:cumulative:K1.01"
+
+
+def test_box_handles_ra_wrap_and_poles():
+    from skysift.vetting.rung4_novelty import _box, _separation_deg
+    assert "or ra between" in _box(0.001, 10.0, 0.01) and "or ra between" in _box(359.999, 10.0, 0.01)
+    assert _box(10.0, 89.999, 0.01).startswith("dec between")
+    assert abs(_separation_deg(10.0, 20.0, 10.0, 20.0 + 1 / 3600) * 3600 - 1.0) < 1e-6
 
 
 def test_kic_target_queries_archive_by_kepid():
     calls = []
     Rung4Novelty().run(SIG, bundle(EMPTY, calls=calls))
     queries = [p["query"] for s, p in calls if s == "exoarchive"]
-    assert "kepid=5689121" in queries[0] and "kepid=5689121" in queries[1] and "CIRCLE" in queries[2]
+    assert "kepid=5689121" in queries[0] and "kepid=5689121" in queries[1] and "ra between" in queries[2]
 
 
 def test_tsv_parser_anchors_on_separator_line():
