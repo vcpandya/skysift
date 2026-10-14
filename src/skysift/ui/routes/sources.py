@@ -88,5 +88,6 @@ def stop_sweep(request: Request):
     stopped = st.launcher.stop()
     # False with a sweep still holding the lock means the child is still shutting down: /live shows "stopping"
     still = None if stopped else st.launcher.active()
-    st.stop_requested_pid = still["pid"] if (still and before and still["pid"] == before["pid"]) else None
+    same = still and before and (still.get("pid"), still.get("stamp")) == (before.get("pid"), before.get("stamp"))
+    st.stop_requested = (still.get("pid"), still.get("stamp")) if same else None
     return _go_live(request)

@@ -223,13 +223,13 @@ def test_live_sweep_shows_stopping_state_without_second_stop_button(settings, tm
         assert launcher.active() is not None
         monkeypatch.setattr(launcher, "stop", lambda: False)                  # the child is slow to exit
         r = client.post("/sweeps/stop", data={"_token": app.state.token}, follow_redirects=False)
-        assert r.status_code == 303 and app.state.stop_requested_pid == launcher.active()["pid"]
+        assert r.status_code == 303 and app.state.stop_requested == (launcher.active()["pid"], launcher.active()["stamp"])
         r = client.get("/partials/live/sweep")
         assert "stopping, waiting for the sweep to exit" in r.text and "<button" not in r.text
         assert 'hx-trigger="every 5s"' in r.text                              # keep polling until it is gone
         monkeypatch.setattr(launcher, "stop", lambda: True)
         client.post("/sweeps/stop", data={"_token": app.state.token}, follow_redirects=False)
-        assert app.state.stop_requested_pid is None
+        assert app.state.stop_requested is None
         assert "Stop" in client.get("/partials/live/sweep").text
     finally:
         monkeypatch.undo()
@@ -246,3 +246,84 @@ def test_live_idle_shows_past_sweeps_with_engine_summary(settings, tmp_path):
         time.sleep(0.1)
     r = client.get("/partials/live/sweep")
     assert "Past sweeps" in r.text and "processed 7" in r.text and "signals 3" in r.text
+
+
+def test_live_survives_a_reattached_lock_without_started_or_request(settings, tmp_path):
+    import json
+    import os
+
+    from skysift.ui.sweeps import _process_created
+    client, _app, _ids, launcher = make_seeded_client(settings, tmp_path)
+    try:
+        launcher.lock.write_text(json.dumps({"pid": os.getpid(), "created": _process_created(os.getpid()),
+                                             "log": str(tmp_path / "x.log"), "stamp": "20260101T000000000000Z"}),
+                                 encoding="utf-8")                      # a live pid (this test process), nothing else
+        for url in ("/live", "/partials/live/sweep"):
+            r = client.get(url)
+            assert r.status_code == 200 and "running" in r.text, url
+        for started in (None, "not a date", 12, "2026-01-01T00:00:00"):     # null, malformed, wrong type, naive
+            launcher.lock.write_text(json.dumps({"pid": os.getpid(), "created": _process_created(os.getpid()),
+                                                 "log": str(tmp_path / "x.log"), "stamp": "20260101T000000000000Z",
+                                                 "started": started, "request": "garbage"}), encoding="utf-8")
+            r = client.get("/partials/live/sweep")
+            assert r.status_code == 200 and "running" in r.text, started
+    finally:
+        launcher.lock.unlink(missing_ok=True)
+
+
+def test_sweep_finished_header_is_sent_to_every_client_that_saw_it_running(settings, tmp_path):
+    client, app, _ids, launcher = make_seeded_client(settings, tmp_path)
+    try:
+        client.post("/sweeps", data={"source": "kbonus_bkg", "_token": app.state.token}, follow_redirects=False)
+        assert 'hx-vals=\'{"was": 1}\'' in client.get("/partials/live/sweep").text
+        launcher.stop()
+        for _ in range(2):                                   # two tabs: neither may lose the signal to the other
+            r = client.get("/partials/live/sweep?was=1")
+            assert "idle" in r.text and r.headers.get("HX-Trigger") == "sweep-finished"
+        assert "HX-Trigger" not in client.get("/partials/live/sweep").headers      # idle -> idle, no was
+        assert "HX-Trigger" not in client.get("/partials/live/sweep?was=0").headers
+    finally:
+        launcher.stop()
+
+
+def test_provisional_lock_is_not_shown_as_stopping(settings, tmp_path):
+    import json
+    from datetime import UTC, datetime
+    client, app, _ids, launcher = make_seeded_client(settings, tmp_path)
+    try:
+        launcher.lock.write_text(json.dumps({"pid": None, "provisional": True, "stamp": "20260101T000000000000Z",
+                                             "log": str(tmp_path / "x.log"), "started": datetime.now(UTC).isoformat(),
+                                             "request": {"source": "kbonus_bkg", "limit": 5}}), encoding="utf-8")
+        app.state.stop_requested = (None, "20260101T000000000000Z")
+        r = client.get("/partials/live/sweep")
+        assert r.status_code == 200 and "stopping" not in r.text and "running" in r.text
+    finally:
+        launcher.lock.unlink(missing_ok=True)
+
+
+def test_live_tail_is_entity_escaped(settings, tmp_path):
+    import time
+    cmd = [sys.executable, "-c", "import time; print('<script>alert(1)</script>', flush=True); time.sleep(20)"]
+    client, app, _ids, launcher = make_seeded_client(settings, tmp_path, command=cmd)
+    try:
+        client.post("/sweeps", data={"source": "kbonus_bkg", "_token": app.state.token}, follow_redirects=False)
+        for _ in range(50):
+            if launcher.tail(): break
+            time.sleep(0.1)
+        r = client.get("/partials/live/sweep")
+        assert "&lt;script&gt;alert(1)" in r.text and "<script>alert" not in r.text
+    finally:
+        launcher.stop()
+
+
+def test_live_idle_renders_a_corrupt_lock_history_record(settings, tmp_path):
+    import json
+    client, _app, _ids, launcher = make_seeded_client(settings, tmp_path)
+    (launcher.dir / "20260101T000000000000Z.json").write_text(json.dumps(
+        {"stamp": "20260101T000000000000Z", "log": "", "request": {}, "reason": "corrupt-lock", "exit_code": None,
+         "finished": "2026-01-01T00:00:01+00:00", "summary": None}), encoding="utf-8")
+    (launcher.dir / "20260102T000000000000Z.json").write_text(json.dumps(
+        {"stamp": "20260102T000000000000Z", "log": "", "reason": "corrupt-lock"}), encoding="utf-8")   # no request at all
+    for url in ("/live", "/partials/live/sweep"):
+        r = client.get(url)
+        assert r.status_code == 200 and "Past sweeps" in r.text, url
