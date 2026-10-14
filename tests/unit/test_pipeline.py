@@ -56,6 +56,19 @@ def test_priority_prefers_faint_unsearched_clean():
     assert priority_score(a) == 5 and priority_score(b) == -3
 
 
+def test_priority_uses_quarter_availability():
+    """A single-quarter target (Q0 only, 469 points) cannot reach MIN_POINTS: it must sort below everything searchable,
+    and a long baseline earns a bonus. Targets without the field keep the old score."""
+    base = {"source": "x", "ra": 0, "dec": 0, "gmag": 16.5}
+    one = Target(**base, target_id="q1", meta={"psffrac": 0.9, "crowdsap": 0.9, "n_quarters": 1})
+    few = Target(**base, target_id="q4", meta={"psffrac": 0.9, "crowdsap": 0.9, "n_quarters": 4})
+    many = Target(**base, target_id="q17", meta={"psffrac": 0.9, "crowdsap": 0.9, "n_quarters": 17})
+    unknown = Target(**base, target_id="na", meta={"psffrac": 0.9, "crowdsap": 0.9})
+    assert priority_score(one) == -5 and priority_score(few) == 5 == priority_score(unknown) and priority_score(many) == 7
+    assert priority_score(one) < priority_score(Target(**{**base, "gmag": 19.5}, target_id="faint", kic=1,
+                                                       meta={"psffrac": 0.3, "crowdsap": 0.3, "n_quarters": 17}))
+
+
 def test_build_ladder_orders_rungs_and_drops_novelty_on_request():
     costs = [r.cost for r in build_ladder().rungs]
     assert costs == sorted(costs) and build_ladder().rungs[-1].name == "rung4_novelty"

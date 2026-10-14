@@ -48,6 +48,12 @@ def priority_score(t: Target) -> float:
     if t.meta.get("psffrac", 0) >= 0.8: s += 1
     if t.meta.get("crowdsap", 0) >= 0.8: s += 1
     if not t.kic: s += 1
+    # Data span decides whether a search is possible at all: fewer than two quarters cannot reach MIN_POINTS and
+    # a long baseline is what makes periods out to 200 d and the season test meaningful.
+    nq = t.meta.get("n_quarters")
+    if nq is not None:
+        if nq < 2: s -= 10          # below every searchable target, whatever its other scores
+        elif nq >= 8: s += 2
     return s
 
 

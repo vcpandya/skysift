@@ -42,7 +42,8 @@ def _catalog_table(kic, gmag=(15.0, 18.5, 17.0), psffrac=(0.9, 0.9, 0.3)):
                  "ra": [1.0, 2.0, 3.0], "dec": [1.0, 2.0, 3.0],
                  "phot_g_mean_mag": gmag, "psffrac": psffrac, "kic": kic,
                  "fname": np.array(["kic-000000123", "gaia-dr3-2", "gaia-dr3-3"], dtype="S28"),   # real column names (v1.0 catalogue)
-                 "tpforg": [1, 1, 1], "crowdsap": [0.9, 0.8, 0.7]})
+                 "tpforg": [1, 1, 1], "crowdsap": [0.9, 0.8, 0.7],
+                 "sap_avail": np.array(["111111111111111111", "011011001000100011", "100000000000000000"], dtype="S18")})
 
 
 def _write_catalog(path, kic, **kw):
@@ -65,7 +66,8 @@ def test_list_targets_kic_targets_limit_and_fields(tmp_path):
     assert [t.target_id for t in ts] == ["kic-000000123", "gaia-dr3-2", "gaia-dr3-3"]
     assert ts[0].kic == 123 and ts[0].gaia_id == "1" and ts[1].kic is None
     assert ts[1].gmag == 18.5 and ts[1].meta == {"file_name": "hlsp_kbonus-bkg_kepler_kepler_gaia-dr3-2_kepler_v1.0_lc.fits",
-                                                 "tpf_org": 1, "crowdsap": 0.8, "psffrac": 0.9}
+                                                 "tpf_org": 1, "crowdsap": 0.8, "psffrac": 0.9, "n_quarters": 8}
+    assert [t.meta["n_quarters"] for t in ts] == [18, 8, 1]
     assert lc_url(ts[0]) == f"{BASE}/lcs/0000/000000123/hlsp_kbonus-bkg_kepler_kepler_kic-000000123_kepler_v1.0_lc.fits"
     assert [t.target_id for t in src.list_targets({"gmag_max": 19.0, "background_only": False, "psffrac_min": 0.0, "limit": 2})] \
         == ["kic-000000123", "gaia-dr3-2"]

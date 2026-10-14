@@ -78,6 +78,10 @@ class KBonusBkg:
         # ``gaia-dr3-2049134982905809664``); the light-curve file name is derived from it (see FILE_TEMPLATE).
         gaia_col = _strings(tab["gaia_designation"]); fname_col = _strings(tab["fname"])
         tpf_org = np.asarray(tab["tpforg"]); crowdsap = np.asarray(tab["crowdsap"], dtype=float)
+        # ``sap_avail`` is an 18-character bit string, one per Kepler quarter (Q0 to Q17); its count of ones is the
+        # number of quarters with a light curve. 5,472 of the 34,161 background targets have only Q0 (9.7 days,
+        # 469 points), which is below the detector's MIN_POINTS and cannot be searched.
+        n_quarters = np.array([str(v).count("1") for v in _strings(tab["sap_avail"])], dtype=int)
         if limit is not None and limit <= 0: return
         n = 0
         for i in np.flatnonzero(keep):
@@ -88,7 +92,7 @@ class KBonusBkg:
             yield Target(source=self.name, target_id=tid, ra=float(ra[i]), dec=float(dec[i]), gaia_id=gaia, kic=kic,
                          gmag=float(gmag[i]),
                          meta={"file_name": FILE_TEMPLATE.format(fname=str(fname_col[i]).strip()), "tpf_org": int(tpf_org[i]),
-                               "crowdsap": float(crowdsap[i]),
+                               "crowdsap": float(crowdsap[i]), "n_quarters": int(n_quarters[i]),
                                "psffrac": float(psffrac[i])})
             n += 1
             if limit is not None and n >= limit: return
