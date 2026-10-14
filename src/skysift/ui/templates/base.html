@@ -4,10 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{% block title %}SkySift{% endblock %}</title>
-<link rel="stylesheet" href="/static/app.css">
-<script src="/static/htmx.min.js" defer></script>
-{% if plotly_url %}<script src="{{ plotly_url }}" defer></script>{% endif %}
-<script src="/static/app.js" defer></script>
+<link rel="stylesheet" href="/static/app.css?v={{ git_commit }}">
+<script src="/static/htmx.min.js?v={{ git_commit }}" defer></script>
+{% if plotly_url %}<script src="{{ plotly_url }}?v={{ git_commit }}" defer></script>{% endif %}
+<script src="/static/app.js?v={{ git_commit }}" defer></script>
 </head>
 <body hx-headers='{"X-SkySift-Token": "{{ token }}"}'>
 <nav class="side">

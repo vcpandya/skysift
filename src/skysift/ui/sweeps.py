@@ -49,7 +49,9 @@ class SweepRequest:
     gmag_max: float = 19.0
     store_periodogram: str = "all"
 
-    def validate(self) -> None:
+    def validate(self, thresholds: Thresholds | None = None) -> None:
+        """Raise ValueError for a request the CLI would refuse. The period window is checked against ``thresholds``
+        (the dashboard's settings; the engine defaults when omitted), since an omitted end falls back to them."""
         if not self.source or not self.source.replace("_", "").isalnum():
             raise ValueError("source name is required")
         for name in ("limit", "workers_io", "workers_cpu"):
@@ -72,9 +74,10 @@ class SweepRequest:
         if self.store_periodogram not in PERIODOGRAM_MODES:
             raise ValueError(f"store_periodogram must be one of {PERIODOGRAM_MODES}")
         if self.min_period is not None or self.max_period is not None:
-            base = Thresholds()
-            Thresholds(min_period_days=self.min_period if self.min_period is not None else base.min_period_days,
-                       max_period_days=self.max_period if self.max_period is not None else base.max_period_days)
+            base = thresholds if thresholds is not None else Thresholds()
+            Thresholds(**{**base.model_dump(),
+                          "min_period_days": self.min_period if self.min_period is not None else base.min_period_days,
+                          "max_period_days": self.max_period if self.max_period is not None else base.max_period_days})
 
     def argv(self, python: str = sys.executable) -> list[str]:
         a = [python, "-m", "skysift", "run", "--source", self.source, "--gmag-max", str(self.gmag_max),
@@ -308,8 +311,8 @@ class SweepLauncher:
         self._retire(info, None, "stale-lock", mtime); return None
 
     # -- public
-    def start(self, req: SweepRequest) -> dict:
-        req.validate()
+    def start(self, req: SweepRequest, thresholds: Thresholds | None = None) -> dict:
+        req.validate(thresholds)
         with self._mu:
             stamp = datetime.now(UTC).strftime(STAMP_FORMAT)
             log = self.dir / f"{stamp}.log"

@@ -74,7 +74,8 @@ class _QueryRecorder:
     def __init__(self):
         self.rows: list[dict] = []
 
-    def log_query(self, service, url, params, status, nbytes, sha256=None, error="") -> None:
+    def log_query(self, service, url, params, status, nbytes, sha256=None, error="", target_id=None) -> None:
+        # target_id is accepted for net.fetch's sake; record_results stamps every row with the run's own target
         self.rows.append({"service": service, "url": url, "params": dict(params or {}), "status": status,
                           "nbytes": nbytes, "sha256": sha256, "error": error, "utc": utcnow().isoformat()})
 

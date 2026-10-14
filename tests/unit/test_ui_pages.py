@@ -26,6 +26,13 @@ def test_healthz_and_token(settings):
     assert len(app.state.token) >= 32
 
 
+def test_static_urls_carry_a_cache_busting_version(settings):
+    client, app = make_client(settings)
+    html = client.get("/").text
+    assert "/static/app.css?v=" in html and "/static/app.js?v=" in html and "/static/htmx.min.js?v=" in html
+    assert f"?v={app.state.git_commit}" in html
+
+
 def test_error_page_is_plain_html_without_traceback(settings):
     _client, app = make_client(settings)
 
@@ -338,7 +345,9 @@ def test_plots_endpoint_reports_outage_without_breaking_the_page(settings, tmp_p
     monkeypatch.setitem(plots_mod.PARSERS, "kbonus_bkg", lambda b: (_ for _ in ()).throw(ServiceUnavailable("mast down")))
     r = client.get(f"/api/signals/{ids['candidate']}/plots.json")
     assert r.status_code == 503 and "mast down" in r.json()["detail"]
-    assert client.get(f"/signals/{ids['candidate']}").status_code in (200, 404)   # the page route arrives in Task 11
+    page = client.get(f"/signals/{ids['candidate']}")          # an archive outage must not break the page itself
+    assert page.status_code == 200 and "Ladder" in page.text and "rung1_detection" in page.text
+    assert 'id="plots"' in page.text
     assert client.get("/api/signals/999999/plots.json").status_code == 404
 
 
@@ -351,7 +360,7 @@ def test_plots_json_is_strict(settings, tmp_path, monkeypatch):
     r = client.get(f"/api/signals/{ids['candidate']}/plots.json")
     assert r.status_code == 200 and "NaN" not in r.text
     body = r.json()
-    assert body["periodogram"] is None and body["seasons"]["season"] == [0, 1, 2, 3] and len(body["fold"]["bin_flux"]) > 10
+    assert body["periodogram"] is None and body["periodogram_status"] == "off" and body["seasons"]["season"] == [0, 1, 2, 3] and len(body["fold"]["bin_flux"]) > 10
     assert client.get(f"/api/signals/{ids['candidate']}/plots.json").json() == body     # cached per signal id
 
 
@@ -376,13 +385,16 @@ def test_plots_periodogram_tolerates_evicted_missing_and_corrupt_summaries(setti
     sha = hashlib.sha256(data).hexdigest()
     st = app.state
     loc = str(Path(settings.data_dir) / "nowhere.npz") if case == "missing" else st.blob.put(data, "pg.npz")[1]
-    st.store.add_artifact(sha, len(data), "skysift://periodogram/kic-005689121", loc, "kic-005689121", kind="periodogram")
+    st.store.add_artifact(sha, len(data), "skysift://periodogram/kic-005689121", loc, "kic-005689121", kind="summary")
     with st.store.session() as s:
         if case == "deleted": s.get(ArtifactRow, sha).deleted_at = utcnow()
         s.get(RunRow, ids["run_ids"]["candidate"]).periodogram_sha256 = sha
     r = client.get(f"/api/signals/{ids['candidate']}/plots.json")
     assert r.status_code == 200 and "NaN" not in r.text
-    assert (r.json()["periodogram"] is not None) is (case == "present")
+    body = r.json()
+    assert (body["periodogram"] is not None) is (case == "present")
+    assert body["periodogram_status"] == {"present": "ok", "missing": "missing", "deleted": "evicted",
+                                          "corrupt": "unreadable"}[case]
 
 
 def test_plots_endpoint_maps_only_integrity_errors_to_409(settings, tmp_path, monkeypatch):
@@ -409,8 +421,16 @@ def test_pages_render_on_a_migrated_m1_database(settings, tmp_path):
         c.execute(text("DROP INDEX ix_queries_target_id")); c.execute(text("ALTER TABLE queries DROP COLUMN target_id"))
         c.execute(text("ALTER TABLE artifacts DROP COLUMN kind")); c.execute(text("DROP TABLE decisions"))
     store = Store(settings.database_url); store.init_schema()
-    seed(store, blob_from_url(settings.blob_url))
-    client = TestClient(create_app(settings, store=store, blob=blob_from_url(settings.blob_url),
-                                   launcher=SweepLauncher(tmp_path, command=SLEEPER)), base_url=BASE)
-    for path in ("/", "/live", "/candidates", "/candidates?status=all", "/approved"):
+    ids = seed(store, blob_from_url(settings.blob_url))
+    app = create_app(settings, store=store, blob=blob_from_url(settings.blob_url),
+                     launcher=SweepLauncher(tmp_path, command=SLEEPER))
+    client = TestClient(app, base_url=BASE)
+    sid = ids["candidate"]
+    for path in ("/", "/live", "/candidates", "/candidates?status=all", "/approved", f"/signals/{sid}",
+                 f"/signals/{sid}/review.json"):
         assert client.get(path).status_code == 200, path
+    r = client.get(f"/api/signals/{sid}/plots.json")           # the seed's raw file is fake bytes, not FITS
+    assert r.status_code == 409 and "error" in r.json()
+    # the migrated columns (decided_at, periodogram_sha256, queries.target_id) are what these routes read and write
+    r = client.post(f"/signals/{sid}/decide", data={"decision": "approve", "note": "ok", "_token": app.state.token})
+    assert r.status_code == 200 and "approved" in r.text

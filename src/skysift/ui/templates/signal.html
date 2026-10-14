@@ -21,7 +21,7 @@
 
 <h2>Plots</h2>
 <div id="plots" data-signal="{{ signal_id }}"><p class="muted">{% if plotly_url %}Loading light curve…{% else %}Plots are unavailable: the Plotly bundle could not be fetched. Start the dashboard once with network access to download it.{% endif %}</p></div>
-<script src="/static/plots.js" defer></script>
+<script src="/static/plots.js?v={{ git_commit }}" defer></script>
 
 <div id="decision">{% include "partials/decision_bar.html" %}</div>
 {% endblock %}

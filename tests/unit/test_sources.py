@@ -173,3 +173,28 @@ def test_fetch_lightcurve_without_blob_adds_no_artifact(store):
     lc, sha, _url = src.fetch_lightcurve(TARGET)
     assert sha == hashlib.sha256(data).hexdigest() and lc.meta["target_id"] == TARGET.target_id
     assert _artifacts(store) == []
+
+
+class _Resp:
+    def __init__(self, content): self.status_code, self.content = 200, content
+
+
+class _Session:
+    def __init__(self, content): self.content = content
+
+    def get(self, url, params=None, timeout=None): return _Resp(self.content)
+
+
+def _queries(store):
+    from skysift.store.db import QueryRow
+    with store.session() as s:
+        return [(q.service, q.url, q.target_id) for q in s.query(QueryRow).all()]
+
+
+def test_fetch_lightcurve_logs_the_download_with_its_target(store):
+    from functools import partial
+
+    from skysift import net
+    src = KBonusBkg(blob=MemBlob(), store=store, fetch=partial(net.fetch, session=_Session(_kbonus_fits_bytes())))
+    src.fetch_lightcurve(TARGET)
+    assert _queries(store) == [("mast", lc_url(TARGET), TARGET.target_id)]

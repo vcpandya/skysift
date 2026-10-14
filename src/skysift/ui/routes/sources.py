@@ -69,9 +69,9 @@ async def start_sweep(request: Request):
     form = dict(await request.form())
     try:
         req = _request_from_form(form)
-        req.validate()
+        req.validate(st.settings.thresholds)
         _require_live(req.source)
-        st.launcher.start(req)
+        st.launcher.start(req, st.settings.thresholds)
     except (ValueError, TypeError, OverflowError) as e:
         return render(request, "partials/sweep_form.html", status_code=400, source=form.get("source", ""),
                       th=st.settings.thresholds, settings=st.settings, error=str(e), values=form)

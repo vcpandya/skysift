@@ -91,7 +91,8 @@ class KBonusBkg:
 
     def fetch_lightcurve(self, target: Target) -> tuple[LightCurve, str, str]:
         url = lc_url(target)
-        data = self.fetch(url, service="mast", store=self.store, timeout=300)
+        data = self.fetch(url, service="mast", store=self.store, timeout=300,
+                          target_id=target.target_id)
         sha = hashlib.sha256(data).hexdigest()
         if self.blob is not None:
             _, loc = self.blob.put(data, Path(url).name)

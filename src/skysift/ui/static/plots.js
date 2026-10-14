@@ -24,14 +24,22 @@ async function skysiftPlots(signalId) {
   if (data.periodogram) {
     const p = data.periodogram;
     const shapes = [{ type: "line", x0: p.period[0], x1: p.period[p.period.length - 1], y0: p.sde_min, y1: p.sde_min, line: { color: muted, dash: "dot" } }];
+    const thresholdNote = `${p.sde_min_label || "threshold"} SDE ${p.sde_min}`;
     p.aliases.concat(p.systematic_periods).forEach((x) => shapes.push({ type: "line", x0: x, x1: x, yref: "paper", y0: 0, y1: 1, line: { color: muted, width: 1, dash: "dash" } }));
     shapes.push({ type: "line", x0: p.detected_period, x1: p.detected_period, yref: "paper", y0: 0, y1: 1, line: { color: fg, width: 1 } });
     Plotly.newPlot(panel("plot-periodogram"), [
       { x: p.period, y: p.sde, mode: "lines", line: { color: fg, width: 1 }, connectgaps: false, name: "SDE" },
       { x: p.peaks.map((k) => k.period), y: p.peaks.map((k) => k.sde), mode: "markers", marker: { color: fg, size: 7, symbol: "triangle-down" }, name: "peaks" }],
-      { ...base, title: "Periodogram (per-band SDE envelope)", xaxis: { type: "log", title: "period (d)" }, yaxis: { title: "SDE" }, shapes }, cfg);
+      { ...base, title: `Periodogram (per-band SDE envelope; dotted line: ${thresholdNote})`, xaxis: { type: "log", title: "period (d)" }, yaxis: { title: "SDE" }, shapes }, cfg);
   } else {
-    const d = panel("plot-periodogram"); d.className = "muted"; d.textContent = "No periodogram stored for this run (store_periodogram was off).";
+    const notes = {
+      off: "No periodogram summary was stored for this run (store_periodogram was off, or kept signals only).",
+      evicted: "The periodogram summary was evicted by budget retention.",
+      missing: "The periodogram summary file is missing from the blob store.",
+      unreadable: "The periodogram summary file could not be read.",
+    };
+    const d = panel("plot-periodogram"); d.className = "muted";
+    d.textContent = notes[data.periodogram_status] || "No periodogram summary is available for this run.";
   }
   const f = data.full;
   Plotly.newPlot(panel("plot-full"), [

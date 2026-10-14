@@ -32,6 +32,12 @@ def test_request_argv_and_env():
     with pytest.raises(ValueError): SweepRequest(source="kbonus_bkg", min_period=5, max_period=2).validate()
     with pytest.raises(ValueError): SweepRequest(source="kbonus_bkg", retention="bogus").validate()
     with pytest.raises(ValueError): SweepRequest(source="kbonus_bkg", store_periodogram="maybe").validate()
+    # an omitted end of the window falls back to the configured thresholds, not the engine defaults
+    from skysift.config import Thresholds
+    narrow = Thresholds(max_period_days=20.0)
+    SweepRequest(source="kbonus_bkg", min_period=30.0).validate()                       # fine against the defaults
+    with pytest.raises(ValueError): SweepRequest(source="kbonus_bkg", min_period=30.0).validate(narrow)
+    SweepRequest(source="kbonus_bkg", min_period=1.0).validate(narrow)
 
 
 def test_start_tail_stop_and_history(tmp_path):

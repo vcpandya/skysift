@@ -7,7 +7,7 @@ EMPTY_CSV = b"kepid,kepoi_name,koi_period\n"
 EMPTY_TSV = b"#\nKIC\tPer\n\td\n---\t---\n"
 
 
-def fetch(url, *, params=None, service, store=None, **_kw) -> bytes:
+def fetch(url, *, params=None, service, store=None, target_id=None, **_kw) -> bytes:
     data = EMPTY_TSV if service == "vizier" else EMPTY_CSV
-    if store: store.log_query(service, url, params or {}, 200, len(data), hashlib.sha256(data).hexdigest())
+    if store: store.log_query(service, url, params or {}, 200, len(data), hashlib.sha256(data).hexdigest(), target_id=target_id)
     return data

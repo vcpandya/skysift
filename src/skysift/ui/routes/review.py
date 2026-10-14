@@ -15,8 +15,8 @@ router = APIRouter()
 
 RUNG_METRICS = {
     "rung1_detection": ["sde", "snr", "n_events", "duration_ratio", "stellar_source"],
-    "rung2_shape": ["odd_ppm", "even_ppm", "parity_sigma", "secondary_ppm", "secondary_sigma", "free_secondary_phase",
-                    "free_secondary_sigma"],
+    "rung2_shape": ["depth_ppm", "depth_err_ppm", "odd_ppm", "even_ppm", "parity_sigma", "secondary_ppm",
+                    "secondary_sigma", "free_secondary_phase", "free_secondary_sigma"],
     "rung3_stability": ["p_value", "chi2", "dof", "n_events", "sap_psf_ratio"],
     "rung4_novelty": ["cumulative", "q1_q17_dr25_tce", "toi", "kepler_eb", "gaia_nss_two_body_orbit",
                       "gaia_vari_eclipsing_binary", "gaia_skipped"],

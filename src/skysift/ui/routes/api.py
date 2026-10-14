@@ -18,22 +18,24 @@ router = APIRouter()
 CACHE_LIMIT = 64
 
 
-def _periodogram(request: Request, run: dict | None) -> PeriodogramSummary | None:
-    """The run's stored periodogram summary, or None when it is not stored, was evicted by retention, is missing from the
-    blob or cannot be read: the signal page then shows its "no periodogram" note instead of failing."""
+def _periodogram(request: Request, run: dict | None) -> tuple[PeriodogramSummary | None, str]:
+    """The run's stored periodogram summary and a status telling the panel why it may be absent: "ok", "off" (never
+    stored: store_periodogram was off or kept signals only), "evicted" (released by budget retention), "missing" (the
+    blob file is gone) or "unreadable" (it cannot be parsed). The signal page shows a matching note instead of failing."""
     st = request.app.state
     sha = (run or {}).get("periodogram_sha256")
-    if not sha: return None
+    if not sha: return None, "off"
     with st.store.session() as s:
         row = s.get(ArtifactRow, sha)
-        path = row.local_path if row and row.deleted_at is None else None
-    if not path: return None
+        if row is not None and row.deleted_at is not None: return None, "evicted"
+        path = row.local_path if row else None
+    if not path: return None, "missing"
     try:
-        if not st.blob.exists(path): return None
-        return PeriodogramSummary.from_npz(st.blob.get(path))
+        if not st.blob.exists(path): return None, "missing"
+        return PeriodogramSummary.from_npz(st.blob.get(path)), "ok"
     except Exception:
         log.warning("periodogram summary %s is unreadable; plotting without it", sha[:12], exc_info=True)
-        return None
+        return None, "unreadable"
 
 
 @router.get("/api/signals/{signal_id}/plots.json")
@@ -51,7 +53,9 @@ def plots_json(request: Request, signal_id: int):
         return JSONResponse({"error": "outage", "detail": str(e)}, status_code=503)
     except IntegrityError as e:
         return JSONResponse({"error": "integrity", "detail": str(e)}, status_code=409)
-    out = build_plots(lc, detrend(lc), d["signal"], d["tests"], _periodogram(request, d["run"]), st.settings.thresholds)
+    summary, status = _periodogram(request, d["run"])
+    out = build_plots(lc, detrend(lc), d["signal"], d["tests"], summary, st.settings.thresholds)
+    out["periodogram_status"] = status
     text = jsonutil.dumps(out)
     while len(st.plot_cache) >= CACHE_LIMIT:
         st.plot_cache.pop(next(iter(st.plot_cache)), None)      # oldest first; payloads are a few hundred kB each

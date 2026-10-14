@@ -42,3 +42,13 @@ def test_error_document_detection():
     vot = b'<?xml version="1.0"?><VOTABLE><RESOURCE><INFO name="QUERY_STATUS" value="ERROR">UsageFault: bad</INFO></RESOURCE></VOTABLE>'
     assert "UsageFault" in looks_like_error_document(vot)
     assert looks_like_error_document(b"a,b\n1,2\n") is None
+
+
+def test_fetch_logs_the_target_on_success_and_on_error(tmp_path):
+    from skysift.store.db import QueryRow
+    st = Store(f"sqlite:///{tmp_path.as_posix()}/t.db"); st.init_schema()
+    fetch("https://x/y", service="t", store=st, session=FlakySession(1), backoff=0.0, target_id="kic-1")
+    fetch("https://x/z", service="t", store=st, session=FlakySession(0))
+    with st.session() as s:
+        rows = [(q.url, q.status, q.target_id) for q in s.query(QueryRow).order_by(QueryRow.id)]
+    assert rows == [("https://x/y", None, "kic-1"), ("https://x/y", 200, "kic-1"), ("https://x/z", 200, None)]

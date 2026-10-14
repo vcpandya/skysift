@@ -1,7 +1,7 @@
 <div class="cards">
   {% for state, n in summary.targets_by_state.items() %}<div class="card"><div class="label">targets {{ state }}</div><div class="value">{{ n | fmt }}</div></div>{% endfor %}
   {% for status, n in summary.signal_outcomes.items() %}<div class="card"><div class="label">signals {{ status }}</div><div class="value">{{ n | fmt }}</div></div>{% endfor %}
-  <div class="card"><div class="label">targets / hour</div><div class="value">{{ summary.targets_per_hour | fmt(1) }}</div></div>
+  <div class="card"><div class="label">targets / hour</div><div class="value">{% if summary.mean_seconds_per_run %}{{ summary.targets_per_hour | fmt(1) }}{% else %}–{% endif %}</div></div>
   <div class="card"><div class="label">mean s / run</div><div class="value">{{ summary.mean_seconds_per_run | fmt(1) }}</div></div>
   <div class="card"><div class="label">cache</div><div class="value">{{ (summary.cache_bytes / 1e9) | fmt(2) }} GB{% if summary.cache_budget_bytes %} / {{ (summary.cache_budget_bytes / 1e9) | fmt(0) }}{% endif %}</div></div>
   <div class="card"><div class="label">error-capped targets</div><div class="value">{{ summary.error_capped_targets | fmt }}</div></div>

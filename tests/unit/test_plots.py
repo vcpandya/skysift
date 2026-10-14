@@ -212,3 +212,22 @@ def test_loader_reports_a_source_that_is_not_live_as_unavailable(tmp_path):
     loader = LightCurveLoader(store, blob)                                    # the real make_source
     with pytest.raises(ServiceUnavailable, match="not live"):
         loader.load({"target_id": "w1", "source": "tess_spoc"})
+
+
+def test_loader_refetch_logs_the_download_with_the_target(tmp_path):
+    from functools import partial
+
+    from skysift import net
+    from skysift.sources.kbonus_bkg import KBonusBkg
+    from skysift.store.db import QueryRow
+    from tests.unit.test_sources import _kbonus_fits_bytes, _Session
+    store, blob = _store_blob(tmp_path)
+    data = _kbonus_fits_bytes()
+    fetch = partial(net.fetch, session=_Session(data))
+    loader = LightCurveLoader(store, blob, source_factory=lambda name, st, b: KBonusBkg(b, st, fetch=fetch))
+    target = {"source": "kbonus_bkg", "target_id": "kic-005689121", "ra": 0.0, "dec": 0.0, "kic": 5689121,
+              "meta": {"file_name": "hlsp_kbonus-bkg_kepler_kepler_kic-005689121_kepler_v1.0_lc.fits"}}
+    loader.load(target)
+    with store.session() as s:
+        rows = [(q.service, q.target_id) for q in s.query(QueryRow).all()]
+    assert rows == [("mast", "kic-005689121")]

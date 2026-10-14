@@ -201,7 +201,8 @@ def build_plots(lc: LightCurve, fnorm: np.ndarray, signal: dict, tests: list[dic
     pg = None
     if periodogram is not None:
         pg = {"period": _lst(periodogram.bin_periods()), "sde": _lst([np.nan if v is None else v for v in periodogram.envelope]),
-              "peaks": periodogram.peaks, "sde_min": float(thresholds.sde_min), "detected_period": period,
+              "peaks": periodogram.peaks, "sde_min": float(thresholds.sde_min), "sde_min_label": "current threshold",
+              "detected_period": period,
               "aliases": [round(period * a, 6) for a in ALIAS_FACTORS], "systematic_periods": list(SYSTEMATIC_PERIODS),
               "band_edges": periodogram.band_edges}
     return {"periodogram": pg, "full": full, "fold": fold, "oddeven": oddeven, "secondary": secondary, "seasons": seasons}
