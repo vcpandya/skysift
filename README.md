@@ -40,6 +40,12 @@ and search grid, so a run with a different `--min-period` or `--max-period` sear
 whose job fails three times is not retried; `run` counts it as `gave_up` and `status` reports it under
 `error_capped_targets`. A failure caused by a service outage (MAST or a catalogue unreachable) is recorded but never counted as one of the three attempts.
 
+Stopping a sweep has two modes. The first Ctrl+C is the graceful stop: the engine starts no new target, finishes
+the targets already fetched or being fetched (at most two per I/O worker plus two per CPU worker, each up to a few
+minutes), writes their results and exits with its summary, which then carries `"stopped": "graceful"`. A second
+Ctrl+C stops at once: in-flight work is dropped and the interrupted runs are marked superseded when the target is
+redone. Either way the same command resumes the sweep, since every finished target is skipped by its job key.
+
 ## Dashboard
 
 ```bash
@@ -59,7 +65,10 @@ Pages:
   `python -m skysift run` process. Only one sweep runs per data directory at a time, and it can only be launched from
   this page.
 * **Live**: targets per state, signal outcomes, rung verdicts, throughput, cache against budget, and the running
-  sweep's log. The page refreshes while a sweep runs. A Stop button ends the sweep.
+  sweep's log. The page refreshes while a sweep runs. **Stop** asks the sweep to finish the targets it has already
+  started and then exit (the page shows "finishing" until it does; nothing started is lost). **Stop now** ends the
+  sweep process at once, and the targets it was working on are redone next time. Starting the same sweep again
+  resumes it: finished targets are skipped by their job key.
 * **Candidates**: the review queue sorted by SDE. A signal's page shows the ladder with the metrics that matter per
   rung. It also shows the periodogram (per-band SDE envelope with threshold, aliases and systematic periods), the
   detrended curve, the phase fold with the box model, odd against even, the phase 0.5 window and per-season depths.

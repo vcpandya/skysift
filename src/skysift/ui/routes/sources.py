@@ -81,9 +81,21 @@ async def start_sweep(request: Request):
     return _go_live(request)
 
 
+STOP_MODES = ("graceful", "now")
+
+
 @router.post("/sweeps/stop", dependencies=[Depends(require_token)])
-def stop_sweep(request: Request):
+async def stop_sweep(request: Request):
+    """``mode=graceful`` (the default, the Stop button) asks the engine to finish its in-flight targets and exit;
+    ``mode=now`` (the Stop now button) terminates the sweep process at once."""
     st = request.app.state
+    mode = dict(await request.form()).get("mode", "graceful")
+    if mode not in STOP_MODES:
+        return Response(f"mode must be one of {', '.join(STOP_MODES)}", status_code=400)
+    if mode == "graceful":
+        st.launcher.request_stop()       # False (no sweep) needs nothing: /live shows idle
+        st.stop_requested = None         # "finishing" comes from the lock, not from the hard-stop "stopping" flag
+        return _go_live(request)
     before = st.launcher.active()
     stopped = st.launcher.stop()
     # False with a sweep still holding the lock means the child is still shutting down: /live shows "stopping"

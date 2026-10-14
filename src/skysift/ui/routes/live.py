@@ -43,13 +43,18 @@ def _as_dict(value) -> dict:
     return value if isinstance(value, dict) else {}
 
 
+def _positive_int(value, default: int) -> int:
+    """A worker count from the sweep request (absent or null means the engine's setting)."""
+    return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else default
+
+
 def _sweep_ctx(request: Request, mean=...) -> dict:
     """Template context for the sweep block. `mean` (seconds per run) is passed in when the caller already has the
     summary; otherwise it is computed only when a sweep is active."""
     st = request.app.state
     launcher = st.launcher
-    idle = {"active": None, "stopping": False, "pid": None, "req": {}, "tail": [], "history": [], "elapsed": None,
-            "eta_s": None}
+    idle = {"active": None, "stopping": False, "finishing": None, "in_flight_max": None, "pid": None, "req": {},
+            "tail": [], "history": [], "elapsed": None, "eta_s": None}
     if launcher is None:
         return idle
     active = launcher.active()
@@ -59,6 +64,10 @@ def _sweep_ctx(request: Request, mean=...) -> dict:
     pid = active.get("pid")
     req = _as_dict(active.get("request"))
     stopping = pid is not None and getattr(st, "stop_requested", None) == (pid, active.get("stamp"))
+    # a graceful stop was asked for: the engine finishes what it had started (at most 2*io + 2*cpu targets) and exits
+    finishing = active.get("stop_requested_at") if isinstance(active.get("stop_requested_at"), str) else None
+    in_flight_max = (2 * _positive_int(req.get("workers_io"), st.settings.workers_io)
+                     + 2 * _positive_int(req.get("workers_cpu"), st.settings.workers_cpu))
     elapsed = _elapsed_s(active.get("started"))
     eta = None
     if elapsed is not None:
@@ -68,8 +77,8 @@ def _sweep_ctx(request: Request, mean=...) -> dict:
         if (mean and isinstance(limit, int) and not isinstance(limit, bool) and isinstance(cpu, int)
                 and not isinstance(cpu, bool)):
             eta = max(0.0, limit * mean / max(1, cpu) - elapsed)
-    return {"active": active, "stopping": stopping, "pid": pid, "req": req, "tail": launcher.tail(200),
-            "history": history, "elapsed": elapsed, "eta_s": eta}
+    return {"active": active, "stopping": stopping, "finishing": finishing, "in_flight_max": in_flight_max, "pid": pid,
+            "req": req, "tail": launcher.tail(200), "history": history, "elapsed": elapsed, "eta_s": eta}
 
 
 @router.get("/live", response_class=HTMLResponse)

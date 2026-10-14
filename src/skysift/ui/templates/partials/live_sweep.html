@@ -1,20 +1,25 @@
 {% if active %}
 <div data-active="1" hx-get="/partials/live/sweep" hx-vals='{"was": 1}' hx-trigger="every 5s" hx-target="#sweep" hx-swap="innerHTML">
   {% if stopping %}<h2 class="status-running">Sweep stopping, waiting for the sweep to exit · {{ req.source }} · pid {{ pid if pid is not none else 'starting' }}</h2>
+  {% elif finishing %}<h2 class="status-running">Sweep finishing · {{ req.source }} · pid {{ pid if pid is not none else 'starting' }}</h2>
+  <p class="muted">stop requested at {{ finishing }}, finishing up to {{ in_flight_max }} in-flight targets (no new target is started; each takes up to a few minutes)</p>
   {% else %}<h2 class="status-running">Sweep running · {{ req.source }} · pid {{ pid if pid is not none else 'starting' }}</h2>{% endif %}
-  <p class="muted">started {{ active.started }}{% if elapsed is not none %} · elapsed {{ elapsed | fmt(0) }} s{% endif %}{% if eta_s is not none %} · about {{ (eta_s / 60) | fmt(0) }} min remaining{% endif %}
+  <p class="muted">started {{ active.started }}{% if elapsed is not none %} · elapsed {{ elapsed | fmt(0) }} s{% endif %}{% if eta_s is not none and not finishing %} · about {{ (eta_s / 60) | fmt(0) }} min remaining{% endif %}
   · limit {{ req.limit }} · window {{ req.min_period or 'default' }}–{{ req.max_period or 'default' }} d · retention {{ req.retention }}</p>
-  {% if not stopping %}<form method="post" action="/sweeps/stop" onsubmit="return confirm('Stop the running sweep? Interrupted targets are redone next time.')">
-    <input type="hidden" name="_token" value="{{ token }}"><button class="danger">Stop</button></form>{% endif %}
-  <pre class="log">{{ tail | join('\n') }}</pre>
+  {% if not stopping %}<form method="post" action="/sweeps/stop">
+    <input type="hidden" name="_token" value="{{ token }}">
+    {% if not finishing %}<button name="mode" value="graceful" onclick="return confirm('Finish the targets already in flight, then stop? Nothing started is lost.')">Stop</button>{% endif %}
+    <button class="danger" name="mode" value="now" onclick="return confirm('Stop the running sweep now? Interrupted targets are redone next time.')">Stop now</button></form>{% endif %}
+  <pre class="log">{{ tail | join('
+') }}</pre>
 </div>
 {% else %}
 <div>
   <h2>idle</h2>
-  {% if history %}<p class="muted">last sweep finished {{ history[0].finished }} with exit code {{ history[0].exit_code }}{% if history[0].summary %} · processed {{ history[0].summary.processed }} · signals {{ history[0].summary.signals }}{% endif %}</p>
+  {% if history %}<p class="muted">last sweep finished {{ history[0].finished }} with exit code {{ history[0].exit_code }}{% if history[0].summary %} · processed {{ history[0].summary.processed }} · signals {{ history[0].summary.signals }}{% if history[0].summary.stopped %} · stopped early ({{ history[0].summary.stopped }}){% endif %}{% endif %}</p>
   <h2>Past sweeps</h2>
   <div class="table-wrap"><table><thead><tr><th>started</th><th>source</th><th class="num">limit</th><th class="num">exit</th><th>log</th></tr></thead><tbody>
-  {% for h in history %}<tr><td>{{ h.started }}</td><td>{{ h.req.source }}</td><td class="num">{{ h.req.limit }}</td><td class="num">{{ h.exit_code }}</td><td><code>{{ h.log }}</code></td></tr>{% endfor %}
+  {% for h in history %}<tr><td>{{ h.started }}</td><td>{{ h.req.source }}</td><td class="num">{{ h.req.limit }}</td><td class="num">{{ h.exit_code }}{% if h.summary and h.summary.stopped %} (stopped early){% elif h.reason == 'stopped' %} (stopped now){% endif %}</td><td><code>{{ h.log }}</code></td></tr>{% endfor %}
   </tbody></table></div>{% else %}<p class="muted">No sweep has run from this dashboard yet. Start one from <a href="/">Sources</a>.</p>{% endif %}
 </div>
 {% endif %}

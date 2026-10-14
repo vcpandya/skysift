@@ -176,3 +176,49 @@ def test_summary_from_pretty_block_and_only_on_clean_exit(tmp_path):
     wait_finished(other)
     rec = other.history()[0]
     assert rec["exit_code"] == 3 and rec["summary"] is None
+
+
+# a stand-in engine: runs until the stop file (argv[1]) appears, then prints a summary like a graceful exit
+POLLER_SCRIPT = """import os, sys, time; print('started', flush=True)
+for _ in range(600):
+    if os.path.exists(sys.argv[1]): break
+    time.sleep(0.05)
+print('{"processed": 2, "stopped": "graceful"}')
+"""
+POLLER = [sys.executable, "-c", POLLER_SCRIPT]
+
+
+def stop_path(tmp_path):
+    return tmp_path / "ui" / "sweeps" / "stop.request"
+
+
+def test_request_stop_writes_the_stop_file_and_the_child_finishes_on_its_own(tmp_path):
+    launcher = SweepLauncher(tmp_path, command=POLLER + [str(stop_path(tmp_path))])
+    launcher.start(SweepRequest(source="kbonus_bkg"))
+    for _ in range(50):
+        if launcher.tail() == ["started"]: break
+        time.sleep(0.1)
+    assert launcher.request_stop() is True
+    assert stop_path(tmp_path).exists()
+    active = launcher.active()
+    assert active is not None and active["stop_requested_at"]            # still running: the lock stays until it exits
+    wait_finished(launcher)
+    rec = launcher.history()[0]
+    assert rec["exit_code"] == 0 and rec["reason"] == "exited" and rec["summary"]["stopped"] == "graceful"
+    assert rec["stop_requested_at"] == active["stop_requested_at"]
+    assert not stop_path(tmp_path).exists()                                # retired: the request is consumed
+
+
+def test_request_stop_without_a_sweep_does_nothing(tmp_path):
+    launcher = SweepLauncher(tmp_path, command=SLEEPER)
+    assert launcher.request_stop() is False and not stop_path(tmp_path).exists()
+
+
+def test_stale_stop_file_is_removed_on_start_and_on_hard_stop(tmp_path):
+    launcher = SweepLauncher(tmp_path, command=SLEEPER)
+    stop_path(tmp_path).write_text("stale", encoding="utf-8")
+    launcher.start(SweepRequest(source="kbonus_bkg"))
+    assert not stop_path(tmp_path).exists()                                # a leftover must not stop the new sweep
+    assert launcher.request_stop() is True and stop_path(tmp_path).exists()
+    assert launcher.stop() is True                                         # the hard stop still works while finishing
+    assert launcher.history()[0]["reason"] == "stopped" and not stop_path(tmp_path).exists()

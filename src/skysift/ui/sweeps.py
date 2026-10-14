@@ -4,9 +4,13 @@ runs need no cleanup: the engine's start_run marks them superseded on the next s
 
 Guarantees: the lock is created atomically before the child is spawned (two starts cannot both win); a lock names
 its process by (pid, creation time) so a reused pid is never signalled; a corrupt or stale lock is retired into the
-history instead of raising into a request. Stopping kills only the sweep process itself: engine spawn workers that
-outlive it exit on their own at the end of their current target (at most about 250 s), and the next sweep's
-start_run marks the interrupted run superseded."""
+history instead of raising into a request.
+
+Two ways to stop. ``request_stop`` (graceful) writes a stop file next to the lock; the engine polls it between target
+submissions, finishes every target already fetched or being fetched, and exits with its summary, so nothing is lost
+or superseded. ``stop`` (hard) kills the sweep process itself: engine spawn workers that outlive it exit on their own
+at the end of their current target (at most about 250 s), and the next sweep's start_run marks the interrupted run
+superseded. The launcher owns the stop file: a new start removes a stale one and retiring the lock removes it."""
 from __future__ import annotations
 
 import json
@@ -23,7 +27,7 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from skysift.config import Thresholds
+from skysift.config import Thresholds, stop_request_path
 from skysift.store.retention import RetentionPolicy
 
 PERIODOGRAM_MODES = ("all", "signals", "off")
@@ -225,6 +229,10 @@ class SweepLauncher:
     def lock(self) -> Path:
         return self.dir / "active.json"
 
+    @property
+    def stop_file(self) -> Path:
+        return stop_request_path(self.dir.parent.parent)
+
     # -- internals
     def _note(self, message: str) -> None:
         """Problems with the launcher's own files go here, never into the web request."""
@@ -253,6 +261,10 @@ class SweepLauncher:
         try: self.lock.unlink(missing_ok=True)
         except OSError as exc: self._note(f"could not remove the lock: {exc!r}")
 
+    def _drop_stop_file(self) -> None:
+        try: self.stop_file.unlink(missing_ok=True)
+        except OSError as exc: self._note(f"could not remove the stop file: {exc!r}")
+
     def _lock_mtime(self) -> float:
         try: return self.lock.stat().st_mtime
         except OSError: return time.time()
@@ -272,6 +284,7 @@ class SweepLauncher:
         except (OSError, TypeError, ValueError) as exc:
             self._note(f"could not write the history record {stamp}: {exc!r}")
         self._drop_lock()
+        self._drop_stop_file()
         self._proc = None
 
     def _reap(self) -> None:
@@ -326,6 +339,7 @@ class SweepLauncher:
                 except FileExistsError:
                     if attempt or self._active() is not None:
                         raise SweepActive("a sweep is already running in this data directory") from None
+            self._drop_stop_file()                            # a leftover request must not stop the new sweep at once
             flags = subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0
             try:
                 with open(log, "w", encoding="utf-8") as fh:     # the child holds its own handle
@@ -358,6 +372,22 @@ class SweepLauncher:
         except OSError:
             return []
         return [ln.rstrip("\r") for ln in lines[-n:] if ln.strip()]
+
+    def request_stop(self) -> bool:
+        """Ask the running sweep to finish its in-flight targets and exit: write the stop file and note the time in
+        the lock (``stop_requested_at``). True when a sweep was running; the lock stays until the child exits, when
+        it is retired as a normal exit with the engine's summary (``stopped: graceful``). Asking twice is harmless."""
+        with self._mu:
+            info = self._active()
+            if info is None or info["pid"] is None: return False
+            now = datetime.now(UTC).isoformat()
+            _write_atomic(self.stop_file, now)
+            if not info.get("stop_requested_at"):
+                try:
+                    _write_atomic(self.lock, json.dumps({**info, "stop_requested_at": now}))
+                except OSError as exc:                       # the request itself is delivered; only the note is lost
+                    self._note(f"could not record the stop request in the lock: {exc!r}")
+            return True
 
     def stop(self) -> bool:
         """True when the sweep is gone and recorded as stopped. False when there is none, or when a sweep started by

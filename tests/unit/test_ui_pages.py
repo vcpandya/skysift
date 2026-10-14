@@ -123,8 +123,8 @@ def test_start_sweep_form_launches_child_and_redirects(settings, tmp_path):
         assert page.count("Start sweep") == 0 and "is running" in page and "kbonus_bkg" in page
         r2 = client.post("/sweeps", data={"source": "kbonus_bkg", "_token": app.state.token}, follow_redirects=False)
         assert r2.status_code == 409 and "already running" in r2.text
-        assert client.post("/sweeps/stop", data={"_token": app.state.token}, follow_redirects=False).status_code == 303
-        assert launcher.active() is None
+        r = client.post("/sweeps/stop", data={"mode": "now", "_token": app.state.token}, follow_redirects=False)
+        assert r.status_code == 303 and launcher.active() is None
     finally:
         launcher.stop()                                   # never leave the SLEEPER child behind if an assertion fails
 
@@ -145,7 +145,7 @@ def test_htmx_posts_get_hx_redirect_not_a_303(settings, tmp_path):
     try:
         r = client.post("/sweeps", data={"source": "kbonus_bkg", "limit": "5"}, headers=hx, follow_redirects=False)
         assert r.status_code == 200 and r.headers["HX-Redirect"] == "/live" and launcher.active() is not None
-        r = client.post("/sweeps/stop", headers=hx, follow_redirects=False)
+        r = client.post("/sweeps/stop", data={"mode": "now"}, headers=hx, follow_redirects=False)
         assert r.status_code == 200 and r.headers["HX-Redirect"] == "/live" and launcher.active() is None
     finally:
         launcher.stop()
@@ -230,13 +230,13 @@ def test_live_sweep_shows_stopping_state_without_second_stop_button(settings, tm
         client.post("/sweeps", data={"source": "kbonus_bkg", "_token": app.state.token}, follow_redirects=False)
         assert launcher.active() is not None
         monkeypatch.setattr(launcher, "stop", lambda: False)                  # the child is slow to exit
-        r = client.post("/sweeps/stop", data={"_token": app.state.token}, follow_redirects=False)
+        r = client.post("/sweeps/stop", data={"mode": "now", "_token": app.state.token}, follow_redirects=False)
         assert r.status_code == 303 and app.state.stop_requested == (launcher.active()["pid"], launcher.active()["stamp"])
         r = client.get("/partials/live/sweep")
         assert "stopping, waiting for the sweep to exit" in r.text and "<button" not in r.text
         assert 'hx-trigger="every 5s"' in r.text                              # keep polling until it is gone
         monkeypatch.setattr(launcher, "stop", lambda: True)
-        client.post("/sweeps/stop", data={"_token": app.state.token}, follow_redirects=False)
+        client.post("/sweeps/stop", data={"mode": "now", "_token": app.state.token}, follow_redirects=False)
         assert app.state.stop_requested is None
         assert "Stop" in client.get("/partials/live/sweep").text
     finally:
@@ -434,3 +434,51 @@ def test_pages_render_on_a_migrated_m1_database(settings, tmp_path):
     # the migrated columns (decided_at, periodogram_sha256, queries.target_id) are what these routes read and write
     r = client.post(f"/signals/{sid}/decide", data={"decision": "approve", "note": "ok", "_token": app.state.token})
     assert r.status_code == 200 and "approved" in r.text
+
+
+def test_stop_defaults_to_graceful_and_live_shows_the_finishing_state(settings, tmp_path):
+    client, app, _ids, launcher = make_seeded_client(settings, tmp_path)
+    try:
+        client.post("/sweeps", data={"source": "kbonus_bkg", "_token": app.state.token}, follow_redirects=False)
+        running = client.get("/partials/live/sweep").text
+        assert 'value="graceful"' in running and 'value="now"' in running and "finishing" not in running
+        r = client.post("/sweeps/stop", data={"_token": app.state.token}, follow_redirects=False)
+        assert r.status_code == 303 and r.headers["location"] == "/live"
+        active = launcher.active()
+        assert active is not None and active["stop_requested_at"] and launcher.stop_file.exists()
+        assert app.state.stop_requested is None                                 # not the hard "stopping" state
+        r = client.get("/partials/live/sweep")
+        assert "finishing" in r.text and active["stop_requested_at"] in r.text and "in-flight" in r.text
+        assert 'value="now"' in r.text and 'value="graceful"' not in r.text     # only the hard stop is left to offer
+        assert 'hx-trigger="every 5s"' in r.text                                # keep polling until it exits
+        r = client.post("/sweeps/stop", data={"mode": "now", "_token": app.state.token}, follow_redirects=False)
+        assert r.status_code == 303 and launcher.active() is None and not launcher.stop_file.exists()
+        assert launcher.history()[0]["reason"] == "stopped"
+        assert "idle" in client.get("/partials/live/sweep").text
+    finally:
+        launcher.stop()
+
+
+def test_stop_now_is_the_hard_stop(settings, tmp_path):
+    client, app, _ids, launcher = make_seeded_client(settings, tmp_path)
+    try:
+        client.post("/sweeps", data={"source": "kbonus_bkg", "_token": app.state.token}, follow_redirects=False)
+        r = client.post("/sweeps/stop", data={"mode": "now", "_token": app.state.token}, follow_redirects=False)
+        assert r.status_code == 303 and launcher.active() is None and launcher.history()[0]["reason"] == "stopped"
+        assert client.post("/sweeps/stop", data={"mode": "bogus", "_token": app.state.token},
+                           follow_redirects=False).status_code == 400
+    finally:
+        launcher.stop()
+
+
+def test_live_history_marks_a_graceful_stop(settings, tmp_path):
+    client, app, _ids, launcher = make_seeded_client(
+        settings, tmp_path, command=[sys.executable, "-c",
+                                     "import json; print(json.dumps({'processed': 4, 'signals': 1, 'stopped': 'graceful'}))"])
+    client.post("/sweeps", data={"source": "kbonus_bkg", "_token": app.state.token}, follow_redirects=False)
+    import time
+    for _ in range(100):
+        if launcher.active() is None: break
+        time.sleep(0.1)
+    r = client.get("/partials/live/sweep")
+    assert "processed 4" in r.text and "stopped early" in r.text
