@@ -162,5 +162,35 @@ def vet(source: str = typer.Option(...), target_id: str = typer.Option(...), det
     _plain(console, f"wrote {path}")
 
 
+@app.command()
+def ui(host: str = "127.0.0.1", port: int = 8765, no_browser: bool = typer.Option(False, "--no-browser")):
+    """Start the local dashboard (loopback only) and open it in the browser."""
+    import os
+    import threading
+    import webbrowser
+
+    import uvicorn
+
+    from skysift.ui.app import LOOPBACK, create_app
+    from skysift.ui.assets import ensure_plotly
+    from skysift.ui.sweeps import SweepLauncher
+
+    if host not in LOOPBACK and not (host == "0.0.0.0" and os.environ.get("SKYSIFT_UI_ALLOW_CONTAINER") == "1"):
+        raise typer.BadParameter(f"{host} is not a loopback address; the dashboard has no authentication. "
+                                 "Reach it remotely through an SSH tunnel: ssh -L 8765:127.0.0.1:8765 <host>",
+                                 param_hint="--host")
+    s, store, blob = _ctx()
+    (s.data_dir / "ui").mkdir(parents=True, exist_ok=True)
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s",
+                        handlers=[logging.FileHandler(s.data_dir / "ui" / "dashboard.log", encoding="utf-8")])
+    plotly = ensure_plotly(s.data_dir)
+    application = create_app(s, store=store, blob=blob, launcher=SweepLauncher(s.data_dir), plotly_path=plotly)
+    url = f"http://{'127.0.0.1' if host == '0.0.0.0' else host}:{port}/"
+    _plain(_console(stderr=True), f"SkySift dashboard at {url}  (Ctrl+C to stop)")
+    if not no_browser:
+        threading.Timer(1.5, webbrowser.open, args=(url,)).start()
+    uvicorn.run(application, host=host, port=port, log_level="warning")
+
+
 if __name__ == "__main__":
     app()

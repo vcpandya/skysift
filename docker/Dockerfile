@@ -5,7 +5,7 @@ COPY pyproject.toml README.md ./
 COPY src ./src
 COPY config ./config
 # Editable install so that config/ (resolved relative to the source tree) is found at run time.
-RUN pip install --no-cache-dir -e ".[s3,pg]"
+RUN pip install --no-cache-dir -e ".[s3,pg,ui]"
 RUN mkdir -p /data && chown skysift:skysift /data
 USER skysift
 ENV PYTHONUNBUFFERED=1

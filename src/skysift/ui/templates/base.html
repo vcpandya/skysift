@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}SkySift{% endblock %}</title>
+<link rel="stylesheet" href="/static/app.css">
+<script src="/static/htmx.min.js" defer></script>
+{% if plotly_url %}<script src="{{ plotly_url }}" defer></script>{% endif %}
+<script src="/static/app.js" defer></script>
+</head>
+<body hx-headers='{"X-SkySift-Token": "{{ token }}"}'>
+<nav class="side">
+  <div class="brand">SkySift</div>
+  {% for href, label in nav %}
+  <a href="{{ href }}" class="{{ 'active' if (href == '/' and active_path == '/') or (href != '/' and active_path.startswith(href)) else '' }}">{{ label }}</a>
+  {% endfor %}
+</nav>
+<main>
+  <header class="top">
+    <span>data <code>{{ settings.data_dir }}</code></span>
+    <span>db <code>{{ settings.database_url }}</code></span>
+    <span>retention <code>{{ settings.retention }}</code></span>
+  </header>
+  <section class="page">
+  {% block content %}{% endblock %}
+  </section>
+  <footer>SkySift {{ engine_version }} · {{ git_commit }}</footer>
+</main>
+</body>
+</html>

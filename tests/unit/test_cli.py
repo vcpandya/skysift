@@ -116,3 +116,17 @@ def test_run_disk_budget_exceeded_prints_summary_and_exits_3(settings, monkeypat
     assert r.exit_code == 3 and not isinstance(r.exception, DiskBudgetExceeded)
     assert json.loads(r.stdout)["processed"] == 4
     assert "stopped: cache 20 B over budget 0 B" in r.stderr and "Traceback" not in r.output
+
+
+def test_ui_refuses_non_loopback_host(settings):
+    r = CliRunner().invoke(app, ["ui", "--host", "0.0.0.0", "--no-browser"])
+    assert r.exit_code != 0 and "loopback" in r.output
+
+
+def test_ui_starts_uvicorn_on_loopback(settings, monkeypatch):
+    import uvicorn
+    seen = {}
+    monkeypatch.setattr(uvicorn, "run", lambda application, **kw: seen.update(kw, app=application))
+    r = CliRunner().invoke(app, ["ui", "--port", "8899", "--no-browser"])
+    assert r.exit_code == 0, r.output
+    assert seen["host"] == "127.0.0.1" and seen["port"] == 8899 and seen["app"].title == "SkySift"
