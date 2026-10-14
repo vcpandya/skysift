@@ -89,3 +89,14 @@ Unit tests per detector and rung with synthetic injections (transits, eclipsing 
 ## 12. Milestones
 
 M1 core: store, blob, kbonus_bkg adapter, box_dip, rungs 1 to 4, CLI run and status, stream retention, golden test 1 partially (light-curve part). M2 localisation: pixels, rung 5, kepler adapter, golden tests 1 to 3 complete. M3 physics and FPP: rungs 6 to 8, tess_lc adapter, pack builder, review queue. M4 publish and deploy: Zenodo, drafts, Dockerfile, AWS templates, CI, README. M5 breadth: k2, exoarchive_bulk, box_rise, periodic, EB and self-lensing branches, injection-recovery yields in sources.yaml.
+
+## 13. Amendments (14 October 2026, after the milestone 1 review)
+
+- Section 1, scope: a local web dashboard is in scope as milestone 2 (`2026-10-14-skysift-dashboard-design.md`); "web UI beyond a static report" is no longer excluded. Automatic publishing without human approval stays excluded.
+- Section 3, detectors: a complete drift-correct Box Least Squares search over 0.5 to 200 d on the 1430 d Kepler baseline costs about 250 CPU-s per star with astropy, not 4 s; throughput comes from the CPU pool and AWS scale-out, and `sources.yaml` carries the measured value.
+- Section 5, rung 1: the detection statistic is the per-band normalised SDE (band median and MAD over 24 logarithmic period bands); the threshold of 9 is uncalibrated and must be calibrated on inverted and scrambled real curves before any production sweep (a 1000-star pilot is the interim check).
+- Section 5, rung 2: the free-phase secondary search fails the signal whenever it exceeds 5 sigma, with reason `secondary_at_0.5` when the phase is within one duration of 0.5 and `eccentric_secondary` otherwise; points within 1.5 durations of the primary are excluded from every off-primary measurement.
+- Section 5, rung 3: season stability uses a leave-one-out z per season; one deviant season fails the signal on purpose (season-dependent depth is the signature of off-target contamination).
+- Section 9: a target's work is checkpointed per target (one transaction holding its signals, tests, queries, pins and run status), not per rung; detection dominates the cost and the rungs total seconds. The three-attempt cap excludes failures caused by service outages. The job key's version field carries a hash of the search configuration, so a changed period window searches a target again.
+- Section 10: the golden depth for KIC 5689121 is asserted as consistency with the published 1883 ppm within three combined sigmas plus a regression pin on the engine's own 2037 ppm measurement under the 2-day detrend window; the 150 ppm hand-set tolerance is withdrawn.
+- Section 12: milestones are renumbered. M2 dashboard; M3 localisation (pixels, rung 5, kepler adapter, golden tests 1 to 3) plus the pre-sweep gates (SDE calibration, stacked-fold depths for transits shorter than about 1.8 h, wider rung 4 period-match radius); M4 physics and FPP; M5 publish and deploy; M6 breadth.

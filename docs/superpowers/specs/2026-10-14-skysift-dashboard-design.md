@@ -1,0 +1,83 @@
+# SkySift dashboard design spec (milestone 2)
+
+Date: 14 October 2026. Status: draft for review. Author: Vikram Pandya with Claude. Parent spec: `2026-10-13-skysift-design.md` (amended in its section 13 by this document).
+
+## 1. Purpose
+
+Milestone 1 delivers the engine as a command line tool: `run` sweeps a source, `status` prints JSON, `vet` dumps every metric of one target. The operator decisions in the parent spec (which source to sweep, with what budget, and approve or reject per candidate) are made faster and with fewer mistakes when the numbers and the light curves are in front of the operator. Milestone 2 adds a local web dashboard, started with `python -m skysift ui`, that shows the source registry with yield and cost, starts and watches a sweep, presents every candidate with its ladder verdicts and folded light curves, records the approve or reject decision, and lists what has been approved. The dashboard reads the same SQLite or Postgres database and blob store the engine writes. It does not change any scientific verdict; the ladder stays the only source of pass, fail and undetermined.
+
+Success means: (a) the operator can start a KBonus sweep, watch it progress and stop it without opening a terminal, (b) a candidate can be judged from one page (ladder table, full light curve, phase fold, odd and even fold, secondary zoom, season depths) in under a minute, (c) every decision is stored with a note, a timestamp and the signal id, and a rejected signal never returns to the queue, (d) the dashboard works offline after its first start (no CDN at view time), (e) the dashboard never launches a Windows console `.exe` (Norton CyberCapture) and never binds to anything but the loopback interface by default.
+
+Out of scope for milestone 2: multi-user access, authentication, remote hosting (use an SSH tunnel), editing thresholds from the UI, the evidence pack and Zenodo (milestone 5 in the amended plan), the periodogram plot (the detector does not persist the power spectrum; recomputing it costs 250 CPU-s), pixel and field panels (rung 5, milestone 3).
+
+## 2. Users and decisions
+
+One operator (Vikram), on the same machine as the engine or on a machine with the same database and blob paths. Decisions made in the UI: start a sweep (source, limit, period window, retention, worker counts), stop a sweep, approve or reject a candidate with a note, mark a candidate "needs data" (kept in the queue, flagged). Everything else is read only.
+
+## 3. Architecture
+
+A `ui/` layer inside the existing package, with the same layering rule as the rest (the UI calls `store/`, `sources/`, `lc/` and `jsonutil`; nothing calls the UI).
+
+- `src/skysift/ui/app.py`: FastAPI application factory `create_app(settings) -> FastAPI`; mounts static files, registers the routers, holds one `Store` and one `Blob` per process.
+- `src/skysift/ui/routes/{sources,live,review,published,api}.py`: one router per page plus a JSON API for plot data. Pages are Jinja2 templates; partial updates (progress, log tail, decision results) are HTMX fragments returned by the same routers under `/partials/...`.
+- `src/skysift/ui/queries.py`: every read the pages need, as named functions over SQLAlchemy selects (`summary()`, `source_progress()`, `review_queue(filter, sort)`, `signal_detail(id)`, `approved()`); no ORM objects reach templates, only dicts. The `status` command calls the same `summary()` (this closes the deferred "status loads whole tables" minor and adds the rung counts the parent spec section 11 asks for).
+- `src/skysift/ui/sweeps.py`: the sweep launcher. Starts `sys.executable -m skysift run ...` as a child process with stdout and stderr redirected to `<data_dir>/ui/sweeps/<utc>.log`, records pid and arguments in `<data_dir>/ui/sweeps/active.json` (the lock: one sweep per data directory), and offers `status()`, `tail(n)` and `stop()`. Stop terminates the child; the engine's `start_run` already marks interrupted runs as superseded, so no cleanup is needed. The launcher never uses a console `.exe`.
+- `src/skysift/ui/plots.py`: builds the plot payloads from a light curve and a signal: full detrended curve (downsampled to at most 20,000 points, transit times marked), phase fold with 15-minute bins and the box model from the signal, odd and even folds, a phase 0.5 window, and the per-season depths read from the stored rung 3 metrics. The light curve comes from `LightCurveLoader`: the pinned artifact of the target through the blob (parsed with the adapter's parser, detrended with the engine's `detrend` and default window), or, when the file was released, a re-fetch through the adapter that verifies the stored SHA-256 and pins the row (parent spec, data flow step 5).
+- `src/skysift/ui/assets.py`: first-run download of Plotly (pinned version, SHA-256 verified, written atomically) into `<data_dir>/ui/assets`, served under `/static/vendor`. HTMX (about 50 kB) is vendored in the repository under `src/skysift/ui/static/`. Offline with no cached Plotly, plot panels show a plain message and the tables still work.
+- `src/skysift/store/migrations.py`: ordered, idempotent schema steps with a `schema_version` table, run by `Store.init_schema()` after `create_all`. Milestone 2 adds step 1: `candidates.decided_at` (DateTime, nullable) and `candidates.decided_by` (String(64), default ""). SQLAlchemy `create_all` does not add columns to existing tables, so this is needed for every database created by milestone 1.
+- `Store.decide(signal_id, decision, note, who="operator") -> dict`: one transaction. `approve` upserts the candidate row (`branch` from the signal, status `approved`), `reject` sets status `rejected` and the signal's `final_status` to `rejected` (with the note in `candidates.note`), `needs_data` sets status `review` with the note. A rejected signal is excluded from the queue by status, and the engine never re-runs a done job key, so it cannot return.
+- CLI: `python -m skysift ui [--host 127.0.0.1] [--port 8765] [--no-browser]`. Starts uvicorn, opens the default browser once the port answers. Any host other than `127.0.0.1`, `localhost` or `::1` is refused with a message pointing to SSH tunnelling.
+
+Dependencies: new extra `ui = ["fastapi>=0.115", "uvicorn>=0.30", "jinja2>=3.1", "python-multipart>=0.0.9"]`. The container installs `.[s3,pg,ui]` so one image serves every environment; the compose file gains a `ui` service that publishes port 8765 on localhost only.
+
+## 4. Pages
+
+All pages share one layout: a left navigation (Sources, Live, Candidates, Approved), a header with the data directory, database and retention in use, and a footer with the engine version and the git commit. Colour carries status only (pass green, fail red, undetermined amber, running blue); everything else is neutral. Light and dark follow the operating system (`prefers-color-scheme`). Tables are dense, numbers right aligned with units in the header, and every table sorts by clicking a header (server side, so the URL holds the state). Text is the only decoration.
+
+### 4.1 Sources
+The registry from `config/sources.yaml` as a table: name, status (live or planned), light curves, baseline (d), cadence (min), depth limit (ppm), fraction searched, estimated yield per 10k, CPU hours per 10k (from `seconds_per_star`), GB per 10k, notes. Live sources get a progress column from the database (targets done, error, capped, remaining against `n_lightcurves`) and a "Start sweep" button that opens an inline form: limit (default 500), min and max period (defaults from thresholds), retention (keep, stream, budget with GiB), workers io and cpu (defaults from settings), background only, gmag max. Submitting posts to `/sweeps` and redirects to Live. The form is disabled while a sweep is active, with a link to it. Planned sources are listed, greyed, with their notes, so the choice is informed before any adapter exists.
+
+### 4.2 Live
+Top row of cards from `summary()`: targets per state (new, done, error, capped), signals per outcome (candidate, rejected, undetermined), rung pass, fail and undetermined counts per rung, throughput (targets per hour, mean seconds per run), cache bytes versus budget, queries logged, last five errors (target, time, first line). Below: the active sweep (arguments, started, elapsed, processed so far, estimated remaining from the mean seconds per run and the limit), a Stop button (confirm step), and the last 200 lines of its log. Cards and log refresh every 5 s with HTMX polling; polling stops when no sweep is active and the page shows "idle" with the time of the last finished run. Past sweeps are listed with their log links.
+
+### 4.3 Candidates (review queue)
+Table of signals with `final_status` in (`candidate_stage1`, `undetermined`), default filter `candidate_stage1`, default sort SDE descending. Columns: target, period (d), depth (ppm), duration (h), SDE, SNR, events, highest rung reached, verdict, detected (UTC), decision state. Clicking a row opens the detail page `/signals/{id}`:
+- Header: target id, KIC and Gaia id with links to the MAST and Gaia archive pages, G magnitude, coordinates, priority score, source.
+- Ladder table: rung, status, reason, duration, and the three or four metrics that matter per rung (rung 1: SDE, SNR, events, duration ratio; rung 2: odd and even depths with sigma, phase 0.5 depth, free phase and sigma; rung 3: per-season depths, chi-squared p; rung 4: counts per catalogue, matched identifier). The full metrics dict is behind a "raw" toggle.
+- Plots (Plotly, one column, fixed heights): full detrended curve with transit epochs marked; phase fold in hours from mid-transit with 15-minute bins and the box model; odd and even folds overlaid; phase 0.5 window at the same vertical scale as the primary; per-season depth with error bars and the weighted mean. Hovering gives time and flux; zoom is free. Plot data arrives from `/api/signals/{id}/plots.json` after the page renders, so the tables never wait for a FITS parse.
+- Decision bar (sticky): Approve, Reject, Needs data, each with a note field (reject requires a note), and previous and next links within the current filter and sort. Keyboard: `a`, `r`, `n`, `j`, `k`. The decision posts via HTMX and the bar re-renders with the stored state, timestamp and author.
+
+### 4.4 Approved
+Candidates with status `approved` (and `published` later): target, period, depth, SDE, decided at, note, and a "review JSON" link that serves the same document `vet` writes (signal, every test, every query) for the record. Rejected candidates are reachable through a filter on the same page so a decision can be revisited; revisiting updates the decision, and the previous note is kept as a dated line above the new one.
+
+## 5. Data flow
+
+1. `python -m skysift ui` loads settings, opens the store (running migrations), checks the Plotly asset (downloads once), binds uvicorn to loopback and opens the browser.
+2. Page requests run `queries.py` functions in short sessions; no page holds a session across a render.
+3. Start sweep: validate the form with the same pydantic models the CLI uses (`Thresholds` for the window, `RetentionPolicy.parse` for retention), write `active.json`, spawn the child with `SKYSIFT_*` environment overrides for workers and retention and `--min-period/--max-period/--limit` arguments, redirect to Live.
+4. Live polling reads `summary()` and the child state; when the child exits, `active.json` is removed and the exit code and summary JSON (the child's stdout) are stored next to the log.
+5. Signal detail: the page renders from the database; the browser then requests the plots JSON, which loads the light curve (blob, or re-fetch with hash check), detrends with the engine's default window, folds on the stored ephemeris and returns arrays; the response is cached in memory per signal id for the life of the process.
+6. Decision: `Store.decide` in one transaction; the fragment re-renders from the database, never from the request.
+
+## 6. Error handling
+
+- A missing or unreadable artifact: re-fetch through the adapter; on `ServiceUnavailable` the plot panel shows the message and a retry link, tables unaffected.
+- A sweep that fails to start (bad arguments, a previous child still alive): the form shows the validation message; a stale `active.json` whose pid is dead is removed on the next status check.
+- Database locked (SQLite busy): the store already waits 30 s; the UI shows a short notice on timeout rather than a traceback.
+- All exceptions in routes render a plain error page with the exception text and the log path, never a stack trace to the browser (the log file has it).
+- The UI never deletes files, never changes thresholds, never edits runs or tests.
+
+## 7. Security
+
+Loopback binding only; a non-loopback `--host` is refused. No credentials in templates or static files. A `SameSite=Strict` session cookie carries a random per-process token that every state-changing POST must echo (CSRF guard against a malicious page on the same machine). Downloaded Plotly is SHA-256 verified before it is served. Target ids and notes are escaped by Jinja2 autoescape; identifiers that go into archive links are URL-quoted.
+
+## 8. Testing
+
+- Unit: `queries.py` functions against a seeded SQLite (targets, runs, signals, tests, candidates) with expected numbers; `Store.decide` transitions and the rejected-never-returns rule; migrations on a milestone 1 database file (create with the old `create_all`, then `init_schema`, assert the columns exist and the step is idempotent); `plots.py` payload shapes and bin counts on a synthetic injected transit (the fold must centre the dip at phase 0 and the odd and even depths must agree); `sweeps.py` with `sys.executable -c` as the child (start, lock refuses a second start, tail, stop, stale lock removal); `assets.py` SHA mismatch rejected, offline skipped.
+- Integration: FastAPI `TestClient` renders every page with the seeded database (status 200, key strings present), the HTMX partials return fragments, the plots endpoint returns JSON for a signal whose FITS is a synthetic file written through the blob, the decision POST without the token is refused.
+- Manual: the dashboard is opened in the desktop app's browser pane during development to check layout at 1280 and 1920 px widths and both colour schemes; no browser automation in CI.
+- UI tests are fast (no BLS); the unit suite stays under six minutes.
+
+## 9. Milestone plan
+
+Milestone 2 is the dashboard alone, built on the merged milestone 1. The parent spec's milestones shift by one: localisation becomes milestone 3, physics and FPP milestone 4, publish and deploy milestone 5, breadth milestone 6. Pre-sweep gates carried from the milestone 1 review stay attached to milestone 3 or earlier: SDE threshold calibration on inverted and scrambled real curves, stacked-fold depths for transits shorter than about 1.8 h, a wider period-match radius in rung 4. The dashboard makes the 1000-star pilot sweep (the interim calibration check) practical, so the pilot runs as soon as milestone 2 lands.
