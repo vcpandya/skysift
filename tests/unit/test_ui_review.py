@@ -1,3 +1,8 @@
+import json
+
+import pytest
+from sqlalchemy import text
+
 from tests.unit.test_ui_pages import make_seeded_client
 
 
@@ -70,6 +75,7 @@ def test_approved_page_lists_each_signal_once(settings, tmp_path):
         client.post(f"/signals/{sid}/decide", data={"decision": decision, "note": note, "_token": app.state.token})
     r = client.get("/approved")
     assert r.status_code == 200 and r.text.count("kic-005689121") == 1 and "confirmed" in r.text
+    assert "first look" not in r.text and "second look" not in r.text                         # superseded notes
     assert "kic-005689121" not in client.get("/approved?status=rejected").text
     assert "kic-005689121" not in client.get("/candidates?status=rejected").text
     assert f'href="/signals/{sid}/review.json"' in r.text
@@ -81,14 +87,36 @@ def test_approved_page_rejects_unknown_status(settings, tmp_path):
     assert r.status_code == 400 and "Something went wrong" in r.text
 
 
+def _strict(body: str):
+    return json.loads(body, parse_constant=lambda c: pytest.fail(f"non-strict constant {c}"))
+
+
 def test_review_json_download(settings, tmp_path):
     client, app, ids, _launcher = make_seeded_client(settings, tmp_path)
     sid = ids["candidate"]
     client.post(f"/signals/{sid}/decide", data={"decision": "approve", "note": "ok", "_token": app.state.token})
+    with app.state.store.session() as s:           # the ORM sanitizes on write, so plant NaN/Infinity as raw JSON text
+        rung = s.execute(text("SELECT id, rung FROM tests WHERE signal_id = :sid ORDER BY id"), {"sid": sid}).first()
+        s.execute(text("UPDATE tests SET metrics = :m WHERE id = :id"),
+                  {"m": '{"timing_rms_min": NaN, "wide": Infinity, "narrow": -Infinity, "ok": 1.5}', "id": rung.id})
+        s.commit()
     r = client.get(f"/signals/{sid}/review.json")
-    assert r.status_code == 200 and "attachment" in r.headers["content-disposition"] and "NaN" not in r.text
+    assert r.status_code == 200 and "attachment" in r.headers["content-disposition"]
     assert f'filename="kic-005689121_{sid}_review.json"' in r.headers["content-disposition"]
-    doc = r.json()
+    doc = _strict(r.text)
     assert doc["signal"]["target_id"] == "kic-005689121" and doc["decisions"][0]["decision"] == "approve"
     assert doc["queries"] and doc["artifacts"] and len(doc["tests"]) == 4
+    planted = next(t for t in doc["tests"] if t["rung"] == rung.rung)["metrics"]
+    assert planted == {"timing_rms_min": None, "wide": None, "narrow": None, "ok": 1.5}
     assert client.get("/signals/999999/review.json").status_code == 404
+
+
+def test_review_json_filename_is_sanitised(settings, tmp_path, monkeypatch):
+    client, _app, ids, _launcher = make_seeded_client(settings, tmp_path)
+    sid = ids["candidate"]
+    evil = 'kic-1";x=y' + chr(13) + chr(10) + "z/../w"                                    # quote, ;, CR, LF, /
+    monkeypatch.setattr("skysift.ui.queries.review_document",
+                        lambda _store, _sid: {"signal": {"target_id": evil}})
+    r = client.get(f"/signals/{sid}/review.json")
+    assert r.status_code == 200
+    assert r.headers["content-disposition"] == f'attachment; filename="kic-1xyz..w_{sid}_review.json"'

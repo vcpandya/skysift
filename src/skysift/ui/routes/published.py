@@ -31,5 +31,5 @@ def review_json(request: Request, signal_id: int):
         return JSONResponse({"error": "not found"}, status_code=404)
     target = re.sub(r"[^A-Za-z0-9._-]", "", str(doc["signal"]["target_id"]))
     name = f"{target}_{signal_id}_review.json"
-    return Response(jsonutil.dumps(doc, indent=1, default=str), media_type="application/json",
+    return Response(jsonutil.dumps(doc, indent=1), media_type="application/json",
                     headers={"Content-Disposition": f'attachment; filename="{name}"'})
