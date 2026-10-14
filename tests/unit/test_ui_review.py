@@ -61,3 +61,34 @@ def test_decision_bar_records_and_requires_note_for_reject(settings, tmp_path):
     assert r.status_code == 404
     r = client.post(f"/signals/{sid}/decide", data={"decision": "bogus", "note": "", "_token": app.state.token})
     assert r.status_code == 400
+
+
+def test_approved_page_lists_each_signal_once(settings, tmp_path):
+    client, app, ids, _launcher = make_seeded_client(settings, tmp_path)
+    sid = ids["candidate"]
+    for decision, note in (("reject", "first look"), ("approve", "second look"), ("approve", "confirmed")):
+        client.post(f"/signals/{sid}/decide", data={"decision": decision, "note": note, "_token": app.state.token})
+    r = client.get("/approved")
+    assert r.status_code == 200 and r.text.count("kic-005689121") == 1 and "confirmed" in r.text
+    assert "kic-005689121" not in client.get("/approved?status=rejected").text
+    assert "kic-005689121" not in client.get("/candidates?status=rejected").text
+    assert f'href="/signals/{sid}/review.json"' in r.text
+
+
+def test_approved_page_rejects_unknown_status(settings, tmp_path):
+    client, _app, _ids, _launcher = make_seeded_client(settings, tmp_path)
+    r = client.get("/approved?status=bogus")
+    assert r.status_code == 400 and "Something went wrong" in r.text
+
+
+def test_review_json_download(settings, tmp_path):
+    client, app, ids, _launcher = make_seeded_client(settings, tmp_path)
+    sid = ids["candidate"]
+    client.post(f"/signals/{sid}/decide", data={"decision": "approve", "note": "ok", "_token": app.state.token})
+    r = client.get(f"/signals/{sid}/review.json")
+    assert r.status_code == 200 and "attachment" in r.headers["content-disposition"] and "NaN" not in r.text
+    assert f'filename="kic-005689121_{sid}_review.json"' in r.headers["content-disposition"]
+    doc = r.json()
+    assert doc["signal"]["target_id"] == "kic-005689121" and doc["decisions"][0]["decision"] == "approve"
+    assert doc["queries"] and doc["artifacts"] and len(doc["tests"]) == 4
+    assert client.get("/signals/999999/review.json").status_code == 404
