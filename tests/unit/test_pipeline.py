@@ -63,7 +63,7 @@ def test_build_ladder_orders_rungs_and_drops_novelty_on_request():
     assert build_ladder("7").version == "7"
 
 
-def test_write_results_keeps_nan_and_numpy_metrics(settings):
+def test_write_results_keeps_nan_and_numpy_metrics(settings, tmp_path):
     store = Store(settings.database_url); store.init_schema()
     t = Target(source="fake", target_id="t1", ra=0, dec=0); store.upsert_target(t)
     rid = store.start_run(make_job_key("t1", "box_dip", "1", "1"), "t1", "box_dip", "1", "1")
@@ -75,7 +75,7 @@ def test_write_results_keeps_nan_and_numpy_metrics(settings):
              "nbytes": 10, "sha256": "ab" * 32, "error": "", "utc": "2026-10-14T00:00:00+00:00"}
     payload = jsonutil.dumps({"signals": [{"signal": sig.model_dump(), "outcome": "pass", "tests": [r.model_dump()],
                                            "timings": [0.1]}], "queries": [query]})
-    assert _write_results(store, rid, "t1", payload) == {"pass": 1, "fail": 0, "undetermined": 0}
+    assert _write_results(store, LocalBlob(tmp_path / "b"), rid, "t1", payload) == {"pass": 1, "fail": 0, "undetermined": 0}
     with store.session() as s:
         m = s.query(db.TestRow).one().metrics
         q = s.query(db.QueryRow).one()
@@ -147,12 +147,19 @@ def test_run_end_to_end_with_fake_source_and_resume(settings, monkeypatch):
         assert any(abs(r.period - 13.769) < 0.05 for r in planet_sigs)
         assert all(r.final_status in ("candidate_stage1", "rejected", "undetermined") for r in ss.query(db.SignalRow))
         alive = {r.target_id for r in ss.query(db.SignalRow) if r.final_status != "rejected"}
-        arts = {a.target_id: (a.pinned, a.deleted_at, a.local_path) for a in ss.query(db.ArtifactRow)}
+        arts = {a.target_id: (a.pinned, a.deleted_at, a.local_path) for a in ss.query(db.ArtifactRow).filter_by(kind="raw")}
+        summaries = {a.target_id: (a.pinned, a.deleted_at, a.local_path) for a in
+                     ss.query(db.ArtifactRow).filter_by(kind="summary")}
+        assert {r.target_id: r.periodogram_sha256 is not None for r in ss.query(db.RunRow)} == {"planet": True, "noise": True}
     assert "planet" in alive
-    # stream retention: nothing unpinned is left on disk; live signals keep their evidence pinned
-    assert store.unpinned_artifacts() == []
+    # stream retention: no unpinned raw file is left on disk; live signals keep their evidence pinned
+    assert store.unpinned_artifacts(kind="raw") == []
     for tid, (pinned, deleted_at, path) in arts.items():
         assert pinned == (tid in alive) and (deleted_at is None) == pinned and Path(path).exists() == pinned
+    # periodogram summaries stay in stream mode (the null set for calibration), pinned only with live evidence
+    assert set(summaries) == {"planet", "noise"}
+    for tid, (pinned, deleted_at, path) in summaries.items():
+        assert pinned == (tid in alive) and deleted_at is None and Path(path).exists()
     # an interrupted rerun leaves a 'running' row; the earlier done run still checkpoints the target
     store.start_run(planet_key, "planet", "box_dip", ver, "1")
     assert store.job_done(planet_key)
@@ -160,6 +167,38 @@ def test_run_end_to_end_with_fake_source_and_resume(settings, monkeypatch):
     out2 = run(src, store, blob, s, filter={}, max_targets=2)
     assert out2["skipped"] == 2 and out2["processed"] == 0 and store.counts()["signals"] == c["signals"]
     assert store.counts()["runs"] == 3
+
+
+@pytest.mark.parametrize("mode,expect_file", [("all", True), ("signals", False), ("off", False)])
+def test_store_periodogram_modes(settings, monkeypatch, mode, expect_file):
+    from skysift.detectors.periodogram import PeriodogramSummary
+    s, store, blob = _env(monkeypatch, settings, THRESHOLDS__MIN_PERIOD_DAYS="5", THRESHOLDS__MAX_PERIOD_DAYS="40",
+                          STORE_PERIODOGRAM=mode)
+    lc = make_lightcurve(n_days=500, seed=11, noise_ppm=600)          # pure noise: the top peaks all fail rung 1
+    src = ScriptedSource([_tgt("quiet")], {"quiet": lc}, store, blob)
+    out = run(src, store, blob, s, filter={}, with_novelty=False)
+    assert out["processed"] == 1
+    with store.session() as ss:
+        sha = ss.query(db.RunRow).one().periodogram_sha256
+        arts = [a for a in ss.query(db.ArtifactRow) if a.kind == "summary"]
+        ss.expunge_all()                                                 # keep the loaded rows readable below
+    assert (sha is not None) == expect_file and (len(arts) == 1) == expect_file
+    if expect_file:
+        ps = PeriodogramSummary.from_npz(blob.get(arts[0].local_path))
+        assert ps.n_bins == 2048 and len(ps.peaks) == 3                 # the detector's top three peaks, all rejected
+        assert arts[0].url == "skysift://periodogram/quiet" and not arts[0].pinned and blob.exists(arts[0].local_path)
+
+
+def test_signals_mode_stores_periodogram_when_a_signal_exists(settings, monkeypatch):
+    s, store, blob = _env(monkeypatch, settings, THRESHOLDS__MIN_PERIOD_DAYS="5", THRESHOLDS__MAX_PERIOD_DAYS="40",
+                          STORE_PERIODOGRAM="signals")
+    lc = inject_transit(make_lightcurve(n_days=500, seed=5, noise_ppm=600), 12.5, 140.0, 0.12, 2000)
+    src = ScriptedSource([_tgt("planet")], {"planet": lc}, store, blob)
+    run(src, store, blob, s, filter={}, with_novelty=False)
+    with store.session() as ss:
+        run_row = ss.query(db.RunRow).one(); arts = [a for a in ss.query(db.ArtifactRow) if a.kind == "summary"]
+        ss.expunge_all()                                                 # keep the loaded rows readable below
+    assert run_row.periodogram_sha256 == arts[0].sha256 and arts[0].pinned       # pinned with the evidence
 
 
 class ScriptedSource(FakeSource):
@@ -281,8 +320,10 @@ def test_disk_budget_exceeded_stops_run_after_planet_is_written(settings, monkey
     assert _runs(store)["planet"][0] == "done" and _states(store)["planet"] == "done"
     with store.session() as ss:
         assert ss.query(db.SignalRow).filter_by(final_status="candidate_stage1").count() >= 1
-        art = ss.query(db.ArtifactRow).one()
+        art = ss.query(db.ArtifactRow).filter_by(kind="raw").one()
         assert art.pinned and art.deleted_at is None and Path(art.local_path).exists()
+        summary = ss.query(db.ArtifactRow).filter_by(kind="summary").one()
+        assert summary.pinned and summary.deleted_at is None and Path(summary.local_path).exists()
 
 
 def test_rung4_catalogue_queries_are_logged_during_a_sweep(settings, monkeypatch):
@@ -395,3 +436,17 @@ def test_duplicate_target_ids_start_one_run(settings, monkeypatch):
     assert out["processed"] == 1 and out["errors"] == 0
     with store.session() as ss:
         assert ss.query(db.RunRow).count() == 1
+
+
+def test_salvaged_queries_carry_the_target_id(settings, monkeypatch):
+    s, store, blob = _env(monkeypatch, settings, THRESHOLDS__MIN_PERIOD_DAYS="5", THRESHOLDS__MAX_PERIOD_DAYS="15")
+    planet = inject_transit(make_lightcurve(n_days=120, seed=1, noise_ppm=800), 7.3, 135.0, 0.1, 3000)
+    src = ScriptedSource([_tgt("planet")], {"planet": planet}, store, blob)
+
+    def broken(self, *a, **kw): raise RuntimeError("database went away")
+    monkeypatch.setattr(Store, "record_results", broken)
+    out = run(src, store, blob, s, filter={}, with_novelty=True, fetch_module="tests.unit.fake_fetch")
+    assert out["errors"] == 1 and out["processed"] == 0
+    with store.session() as ss:
+        rows = ss.query(db.QueryRow).all()
+        assert rows and all(r.target_id == "planet" for r in rows)       # salvaged, and still tied to their target

@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 import itertools
+from dataclasses import dataclass, field
 
 import numpy as np
 from astropy.timeseries import BoxLeastSquares
 
 from skysift.config import Thresholds
 from skysift.detectors.base import register
+from skysift.detectors.periodogram import PeriodogramSummary
 from skysift.lc.ops import circular_duration_days
 from skysift.models import LightCurve, Signal
 
@@ -16,6 +18,13 @@ DURATIONS_H = np.array([1, 1.5, 2, 3, 4, 6, 9, 12])
 ALIAS_RATIOS = (2.0, 3.0, 0.5, 1 / 3)
 MIN_BAND_PERIODS = 50
 MAX_DURATION_FRACTION = 0.9     # trial durations must stay below this fraction of the band's shortest period
+
+
+@dataclass
+class SearchResult:
+    signals: list[Signal] = field(default_factory=list)
+    periodogram: PeriodogramSummary | None = None
+    spectrum: dict | None = None            # full arrays (period, power, sde, duration), only on request
 
 
 def _band_durations(p_mid: float) -> np.ndarray:
@@ -110,30 +119,35 @@ class BoxDip:
                 float(res.depth[j]), float(res.depth_err[j]), b)
 
     def detect(self, lc: LightCurve, fnorm: np.ndarray, thresholds: Thresholds) -> list[Signal]:
+        return self.search(lc, fnorm, thresholds).signals
+
+    def search(self, lc: LightCurve, fnorm: np.ndarray, thresholds: Thresholds, keep_spectrum: bool = False) -> SearchResult:
+        """Signals plus the periodogram summary built from the same per-band SDE spectrum the ranking uses; the full
+        spectrum arrays come back only with ``keep_spectrum``."""
         th = thresholds
         m = np.isfinite(fnorm) & np.isfinite(lc.time)
         if m.sum() < MIN_POINTS:
-            return []
+            return SearchResult()
         t, y = lc.time[m], fnorm[m]
         med = np.median(y); mad = 1.4826 * np.median(np.abs(y - med))
         if mad == 0:
-            return []
+            return SearchResult()
         # clip upward outliers only: transits are downward and must survive however deep they are
         k = (y - med) < 5 * mad
         if k.sum() < MIN_POINTS:
-            return []
+            return SearchResult()
         t, y = t[k], y[k]
         baseline = float(t.max() - t.min())
         pmax = min(th.max_period_days, baseline / 3.0)
         if pmax <= th.min_period_days:
-            return []
+            return SearchResult()
         # constant per-point uncertainty from the robust scatter, so depth_err (and snr) are in real units
         sigma = max(1.4826 * float(np.median(np.abs(y - np.median(y)))), 1e-12)
         model = BoxLeastSquares(t, y, dy=np.full(t.size, sigma))
         spec = self._coarse_search(model, baseline, th, pmax)
         periods, power = spec["period"], spec["power"]
         if periods.size == 0:
-            return []
+            return SearchResult()
         # selection and ranking use the per-band SDE, not raw power, so every band competes on the same scale
         order = np.argsort(spec["sde"])[::-1]
         # candidates: (period, power, duration, t0, depth, depth_err, band)
@@ -160,7 +174,12 @@ class BoxDip:
                               extra={"baseline_days": baseline, "sde_spectrum_std": bstd, "band": b,
                                      "alias_of": _alias_of(p, out), "n_periods": int(periods.size),
                                      "n_bands": self.n_bands, "two_stage": self.two_stage, "n_refined": n_refined}))
-        return out
+        edges = np.geomspace(th.min_period_days, pmax, self.n_bands + 1)
+        peaks = [{"period": s.period, "sde": s.sde, "duration": s.duration, "rank": i} for i, s in enumerate(out)]
+        summary = PeriodogramSummary.from_spectrum(periods, spec["sde"], th.min_period_days, pmax, edges, peaks)
+        spectrum = ({"period": periods, "power": power, "sde": spec["sde"], "duration": spec["duration"]}
+                    if keep_spectrum else None)
+        return SearchResult(signals=out, periodogram=summary, spectrum=spectrum)
 
 
 register(BoxDip())

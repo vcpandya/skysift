@@ -14,11 +14,18 @@ from itertools import islice
 from skysift import jsonutil, net
 from skysift.config import Settings, Thresholds
 from skysift.detectors.base import get_detector
+from skysift.detectors.periodogram import PeriodogramSummary
 from skysift.lc.ops import detrend
 from skysift.models import LightCurve, Target
 from skysift.net import ServiceUnavailable
 from skysift.store.blob import Blob
-from skysift.store.db import UNAVAILABLE_PREFIX, Store, make_job_key, utcnow
+from skysift.store.db import (
+    PERIODOGRAM_URL,  # noqa: F401  re-exported: the summary artifact url
+    UNAVAILABLE_PREFIX,
+    Store,
+    make_job_key,
+    utcnow,
+)
 from skysift.store.retention import DiskBudgetExceeded, Retention, RetentionPolicy
 from skysift.vetting.base import DataBundle, Ladder
 from skysift.vetting.rung1_detection import Rung1Detection
@@ -72,10 +79,21 @@ class _QueryRecorder:
                           "nbytes": nbytes, "sha256": sha256, "error": error, "utc": utcnow().isoformat()})
 
 
+def _search(det, lc, fn, th, keep_spectrum=False):
+    """Detectors that implement search() give signals plus the periodogram; older ones give signals only."""
+    if hasattr(det, "search"):
+        return det.search(lc, fn, th, keep_spectrum=keep_spectrum)
+    from skysift.detectors.box_dip import SearchResult
+    return SearchResult(signals=det.detect(lc, fn, th))
+
+
 def _cpu_work(lc_pickle: bytes, target_json: str, thresholds_json: str, detector_name: str, ladder_version: str,
-              with_novelty: bool, fetch_module: str | None = None) -> str:
-    """Runs in a worker process: detect + vet. Returns strict JSON {"signals": [...], "queries": [...]}: each signal
-    with its outcome, test results and timings, and every catalogue query the rungs made.
+              with_novelty: bool, fetch_module: str | None = None, store_periodogram: str = "all",
+              spectrum_path: str | None = None) -> str:
+    """Runs in a worker process: detect + vet. Returns strict JSON {"signals": [...], "queries": [...],
+    "periodogram": {...} | null}: each signal with its outcome, test results and timings, every catalogue query the
+    rungs made, and the periodogram summary when ``store_periodogram`` keeps it ("all"; "signals" only when a peak
+    survived rung 1; never for "off"). ``spectrum_path`` also writes the full spectrum arrays there (.npz).
 
     ``fetch_module`` names a module whose ``fetch`` replaces ``net.fetch`` for the rungs (tests use it to keep rung 4
     off the network; a monkeypatch in the parent never reaches a spawned worker). The pickle comes only from this
@@ -87,7 +105,11 @@ def _cpu_work(lc_pickle: bytes, target_json: str, thresholds_json: str, detector
     lc.meta.setdefault("target_id", target.target_id)
     fn = detrend(lc); fn_alt = detrend(lc, flux=lc.flux_alt) if lc.flux_alt is not None else None
     det = get_detector(detector_name)
-    signals = det.detect(lc, fn, th)
+    res = _search(det, lc, fn, th, keep_spectrum=spectrum_path is not None)
+    signals = res.signals
+    if spectrum_path and res.spectrum is not None:
+        import numpy as np
+        np.savez_compressed(spectrum_path, **{k: np.asarray(v) for k, v in res.spectrum.items()})
     version = search_version(det, th)
     ladder = build_ladder(ladder_version, with_novelty=with_novelty)
     recorder = _QueryRecorder()
@@ -101,27 +123,38 @@ def _cpu_work(lc_pickle: bytes, target_json: str, thresholds_json: str, detector
         outcome, results = ladder.run(sig, bundle, on_result=lambda r, dt, ts=timings: ts.append(dt))
         out.append({"signal": sig.model_dump(), "outcome": outcome,
                     "tests": [r.model_dump() for r in results], "timings": timings})
+    # a peak "survived rung 1" when its first test did not fail; the detector always returns its top peaks, so
+    # "has a signal" alone would keep the periodogram of every target
+    survived = any(item["tests"] and item["tests"][0]["status"] != "fail" for item in out)
+    keep = store_periodogram == "all" or (store_periodogram == "signals" and survived)
+    periodogram = res.periodogram.model_dump() if (keep and res.periodogram is not None) else None
     # default=str: an unexpected type in a metric must not error the target (and lose its query log)
-    return jsonutil.dumps({"signals": out, "queries": recorder.rows}, default=str)
+    return jsonutil.dumps({"signals": out, "queries": recorder.rows, "periodogram": periodogram}, default=str)
 
 
-def _write_results(store: Store, run_id: int, target_id: str, payload: str) -> dict:
-    """Parse a worker payload and write it atomically (``Store.record_results``); evidence is pinned when any
-    signal passed or is undetermined. Returns counts per outcome."""
+def _write_results(store: Store, blob: Blob, run_id: int, target_id: str, payload: str) -> dict:
+    """Parse a worker payload, store the periodogram summary (content addressed, so a retry reuses the same file)
+    and write everything else atomically through ``Store.record_results``; evidence (the summary included) is pinned
+    when any signal passed or is undetermined. Returns counts per outcome."""
     data = json.loads(payload)
     items = data["signals"]
     pin = any(i["outcome"] in ("pass", "undetermined") for i in items)
-    return store.record_results(run_id, target_id, items, data["queries"], pin_evidence=pin)
+    periodogram = None
+    if data.get("periodogram"):
+        npz = PeriodogramSummary(**data["periodogram"]).to_npz()
+        sha, loc = blob.put(npz, f"{target_id}_periodogram.npz")
+        periodogram = (sha, len(npz), loc)
+    return store.record_results(run_id, target_id, items, data["queries"], pin_evidence=pin, periodogram=periodogram)
 
 
-def _salvage_queries(store: Store, payload) -> None:
+def _salvage_queries(store: Store, payload, target_id: str) -> None:
     """When the result write failed, the worker's catalogue requests still happened: log them on their own so
     the queries table keeps every HTTP request even for a target that ends in error."""
     if not isinstance(payload, str): return
     try:
         for q in json.loads(payload).get("queries", []):
             store.log_query(q["service"], q["url"], q.get("params") or {}, q.get("status"), q.get("nbytes", 0),
-                            q.get("sha256"), q.get("error") or "")
+                            q.get("sha256"), q.get("error") or "", target_id=target_id)
     except Exception:  # best effort: the target is already being marked error
         log.warning("could not salvage query log", exc_info=True)
 
@@ -195,11 +228,11 @@ def run(source, store: Store, blob: Blob, settings: Settings, filter: dict, dete
         payload = None
         try:
             payload = fut.result()
-            # one transaction: signals, tests, queries, evidence pins, finished run, target state
-            counts = _write_results(store, rid, t.target_id, payload)
+            # one transaction: signals, tests, queries, periodogram row, evidence pins, finished run, target state
+            counts = _write_results(store, blob, rid, t.target_id, payload)
         except Exception as e:
             log.exception("processing failed for %s", t.target_id)
-            _salvage_queries(store, payload)
+            _salvage_queries(store, payload, t.target_id)
             fail(t, rid, e); return
         try:
             retention.release_target(t.target_id)            # pinned evidence stays; everything else goes
@@ -218,7 +251,7 @@ def run(source, store: Store, blob: Blob, settings: Settings, filter: dict, dete
         while ready and len(cpu_jobs) < max_cpu:
             t, rid, lc_pickle = ready.popleft()
             cpu_jobs[cpu_pool.submit(_cpu_work, lc_pickle, t.model_dump_json(), th_json, detector_name,
-                                     ladder_version, with_novelty, fetch_module)] = (t, rid)
+                                     ladder_version, with_novelty, fetch_module, settings.store_periodogram)] = (t, rid)
         while len(fetches) + len(ready) < max_fetch and (nxt := next(pending, None)) is not None:
             fetches[io_pool.submit(_fetch, source, nxt[0])] = nxt
 

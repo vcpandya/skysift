@@ -23,6 +23,15 @@ def test_approve_creates_candidate_and_history(tmp_path):
         assert (c.status, c.note, c.branch) == ("approved", "clean fold, no secondary", "planet") and c.decided_at
         assert ses.query(DecisionRow).count() == 1
     assert s.decisions(sid)[0]["decision"] == "approve"
+    assert s.decisions(sid)[0]["utc"] == out["decided_at"]               # one naive-UTC form, written and read back
+
+
+def test_note_is_stripped_once(tmp_path):
+    s, sid = _store_with_signal(tmp_path)
+    out = s.decide(sid, "reject", "  odd/even differ  ")
+    assert out["note"] == "odd/even differ" and s.decisions(sid)[0]["note"] == "odd/even differ"
+    with s.session() as ses:
+        assert ses.query(CandidateRow).one().note == "odd/even differ"
 
 
 def test_reject_requires_note_and_marks_signal(tmp_path):

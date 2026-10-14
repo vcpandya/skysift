@@ -39,6 +39,7 @@ class Base(DeclarativeBase):
 
 
 UNAVAILABLE_PREFIX = "unavailable:"      # run error text for a service outage; never counted as an attempt
+PERIODOGRAM_URL = "skysift://periodogram/{target_id}"     # artifact url of a target's periodogram summary
 
 
 class TargetRow(Base):
@@ -245,7 +246,8 @@ class Store:
         candidate status so the queue and the approved list agree."""
         if decision not in DECISION_STATUS:
             raise ValueError(f"unknown decision {decision!r}; one of {sorted(DECISION_STATUS)}")
-        if decision == "reject" and not note.strip():
+        note = note.strip()
+        if decision == "reject" and not note:
             raise ValueError("a rejection needs a note saying why")
         now = utcnow()
         with self.session() as s:
@@ -262,7 +264,7 @@ class Store:
             elif sig.final_status == "rejected":
                 sig.final_status = "candidate_stage1"
             return {"signal_id": signal_id, "decision": decision, "status": cand.status, "final_status": sig.final_status,
-                    "note": note, "who": who, "decided_at": now.isoformat()}
+                    "note": note, "who": who, "decided_at": now.replace(tzinfo=None).isoformat()}
 
     def decisions(self, signal_id: int) -> list[dict]:
         with self.session() as s:
@@ -279,14 +281,18 @@ class Store:
                       artifacts=r.artifacts, reason=r.reason, duration_s=duration_s))
 
     def record_results(self, run_id: int, target_id: str, items: list[dict], queries: list[dict],
-                       pin_evidence: bool) -> dict:
+                       pin_evidence: bool, periodogram: tuple[str, int, str] | None = None) -> dict:
         """Write one target's outcome in ONE transaction: signals with their tests and final statuses, the catalogue
-        queries the worker made, evidence pins, the finished run and the target state. Either all of it lands or
-        none does, so an exception or crash never leaves pending signals that a rerun would duplicate.
+        queries the worker made, the periodogram summary's artifact row, evidence pins, the finished run and the
+        target state. Either all of it lands or none does, so an exception or crash never leaves pending signals that
+        a rerun would duplicate.
 
         ``items`` are the worker's signal entries ({"signal", "outcome", "tests", "timings"}); ``queries`` are the
-        keyword arguments of ``log_query`` (plus an optional ISO ``utc``). Returns counts per outcome."""
+        keyword arguments of ``log_query`` (plus an optional ISO ``utc``); ``periodogram`` is (sha256, nbytes,
+        local_path) of the summary file already written through the blob, recorded as a ``summary`` artifact and on
+        the run row. Returns counts per outcome."""
         counts = {"pass": 0, "fail": 0, "undetermined": 0}
+        run_pg = None
         with self.session() as s:
             for item in items:
                 sig = Signal(**item["signal"])
@@ -300,11 +306,17 @@ class Store:
                 s.add(QueryRow(service=q["service"], url=q["url"], params=jsonutil.dumps(q.get("params") or {}, default=str),
                                status=q.get("status"), nbytes=q.get("nbytes") or 0, sha256=q.get("sha256"),
                                error=q.get("error") or "", utc=utc, target_id=target_id))
+            if periodogram is not None:
+                sha, nbytes, loc = periodogram
+                self._upsert_artifact(s, sha, nbytes, PERIODOGRAM_URL.format(target_id=target_id), loc, target_id,
+                                      pin_evidence, "summary")
+                run_pg = sha
             if pin_evidence:
                 for a in s.scalars(select(ArtifactRow).where(ArtifactRow.target_id == target_id,
                                                               ArtifactRow.deleted_at.is_(None))):
                     a.pinned = True
             run = s.get(RunRow, run_id); run.status, run.error, run.finished = "done", "", utcnow()
+            run.periodogram_sha256 = run_pg
             s.get(TargetRow, target_id).state = "done"
         return counts
 

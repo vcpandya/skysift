@@ -15,6 +15,10 @@ class Detector(Protocol):
 
     def detect(self, lc: LightCurve, fnorm: np.ndarray, thresholds: Thresholds) -> list[Signal]: ...
 
+    # Optional: signals plus a periodogram summary (``BoxDip.search`` returns a ``SearchResult``). Detectors without
+    # it are wrapped by ``pipeline._search``, which calls ``detect`` and reports no periodogram.
+    def search(self, lc: LightCurve, fnorm: np.ndarray, thresholds: Thresholds, keep_spectrum: bool = False): ...
+
 
 DETECTORS: dict[str, Detector] = {}
 

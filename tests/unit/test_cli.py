@@ -55,6 +55,17 @@ def test_run_passes_limit_as_max_targets_and_period_overrides(settings, monkeypa
     assert "period window: 5 to 40 days" in r.stderr
 
 
+def test_run_passes_periodogram_mode(settings, monkeypatch):
+    from skysift import cli, pipeline
+    seen = {}
+    monkeypatch.setattr(pipeline, "run", lambda source, store, blob, settings, filter, **kw: seen.update(settings=settings) or {"processed": 0})
+    monkeypatch.setattr(cli, "_source", lambda name, store, blob: object())
+    r = CliRunner().invoke(app, ["run", "--source", "kbonus_bkg", "--periodogram", "off"])
+    assert r.exit_code == 0, r.output
+    assert seen["settings"].store_periodogram == "off"
+    assert CliRunner().invoke(app, ["run", "--source", "kbonus_bkg", "--periodogram", "sometimes"]).exit_code != 0
+
+
 def test_run_rejects_bad_retention(settings):
     r = CliRunner().invoke(app, ["run", "--source", "kbonus_bkg", "--retention", "bogus"])
     assert r.exit_code != 0 and "bad retention" in r.output
@@ -62,7 +73,7 @@ def test_run_rejects_bad_retention(settings):
 
 def test_vet_pins_artifacts_and_keeps_stdout_json(settings, monkeypatch):
     from skysift import cli, pipeline
-    from skysift.store.db import Store
+    from skysift.store.db import QueryRow, Store
 
     class Target:
         target_id = "T1"
@@ -81,13 +92,21 @@ def test_vet_pins_artifacts_and_keeps_stdout_json(settings, monkeypatch):
     monkeypatch.setattr(cli, "_source", lambda name, store, blob: Src())
     payload = {"signals": [{"rungs": {"r1": {"x": 1}}}],
                "queries": [{"service": "vizier", "url": "https://v", "params": {}, "status": 200, "nbytes": 3}]}
-    monkeypatch.setattr(pipeline, "_cpu_work", lambda *a: json.dumps(payload))
+    calls = []
+    monkeypatch.setattr(pipeline, "_cpu_work", lambda *a, **kw: calls.append(kw) or json.dumps(payload))
     monkeypatch.setattr(Store, "pin_target_artifacts", lambda self, tid: pinned.append(tid))
     r = CliRunner().invoke(app, ["vet", "--source", "kbonus_bkg", "--target-id", "T1"])
     assert r.exit_code == 0, r.output
     assert pinned == ["T1"] and json.loads(r.stdout)["signals"][0]["rungs"]["r1"]["x"] == 1
     assert Store(settings.database_url).counts()["queries"] == 1       # vet logs the rungs' catalogue queries
+    with Store(settings.database_url).session() as ss:
+        assert ss.query(QueryRow).one().target_id == "T1"               # every request carries its target
     assert "wrote" in r.stderr and (settings.data_dir / "vet" / "T1.json").exists()
+    assert calls[-1] == {"store_periodogram": "all", "spectrum_path": None}
+    r = CliRunner().invoke(app, ["vet", "--source", "kbonus_bkg", "--target-id", "T1", "--spectrum"])
+    assert r.exit_code == 0, r.output
+    assert calls[-1]["spectrum_path"] == str(settings.data_dir / "vet" / "T1_spectrum.npz")
+    assert "T1_spectrum.npz" in r.stderr
 
 
 def test_run_rejects_a_bad_period_window(settings, monkeypatch):

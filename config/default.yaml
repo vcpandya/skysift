@@ -4,6 +4,7 @@ database_url: sqlite:///./data/engine.db
 workers_io: 8
 workers_cpu: 2
 retention: stream
+store_periodogram: all
 thresholds:
   sde_min: 9.0
   snr_min: 7.0

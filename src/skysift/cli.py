@@ -78,6 +78,8 @@ def run(source: str = typer.Option(...), gmag_max: float = 19.0,
         workers_cpu: int | None = None, retention: str | None = None,
         min_period: float | None = typer.Option(None, help="Override the minimum search period (days)."),
         max_period: float | None = typer.Option(None, help="Override the maximum search period (days)."),
+        periodogram: str | None = typer.Option(None, "--periodogram",
+                                               help="Store the SDE envelope per target: all (default), signals, off."),
         verbose: bool = False):
     """Sweep a source: fetch, detect, vet, store, release files."""
     logging.basicConfig(level=logging.INFO if verbose else logging.WARNING,
@@ -91,6 +93,10 @@ def run(source: str = typer.Option(...), gmag_max: float = 19.0,
         except ValidationError as e:
             msg = "; ".join(err["msg"] for err in e.errors())
             raise typer.BadParameter(msg, param_hint="--min-period/--max-period") from e
+    if periodogram is not None:
+        if periodogram not in ("all", "signals", "off"):
+            raise typer.BadParameter("one of all, signals, off", param_hint="--periodogram")
+        s.store_periodogram = periodogram
     from skysift import pipeline
     src = _source(source, store, blob)
     _plain(console, f"period window: {s.thresholds.min_period_days:g} to {s.thresholds.max_period_days:g} days")
@@ -119,8 +125,10 @@ def status():
 
 
 @app.command()
-def vet(source: str = typer.Option(...), target_id: str = typer.Option(...), detector: str = "box_dip"):
-    """Run detection and the full ladder on one target and print every metric (files are kept)."""
+def vet(source: str = typer.Option(...), target_id: str = typer.Option(...), detector: str = "box_dip",
+        spectrum: bool = typer.Option(False, "--spectrum", help="Also write the raw BLS spectrum (.npz, about 2 MB).")):
+    """Run detection and the full ladder on one target and print every metric and the periodogram summary (files
+    are kept)."""
     console = _console(stderr=True)
     s, store, blob = _ctx(retention="keep")
     src = _source(source, store, blob)
@@ -132,18 +140,22 @@ def vet(source: str = typer.Option(...), target_id: str = typer.Option(...), det
     lc, sha, url = src.fetch_lightcurve(target)
     store.pin_target_artifacts(target.target_id)      # the kept file must survive a later budget sweep
     _plain(console, f"fetched {url} sha256={sha}")
+    vet_dir = s.data_dir / "vet"
+    vet_dir.mkdir(parents=True, exist_ok=True)
+    spectrum_path = str(vet_dir / f"{target_id}_spectrum.npz") if spectrum else None
     out = _cpu_work(pickle.dumps(lc), target.model_dump_json(), s.thresholds.model_dump_json(), detector,
-                    DEFAULT_LADDER_VERSION, True)
+                    DEFAULT_LADDER_VERSION, True, store_periodogram="all", spectrum_path=spectrum_path)
     data = json.loads(out)
     for q in data.get("queries", []):                 # provenance: every catalogue request the rungs made
         store.log_query(q["service"], q["url"], q.get("params") or {}, q.get("status"), q.get("nbytes") or 0,
-                        q.get("sha256"), error=q.get("error") or "")
+                        q.get("sha256"), error=q.get("error") or "", target_id=target.target_id)
     text = jsonutil.dumps(data, indent=1)
-    path = s.data_dir / "vet" / f"{target_id}.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
+    path = vet_dir / f"{target_id}.json"
     path.write_text(text, encoding="utf-8")
     _plain(_console(), text)
     _plain(console, f"wrote {path}")
+    if spectrum_path:
+        _plain(console, f"wrote {spectrum_path}")
 
 
 @app.command()

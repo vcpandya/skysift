@@ -39,7 +39,14 @@ class Settings(BaseSettings):
     workers_io: int = 8
     workers_cpu: int = 2
     retention: str = "stream"
+    store_periodogram: str = "all"          # all | signals (a peak survived rung 1) | off
     thresholds: Thresholds = Thresholds()
+
+    @model_validator(mode="after")
+    def _periodogram_mode(self) -> Settings:
+        if self.store_periodogram not in ("all", "signals", "off"):
+            raise ValueError(f"store_periodogram must be all, signals or off, got {self.store_periodogram!r}")
+        return self
 
 
 def load_settings(yaml_path: Path | None = None) -> Settings:
