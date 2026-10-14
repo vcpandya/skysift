@@ -10,6 +10,7 @@ start_run marks the interrupted run superseded."""
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import signal
@@ -51,8 +52,22 @@ class SweepRequest:
     def validate(self) -> None:
         if not self.source or not self.source.replace("_", "").isalnum():
             raise ValueError("source name is required")
-        if self.limit is not None and self.limit <= 0:
-            raise ValueError("limit must be positive")
+        for name in ("limit", "workers_io", "workers_cpu"):
+            v = getattr(self, name)
+            if v is not None and (isinstance(v, bool) or not isinstance(v, int) or v <= 0):
+                raise ValueError(f"{name} must be a positive integer")
+        for name in ("min_period", "max_period", "gmag_max"):
+            v = getattr(self, name)
+            if v is not None and not math.isfinite(v):
+                raise ValueError(f"{name} must be a finite number")
+        text = self.retention.strip().lower()
+        if text.startswith("budget:"):
+            try:
+                gib = float(text.split(":", 1)[1])
+            except ValueError:
+                raise ValueError("budget_gib must be a number") from None
+            if not math.isfinite(gib) or gib <= 0:
+                raise ValueError("budget_gib must be a finite number above zero")
         RetentionPolicy.parse(self.retention)                      # raises ValueError
         if self.store_periodogram not in PERIODOGRAM_MODES:
             raise ValueError(f"store_periodogram must be one of {PERIODOGRAM_MODES}")
@@ -60,8 +75,6 @@ class SweepRequest:
             base = Thresholds()
             Thresholds(min_period_days=self.min_period if self.min_period is not None else base.min_period_days,
                        max_period_days=self.max_period if self.max_period is not None else base.max_period_days)
-        for w in (self.workers_io, self.workers_cpu):
-            if w is not None and w <= 0: raise ValueError("worker counts must be positive")
 
     def argv(self, python: str = sys.executable) -> list[str]:
         a = [python, "-m", "skysift", "run", "--source", self.source, "--gmag-max", str(self.gmag_max),

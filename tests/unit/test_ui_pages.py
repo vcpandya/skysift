@@ -111,7 +111,8 @@ def test_start_sweep_form_launches_child_and_redirects(settings, tmp_path):
         assert r.status_code == 303 and r.headers["location"] == "/live"
         active = launcher.active()
         assert active["request"]["retention"] == "budget:20" and active["request"]["limit"] == 25
-        assert client.get("/").text.count("Start sweep") == 0 or "running" in client.get("/").text
+        page = client.get("/").text
+        assert page.count("Start sweep") == 0 and "is running" in page and "kbonus_bkg" in page
         r2 = client.post("/sweeps", data={"source": "kbonus_bkg", "_token": app.state.token}, follow_redirects=False)
         assert r2.status_code == 409 and "already running" in r2.text
         assert client.post("/sweeps/stop", data={"_token": app.state.token}, follow_redirects=False).status_code == 303
@@ -122,5 +123,65 @@ def test_start_sweep_form_launches_child_and_redirects(settings, tmp_path):
 
 def test_start_sweep_rejects_bad_window(settings, tmp_path):
     client, app, _ids, launcher = make_seeded_client(settings, tmp_path)
-    r = client.post("/sweeps", data={"source": "kbonus_bkg", "min_period": "40", "max_period": "5", "_token": app.state.token})
-    assert r.status_code == 400 and "period window" in r.text and launcher.active() is None
+    try:
+        r = client.post("/sweeps", data={"source": "kbonus_bkg", "min_period": "40", "max_period": "5",
+                                        "_token": app.state.token})
+        assert r.status_code == 400 and "period window" in r.text and launcher.active() is None
+    finally:
+        launcher.stop()
+
+
+def test_htmx_posts_get_hx_redirect_not_a_303(settings, tmp_path):
+    client, app, _ids, launcher = make_seeded_client(settings, tmp_path)
+    hx = {"HX-Request": "true", "X-SkySift-Token": app.state.token}
+    try:
+        r = client.post("/sweeps", data={"source": "kbonus_bkg", "limit": "5"}, headers=hx, follow_redirects=False)
+        assert r.status_code == 200 and r.headers["HX-Redirect"] == "/live" and launcher.active() is not None
+        r = client.post("/sweeps/stop", headers=hx, follow_redirects=False)
+        assert r.status_code == 200 and r.headers["HX-Redirect"] == "/live" and launcher.active() is None
+    finally:
+        launcher.stop()
+
+
+def test_start_sweep_rejects_malformed_values(settings, tmp_path):
+    client, app, _ids, launcher = make_seeded_client(settings, tmp_path)
+    try:
+        for field, value in (("limit", "abc"), ("limit", "-4"), ("min_period", "x"), ("gmag_max", "nan"),
+                             ("workers_io", "0"), ("budget_gib", "1e999"), ("budget_gib", "-3"), ("budget_gib", "zz")):
+            data = {"source": "kbonus_bkg", "retention_mode": "budget", "_token": app.state.token, field: value}
+            r = client.post("/sweeps", data=data)
+            assert r.status_code == 400, (field, value, r.status_code)
+            assert field in r.text, (field, value)
+            assert launcher.active() is None, (field, value)
+    finally:
+        launcher.stop()
+
+
+def test_start_sweep_refuses_sources_that_are_not_live(settings, tmp_path):
+    client, app, _ids, launcher = make_seeded_client(settings, tmp_path)
+    try:
+        for name in ("tess_spoc", "nonexistent"):
+            r = client.post("/sweeps", data={"source": name, "_token": app.state.token})
+            assert r.status_code == 400 and f"source {name} is not live" in r.text and launcher.active() is None
+    finally:
+        launcher.stop()
+
+
+def test_sweep_posts_need_the_token(settings, tmp_path):
+    client, _app, _ids, launcher = make_seeded_client(settings, tmp_path)
+    try:
+        assert client.post("/sweeps", data={"source": "kbonus_bkg"}).status_code == 403
+        assert client.post("/sweeps/stop").status_code == 403
+        assert launcher.active() is None
+    finally:
+        launcher.stop()
+
+
+def test_form_echo_is_html_escaped(settings, tmp_path):
+    client, app, _ids, launcher = make_seeded_client(settings, tmp_path)
+    try:
+        evil = '"><script>alert(1)</script>'
+        r = client.post("/sweeps", data={"source": evil, "limit": evil, "_token": app.state.token})
+        assert r.status_code == 400 and "<script>alert" not in r.text and "&lt;script&gt;" in r.text
+    finally:
+        launcher.stop()
