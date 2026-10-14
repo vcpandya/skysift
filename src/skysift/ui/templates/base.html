@@ -18,9 +18,9 @@
 </nav>
 <main>
   <header class="top">
-    <span>data <code>{{ settings.data_dir }}</code></span>
-    <span>db <code>{{ settings.database_url }}</code></span>
-    <span>retention <code>{{ settings.retention }}</code></span>
+    <span>data <code>{{ data_dir }}</code></span>
+    <span>db <code>{{ db_display }}</code></span>
+    <span>retention <code>{{ retention }}</code></span>
   </header>
   <section class="page">
   {% block content %}{% endblock %}

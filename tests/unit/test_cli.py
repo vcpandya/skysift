@@ -118,7 +118,8 @@ def test_run_disk_budget_exceeded_prints_summary_and_exits_3(settings, monkeypat
     assert "stopped: cache 20 B over budget 0 B" in r.stderr and "Traceback" not in r.output
 
 
-def test_ui_refuses_non_loopback_host(settings):
+def test_ui_refuses_non_loopback_host(settings, monkeypatch):
+    monkeypatch.delenv("SKYSIFT_UI_ALLOW_CONTAINER", raising=False)
     r = CliRunner().invoke(app, ["ui", "--host", "0.0.0.0", "--no-browser"])
     assert r.exit_code != 0 and "loopback" in r.output
 
@@ -130,3 +131,22 @@ def test_ui_starts_uvicorn_on_loopback(settings, monkeypatch):
     r = CliRunner().invoke(app, ["ui", "--port", "8899", "--no-browser"])
     assert r.exit_code == 0, r.output
     assert seen["host"] == "127.0.0.1" and seen["port"] == 8899 and seen["app"].title == "SkySift"
+
+
+def test_ui_allows_all_interfaces_only_inside_the_container(settings, monkeypatch):
+    import uvicorn
+    seen = {}
+    monkeypatch.setenv("SKYSIFT_UI_ALLOW_CONTAINER", "1")
+    monkeypatch.setattr(uvicorn, "run", lambda application, **kw: seen.update(kw, app=application))
+    r = CliRunner().invoke(app, ["ui", "--host", "0.0.0.0", "--no-browser"])
+    assert r.exit_code == 0, r.output
+    assert seen["host"] == "0.0.0.0"
+    assert "http://127.0.0.1:8765/" in r.output
+
+
+def test_ui_brackets_an_ipv6_host_in_the_printed_url(settings, monkeypatch):
+    import uvicorn
+    monkeypatch.setattr(uvicorn, "run", lambda application, **kw: None)
+    r = CliRunner().invoke(app, ["ui", "--host", "::1", "--no-browser"])
+    assert r.exit_code == 0, r.output
+    assert "http://[::1]:8765/" in r.output

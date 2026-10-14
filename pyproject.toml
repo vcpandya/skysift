@@ -33,6 +33,10 @@ where = ["src"]
 testpaths = ["tests"]
 markers = ["golden: needs network to fetch cached fixtures", "slow: long running"]
 addopts = "-m 'not slow'"
+filterwarnings = [
+  # Starlette 1.x nags that TestClient with httpx is deprecated in favour of httpx2; harmless for our tests
+  "ignore:Using `httpx` with `starlette.testclient` is deprecated",
+]
 
 [tool.ruff]
 line-length = 120

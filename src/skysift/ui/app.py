@@ -11,6 +11,8 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from sqlalchemy.engine import make_url
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from skysift import __version__ as engine_version
 from skysift.config import Settings
@@ -27,13 +29,14 @@ def _git_commit() -> str:
     try:
         return subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, timeout=5,
                               cwd=HERE.parents[2], check=False).stdout.strip() or "unknown"
-    except OSError:
+    except (OSError, subprocess.SubprocessError):
         return "unknown"
 
 
 async def require_token(request: Request) -> None:
     """CSRF guard for every state-changing POST: the per-process token must arrive in the X-SkySift-Token header
-    or the _token form field. A page on another origin cannot read it, so it cannot forge the request."""
+    or the _token form field. Together with the trusted-host check (create_app), a page on another origin cannot
+    read the token, so it cannot forge the request; the token alone would not stop a DNS-rebinding page."""
     token = request.app.state.token
     sent = request.headers.get("X-SkySift-Token")
     if sent is None and request.headers.get("content-type", "").startswith(("application/x-www-form-urlencoded",
@@ -46,7 +49,10 @@ async def require_token(request: Request) -> None:
 
 def render(request: Request, name: str, status_code: int = 200, **ctx) -> HTMLResponse:
     st = request.app.state
-    base = {"request": request, "token": st.token, "settings": st.settings, "nav": NAV,
+    s = st.settings
+    # the template gets only what it prints; the database URL is shown with any password masked
+    base = {"request": request, "token": st.token, "nav": NAV, "data_dir": s.data_dir, "retention": s.retention,
+            "db_display": make_url(s.database_url).render_as_string(hide_password=True),
             "plotly_url": "/static/vendor/plotly.min.js" if st.plotly_path else None,
             "engine_version": engine_version, "git_commit": st.git_commit, "active_path": request.url.path}
     return st.templates.TemplateResponse(request, name, {**base, **ctx}, status_code=status_code)
@@ -54,12 +60,15 @@ def render(request: Request, name: str, status_code: int = 200, **ctx) -> HTMLRe
 
 def create_app(settings: Settings, store: Store | None = None, blob: Blob | None = None, launcher=None,
                plotly_path: Path | None = None) -> FastAPI:
-    app = FastAPI(title="SkySift", docs_url=None, redoc_url=None)
+    app = FastAPI(title="SkySift", docs_url=None, redoc_url=None, openapi_url=None)
+    # the dashboard has no authentication: refuse any Host header that is not loopback (DNS-rebinding defence).
+    # Starlette strips the port before matching, so port-qualified entries would never match.
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost", "[::1]"])
     st = app.state
     st.settings = settings
-    st.store = store or Store(settings.database_url)
+    st.store = store if store is not None else Store(settings.database_url)
     if store is None: st.store.init_schema()
-    st.blob = blob or blob_from_url(settings.blob_url)
+    st.blob = blob if blob is not None else blob_from_url(settings.blob_url)
     st.launcher = launcher
     st.token = secrets.token_urlsafe(32)
     st.templates = Jinja2Templates(directory=str(HERE / "templates"))

@@ -185,7 +185,8 @@ def ui(host: str = "127.0.0.1", port: int = 8765, no_browser: bool = typer.Optio
                         handlers=[logging.FileHandler(s.data_dir / "ui" / "dashboard.log", encoding="utf-8")])
     plotly = ensure_plotly(s.data_dir)
     application = create_app(s, store=store, blob=blob, launcher=SweepLauncher(s.data_dir), plotly_path=plotly)
-    url = f"http://{'127.0.0.1' if host == '0.0.0.0' else host}:{port}/"
+    shown = "127.0.0.1" if host == "0.0.0.0" else host
+    url = f"http://[{shown}]:{port}/" if ":" in shown else f"http://{shown}:{port}/"
     _plain(_console(stderr=True), f"SkySift dashboard at {url}  (Ctrl+C to stop)")
     if not no_browser:
         threading.Timer(1.5, webbrowser.open, args=(url,)).start()
