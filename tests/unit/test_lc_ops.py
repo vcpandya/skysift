@@ -1,6 +1,6 @@
 import numpy as np
 
-from skysift.lc.ops import detrend, event_depths, fold_phase, secondary_search
+from skysift.lc.ops import detrend, event_depths, fold_phase, secondary_search, stacked_depth
 from skysift.models import LightCurve
 from tests.synthetic import inject_transit, make_lightcurve
 
@@ -103,3 +103,23 @@ def test_secondary_search_still_finds_a_half_phase_eclipse_on_a_short_period():
     lc = inject_transit(_usp_lc(0), USP_P, USP_T0 + 0.5 * USP_P, USP_DUR, 1500)
     phase, _depth, sigma = secondary_search(lc.time, detrend(lc), USP_P, USP_T0, USP_DUR)
     assert abs(phase - 0.5) < 0.03 and sigma > 5
+
+
+def test_stacked_depth_measures_a_short_transit_and_its_parity():
+    lc = inject_transit(make_lightcurve(n_days=300, cadence_min=30, noise_ppm=500, seed=31), 0.6, 132.0, 1 / 24, 600)
+    fn = detrend(lc)
+    d_all = stacked_depth(lc.time, fn, 0.6, 132.0, 1 / 24)
+    assert d_all.n_in > 800 and abs(d_all.depth_ppm - 600) < 3 * d_all.err_ppm and d_all.err_ppm < 60
+    odd, even = (stacked_depth(lc.time, fn, 0.6, 132.0, 1 / 24, epochs=e) for e in ("odd", "even"))
+    assert abs(odd.depth_ppm - even.depth_ppm) < 3 * np.hypot(odd.err_ppm, even.err_ppm)
+    sec = stacked_depth(lc.time, fn, 0.6, 132.0, 1 / 24, phase_offset=0.5)
+    assert abs(sec.depth_ppm) < 3 * sec.err_ppm
+    assert stacked_depth(lc.time[:40], fn[:40], 0.6, 132.0, 1 / 24).n_in == 0
+
+
+def test_stacked_depth_inflates_its_error_under_red_noise():
+    base = make_lightcurve(n_days=300, cadence_min=30, noise_ppm=300, seed=32)
+    f = base.flux * (1 - 1500e-6 * np.cos(2 * np.pi * base.time / 0.3))        # a 0.3 d wave: it repeats on every fold, so it is red noise
+    red = inject_transit(LightCurve(base.time, f, base.flux_err, base.quality, base.quarter, f.copy()), 0.6, 132.0, 1 / 24, 600)
+    d = stacked_depth(red.time, detrend(red), 0.6, 132.0, 1 / 24)
+    assert d.inflation > 1.5 and abs(d.depth_ppm - 600) < 3 * d.err_ppm

@@ -91,6 +91,67 @@ def event_depths(time, fnorm, quarter, period, t0, duration_days, local_baseline
                        scaled * 1e6, float(np.std(ctrl) * 1e6) if ctrl else np.nan, len(rows))
 
 
+@dataclass
+class StackedDepth:
+    depth_ppm: float
+    err_ppm: float
+    n_in: int
+    n_out: int
+    inflation: float
+
+
+STACK_MIN_IN, STACK_MIN_BASELINE, STACK_MIN_CONTROLS = 10, 50, 3
+
+
+def _circular(x: np.ndarray, period: float) -> np.ndarray:
+    return np.abs((x + 0.5 * period) % period - 0.5 * period)
+
+
+def _window_depth(ph, fn, period, duration_days, centre):
+    """Depth and formal error of the box of width ``duration_days`` centred ``centre`` days from the primary on a fold
+    whose phases are ``ph``. The baseline is the median of the points at least 1.5 durations from both the primary and
+    the box. Returns (depth, err, n_in, n_out) as fractions, or None when the box or its baseline is too sparse."""
+    d_win = _circular(ph - centre, period)
+    inside = d_win < 0.5 * duration_days
+    base = (np.abs(ph) >= PRIMARY_MASK_DURATIONS * duration_days) & (d_win >= PRIMARY_MASK_DURATIONS * duration_days)
+    if inside.sum() < STACK_MIN_IN or base.sum() < STACK_MIN_BASELINE:
+        return None
+    level = np.median(fn[base])
+    scat = 1.4826 * np.median(np.abs(fn[base] - level))
+    return float(1 - np.mean(fn[inside]) / level), float(scat / level / np.sqrt(inside.sum())), int(inside.sum()), int(base.sum())
+
+
+def stacked_depth(time, fnorm, period, t0, duration_days, *, epochs="all", phase_offset=0.0) -> StackedDepth:
+    """Box depth on the stacked fold, for signals whose single events hold too few points to measure.
+
+    The window is ``duration_days`` wide, centred ``phase_offset`` of a period from mid-transit (0.5 for the secondary).
+    ``epochs`` keeps all events or only the odd or the even ones (epoch number ``round((t - t0) / period)``). The formal
+    error is the out-of-window scatter over the square root of the in-window count; it is multiplied by the ratio of
+    the spread of the same window's depth at nine control phases (0.1 to 0.9, at least 1.5 durations from the primary
+    and from the window) to that formal error whenever the ratio exceeds one, which carries the red noise the formal
+    error misses. Fewer than three controls leave the error as is. Returns NaN depths and ``n_in = 0`` when the window
+    holds fewer than 10 points or the baseline fewer than 50."""
+    good = np.isfinite(fnorm) & np.isfinite(time)
+    if epochs != "all":
+        parity = np.round((time - t0) / period).astype(int) % 2
+        good &= parity == (1 if epochs == "odd" else 0)
+    ph, fn = fold_phase(time[good], period, t0), fnorm[good]
+    r = _window_depth(ph, fn, period, duration_days, phase_offset * period)
+    if r is None:
+        return StackedDepth(float("nan"), float("nan"), 0, 0, 1.0)
+    depth, err, n_in, n_out = r
+    away = PRIMARY_MASK_DURATIONS * duration_days
+    ctrl = []
+    for c in np.linspace(0.1, 0.9, 9):
+        if min(c, 1 - c) * period < away or _circular(np.array([(c - phase_offset) * period]), period)[0] < away:
+            continue
+        rc = _window_depth(ph, fn, period, duration_days, c * period)
+        if rc:
+            ctrl.append(rc[0])
+    inflation = max(1.0, float(np.std(ctrl)) / err) if len(ctrl) >= STACK_MIN_CONTROLS and err > 0 else 1.0
+    return StackedDepth(depth * 1e6, err * inflation * 1e6, n_in, n_out, inflation)
+
+
 def secondary_search(time, fnorm, period, t0, duration_days, phases=None):
     """Box depth at each trial phase in 0.1..0.9; returns (best_phase, depth_ppm, sigma).
 

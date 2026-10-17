@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from skysift.lc.ops import event_depths, secondary_search, shape_contrast
+from skysift.lc.ops import event_depths, fold_phase, secondary_search, shape_contrast, stacked_depth
 from skysift.models import Signal, TestResult, TestStatus
 from skysift.vetting.base import DataBundle
 
@@ -35,7 +35,23 @@ class Rung2Shape:
         # (about two points per event for sub-day periods at 30-minute cadence)
         if np.isfinite(sine_chi2) and sine_chi2 <= box_chi2:
             return TestResult(rung=self.name, status=TestStatus.FAIL, metrics=m, reason="sinusoidal")
+        m["stacked"] = False
         if not np.isfinite(parity_sigma) or d_odd.n < 2 or d_even.n < 2:
+            # per-event depths are starved (about two points per event for sub-day periods at 30-minute cadence), so
+            # measure odd, even and secondary on the stacked fold, which holds every point
+            args = (lc.time, fn, s.period, s.t0, s.duration)
+            st_odd, st_even = (stacked_depth(*args, epochs=e) for e in ("odd", "even"))
+            st_sec, st_all = stacked_depth(*args, phase_offset=0.5), stacked_depth(*args)
+            if not (st_odd.n_in and st_even.n_in):
+                return TestResult(rung=self.name, status=TestStatus.UNDETERMINED, metrics=m, reason="too few odd/even events")
+            parity_sigma = abs(st_odd.depth_ppm - st_even.depth_ppm) / np.hypot(st_odd.err_ppm, st_even.err_ppm)
+            sec_sigma = st_sec.depth_ppm / st_sec.err_ppm if st_sec.n_in else 0.0
+            in_window = np.isfinite(fn) & (np.abs(fold_phase(lc.time, s.period, s.t0)) < 0.5 * s.duration)
+            m.update({"stacked": True, "odd_ppm": st_odd.depth_ppm, "even_ppm": st_even.depth_ppm,
+                      "parity_sigma": float(parity_sigma), "depth_ppm": st_all.depth_ppm, "depth_err_ppm": st_all.err_ppm,
+                      "secondary_ppm": st_sec.depth_ppm if st_sec.n_in else None, "secondary_sigma": float(sec_sigma),
+                      "n_events": int(np.unique(np.round((lc.time[in_window] - s.t0) / s.period)).size)})
+        if not np.isfinite(parity_sigma):
             return TestResult(rung=self.name, status=TestStatus.UNDETERMINED, metrics=m, reason="too few odd/even events")
         if parity_sigma > th.parity_sigma:
             return TestResult(rung=self.name, status=TestStatus.FAIL, metrics=m, reason=f"odd_even {parity_sigma:.1f} sigma")

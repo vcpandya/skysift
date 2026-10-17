@@ -176,3 +176,23 @@ def test_rung2_box_beats_sine_for_a_transit_on_a_variable_star():
     assert r.metrics["box_chi2"] < r.metrics["sine_chi2"] and r.reason != "sinusoidal"
     clean = inject_transit(make_lightcurve(n_days=200, cadence_min=30, noise_ppm=500, seed=6), 9.9, 133.1, 2.5 / 24, 2500)
     assert Rung2Shape().run(s, bundle(clean)).status == TestStatus.PASS
+
+
+def test_stacked_odd_even_passes_a_short_period_planet():
+    """K04802.01 at 30-minute cadence: one hour of transit is two points per event, so the per-event odd/even test is
+    starved; the stacked folds answer instead."""
+    lc = inject_transit(make_lightcurve(n_days=300, cadence_min=30, noise_ppm=500, seed=33), 0.6, 132.0, 1 / 24, 600)
+    s = Signal(target_id="t", detector="box_dip", detector_version="1", period=0.6, t0=132.0, duration=1 / 24,
+               depth_ppm=600, snr=25.0, sde=30.0, n_events=480)
+    r = Rung2Shape().run(s, bundle(lc))
+    assert r.status == TestStatus.PASS, (r.reason, r.metrics)
+    assert r.metrics["stacked"] is True and r.metrics["parity_sigma"] < 3 and r.metrics["n_events"] > 0
+
+
+def test_stacked_odd_even_fails_alternating_eclipses():
+    lc = inject_transit(make_lightcurve(n_days=300, cadence_min=30, noise_ppm=500, seed=34), 1.2, 132.0, 1 / 24, 2500)
+    lc = inject_transit(lc, 1.2, 132.6, 1 / 24, 1200)
+    s = Signal(target_id="t", detector="box_dip", detector_version="1", period=0.6, t0=132.0, duration=1 / 24,
+               depth_ppm=1800, snr=40.0, sde=50.0, n_events=480)
+    r = Rung2Shape().run(s, bundle(lc))
+    assert r.status == TestStatus.FAIL and r.reason.startswith("odd_even") and r.metrics["stacked"] is True
