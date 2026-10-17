@@ -1,7 +1,7 @@
 import numpy as np
 
 from skysift.config import Thresholds
-from skysift.lc.ops import detrend
+from skysift.lc.ops import detrend, fold_phase, season_of
 from skysift.models import LightCurve, Signal, Target, TestStatus
 from skysift.vetting.base import DataBundle
 from skysift.vetting.rung1_detection import Rung1Detection
@@ -196,3 +196,40 @@ def test_stacked_odd_even_fails_alternating_eclipses():
                depth_ppm=1800, snr=40.0, sde=50.0, n_events=480)
     r = Rung2Shape().run(s, bundle(lc))
     assert r.status == TestStatus.FAIL and r.reason.startswith("odd_even") and r.metrics["stacked"] is True
+
+
+def test_stacked_seasons_are_determinate_for_a_short_period_planet():
+    lc = inject_transit(make_lightcurve(n_days=1400, cadence_min=30, noise_ppm=500, seed=35), 0.6, 132.0, 1 / 24, 600)
+    s = Signal(target_id="t", detector="box_dip", detector_version="1", period=0.6, t0=132.0, duration=1 / 24,
+               depth_ppm=600, snr=25.0, sde=30.0, n_events=2300)
+    r = Rung3Stability().run(s, bundle(lc))
+    assert r.status == TestStatus.PASS and r.metrics["stacked"] is True and len(r.metrics["season_depths"]) == 4
+
+
+def test_stacked_seasons_catch_a_contaminated_season():
+    lc = inject_transit(make_lightcurve(n_days=1400, cadence_min=30, noise_ppm=500, seed=36), 0.6, 132.0, 1 / 24, 600)
+    f = lc.flux.copy()
+    half = season_of(lc.quarter) == 2
+    ph = fold_phase(lc.time, 0.6, 132.0)
+    dip = np.abs(ph) < 0.5 / 24
+    f[half & dip] = 1 - 0.5 * (1 - f[half & dip])            # season 2 shows half the depth: contamination signature
+    lc = LightCurve(lc.time, f, lc.flux_err, lc.quality, lc.quarter, f.copy())
+    s = Signal(target_id="t", detector="box_dip", detector_version="1", period=0.6, t0=132.0, duration=1 / 24,
+               depth_ppm=600, snr=25.0, sde=30.0, n_events=2300)
+    r = Rung3Stability().run(s, bundle(lc))
+    assert r.status == TestStatus.FAIL and "season-dependent" in r.reason and r.metrics["stacked"] is True
+
+
+def test_stacked_seasons_catch_a_half_depth_season():
+    """Season 2 carries a 300 ppm transit against 600 ppm elsewhere; the quarter offsets are left in place."""
+    lc = make_lightcurve(n_days=1400, cadence_min=30, noise_ppm=500, seed=37)
+    dip = np.abs(fold_phase(lc.time, 0.6, 132.0)) < 0.5 / 24
+    depth = np.where(season_of(lc.quarter) == 2, 300e-6, 600e-6)
+    f = lc.flux.copy()
+    f[dip] *= 1 - depth[dip]
+    lc = LightCurve(lc.time, f, lc.flux_err, lc.quality, lc.quarter, f.copy())
+    s = Signal(target_id="t", detector="box_dip", detector_version="1", period=0.6, t0=132.0, duration=1 / 24,
+               depth_ppm=600, snr=25.0, sde=30.0, n_events=2300)
+    r = Rung3Stability().run(s, bundle(lc))
+    assert r.status == TestStatus.FAIL and r.metrics["stacked"] is True
+    assert abs(r.metrics["season_depths"]["2"] - 300) < 80 and abs(r.metrics["season_z"]["2"]) > 4

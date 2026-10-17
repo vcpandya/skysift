@@ -34,6 +34,12 @@ def fold_phase(time: np.ndarray, period: float, t0: float) -> np.ndarray:
     return (time - t0 + 0.5 * period) % period - 0.5 * period
 
 
+def season_of(quarter: np.ndarray) -> np.ndarray:
+    """Kepler season of each quarter (``quarter % 4``): the spacecraft rolls every quarter, so a star returns to the
+    same CCD module every fourth quarter."""
+    return np.asarray(quarter) % 4
+
+
 @dataclass
 class EventDepths:
     epochs: np.ndarray
