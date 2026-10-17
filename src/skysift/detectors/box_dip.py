@@ -15,7 +15,7 @@ from skysift.models import LightCurve, Signal
 
 MIN_POINTS = 500
 DURATIONS_H = np.array([1, 1.5, 2, 3, 4, 6, 9, 12])
-ALIAS_RATIOS = (2.0, 3.0, 0.5, 1 / 3)
+ALIAS_RATIOS = (2.0, 3.0, 4.0, 0.5, 1 / 3, 0.25)   # 4 and 1/4: a P/2 peak becomes P/4 once the top signal is doubled
 MIN_BAND_PERIODS = 50
 MAX_DURATION_FRACTION = 0.9     # trial durations must stay below this fraction of the band's shortest period
 ALIAS_PARITY_SIGMA = 5.0        # odd and even stacked depths of a half-period alias differ by this many combined errors
@@ -293,8 +293,13 @@ class BoxDip:
         top = self._resolve_alias(t, y, out[0], pmax, spec)
         if top is not out[0]:
             # the doubled period may now coincide with a lower-ranked peak: drop those (the 2 percent rule of
-            # _separated) and redo the alias bookkeeping of the rest against the resolved period
-            out = [top] + [s for s in out[1:] if abs(s.period - top.period) / top.period >= 0.02]
+            # _separated), take the best one's refined SDE over the coarse nearest-trial value, and redo the alias
+            # bookkeeping of the rest against the resolved period (the first-pass list then holds top_k - 1 signals)
+            dup = [s for s in out[1:] if abs(s.period - top.period) / top.period < 0.02]
+            if dup:
+                extra = {**top.extra, "band": dup[0].extra["band"], "sde_spectrum_std": dup[0].extra["sde_spectrum_std"]}
+                top = top.model_copy(update={"sde": dup[0].sde, "extra": extra})
+            out = [top] + [s for s in out[1:] if all(s is not d for d in dup)]
             for j in range(1, len(out)):
                 out[j].extra["alias_of"] = _alias_of(out[j].period, out[:j])
         # the periodogram summary and its peaks describe the first-pass spectrum only; a second-pass signal has its

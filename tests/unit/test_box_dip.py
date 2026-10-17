@@ -1,3 +1,4 @@
+import functools
 import itertools
 import time
 
@@ -143,18 +144,28 @@ def test_is_alias_catches_combination_frequencies_of_a_multiperiodic_variable():
 ALIAS_WINDOW = Thresholds(min_period_days=0.5, max_period_days=15.0)
 
 
+@functools.cache
 def _half_period_planet():
-    """A 6.5 d, 20000 ppm planet that the per-band SDE ranks at 3.25 d (SDE 145.9 against 137.4 at 6.5 d)."""
-    return inject_transit(make_lightcurve(n_days=500, seed=42, noise_ppm=1500), 6.5, 133.0, 0.1, 20000)
+    """A 6.5 d, 20000 ppm planet that the per-band SDE ranks at 3.25 d (SDE 145.9 against 137.4 at 6.5 d). One search
+    with the alias resolution on and one with it off, shared by the tests below."""
+    lc = inject_transit(make_lightcurve(n_days=500, seed=42, noise_ppm=1500), 6.5, 133.0, 0.1, 20000)
+    fnorm = detrend(lc)
+    on = BoxDip(mask_iterations=0).detect(lc, fnorm, ALIAS_WINDOW)
+    off = BoxDip(mask_iterations=0, alias_resolution=0).detect(lc, fnorm, ALIAS_WINDOW)
+    return lc, fnorm, on, off
 
 
 def test_deep_transit_ranked_at_half_period_is_doubled():
-    lc = _half_period_planet()
-    sig = BoxDip(mask_iterations=0).detect(lc, detrend(lc), ALIAS_WINDOW)
+    _, _, sig, off = _half_period_planet()
     assert abs(sig[0].period - 6.5) < 0.01
     assert abs(sig[0].extra["alias_resolved"]["from_period"] - 3.25) < 0.01
     assert abs(sig[0].depth_ppm - 20000) < 0.15 * 20000
     assert all(abs(s.period - 6.5) / 6.5 >= 0.02 for s in sig[1:])
+    # the dropped 6.5 d candidate lends its refined SDE to the doubled signal
+    dropped = [s for s in off if abs(s.period - 6.5) / 6.5 < 0.02]
+    assert dropped and abs(sig[0].sde - dropped[0].sde) < 1e-9
+    third = [s for s in sig[1:] if abs(s.period - 6.5 / 3) < 0.01]
+    assert all(s.extra["alias_of"] == 0 for s in third)
 
 
 def test_unequal_eclipses_are_doubled_to_the_binary_period():
@@ -166,6 +177,8 @@ def test_unequal_eclipses_are_doubled_to_the_binary_period():
     m = np.isfinite(fnorm)
     on_t0 = stacked_depth(lc.time[m], fnorm[m], sig[0].period, sig[0].t0, sig[0].duration)
     assert on_t0.depth_ppm > 15000, "t0 sits on the primary eclipse"
+    quarter = [s for s in sig[1:] if abs(s.period - 1.0) < 0.01]
+    assert all(s.extra["alias_of"] == 0 for s in quarter), "the P/4 peak stays flagged after the doubling"
 
 
 def test_correctly_ranked_planet_keeps_its_period():
@@ -175,6 +188,13 @@ def test_correctly_ranked_planet_keeps_its_period():
 
 
 def test_alias_resolution_off_leaves_the_ranking():
-    lc = _half_period_planet()
-    sig = BoxDip(mask_iterations=0, alias_resolution=0).detect(lc, detrend(lc), ALIAS_WINDOW)
-    assert abs(sig[0].period - 3.25) < 0.01 and "alias_resolved" not in sig[0].extra
+    _, _, _, off = _half_period_planet()
+    assert abs(off[0].period - 3.25) < 0.01 and "alias_resolved" not in off[0].extra
+
+
+def test_doubling_stays_inside_the_search_window():
+    lc, fnorm, _, off = _half_period_planet()
+    m = np.isfinite(fnorm)
+    det = BoxDip(mask_iterations=0)
+    assert det._resolve_alias(lc.time[m], fnorm[m], off[0], 6.0, None) is off[0]       # 6.5 d is past pmax
+    assert abs(det._resolve_alias(lc.time[m], fnorm[m], off[0], 15.0, None).period - 6.5) < 0.01

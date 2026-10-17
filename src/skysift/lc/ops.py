@@ -141,10 +141,11 @@ def stacked_depth(time, fnorm, period, t0, duration_days, *, epochs="all", phase
     The window is ``duration_days`` wide, centred ``phase_offset`` of a period from mid-transit (0.5 for the secondary).
     ``epochs`` keeps all events or only the odd or the even ones (epoch number ``round((t - t0) / period)``). The formal
     error is the out-of-window scatter over the square root of the in-window count; it is multiplied by the ratio of
-    the spread of the same window's depth at nine control phases (0.1 to 0.9, at least 1.5 durations from the primary
-    and from the window) to that formal error whenever the ratio exceeds one, which carries the red noise the formal
-    error misses. Fewer than three controls leave the error as is. Returns NaN depths and ``n_in = 0`` when the window
-    holds fewer than 10 points or the baseline fewer than 50."""
+    the robust spread (1.4826 times the median absolute deviation) of the same window's depth at nine control phases
+    (0.1 to 0.9, at least 1.5 durations from the primary and from the window) to that formal error whenever the ratio
+    exceeds one, which carries the red noise the formal error misses; a real secondary in one control does not count.
+    Fewer than three controls leave the error as is. Returns NaN depths and ``n_in = 0`` when the window holds fewer
+    than 10 points or the baseline fewer than 50."""
     good = np.isfinite(fnorm) & np.isfinite(time)
     if epochs != "all":
         parity = np.round((time - t0) / period).astype(int) % 2
@@ -162,7 +163,9 @@ def stacked_depth(time, fnorm, period, t0, duration_days, *, epochs="all", phase
         rc = _window_depth(ph, fn, period, duration_days, c * period)
         if rc:
             ctrl.append(rc[0])
-    inflation = max(1.0, float(np.std(ctrl)) / err) if len(ctrl) >= STACK_MIN_CONTROLS and err > 0 else 1.0
+    # robust spread (1.4826 MAD about the median): one real secondary among the controls must not inflate the error
+    spread = 1.4826 * float(np.median(np.abs(np.asarray(ctrl) - np.median(ctrl)))) if ctrl else 0.0
+    inflation = max(1.0, spread / err) if len(ctrl) >= STACK_MIN_CONTROLS and err > 0 else 1.0
     return StackedDepth(depth * 1e6, err * inflation * 1e6, n_in, n_out, inflation)
 
 

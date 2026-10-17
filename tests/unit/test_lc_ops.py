@@ -123,3 +123,11 @@ def test_stacked_depth_inflates_its_error_under_red_noise():
     red = inject_transit(LightCurve(base.time, f, base.flux_err, base.quality, base.quarter, f.copy()), 0.6, 132.0, 1 / 24, 600)
     d = stacked_depth(red.time, detrend(red), 0.6, 132.0, 1 / 24)
     assert d.inflation > 1.5 and abs(d.depth_ppm - 600) < 3 * d.err_ppm
+
+
+def test_stacked_depth_inflation_ignores_a_real_secondary_among_its_controls():
+    lc = inject_transit(make_lightcurve(n_days=500, seed=42, noise_ppm=800), 4.0, 133.0, 0.1, 20000)
+    lc = inject_transit(lc, 4.0, 135.0, 0.1, 14000)                    # a 70 percent secondary at phase 0.5
+    fn = detrend(lc)
+    pri = stacked_depth(lc.time, fn, 4.0, 133.0, 0.1)
+    assert pri.inflation < 3 and abs(pri.depth_ppm - 20000) < 0.1 * 20000
