@@ -158,6 +158,8 @@ def test_stacked_seasons_catch_a_contaminated_season():
 
 ### Task 3: 2P alias resolution in BoxDip
 
+> As built, see the ledger rulings (`.superpowers/sdd/2026-10-17-skysift-m3-accuracy/progress.md`): the halving rule below was replaced by a doubling rule (a P/2 peak with unequal odd and even stacked depths is re-issued at twice its period).
+
 **Files:**
 - Modify: `src/skysift/detectors/box_dip.py`, `src/skysift/pipeline.py` (`SEARCH_CONFIG_KEYS`)
 - Test: `tests/unit/test_box_dip.py`, `tests/unit/test_pipeline.py` (version hash)
@@ -196,6 +198,8 @@ def test_unequal_eclipses_keep_their_period():
 ---
 
 ### Task 4: Period-matched neighbours out to 120 arcsec in rung 4
+
+> As built, see the ledger rulings (`.superpowers/sdd/2026-10-17-skysift-m3-accuracy/progress.md`): a single 120 arcsec radius replaced the two-radius design below.
 
 **Files:**
 - Modify: `src/skysift/vetting/rung4_novelty.py`
@@ -268,6 +272,8 @@ def test_unequal_eclipses_keep_their_period():
 ---
 
 ### Task 9: Mask the ramp after every data gap (added 17 October 2026 from the Task 7 study)
+
+> As built, see the ledger rulings (`.superpowers/sdd/2026-10-17-skysift-m3-accuracy/progress.md`): a 0.5 d trigger, a 1.5 d mask, mirror padding and DETREND_VERSION 3 replaced the 1.0 d values below; the start of the data also counts as a gap edge.
 
 **Files:**
 - Modify: `src/skysift/lc/ops.py` (`detrend`), `src/skysift/pipeline.py` (`search_version`)

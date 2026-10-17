@@ -578,11 +578,16 @@ def test_job_key_depends_on_the_search_window(settings, monkeypatch):
     assert search_version(BoxDip(alias_resolution=0), s.thresholds) != search_version(det, s.thresholds)
 
 
-def test_search_version_depends_on_the_gap_edge_mask(monkeypatch):
+@pytest.mark.parametrize("name,value", [("DETREND_VERSION", 2), ("GAP_EDGE_MASK_DAYS", 0),
+                                        ("GAP_EDGE_TRIGGER_DAYS", 1.0), ("MEDIAN_PAD_MODE", "nearest")])
+def test_search_version_depends_on_every_detrend_setting(monkeypatch, name, value):
+    """The detrend version, the gap-edge mask, its trigger and the median padding each change the flux every rung
+    sees, so each is part of the search version (and of the record stored with every signal)."""
     det, th = get_detector("box_dip"), Thresholds()
     before = search_version(det, th)
-    monkeypatch.setattr(pipeline, "GAP_EDGE_MASK_DAYS", 0)
+    monkeypatch.setattr(pipeline, name, value)
     assert search_version(det, th) != before
+    assert value in pipeline.detrend_settings().values()
 
 
 def test_errors_are_retried_at_most_three_times(settings, monkeypatch):
@@ -793,6 +798,6 @@ def test_every_signal_stores_the_detrend_it_was_measured_with():
                 "edge_gap_days": pipeline.GAP_EDGE_TRIGGER_DAYS, "median_mode": pipeline.MEDIAN_PAD_MODE}
     assert items and all(i["signal"]["extra"]["detrend"] == expected for i in items)
     assert expected == {"version": 3, "edge_mask_days": 1.5, "edge_gap_days": 0.5, "median_mode": "mirror"}
-    fn, prewhitening, record = pipeline.whitened_flux(lc, th)
+    _fn, prewhitening, record = pipeline.whitened_flux(lc, th)
     assert record == expected and prewhitening["n"] == len(prewhitening["components"])
     json.dumps(record, allow_nan=False)

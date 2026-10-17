@@ -16,7 +16,7 @@ from skysift.lc.ops import GAP_EDGE_TRIGGER_DAYS, detrend, fold_phase
 from skysift.lc.prewhiten import prewhiten_model
 from skysift.models import LightCurve, Target
 from skysift.net import ServiceUnavailable
-from skysift.sources import PARSERS     # the loader's parsers; also re-exported from here
+from skysift.sources import PARSERS  # the loader's parsers; also re-exported from here
 from skysift.sources.factory import make_source
 from skysift.store.db import ArtifactRow, Store
 from skysift.vetting.rung1_detection import SYSTEMATIC_PERIODS

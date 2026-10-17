@@ -41,11 +41,13 @@ def test_recovers_deep_transit():
 
 @pytest.mark.parametrize("seed", [7, 11, 21])
 def test_pure_noise_stays_below_threshold(seed):
-    # held to the detection threshold (sde_min 11). Mirror padding no longer flattens the noise at segment edges, so
-    # noise peaks rise a little: seed 7's 19.585 d peak went from SDE 8.82 to 9.39, the old bound of 9
+    # Mirror padding no longer flattens the noise at segment edges, so noise peaks rose a little: seed 7's 19.585 d
+    # peak went from SDE 8.82 to 9.39, and to 9.45 once the data start was masked too (seeds 11 and 21 peak at 6.21
+    # and 6.57), over the old bound of 9. The bound is 10: tight enough to catch a real rise in the noise floor, and
+    # still below sde_min (11).
     lc = make_lightcurve(n_days=500, seed=seed)
     sig = BoxDip().detect(lc, detrend(lc), NARROW)
-    assert all(s.sde < Thresholds().sde_min for s in sig), [(s.period, s.sde) for s in sig]
+    assert all(s.sde < 10 for s in sig), [(s.period, s.sde) for s in sig]
 
 
 def test_short_or_empty_lightcurve_returns_nothing():
@@ -117,9 +119,10 @@ def test_gap_ramps_do_not_hide_a_long_period_transit():
 
     Besides the quarter gaps the curve has Kepler's monthly downlinks, 0.9 d gaps every 25 to 35 d: with the 15
     quarter gaps alone no trial period lines up more than one ramp and the mask changed nothing (SDE 46.0 against 45.9
-    for a 400 ppm transit, 1.0 d mask). The downlink gaps are shorter than ``gap_days``, so this also checks the 0.5 d
-    trigger. Measured: SDE 155.2 masked against 25.6 unmasked."""
-    base = make_lightcurve(n_days=1400, seed=7, noise_ppm=600)
+    for a 400 ppm transit, 1.0 d mask, 1400 d). The downlink gaps are shorter than ``gap_days``, so this also checks
+    the 0.5 d trigger. The curve is 700 d, half the Kepler baseline, to keep the test near 50 s instead of 130 s.
+    Measured: SDE 97.5 masked against 14.1 unmasked (157.3 against 25.6 on 1400 d)."""
+    base = make_lightcurve(n_days=700, seed=7, noise_ppm=600)
     rng = np.random.default_rng(1)
     keep = np.ones(base.time.size, bool)
     g = base.time[0] + rng.uniform(25, 35)

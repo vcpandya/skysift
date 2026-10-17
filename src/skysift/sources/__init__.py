@@ -2,7 +2,7 @@ from .base import Source, SourceInfo, load_registry  # noqa: F401
 
 
 def _parse_kbonus(data: bytes):
-    from skysift.lc.kbonus import parse_kbonus_fits     # astropy loads only when a raw file is parsed
+    from skysift.lc.kbonus import parse_kbonus_fits  # astropy loads only when a raw file is parsed
     return parse_kbonus_fits(data)
 
 
