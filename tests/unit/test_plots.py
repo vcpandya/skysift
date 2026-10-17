@@ -231,3 +231,22 @@ def test_loader_refetch_logs_the_download_with_the_target(tmp_path):
     with store.session() as s:
         rows = [(q.service, q.target_id) for q in s.query(QueryRow).all()]
     assert rows == [("mast", "kic-005689121")]
+
+
+def test_whitened_fnorm_subtracts_the_stored_model():
+    from skysift.lc.ops import detrend
+    from skysift.lc.prewhiten import prewhiten
+    from skysift.ui.plots import whitened_fnorm
+    from tests.synthetic import make_lightcurve
+    lc = make_lightcurve(n_days=120, seed=21, noise_ppm=500)
+    f = lc.flux * (1 - 1500e-6 * np.cos(2 * np.pi * 15.0479 * lc.time))
+    lc = LightCurve(lc.time, f, lc.flux_err, lc.quality, lc.quarter, f.copy(), dict(lc.meta))
+    fn = detrend(lc); good = np.isfinite(fn)
+    pw = prewhiten(lc.time, fn)
+    assert pw.components
+    signal = {"extra": {"prewhitening": {"n": len(pw.components), "components": [c.as_dict() for c in pw.components]}}}
+    white = whitened_fnorm(lc, signal)
+    assert np.std(white[good]) < 0.5 * np.std(fn[good])
+    assert np.allclose(white[good], pw.residual[good], atol=1e-9)
+    plain = whitened_fnorm(lc, {"extra": {}})
+    assert np.allclose(plain[good], fn[good])

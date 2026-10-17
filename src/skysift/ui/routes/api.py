@@ -7,11 +7,10 @@ from fastapi.responses import JSONResponse, Response
 
 from skysift import jsonutil
 from skysift.detectors.periodogram import PeriodogramSummary
-from skysift.lc.ops import detrend
 from skysift.net import ServiceUnavailable
 from skysift.store.db import ArtifactRow
 from skysift.ui import queries
-from skysift.ui.plots import IntegrityError, LightCurveLoader, build_plots
+from skysift.ui.plots import IntegrityError, LightCurveLoader, build_plots, whitened_fnorm
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -54,7 +53,7 @@ def plots_json(request: Request, signal_id: int):
     except IntegrityError as e:
         return JSONResponse({"error": "integrity", "detail": str(e)}, status_code=409)
     summary, status = _periodogram(request, d["run"])
-    out = build_plots(lc, detrend(lc), d["signal"], d["tests"], summary, st.settings.thresholds)
+    out = build_plots(lc, whitened_fnorm(lc, d["signal"]), d["signal"], d["tests"], summary, st.settings.thresholds)
     out["periodogram_status"] = status
     text = jsonutil.dumps(out)
     while len(st.plot_cache) >= CACHE_LIMIT:

@@ -12,7 +12,7 @@ import pytest
 from skysift import jsonutil
 from skysift.config import Thresholds, load_settings
 from skysift.detectors.base import get_detector
-from skysift.models import Signal, Target, TestResult, TestStatus
+from skysift.models import LightCurve, Signal, Target, TestResult, TestStatus
 from skysift.pipeline import (
     MAX_ATTEMPTS,
     _cpu_work,
@@ -540,3 +540,27 @@ def test_second_interrupt_drops_in_flight_work_for_the_next_sweep_to_supersede(s
     with store.session() as ss:
         assert ss.query(db.RunRow).filter_by(error="superseded").count() >= 1
     assert {st for st, _ in _runs(store).values()} == {"done"}
+
+
+def test_pipeline_whitens_a_pulsator_and_records_the_components(settings, monkeypatch):
+    """A delta Scuti forest on top of a planet: the worker pre-whitens before the search, the planet is still found,
+    and every stored signal carries the removed components so the dashboard can show the same flux."""
+    s, store, blob = _env(monkeypatch, settings, THRESHOLDS__MIN_PERIOD_DAYS="5", THRESHOLDS__MAX_PERIOD_DAYS="40")
+    lc = inject_transit(make_lightcurve(n_days=500, seed=5, noise_ppm=600), 12.5, 140.0, 0.12, 2000)
+    f = lc.flux.copy()
+    for k, (freq, amp) in enumerate([(15.0479, 1100.0), (13.4216, 600.0), (16.0676, 500.0)]):
+        f *= 1 - amp * 1e-6 * np.cos(2 * np.pi * (freq * lc.time + 0.3 * (k + 1)))
+    lc = LightCurve(lc.time, f, lc.flux_err, lc.quality, lc.quarter, f.copy(), dict(lc.meta))
+    src = ScriptedSource([_tgt("pulsing")], {"pulsing": lc}, store, blob)
+    out = run(src, store, blob, s, filter={}, with_novelty=False)
+    assert out["processed"] == 1 and out["signals"] >= 1
+    with store.session() as ss:
+        sigs = ss.query(db.SignalRow).all(); ss.expunge_all()
+    planet = next((x for x in sigs if abs(x.period - 12.5) < 0.02), None)
+    assert planet is not None and planet.sde > 9
+    pw = planet.extra["prewhitening"]
+    assert pw["n"] >= 3 and len(pw["components"]) == pw["n"]
+    assert {round(c["frequency"], 1) for c in pw["components"]} >= {15.0, 13.4, 16.1}
+    assert all(set(c) == {"frequency", "amplitude_ppm", "snr", "coef"} for c in pw["components"])
+    det = get_detector("box_dip")
+    assert search_version(det, s.thresholds) != search_version(det, s.thresholds.model_copy(update={"prewhiten_max_components": 0}))

@@ -120,3 +120,15 @@ def test_review_json_filename_is_sanitised(settings, tmp_path, monkeypatch):
     r = client.get(f"/signals/{sid}/review.json")
     assert r.status_code == 200
     assert r.headers["content-disposition"] == f'attachment; filename="kic-1xyz..w_{sid}_review.json"'
+
+
+def test_signal_page_lists_the_removed_waves(settings, tmp_path):
+    client, app, ids, _launcher = make_seeded_client(settings, tmp_path)
+    comps = [{"frequency": 15.0479, "amplitude_ppm": 1100.0, "snr": 19000.0, "coef": [1.0, -0.0011, 0.0, 0.0, 0.0]},
+             {"frequency": 13.4216, "amplitude_ppm": 600.0, "snr": 6800.0, "coef": [1.0, -0.0006, 0.0, 0.0, 0.0]}]
+    extra = json.dumps({"baseline_days": 1400.0, "prewhitening": {"n": 2, "components": comps, "skipped": []}})
+    with app.state.store.session() as s:
+        s.execute(text("update signals set extra = :e where id = :i"), {"e": extra, "i": ids["candidate"]}); s.commit()
+    r = client.get(f"/signals/{ids['candidate']}")
+    assert r.status_code == 200 and "whitened: 2 waves removed (strongest P = 0.0665 d, 1,100 ppm)" in r.text
+    assert "whitened" not in client.get(f"/signals/{ids['undetermined']}").text

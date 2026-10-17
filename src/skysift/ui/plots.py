@@ -12,7 +12,8 @@ from sqlalchemy import select
 
 from skysift.detectors.periodogram import PeriodogramSummary
 from skysift.lc.kbonus import parse_kbonus_fits
-from skysift.lc.ops import fold_phase
+from skysift.lc.ops import detrend, fold_phase
+from skysift.lc.prewhiten import prewhiten_model
 from skysift.models import LightCurve, Target
 from skysift.net import ServiceUnavailable
 from skysift.sources.factory import make_source
@@ -147,6 +148,16 @@ def _full_selection(t: np.ndarray, period: float, t0: float, dur: float) -> np.n
 
 def _fold_hours(t, period, t0):
     return fold_phase(t, period, t0) * 24.0
+
+
+def whitened_fnorm(lc: LightCurve, signal: dict) -> np.ndarray:
+    """The engine's detrended flux minus the pre-whitening model stored with the signal, so the plots show exactly
+    what the detector and the rungs saw; a signal without a stored model gets the plain detrend."""
+    fnorm = detrend(lc)
+    comps = ((signal.get("extra") or {}).get("prewhitening") or {}).get("components") or []
+    if comps:
+        fnorm = fnorm - prewhiten_model(lc.time, comps)
+    return fnorm
 
 
 def build_plots(lc: LightCurve, fnorm: np.ndarray, signal: dict, tests: list[dict],

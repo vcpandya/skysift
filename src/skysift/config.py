@@ -21,6 +21,10 @@ class Thresholds(BaseModel):
     season_sigma: float = 3.0
     min_period_days: float = 0.5
     max_period_days: float = 200.0
+    # harmonic pre-whitening before the search: up to this many significant sinusoids (0 turns it off), each kept
+    # only while its Lomb-Scargle false-alarm probability stays below prewhiten_fap
+    prewhiten_max_components: int = 50
+    prewhiten_fap: float = 1e-6
 
     @model_validator(mode="after")
     def _period_window(self) -> Thresholds:

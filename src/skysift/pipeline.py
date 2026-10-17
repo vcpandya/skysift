@@ -18,6 +18,7 @@ from skysift.config import Settings, Thresholds, stop_request_path
 from skysift.detectors.base import get_detector
 from skysift.detectors.periodogram import PeriodogramSummary
 from skysift.lc.ops import detrend
+from skysift.lc.prewhiten import PREWHITEN_VERSION, prewhiten
 from skysift.models import LightCurve, Target
 from skysift.net import ServiceUnavailable
 from skysift.store.blob import Blob
@@ -65,6 +66,9 @@ def search_version(det, thresholds: Thresholds) -> str:
     done for a later full-window run. Used in the job key, the run row and every signal's detector_version."""
     cfg = {"min_period_days": thresholds.min_period_days, "max_period_days": thresholds.max_period_days,
            **{k: getattr(det, k, None) for k in SEARCH_CONFIG_KEYS}}
+    if thresholds.prewhiten_max_components:         # whitening changes what the detector sees: part of the version
+        cfg["prewhiten"] = {"version": PREWHITEN_VERSION, "max_components": thresholds.prewhiten_max_components,
+                            "fap": thresholds.prewhiten_fap}
     h = hashlib.sha1(json.dumps(cfg, sort_keys=True).encode()).hexdigest()[:8]
     return f"{det.version}+{h}"
 
@@ -113,6 +117,14 @@ def _cpu_work(lc_pickle: bytes, target_json: str, thresholds_json: str, detector
     # that leave it out get the pipeline's target id so detector output names the right star
     lc.meta.setdefault("target_id", target.target_id)
     fn = detrend(lc); fn_alt = detrend(lc, flux=lc.flux_alt) if lc.flux_alt is not None else None
+    # harmonic pre-whitening: the detector and every rung see the flux with the star's significant sinusoids removed;
+    # the removed model travels with each signal so the dashboard shows the same flux
+    white = prewhiten(lc.time, fn, max_components=th.prewhiten_max_components, fap_max=th.prewhiten_fap)
+    fn = white.residual
+    if fn_alt is not None:
+        fn_alt = prewhiten(lc.time, fn_alt, max_components=th.prewhiten_max_components, fap_max=th.prewhiten_fap).residual
+    prewhitening = {"n": len(white.components), "components": [c.as_dict() for c in white.components],
+                    "skipped": [float(f) for f in white.skipped]}
     det = get_detector(detector_name)
     res = _search(det, lc, fn, th, keep_spectrum=spectrum_path is not None)
     signals = res.signals
@@ -128,6 +140,7 @@ def _cpu_work(lc_pickle: bytes, target_json: str, thresholds_json: str, detector
     for sig in signals:
         sig.target_id, sig.detector_version = target.target_id, version
         sig.extra["search_window"] = {"min_period_days": th.min_period_days, "max_period_days": th.max_period_days}
+        sig.extra["prewhitening"] = prewhitening
         timings = []
         outcome, results = ladder.run(sig, bundle, on_result=lambda r, dt, ts=timings: ts.append(dt))
         out.append({"signal": sig.model_dump(), "outcome": outcome,
