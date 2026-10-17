@@ -48,7 +48,7 @@ def mean_seconds(store: Store) -> float | None:
 
 
 def summary(store: Store, retention: Retention, settings) -> dict:
-    from skysift.pipeline import MAX_ATTEMPTS
+    from skysift.pipeline import MAX_ATTEMPTS, MAX_POOL_BREAKS
     counts = store.counts()
     with store.session() as s:
         states = dict(s.execute(select(TargetRow.state, func.count()).group_by(TargetRow.state)).all())
@@ -67,7 +67,7 @@ def summary(store: Store, retention: Retention, settings) -> dict:
     return {"counts": counts, "targets_by_state": states, "signal_outcomes": outcomes, "rung_counts": rungs,
             "targets_per_hour": round(n_done / hours, 1) if n_done else 0.0,
             "mean_seconds_per_run": round(seconds / n_done, 2) if n_done else None,
-            "error_capped_targets": store.error_capped_targets(MAX_ATTEMPTS),
+            "error_capped_targets": store.error_capped_targets(MAX_ATTEMPTS, MAX_POOL_BREAKS),
             "cache_bytes": retention.cached_bytes(), "retention": settings.retention,
             "cache_budget_bytes": policy.budget_bytes if policy.mode == "budget" else None,
             "last_errors": last_errors, "queries": counts["queries"]}

@@ -209,8 +209,10 @@ class Store:
                 RunRow.job_key == job_key, RunRow.status == "error",
                 RunRow.error.in_((POOL_BROKE_ERROR, WORKER_DIED_ERROR))))
 
-    def error_capped_targets(self, max_attempts: int) -> int:
-        """Targets whose latest job key has at least ``max_attempts`` failed attempts and no done run."""
+    def error_capped_targets(self, max_attempts: int, max_pool_breaks: int | None = None) -> int:
+        """Targets left for a human: their latest job key has no done run and either at least ``max_attempts``
+        failed attempts or, when ``max_pool_breaks`` is given, at least that many runs lost in a broken CPU pool
+        (the same give-up rules the sweep's target selection applies)."""
         with self.session() as s:
             latest = select(func.max(RunRow.id)).group_by(RunRow.target_id)
             keys = select(RunRow.job_key).where(RunRow.id.in_(latest))
@@ -219,7 +221,14 @@ class Store:
                       .where(RunRow.job_key.in_(keys), RunRow.job_key.not_in(done), RunRow.status == "error",
                              *_ATTEMPT_FILTERS)
                       .group_by(RunRow.job_key).having(func.count() >= max_attempts))
-            return s.scalar(select(func.count()).select_from(capped.subquery()))
+            given_up = select(capped.subquery().c.job_key)
+            if max_pool_breaks is not None:
+                broken = (select(RunRow.job_key)
+                          .where(RunRow.job_key.in_(keys), RunRow.job_key.not_in(done), RunRow.status == "error",
+                                 RunRow.error.in_((POOL_BROKE_ERROR, WORKER_DIED_ERROR)))
+                          .group_by(RunRow.job_key).having(func.count() >= max_pool_breaks))
+                given_up = given_up.union(select(broken.subquery().c.job_key))
+            return s.scalar(select(func.count()).select_from(given_up.subquery()))
 
     def start_run(self, job_key, target_id, detector, detector_version, ladder_version) -> int:
         """Start a run. Earlier runs of the same job still marked 'running' were interrupted (a crash or a stopped

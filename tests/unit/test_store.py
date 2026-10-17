@@ -118,6 +118,19 @@ def test_attempts_count_errors_but_not_superseded_runs(tmp_path):
     assert s.error_capped_targets(3) == 0
 
 
+def test_error_capped_targets_count_pool_break_give_ups(tmp_path):
+    from skysift.store.db import POOL_BROKE_ERROR, WORKER_DIED_ERROR
+    s = make_store(tmp_path)
+    for text in (POOL_BROKE_ERROR, POOL_BROKE_ERROR, WORKER_DIED_ERROR):
+        s.finish_run(s.start_run("k", "t", "box_dip", "1+abcdef01", "1"), "error", text)
+    assert s.attempts("k") == 1 and s.pool_breaks("k") == 3
+    assert s.error_capped_targets(3) == 0                          # not three charged attempts
+    assert s.error_capped_targets(3, max_pool_breaks=3) == 1       # but given up by the pool-break rule
+    assert s.error_capped_targets(3, max_pool_breaks=4) == 0
+    s.finish_run(s.start_run("k", "t", "box_dip", "1+abcdef01", "1"), "done")
+    assert s.error_capped_targets(3, max_pool_breaks=3) == 0       # a done run clears it
+
+
 def test_attempts_ignore_service_outages(tmp_path):
     s = make_store(tmp_path)
     for _ in range(3):
