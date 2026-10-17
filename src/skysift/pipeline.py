@@ -20,7 +20,7 @@ from skysift.config import Settings, Thresholds, stop_request_path
 from skysift.detectors.base import get_detector
 from skysift.detectors.periodogram import PeriodogramSummary
 from skysift.lc.ops import DETREND_VERSION, GAP_EDGE_MASK_DAYS, GAP_EDGE_TRIGGER_DAYS, MEDIAN_PAD_MODE, detrend
-from skysift.lc.prewhiten import PREWHITEN_VERSION, prewhiten
+from skysift.lc.prewhiten import GUARD_EXCLUSION, PREWHITEN_VERSION, prewhiten, prewhiten_model
 from skysift.models import LightCurve, Target
 from skysift.net import ServiceUnavailable
 from skysift.store.blob import Blob
@@ -48,6 +48,8 @@ MAX_POOL_RESTARTS = 2       # a CPU pool that breaks a third time in one sweep e
 MAX_POOL_BREAKS = 3         # a job held by three broken pools (charged or not) is given up: it may be the killer
 SEARCH_CONFIG_KEYS = ("oversample", "n_bands", "n_refine", "refine_oversample", "two_stage", "mask_iterations",
                      "alias_resolution")
+RESTORE_HARMONICS = 8       # a detection gets back removed components at m * f / n for m in 1 .. 8 ...
+RESTORE_DIVISORS = (1, 2)   # ... and n in 1, 2: its harmonics and the P/2 alias comb
 
 
 def priority_score(t: Target) -> float:
@@ -132,6 +134,36 @@ def whitened_flux(lc: LightCurve, th: Thresholds, flux=None) -> tuple:
     return white.residual, record, settings
 
 
+def restore_harmonics(time, flux, record: dict, detections) -> tuple | None:
+    """Put back the removed components that sit at a detection's harmonics: within ``GUARD_EXCLUSION`` resolution
+    elements (1/baseline of the finite flux) of m * f / n for every ``(f, depth_ppm)`` in ``detections``, m in 1 ..
+    ``RESTORE_HARMONICS`` and n in ``RESTORE_DIVISORS``, and no larger than that detection's depth: a box of depth d
+    has every Fourier amplitude below d (2 d times its duty cycle, at most), so a component deeper than the detection
+    is a stellar wave that happens to sit on the comb, not a piece of the transit, and stays removed. A detection must
+    never be measured on flux that had its own harmonics removed, whatever the shape guard decided. Returns None when
+    there is nothing to restore, else (the flux plus their model, the record without them and with ``restored``:
+    [{frequency, amplitude_ppm}, ...]), so ``detrend - prewhiten_model(record components)`` is still exactly the
+    returned flux."""
+    import numpy as np
+    time, flux = np.asarray(time, float), np.asarray(flux, float)
+    t = time[np.isfinite(flux) & np.isfinite(time)]
+    comps = record.get("components") or []
+    if t.size < 2 or not comps:
+        return None
+    tolerance = GUARD_EXCLUSION / float(t.max() - t.min())
+    combs = [(m * f / n, depth) for f, depth in detections if f > 0 and depth > 0
+             for n in RESTORE_DIVISORS for m in range(1, RESTORE_HARMONICS + 1)]
+    hit = [any(abs(float(c["frequency"]) - h) < tolerance and float(c["amplitude_ppm"]) <= depth for h, depth in combs)
+           for c in comps]
+    if not any(hit):
+        return None
+    back = [c for c, h in zip(comps, hit) if h]
+    kept = [c for c, h in zip(comps, hit) if not h]
+    new = {**record, "n": len(kept), "components": kept,
+           "restored": [{"frequency": float(c["frequency"]), "amplitude_ppm": float(c["amplitude_ppm"])} for c in back]}
+    return flux + prewhiten_model(time, back), new
+
+
 def _cpu_work(lc_pickle: bytes, target_json: str, thresholds_json: str, detector_name: str, ladder_version: str,
               with_novelty: bool, fetch_module: str | None = None, store_periodogram: str = "all",
               spectrum_path: str | None = None) -> str:
@@ -153,9 +185,19 @@ def _cpu_work(lc_pickle: bytes, target_json: str, thresholds_json: str, detector
     # that leave it out get the pipeline's target id so detector output names the right star
     lc.meta.setdefault("target_id", target.target_id)
     fn, prewhitening, detrend_record = whitened_flux(lc, th)
-    fn_alt = whitened_flux(lc, th, flux=lc.flux_alt)[0] if lc.flux_alt is not None else None
+    fn_alt, alt_record = whitened_flux(lc, th, flux=lc.flux_alt)[:2] if lc.flux_alt is not None else (None, None)
     det = get_detector(detector_name)
     res = _search(det, lc, fn, th, keep_spectrum=spectrum_path is not None)
+    # a detection whose own harmonics were whitened away is searched once more on flux with them put back; that
+    # second search (and its record, without the restored components) is the one stored. At most once per target.
+    detected = [(1.0 / s.period, float(s.depth_ppm)) for s in res.signals if s.sde >= th.sde_min and s.period > 0]
+    restored = restore_harmonics(lc.time, fn, prewhitening, detected) if detected else None
+    if restored is not None:
+        fn, prewhitening = restored
+        if fn_alt is not None:      # the rungs compare the secondary flux with the primary: same treatment
+            alt = restore_harmonics(lc.time, fn_alt, alt_record, detected)
+            if alt is not None: fn_alt = alt[0]
+        res = _search(det, lc, fn, th, keep_spectrum=spectrum_path is not None)
     signals = res.signals
     if spectrum_path and res.spectrum is not None:
         import numpy as np

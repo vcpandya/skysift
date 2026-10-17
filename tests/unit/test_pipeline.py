@@ -812,3 +812,67 @@ def test_every_signal_stores_the_detrend_it_was_measured_with():
     _fn, prewhitening, record = pipeline.whitened_flux(lc, th)
     assert record == expected and prewhitening["n"] == len(prewhitening["components"])
     json.dumps(record, allow_nan=False)
+
+
+class _InlinePool:
+    """Stands in for the CPU pool and runs each job in this process at submit, so a monkeypatch reaches the worker."""
+
+    def submit(self, fn, *a, **kw):
+        f = Future()
+        try: f.set_result(fn(*a, **kw))
+        except Exception as e: f.set_exception(e)  # noqa: BLE001  (a worker error travels in its future, as in a pool)
+        return f
+
+    def shutdown(self, *a, **kw): pass
+
+
+def test_pipeline_restores_removed_harmonics_of_a_detection(settings, monkeypatch):
+    """A wave at exactly the transit frequency makes pre-whitening (shape guard off) remove the transit's own
+    fundamental and harmonics with it; the detection then sits on flux that lost most of its depth. The worker puts
+    the removed components at the detection's harmonics back, searches once more and stores that search, whose
+    record no longer lists them, so the dashboard replays exactly the flux searched."""
+    period, t0, duration, depth = 1.5, 132.2, 3 / 24, 1500.0
+    s, store, blob = _env(monkeypatch, settings, THRESHOLDS__MIN_PERIOD_DAYS="1", THRESHOLDS__MAX_PERIOD_DAYS="5",
+                          THRESHOLDS__PREWHITEN_MAX_COMPONENTS="2")
+    lc = inject_transit(make_lightcurve(n_days=500, seed=7, noise_ppm=600), period, t0, duration, depth)
+    # the wave is odd about mid-transit, so it leaves the box depth alone when it is put back
+    f = lc.flux * (1 - 300e-6 * np.sin(2 * np.pi * (lc.time - t0) / period))
+    lc = LightCurve(lc.time, f, lc.flux_err, lc.quality, lc.quarter, f.copy(), dict(lc.meta))
+    real = pipeline.prewhiten
+    monkeypatch.setattr(pipeline, "prewhiten", lambda *a, **kw: real(*a, **{**kw, "shape_guard": False}))
+    monkeypatch.setattr(pipeline, "cpu_pool", lambda _settings: _InlinePool())
+    src = ScriptedSource([_tgt("eaten")], {"eaten": lc}, store, blob)
+    out = run(src, store, blob, s, filter={}, with_novelty=False)
+    assert out["processed"] == 1 and out["errors"] == 0
+    with store.session() as ss:
+        sigs = ss.query(db.SignalRow).all(); ss.expunge_all()
+    planet = next((x for x in sigs if abs(x.period - period) < 0.01), None)
+    assert planet is not None, [(x.period, x.sde) for x in sigs]
+    pw = planet.extra["prewhitening"]
+    assert pw.get("restored"), pw
+    assert all(set(r) == {"frequency", "amplitude_ppm"} for r in pw["restored"])
+    assert any(abs(r["frequency"] - 1 / period) < 0.01 for r in pw["restored"])
+    assert all(abs(c["frequency"] - 1 / period) > 0.01 for c in pw["components"]) and pw["n"] == len(pw["components"])
+    assert abs(planet.depth_ppm - depth) < 0.15 * depth, planet.depth_ppm
+    assert all(x.extra["prewhitening"] == pw for x in sigs), "every signal of the target carries the searched record"
+    assert planet.extra["detrend"] == pipeline.detrend_settings()
+
+
+def test_restore_harmonics_leaves_a_wave_deeper_than_the_detection_removed():
+    """A pulsation that happens to sit on a detection's harmonic comb is not part of the transit: a box of depth d has
+    every Fourier amplitude below d, so a removed component larger than the detection's depth stays removed, while a
+    smaller one at the same comb comes back."""
+    time = np.arange(0, 400, 1 / 48)
+    flux = np.ones_like(time)
+    f = 1 / 2.5
+    record = {"n": 3, "components": [
+        {"frequency": f, "amplitude_ppm": 40.0, "snr": 10.0, "coef": [0.0, 40e-6, 0.0, 0.0, 0.0]},        # transit fundamental: back
+        {"frequency": 2 * f, "amplitude_ppm": 900.0, "snr": 10.0, "coef": [0.0, 900e-6, 0.0, 0.0, 0.0]},  # a wave on the comb: stays
+        {"frequency": 0.37, "amplitude_ppm": 30.0, "snr": 10.0, "coef": [0.0, 30e-6, 0.0, 0.0, 0.0]},     # unrelated: stays
+    ], "skipped": []}
+    out = pipeline.restore_harmonics(time, flux, record, [(f, 500.0)])
+    assert out is not None
+    _flux, new = out
+    assert [r["frequency"] for r in new["restored"]] == [f]
+    assert [c["frequency"] for c in new["components"]] == [2 * f, 0.37] and new["n"] == 2
+    assert pipeline.restore_harmonics(time, flux, record, [(f, 20.0)]) is None, "nothing under a 20 ppm detection"
