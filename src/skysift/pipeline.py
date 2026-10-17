@@ -297,13 +297,16 @@ def run(source, store: Store, blob: Blob, settings: Settings, filter: dict, dete
         nonlocal cpu_pool
         held = {**(popped or {}), **cpu_jobs}
         cpu_jobs.clear()
-        finished = [f for f in held if f.done() and not f.cancelled() and f.exception() is None]
-        lost = [job for f, job in held.items() if f not in finished]
-        log.error("CPU worker pool broke (a worker process died): %d held runs lost, %d finished results kept",
-                  len(lost), len(finished))
+        # settled before the break: a result, or the worker's own exception (vetted fails it with that error)
+        settled = [f for f in held
+                   if f.done() and not f.cancelled() and not isinstance(f.exception(), BrokenProcessPool)]
+        lost = [job for f, job in held.items() if f not in settled]
+        log.error("CPU worker pool broke (a worker process died): %d held runs lost, %d settled jobs kept",
+                  len(lost), len(settled))
         text = WORKER_DIED_ERROR if len(lost) == 1 else POOL_BROKE_ERROR
         for t, rid in lost: fail(t, rid, e, text)
-        for f in finished: vetted(f, *held[f])
+        for i, f in enumerate(settled):     # later settled targets have not pinned their evidence yet: never evict it
+            vetted(f, *held[f], unwritten=frozenset(held[g][0].target_id for g in settled[i + 1:]))
         if summary["pool_restarts"] >= MAX_POOL_RESTARTS: raise e
         summary["pool_restarts"] += 1
         cpu_pool.shutdown(wait=True, cancel_futures=True)
@@ -312,7 +315,7 @@ def run(source, store: Store, blob: Blob, settings: Settings, filter: dict, dete
     def on_vetted(fut: Future) -> None:
         vetted(fut, *cpu_jobs.pop(fut))
 
-    def vetted(fut: Future, t: Target, rid: int) -> None:
+    def vetted(fut: Future, t: Target, rid: int, unwritten: frozenset[str] = frozenset()) -> None:
         payload = None
         try:
             payload = fut.result()
@@ -334,7 +337,7 @@ def run(source, store: Store, blob: Blob, settings: Settings, filter: dict, dete
         # after a vetted target only, and never touching in-flight targets: they have not pinned their evidence yet,
         # so evicting their files could delete what a live signal is about to claim
         in_flight = ({x[0].target_id for x in fetches.values()} | {x[0].target_id for x in ready}
-                     | {x[0].target_id for x in cpu_jobs.values()})
+                     | {x[0].target_id for x in cpu_jobs.values()} | unwritten)
         retention.enforce_budget(exclude_targets=in_flight)   # raises DiskBudgetExceeded -> stops the run
 
     def top_up() -> None:

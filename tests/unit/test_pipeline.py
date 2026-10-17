@@ -414,7 +414,51 @@ def test_a_result_finished_before_the_break_is_still_written(settings, monkeypat
     src = ScriptedSource([_tgt("a"), _tgt("b")], {"a": lc, "b": lc}, store, blob)
     out = run(src, store, blob, s, filter={}, with_novelty=False)
     assert out["pool_restarts"] == 1 and out["processed"] == 2 and out["errors"] == 0 and len(pools) == 2
-    assert _runs(store) == {"a": ("done", ""), "b": ("done", "")}     # a salvaged, b resubmitted to the new pool
+    assert _runs(store) == {"a": ("done", ""), "b": ("done", "")}     # one salvaged, one resubmitted to the new pool
+
+
+def test_a_worker_error_held_at_a_break_keeps_its_own_text(settings, monkeypatch):
+    def error_then_break(pool, f):
+        if len(pool.futures) == 2:
+            first = pool.futures[0]
+
+            def result(timeout=None):      # the first job's own error lands just before the break is handled
+                first.set_exception(ValueError("bad flux")); return Future.result(f, timeout)
+            f.result = result
+            f.set_exception(BrokenProcessPool("a child process terminated abruptly"))
+    _fake_pools(monkeypatch, error_then_break)
+    s, store, blob = _env(monkeypatch, settings)
+    lc = make_lightcurve(n_days=60, seed=4)
+    src = ScriptedSource([_tgt("a"), _tgt("b")], {"a": lc, "b": lc}, store, blob)
+    out = run(src, store, blob, s, filter={}, with_novelty=False)
+    assert out["pool_restarts"] == 1 and out["errors"] == 2
+    # the worker error is the target's own; the break, with no other run lost, is the lone crash
+    assert sorted(_runs(store).values()) == [("error", "ValueError('bad flux')"), ("error", "worker died: pool broke")]
+    assert store.attempts(_job_key(store, "a")) == store.attempts(_job_key(store, "b")) == 1
+
+
+def test_salvaging_several_results_never_evicts_the_unwritten_ones(settings, monkeypatch):
+    def finish_two_then_break(pool, _f):        # two jobs finish; the pool breaks on the third submit
+        if len(pool.futures) == 3:
+            for f in pool.futures[:2]: f.set_result(_EMPTY_PAYLOAD)
+            raise BrokenProcessPool("a child process terminated abruptly")
+
+    def healthy(_pool, f): f.set_result(_EMPTY_PAYLOAD)
+    _fake_pools(monkeypatch, finish_two_then_break, healthy)
+    s, store, blob = _env(monkeypatch, settings, WORKERS_CPU="2")
+    real, calls = pipeline.Retention.enforce_budget, []
+
+    def spy(self, exclude_targets=None):        # every target with an unfinished run must be safe from eviction
+        running = {t for t, (st, _) in _runs(store).items() if st == "running"}
+        calls.append((running, set(exclude_targets or ())))
+        return real(self, exclude_targets=exclude_targets)
+    monkeypatch.setattr(pipeline.Retention, "enforce_budget", spy)
+    lc = make_lightcurve(n_days=60, seed=4)
+    src = ScriptedSource([_tgt("a"), _tgt("b"), _tgt("c")], {"a": lc, "b": lc, "c": lc}, store, blob)
+    out = run(src, store, blob, s, filter={}, with_novelty=False)
+    assert out["pool_restarts"] == 1 and out["processed"] == 3 and out["errors"] == 0
+    assert len(calls) == 3 and len(calls[0][0]) == 2                # first salvage: one salvaged and one queued wait
+    assert all(running <= excluded for running, excluded in calls), calls
 
 
 def test_a_third_break_ends_the_sweep_after_two_restarts(settings, monkeypatch):
