@@ -28,6 +28,25 @@ def _iso(dt) -> str | None:
     return dt.isoformat() if dt is not None else None
 
 
+def run_time_totals(store: Store) -> tuple[int, float]:
+    """(number of finished runs, their total wall seconds) from one aggregate, so the Live page's poll never loads
+    every run into Python. SQLite has no interval type, hence the julianday arithmetic."""
+    if store.engine.dialect.name == "sqlite":
+        seconds = func.sum((func.julianday(RunRow.finished) - func.julianday(RunRow.started)) * 86400.0)
+    else:
+        seconds = func.sum(func.extract("epoch", RunRow.finished - RunRow.started))
+    with store.session() as s:
+        n, total = s.execute(select(func.count(), seconds)
+                             .where(RunRow.status == "done", RunRow.finished.is_not(None))).one()
+    return int(n), float(total or 0.0)
+
+
+def mean_seconds(store: Store) -> float | None:
+    """Mean wall time of a finished run (None before the first one), rounded to 2 decimals."""
+    n, total = run_time_totals(store)
+    return round(total / n, 2) if n else None
+
+
 def summary(store: Store, retention: Retention, settings) -> dict:
     from skysift.pipeline import MAX_ATTEMPTS
     counts = store.counts()
@@ -38,17 +57,16 @@ def summary(store: Store, retention: Retention, settings) -> dict:
         for rung, status, n in s.execute(select(TestRow.rung, TestRow.status, func.count())
                                          .group_by(TestRow.rung, TestRow.status)):
             rungs.setdefault(rung, {"pass": 0, "fail": 0, "undetermined": 0})[status] = n
-        done = s.execute(select(RunRow.started, RunRow.finished).where(RunRow.status == "done")).all()
-        seconds = sum((f - st).total_seconds() for st, f in done if f is not None)
         errors = s.scalars(select(RunRow).where(RunRow.status == "error", RunRow.error != "superseded")
                            .order_by(RunRow.id.desc()).limit(5)).all()
         last_errors = [{"target": e.target_id, "finished": _iso(e.finished),
                         "error": e.error.splitlines()[0][:200] if e.error else ""} for e in errors]
+    n_done, seconds = run_time_totals(store)
     hours = max(1e-9, seconds / 3600)
     policy = retention.policy
     return {"counts": counts, "targets_by_state": states, "signal_outcomes": outcomes, "rung_counts": rungs,
-            "targets_per_hour": round(len(done) / hours, 1) if done else 0.0,
-            "mean_seconds_per_run": round(seconds / len(done), 2) if done else None,
+            "targets_per_hour": round(n_done / hours, 1) if n_done else 0.0,
+            "mean_seconds_per_run": round(seconds / n_done, 2) if n_done else None,
             "error_capped_targets": store.error_capped_targets(MAX_ATTEMPTS),
             "cache_bytes": retention.cached_bytes(), "retention": settings.retention,
             "cache_budget_bytes": policy.budget_bytes if policy.mode == "budget" else None,

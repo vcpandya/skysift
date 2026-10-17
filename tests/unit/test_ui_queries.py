@@ -1,5 +1,7 @@
+from datetime import datetime, timedelta
+
 from skysift.store.blob import LocalBlob
-from skysift.store.db import Store
+from skysift.store.db import RunRow, Store
 from skysift.store.retention import Retention, RetentionPolicy
 from skysift.ui import queries
 from tests.unit.ui_seed import seed
@@ -64,3 +66,22 @@ def test_approved_and_review_document(tmp_path, settings):
     doc = queries.review_document(store, ids["candidate"])
     assert doc["signal"]["target_id"] == "kic-005689121" and len(doc["tests"]) == 4
     assert doc["queries"][0]["service"] == "exoarchive" and doc["decisions"][0]["decision"] == "approve"
+
+
+def test_mean_seconds_matches_python_mean_and_handles_no_runs(tmp_path, settings):
+    store = Store(settings.database_url); store.init_schema()
+    retention = Retention(RetentionPolicy.parse("stream"), store, LocalBlob(tmp_path / "blobs"))
+    assert queries.mean_seconds(store) is None and queries.run_time_totals(store) == (0, 0.0)
+    assert queries.summary(store, retention, settings)["mean_seconds_per_run"] is None
+    t0 = datetime(2026, 10, 14, 12, 0, 0)
+    for i, (seconds, status) in enumerate([(10, "done"), (30, "done"), (None, "running")]):
+        rid = store.start_run(f"job-{i}", f"t{i}", "box_dip", "1", "1")
+        with store.session() as s:
+            run = s.get(RunRow, rid)
+            run.started, run.status = t0, status
+            run.finished = t0 + timedelta(seconds=seconds) if seconds is not None else None
+    assert queries.mean_seconds(store) == 20.0
+    n, total = queries.run_time_totals(store)
+    assert n == 2 and abs(total - 40.0) < 1e-3
+    out = queries.summary(store, retention, settings)
+    assert out["mean_seconds_per_run"] == 20.0 and out["targets_per_hour"] == round(2 / (40.0 / 3600), 1)

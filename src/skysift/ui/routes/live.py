@@ -4,9 +4,7 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
-from sqlalchemy import select
 
-from skysift.store.db import RunRow
 from skysift.store.retention import Retention, RetentionPolicy
 from skysift.ui import queries
 from skysift.ui.app import render
@@ -18,15 +16,6 @@ def _summary(request: Request) -> dict:
     st = request.app.state
     ret = Retention(RetentionPolicy.parse(st.settings.retention), st.store, st.blob)
     return queries.summary(st.store, ret, st.settings)
-
-
-def _mean_seconds(store) -> float | None:
-    """Mean wall time of a finished run: the one number the ETA needs, without the group-bys of queries.summary
-    (same definition and rounding as summary()["mean_seconds_per_run"])."""
-    with store.session() as s:
-        done = s.execute(select(RunRow.started, RunRow.finished).where(RunRow.status == "done")).all()
-    seconds = sum((f - st).total_seconds() for st, f in done if f is not None)
-    return round(seconds / len(done), 2) if done else None
 
 
 def _elapsed_s(started) -> float | None:
@@ -71,7 +60,7 @@ def _sweep_ctx(request: Request, mean=...) -> dict:
     elapsed = _elapsed_s(active.get("started"))
     eta = None
     if elapsed is not None:
-        if mean is ...: mean = _mean_seconds(st.store)
+        if mean is ...: mean = queries.mean_seconds(st.store)
         limit = req.get("limit")
         cpu = req.get("workers_cpu") or st.settings.workers_cpu
         if (mean and isinstance(limit, int) and not isinstance(limit, bool) and isinstance(cpu, int)
