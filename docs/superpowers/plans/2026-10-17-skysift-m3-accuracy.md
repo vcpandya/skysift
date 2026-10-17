@@ -267,6 +267,28 @@ def test_unequal_eclipses_keep_their_period():
 
 ---
 
+### Task 9: Mask the ramp after every data gap (added 17 October 2026 from the Task 7 study)
+
+**Files:**
+- Modify: `src/skysift/lc/ops.py` (`detrend`), `src/skysift/pipeline.py` (`search_version`)
+- Test: `tests/unit/test_lc_ops.py`, `tests/unit/test_box_dip.py`, `tests/unit/test_pipeline.py`
+
+**Context:** The Task 7 note (`docs/superpowers/notes/2026-10-17-long-period-sde.md`) shows that on gaia-dr3-2053482589315365120 every epoch deeper than 3000 ppm in the 24.82 d fold falls 0.17 to 0.86 d after a data gap: thermal ramps after safe modes and downlinks that the 2 d running-median detrend leaves in the flux. They produce the false 22 to 29 d peaks and, worse, suppress genuine long-period signals: an injected 1250 ppm, 9 h box on that star scores SDE 6.2 as is and 24.6 when the first 1.0 d after each gap is masked (about 5 percent of the points).
+
+**Interfaces:**
+- Produces: `GAP_EDGE_MASK_DAYS = 1.0` and `DETREND_VERSION = 2` in `skysift.lc.ops`; `detrend(lc, window_days=2.0, gap_days=1.0, flux=None, edge_mask_days=GAP_EDGE_MASK_DAYS)` returns NaN for every point within `edge_mask_days` after a gap longer than `gap_days` (the first point of the series is not a gap edge; a gap is a step between consecutive finite times). Everything downstream (pre-whitening, detector, rungs, dashboard plots through `whitened_fnorm`) sees the same masked flux because they all call `detrend`. `search_version` adds `cfg["detrend"] = {"version": DETREND_VERSION, "edge_mask_days": GAP_EDGE_MASK_DAYS}` so earlier runs are searched again rather than mixed.
+- Measurements to record in the Task 7 note (a new dated section) and in the spec bullet: the 24.82 d star's top peak and SDE with the mask; the injected 1250 ppm, 9 h box SDE with the mask (expected about 24); the pre-whitening component count on that star before and after the mask (Task 7 saw 47 to 49 of the 50 cap, possibly fitting the ramps); the fraction of points masked on the three study stars.
+
+- [ ] **Step 1: Write the failing tests**
+  - `tests/unit/test_lc_ops.py::test_detrend_masks_the_ramp_after_a_gap`: a synthetic curve with a 3 d gap and an exponential ramp of 5000 ppm decaying over 0.5 d after it; `detrend` returns NaN for every point within 1.0 d after the gap and finite values elsewhere; the number of NaN points equals the count of points in that window; with `edge_mask_days=0` nothing is masked (the old behaviour).
+  - `tests/unit/test_box_dip.py::test_gap_ramps_do_not_hide_a_long_period_transit`: `make_lightcurve(n_days=1400, seed=7, noise_ppm=600)` with 1 percent ramps (decay 0.5 d) added after each quarter gap and an injected 13.0 d, 6 h, 1500 ppm transit; with the default detrend the detector's top signal is at 13.0 d within 0.01 and its SDE is at least 1.5 times the SDE obtained with `edge_mask_days=0` on the same curve (state both numbers in the assertion message). Keep this to two searches.
+  - `tests/unit/test_pipeline.py`: `search_version` changes when `GAP_EDGE_MASK_DAYS` is monkeypatched to 0.
+- [ ] **Step 2: Run them to see them fail; implement; run them green.** The mask is applied before the running median (so the median is not pulled by the ramp) and the masked points stay NaN in the output.
+- [ ] **Step 3: Measure on the real file** (scratch script, see Task 7 context) and append the dated section to the Task 7 note.
+- [ ] **Step 4: Full suite, ruff, spec section 13 bullet (17 October 2026: gap-edge mask, the numbers, why), commit** `fix(lc): mask the ramp after every data gap before detrending`.
+
+---
+
 ## Final whole-branch review
 
 Dispatch the final reviewer on the most capable model with the whole branch diff against `main`; ONE fix wave; then `superpowers:finishing-a-development-branch` (merge decision stays with Vikram).
