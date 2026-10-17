@@ -396,6 +396,9 @@ def test_job_key_depends_on_the_search_window(settings, monkeypatch):
         min_period_days=5, max_period_days=40, sde_min=12))           # vetting thresholds are not search config
     with store.session() as ss:
         assert {r.detector_version for r in ss.query(db.RunRow)} == {v_narrow, search_version(det, s.thresholds)}
+    from skysift.detectors.box_dip import BoxDip
+    assert search_version(BoxDip(), s.thresholds) == search_version(det, s.thresholds)
+    assert search_version(BoxDip(alias_resolution=0), s.thresholds) != search_version(det, s.thresholds)
 
 
 def test_errors_are_retried_at_most_three_times(settings, monkeypatch):

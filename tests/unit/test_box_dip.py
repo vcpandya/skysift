@@ -6,7 +6,7 @@ import pytest
 
 from skysift.config import Thresholds
 from skysift.detectors.box_dip import BoxDip
-from skysift.lc.ops import detrend
+from skysift.lc.ops import detrend, stacked_depth
 from skysift.models import LightCurve
 from tests.synthetic import inject_transit, make_lightcurve
 
@@ -138,3 +138,43 @@ def test_is_alias_catches_combination_frequencies_of_a_multiperiodic_variable():
     assert not _is_alias(1 / f_side, earlier)                       # without a baseline only p/q ratios count
     assert not _is_alias(1 / (f_side + 0.01), earlier, baseline=1430.0)
     assert not _is_alias(9.909, earlier, baseline=1430.0) and not _is_alias(9.909, earlier[:1], baseline=1430.0)
+
+
+ALIAS_WINDOW = Thresholds(min_period_days=0.5, max_period_days=15.0)
+
+
+def _half_period_planet():
+    """A 6.5 d, 20000 ppm planet that the per-band SDE ranks at 3.25 d (SDE 145.9 against 137.4 at 6.5 d)."""
+    return inject_transit(make_lightcurve(n_days=500, seed=42, noise_ppm=1500), 6.5, 133.0, 0.1, 20000)
+
+
+def test_deep_transit_ranked_at_half_period_is_doubled():
+    lc = _half_period_planet()
+    sig = BoxDip(mask_iterations=0).detect(lc, detrend(lc), ALIAS_WINDOW)
+    assert abs(sig[0].period - 6.5) < 0.01
+    assert abs(sig[0].extra["alias_resolved"]["from_period"] - 3.25) < 0.01
+    assert abs(sig[0].depth_ppm - 20000) < 0.15 * 20000
+    assert all(abs(s.period - 6.5) / 6.5 >= 0.02 for s in sig[1:])
+
+
+def test_unequal_eclipses_are_doubled_to_the_binary_period():
+    lc = inject_transit(make_lightcurve(n_days=500, seed=42, noise_ppm=800), 4.0, 133.0, 0.1, 20000)
+    lc = inject_transit(lc, 4.0, 135.0, 0.1, 6000)                      # secondary a third as deep
+    fnorm = detrend(lc)
+    sig = BoxDip(mask_iterations=0).detect(lc, fnorm, ALIAS_WINDOW)
+    assert abs(sig[0].period - 4.0) < 0.01 and "alias_resolved" in sig[0].extra
+    m = np.isfinite(fnorm)
+    on_t0 = stacked_depth(lc.time[m], fnorm[m], sig[0].period, sig[0].t0, sig[0].duration)
+    assert on_t0.depth_ppm > 15000, "t0 sits on the primary eclipse"
+
+
+def test_correctly_ranked_planet_keeps_its_period():
+    lc = inject_transit(make_lightcurve(n_days=500, seed=41, noise_ppm=1500), 3.0, 133.0, 0.06, 20000)
+    sig = BoxDip(mask_iterations=0).detect(lc, detrend(lc), ALIAS_WINDOW)
+    assert abs(sig[0].period - 3.0) < 0.003 and "alias_resolved" not in sig[0].extra
+
+
+def test_alias_resolution_off_leaves_the_ranking():
+    lc = _half_period_planet()
+    sig = BoxDip(mask_iterations=0, alias_resolution=0).detect(lc, detrend(lc), ALIAS_WINDOW)
+    assert abs(sig[0].period - 3.25) < 0.01 and "alias_resolved" not in sig[0].extra
