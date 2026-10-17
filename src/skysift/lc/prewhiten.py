@@ -24,7 +24,8 @@ from astropy.timeseries import LombScargle
 
 from skysift.lc.ops import fold_phase, shape_contrast
 
-PREWHITEN_VERSION = 2               # 2: the shape guard scans around the peak for short dips
+PREWHITEN_VERSION = 3               # 2: the shape guard scans around the peak for short dips; 3: only boxes at least a
+                                    # cadence wide (2 searched the 30 sample targets once, run 7, and is stale)
 HARMONICS = 2                       # fit a1 cos + b1 sin at f and at 2f
 SAMPLES_PER_PEAK = 5
 # trial box widths for the shape guard, as a fraction of the period: from a one-hour transit at 30 days (0.14 percent)
@@ -41,6 +42,8 @@ GUARD_SCAN_STEPS = 20
 GUARD_SCAN_BINS = 100
 GUARD_SCAN_MIN_SNR = 7.0            # a scanned box must be a dip this many of its own errors deep to count
 GUARD_SCAN_MIN_POINTS = 10
+GUARD_SCAN_MIN_WIDTH = 1.0          # in cadences: a box narrower than one sample is not a box the data can show (a
+                                    # 95.7 min delta Scuti wave at 30 min cadence was refused as box-like without it)
 MIN_POINTS = 200
 
 
@@ -126,7 +129,13 @@ def _box_like(t: np.ndarray, y: np.ndarray, f0: float, coef: list[float], resolu
             return True
     if not scan:
         return False
-    short = [frac for frac in GUARD_BOX_FRACTIONS if frac <= GUARD_SCAN_MAX_FRACTION]
+    # only box widths of at least GUARD_SCAN_MIN_WIDTH cadences: narrower boxes hold one or two points per cycle and
+    # the box-versus-sine contrast on them is noise (every short width of a 95.7 min wave at 30 min cadence is such)
+    cadence = float(np.median(np.diff(t))) if t.size > 1 else 0.0
+    short = [frac for frac in GUARD_BOX_FRACTIONS
+             if frac <= GUARD_SCAN_MAX_FRACTION and frac / f0 >= GUARD_SCAN_MIN_WIDTH * cadence]
+    if not short:
+        return False
     sigma = 1.4826 * float(np.median(np.abs(y - np.median(y)))) or 1e-12
     for k in range(-GUARD_SCAN_STEPS, GUARD_SCAN_STEPS + 1):
         period = 1.0 / (f0 + k * GUARD_SCAN_STEP * resolution)

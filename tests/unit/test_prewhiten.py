@@ -126,3 +126,25 @@ def test_prewhiten_keeps_a_shallow_short_transit():
     for period, _ in waves:
         assert min((abs(f - 1 / period) for f in found), default=np.inf) < 0.002, (period, found, pw.skipped)
     assert abs(after - before) < 0.15 * before, f"stacked depth {before:.0f} ppm before whitening, {after:.0f} after"
+
+
+def test_guard_scan_ignores_boxes_narrower_than_a_cadence():
+    """At a 95.7 min period every short box width of the scan is under a third of the 29.4 min cadence, so each
+    trial holds one or two points per cycle and the box-versus-sine contrast on it is noise; on the real delta Scuti
+    gaia-dr3-2052626821369997696 the scan refused the star's own 15.06 cycles per day pulsation as box-like, left it
+    in, and its sub-harmonics came out of the search at SDE 42. Boxes narrower than GUARD_SCAN_MIN_WIDTH cadences are
+    not tried, so the pulsation is removed. (A synthetic 400 d copy of the pulsation does not reproduce the refusal
+    even with the floor off; the real star does, measured on its cached file.)"""
+    from skysift.lc import prewhiten as pwm
+    lc = _with_waves(make_lightcurve(n_days=400, seed=23, noise_ppm=800), PULSATION[:1])
+    fn = detrend(lc)
+    good = np.isfinite(fn)
+    t, y = lc.time[good], fn[good]
+    f0 = PULSATION[0][0]
+    resolution = 1.0 / (t.max() - t.min())
+    coef = list(np.linalg.lstsq(_design(t, f0), y, rcond=None)[0])
+    cadence = float(np.median(np.diff(t)))
+    assert all(frac / f0 < cadence for frac in pwm.GUARD_BOX_FRACTIONS if frac <= pwm.GUARD_SCAN_MAX_FRACTION)
+    assert _box_like(t, y, f0, coef, resolution) is False
+    pw = prewhiten(lc.time, fn, max_components=5, fap_max=1e-6)
+    assert pw.skipped == [] and any(abs(c.frequency - f0) < 2 * resolution for c in pw.components), pw.skipped
