@@ -10,7 +10,7 @@ Keep the per-band normalisation. Excluding the systematic comb moves the 24.82 d
 
 The current pipeline, which pre-whitens before the search, already lowers the three peaks to SDE 5.79, 3.68 and 2.56. Pre-whitening fitted 47 to 49 of the 50 allowed sinusoids on these stars, so it may be fitting the ramps; Task 9 should re-measure this.
 
-The defect is in the light-curve preparation, not in the normalisation. Masking the first 1.0 d after every gap longer than 0.5 d (5.3 to 5.6 percent of the points) removes all three peaks. It also lifts an injected 1250 ppm, 9 h box at 23.55 d from SDE 6.2 to 24.6 on this star. Section 7 proposes that as a separate task. No detector code changes here. Task 9 put the mask into `detrend` (section 8).
+The defect is in the light-curve preparation, not in the normalisation. Masking the first 1.0 d after every gap longer than 0.5 d (5.3 to 5.6 percent of the points) removes all three peaks. It also lifts an injected 1250 ppm, 9 h box at 23.55 d from SDE 6.2 to 24.6 on this star. Section 7 proposes that as a separate task. No detector code changes here. Task 9 put a 1.5 d mask, with mirror padding of the running median, into `detrend` (section 8).
 
 ## 1. Reproduction
 
@@ -199,38 +199,53 @@ Proposed follow-up, as a separate task because it changes the flux every rung se
 
 ## 8. The gap-edge mask in `detrend` (Task 9, 17 October 2026)
 
-`detrend` now drops every point less than 1.0 d (`GAP_EDGE_MASK_DAYS`) after the first point that follows a time step longer than 0.5 d (`GAP_EDGE_TRIGGER_DAYS`) between consecutive good points, before the running median, and returns NaN there. The first point of the light curve is not a gap edge. `DETREND_VERSION` is 2 and both constants are part of `search_version`, so runs made before the mask are searched again rather than mixed.
+`detrend` now drops every point less than 1.5 d (`GAP_EDGE_MASK_DAYS`) after the first point that follows a time step longer than 0.5 d (`GAP_EDGE_TRIGGER_DAYS`) between consecutive good points. The points are dropped before the running median and come back as NaN. The first point of the light curve is not a gap edge. The running median pads each segment by mirroring it at its edges (`MEDIAN_PAD_MODE = "mirror"`) instead of repeating the edge value. `DETREND_VERSION` is 3, and the version, the mask length, the trigger and the padding mode are all part of `search_version`, so runs made before this change are searched again rather than mixed.
+
+**The `sde_min` null calibration must be redone with this detrend, using the calibrate command of Task 8.** The mask shrinks every band's median and MAD, so noise and variability peaks score higher. On this star the uninjected top SDE rose from 6.5 to 9.5 on the detrended flux; it is 8.6 on the pre-whitened flux the pipeline searches. Mirror padding adds a little on its own, because it no longer flattens the noise at segment edges: on a 500 d synthetic white-noise curve (seed 7) the top SDE went from 8.82 to 9.39.
 
 ### Why the trigger is 0.5 d and not the 1.0 d segment split
 
 The running median splits segments at steps longer than `gap_days` (1.0 d). The monthly downlink gaps are shorter than that, so a mask tied to `gap_days` would miss every ramp this study found. Gap census of the good points:
 
-| Star | Gaps 0.5 to 0.7 d | Gaps 0.7 to 1.0 d | Gaps over 1.0 d | Deep dips caught, trigger 0.5 d | Deep dips caught, trigger 1.0 d | Points masked, trigger 0.5 d | Points masked, trigger 1.0 d |
-|---|---|---|---|---|---|---|---|
-| gaia-dr3-2053482589315365120 | 7 | 25 | 39 | 5 of 5 | 0 of 5 | 5.06 percent | 2.78 percent |
-| gaia-dr3-2053223345080135040 | 9 | 19 | 35 | 4 of 4 | 0 of 4 | 5.33 percent | 3.06 percent |
-| gaia-dr3-2053295363101998848 | 7 | 18 | 35 | 2 of 2 | 0 of 2 | 5.33 percent | 3.15 percent |
+| Star | Gaps 0.5 to 0.7 d | Gaps 0.7 to 1.0 d | Gaps over 1.0 d | Deep dips caught, trigger 0.5 d | Deep dips caught, trigger 1.0 d |
+|---|---|---|---|---|---|
+| gaia-dr3-2053482589315365120 | 7 | 25 | 39 | 5 of 5 | 0 of 5 |
+| gaia-dr3-2053223345080135040 | 9 | 19 | 35 | 4 of 4 | 0 of 4 |
+| gaia-dr3-2053295363101998848 | 7 | 18 | 35 | 2 of 2 | 0 of 2 |
 
-The deep dips are the gap-following epochs of section 5 (the data-start epoch excluded). Their preceding gaps are 0.715 to 0.981 d.
+The deep dips are the gap-following epochs of section 5 (the data-start epoch excluded). Their preceding gaps are 0.715 to 0.981 d, and each dip lies 0.16 to 0.86 d after its gap.
 
-### Measurements with the mask
+### Why mirror padding, and why 1.5 d
 
-All on gaia-dr3-2053482589315365120 with the script of the Method section, the 0.5 to 30 d window, and the studied peak pinned to the section 1 ephemeris (24.82263 d, t0 121.08495, 9 h) so the injected box at 23.55 d lands on the same epochs as in section 7. Run with `--edge-mask-days 0`, the same command reproduces section 7 exactly (SDE 6.52 and 6.22, and 24.60 with the post-hoc mask).
+With `mode="nearest"` the running median repeats a segment's first value over half the window. A transit that touches a segment edge then pulls the median down to its own level and is flattened. In a 3 h, 3000 ppm test transit at the start of the data, 7 ppm survive; at the first point after a masked gap, 47 ppm survive. Mirroring duplicates only the few in-transit points, so the median barely moves: 2964 and 2996 ppm survive. The mask makes this matter on every real curve, because a 0.9 d downlink gap plus the mask exceeds `gap_days`, so every downlink becomes a segment edge. On a synthetic delta Scuti with a 9.9 d, 900 ppm transit (300 d, seed 12), the pre-whitened SDE over the clean SDE is 0.71 with nearest padding and a 1.0 d mask, and 1.00 with mirror padding and the 1.5 d mask. Over seeds 12 to 20 it is 0.91 to 1.01.
+
+Nearest padding also hid the ramp tail, but only by accident: the trend followed the first point after the mask, and that point sits in the tail. The real ramps keep a tail of about 1000 ppm beyond the first day. Under mirror padding that tail stays in the flux unless the mask is longer. Same pinned commands as below, padding varied by patching the module in a scratch script:
+
+| Padding, mask | Points masked | Injected SDE, detrended | Injected SDE, pre-whitened | Segment starts deeper than 1000 ppm (median depth) |
+|---|---|---|---|---|
+| nearest, 1.0 d | about 5 percent | 25.64 | 32.98 | 1 of 63 (-19 ppm) |
+| mirror, 1.0 d | about 5 percent | 21.66 | 25.82 | 18 of 63 (249 ppm) |
+| mirror, 1.5 d (adopted) | about 7.5 percent | 25.76 | 29.61 | 11 of 59 (150 ppm) |
+| mirror, 2.0 d | about 9.6 percent | 25.42 | not run | 6 of 59 (32 ppm) |
+
+Mirror with 1.5 d brings the injected box back to the level of nearest with 1.0 d, and it keeps edge transits, which nearest destroys. A model of the ramp tail (an exponential fit per segment start, or an adaptive mask length) is a follow-up.
+
+### Measurements with the final settings
+
+All on gaia-dr3-2053482589315365120 with the script of the Method section and the 0.5 to 30 d window. The studied peak is pinned to the section 1 ephemeris (24.82263 d, t0 121.08495, 9 h), so the injected box at 23.55 d lands on the same epochs as in section 7. The top signal is the first-pass top of the uninjected flux.
 
 | Flux | Points searched | Top signal (d) | Top SDE | SDE at 24.82263 d | Band 22 median / MAD-sigma | Injected 1250 ppm, 9 h at 23.55 d: SDE 1x / 0.5x / 0.25x |
 |---|---|---|---|---|---|---|
-| Detrended, before the mask (section 7) | 57,550 | 24.82263 | 6.52 | 6.52 | 30.66 / 7.31 | 6.22 / 1.41 / 1.45 |
-| Detrended, masked | 54,793 | 1.68816 | 9.36 | 1.05 | 11.33 / 2.28 | 25.64 / 11.18 / 3.22 |
-| Pre-whitened, before the mask (section 7) | not recorded | not recorded | not recorded | 5.79 | 18.58 / 4.31 | 7.68 / 2.39 at 0.5x |
-| Pre-whitened, masked | 54,867 | 0.84663 | 9.95 | 1.37 | 9.22 / 1.87 | 32.98 / 14.75 / 5.05 |
+| Detrended, before Task 9 (section 7) | 57,550 | 24.82263 | 6.52 | 6.52 | 30.66 / 7.31 | 6.22 / 1.41 / 1.45 |
+| Detrended, final | 53,311 | 0.84390 | 9.46 | 1.24 | 12.51 / 2.39 | 25.76 / 10.63 / 2.99 |
+| Pre-whitened, before Task 9 (section 7) | not recorded | not recorded | not recorded | 5.79 | 18.58 / 4.31 | 7.68 / 2.39 at 0.5x |
+| Pre-whitened, final | 53,410 | 0.84390 | 8.59 | 0.70 | 10.20 / 1.95 | 29.61 / 12.77 / 4.28 |
 
-The 24.82 d peak is gone, and a genuine 1250 ppm, 9 h box now scores SDE 25.6 (33.0 after pre-whitening) instead of 6.2. That is slightly better than the post-hoc mask of section 7 (24.6), because the running median no longer sees the ramp. The masked top signals (1.688 d and its half, 0.848 d) are short-period variability that pre-whitening reduces, and both stay below `sde_min` (11). After the mask the first 9 h of a segment hold 1 window deeper than 1000 ppm out of 63 and none deeper than 5000 ppm. Before the mask the counts were 18 and 13 out of 65.
+The 24.82 d peak is gone. A genuine 1250 ppm, 9 h box now scores SDE 25.8, or 29.6 after pre-whitening, instead of 6.2 (7.7). The final top signals (0.844 d and 1.69 d) are short-period variability, below `sde_min` (11). In the first 9 h of a segment, 11 of 59 windows are deeper than 1000 ppm on the detrended flux and 7 of 59 on the pre-whitened flux. None is deeper than 5000 ppm. Before Task 9 the counts were 18 and 13 out of 65. Interior windows deeper than 1000 ppm: 2.7 percent (detrended), 1.1 percent (pre-whitened).
 
-Pre-whitening components (`max_components=50`, `fap_max=1e-6`) without and with the mask: 48 and 49 on gaia-dr3-2053482589315365120, 47 and 32 on gaia-dr3-2053223345080135040, 49 and 49 on gaia-dr3-2053295363101998848. The ramps account for the near-cap fit on one of the three stars only. On the other two the components are stellar or instrumental power that the mask does not touch.
+Pre-whitening components (`max_components=50`, `fap_max=1e-6`) with the final detrend: 50, 47 and 48 on gaia-dr3-2053482589315365120, gaia-dr3-2053223345080135040 and gaia-dr3-2053295363101998848. Section 7 saw 48, 47 and 49 before Task 9. The ramps were not what filled the 50-component cap.
 
-Finite detrended points lost (the mask, plus the few segments it leaves shorter than the 10 points the running median needs): 2939 of 57,935 (5.07 percent), 2172 of 40,625 (5.35 percent) and 2529 of 47,294 (5.35 percent).
-
-Two side effects to carry forward. First, the mask shrinks every band's median and MAD, so short-period noise and variability peaks score higher: the top SDE on this star rose from 6.5 to 9.4 (9.95 pre-whitened). The `sde_min` = 11 null calibration (spec section 13) was made without the mask and should be repeated. Second, the mask turns every downlink gap into a running-median segment boundary (a 0.9 d gap plus the 1.0 d mask exceeds `gap_days`). The median filter pads a segment with copies of its first point (`mode="nearest"`), so the first day of a segment follows that one point. On white noise this is small (the gap-edge counts above). On a synthetic delta Scuti with a 9.9 d, 900 ppm transit, the whitened SDE over the clean SDE averages 0.79 over nine seeds with the mask against 0.86 without. With `mode="mirror"` the seed-12 case gives 35.7 against 36.2 for the clean curve, compared with 25.4 against 36.0 with `mode="nearest"`.
+Finite detrended points lost (the mask, plus the few segments it leaves shorter than the 10 points the running median needs): 4346 of 57,935 (7.50 percent), 3261 of 40,625 (8.03 percent) and 3701 of 47,294 (7.83 percent).
 
 ## Method
 
@@ -245,14 +260,14 @@ Script: `docs/superpowers/notes/scripts/long_period_sde.py`. It takes a cached K
 
 The FITS files are the cached blobs in `.superpowers/sample-run/blobs` (36/36f003de..., e9/e94b7070... and 67/67e3e098...).
 
-Sections 1 to 7 used the detrend of before the gap-edge mask: add `--edge-mask-days 0` to the four commands above to reproduce them. Section 8 comes from two runs on the 24.82 d star with the studied peak pinned to the section 1 ephemeris; the first again with `--edge-mask-days 0` is the reproduction check:
+Sections 1 to 7 used the detrend of before Task 9 (no gap-edge mask, nearest padding): check out commit e06056c to reproduce them. Section 8 comes from two runs on the 24.82 d star with the studied peak pinned to the section 1 ephemeris (at commit 216abc6, the first with `--edge-mask-days 0` reproduced section 7 exactly):
 
 ```
 .venv/Scripts/python.exe docs/superpowers/notes/scripts/long_period_sde.py <2053482589315365120 fits> --period 24.82263 --t0 121.08495 --duration 9 --inject 23.55 --inject-depth 1250
 .venv/Scripts/python.exe docs/superpowers/notes/scripts/long_period_sde.py <2053482589315365120 fits> --period 24.82263 --t0 121.08495 --duration 9 --inject 23.55 --inject-depth 1250 --prewhiten
 ```
 
-The gap census, the component counts and the masked fractions come from short scripts calling `detrend` and `prewhiten` directly on the three files.
+The gap census, the component counts, the masked fractions and the padding comparison come from short scratch scripts that call `detrend` and `prewhiten` on the three files (the padding rows patch the median filter's mode and pass `--edge-mask-days`).
 
 | Step | Definition |
 |---|---|

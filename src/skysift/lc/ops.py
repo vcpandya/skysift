@@ -13,12 +13,14 @@ def _segments(time: np.ndarray, gap_days: float):
     return np.split(np.arange(time.size), breaks)
 
 
-# Kepler data resume after every downlink and safe mode with a thermal ramp, up to 3 percent deep and lasting under a
-# day, that the 2 d running median cannot follow. The downlink gaps are 0.7 to 1.0 d long, so the mask triggers on any
-# gap longer than GAP_EDGE_TRIGGER_DAYS, not on the 1.0 d segment split (notes/2026-10-17-long-period-sde.md, section 8).
-GAP_EDGE_MASK_DAYS = 1.0        # points this close after a gap are dropped before detrending (NaN in the output)
+# Kepler data resume after every downlink and safe mode with a thermal ramp, up to 3 percent deep, whose tail stays
+# near 1000 ppm past the first day; the 2 d running median cannot follow it. The downlink gaps are 0.7 to 1.0 d long,
+# so the mask triggers on any gap longer than GAP_EDGE_TRIGGER_DAYS, not on the 1.0 d segment split
+# (notes/2026-10-17-long-period-sde.md, section 8).
+GAP_EDGE_MASK_DAYS = 1.5        # points this close after a gap are dropped before detrending (NaN in the output)
 GAP_EDGE_TRIGGER_DAYS = 0.5     # a time step longer than this between consecutive points is a gap for the mask
-DETREND_VERSION = 2             # 1: running median only; 2: gap-edge mask before the running median
+MEDIAN_PAD_MODE = "mirror"      # how the running median extends a segment past its edges
+DETREND_VERSION = 3             # 1: running median only; 2: 1.0 d gap-edge mask first; 3: 1.5 d mask, mirror padding
 
 
 def _gap_edge_mask(time: np.ndarray, edge_mask_days: float, edge_gap_days: float) -> np.ndarray:
@@ -36,7 +38,12 @@ def detrend(lc: LightCurve, window_days: float = 2.0, gap_days: float = 1.0, flu
     """Divide by a running median per contiguous segment (split at steps longer than ``gap_days``). Returns normalised
     flux aligned with lc.time, NaN where bad and for the first ``edge_mask_days`` after every step longer than
     ``edge_gap_days`` between consecutive good points: those points are dropped before the running median, so the
-    ramp neither enters the search nor pulls the trend. ``edge_mask_days=0`` turns the mask off."""
+    ramp neither enters the search nor pulls the trend. ``edge_mask_days=0`` turns the mask off.
+
+    The median is padded by mirroring each segment at its edges. Repeating the edge value instead (``"nearest"``) fills
+    half the window with one point, so a transit touching a segment edge pulls the median to its own level and is
+    flattened; mirroring duplicates only its few in-transit points and the median barely moves. The mask adds a
+    segment edge after every downlink gap, so this matters on every real curve."""
     m = lc.good_mask()
     f = (lc.flux if flux is None else flux)
     m = m & np.isfinite(f)
@@ -49,7 +56,7 @@ def detrend(lc: LightCurve, window_days: float = 2.0, gap_days: float = 1.0, flu
             continue
         dt = np.nanmedian(np.diff(t[seg]))
         n = max(5, round(window_days / dt) | 1)
-        trend = median_filter(y[seg], size=n, mode="nearest")
+        trend = median_filter(y[seg], size=n, mode=MEDIAN_PAD_MODE)
         out[idx[seg]] = y[seg] / trend
     return out
 

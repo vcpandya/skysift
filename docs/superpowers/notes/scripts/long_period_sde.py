@@ -5,7 +5,7 @@ Usage (from the repository root, with the project venv):
     .venv/Scripts/python.exe docs/superpowers/notes/scripts/long_period_sde.py <kbonus.fits> [--prewhiten]
         [--period P [--t0 T0 --duration HOURS]] [--inject P] [--inject-depth PPM] [--edge-mask-days D]
 
-The flux is ``detrend(lc)`` with its gap-edge mask (``--edge-mask-days 0`` gives the detrend of sections 1 to 7),
+The flux is ``detrend(lc)`` with its gap-edge mask (``--edge-mask-days 0`` turns the mask off),
 optionally pre-whitened as the pipeline does today (``--prewhiten``), then put through the same finite mask and upward
 5-MAD clip as ``BoxDip.search``. The coarse search and ranking are ``BoxDip._coarse_search`` and ``BoxDip._rank`` with
 ``BoxDip(mask_iterations=0, alias_resolution=0)`` and the 0.5 to 30 d window. The peak studied is the refined candidate
@@ -103,7 +103,7 @@ def main() -> None:
     ap.add_argument("--t0", type=float, help="with --period and --duration: study exactly this peak")
     ap.add_argument("--duration", type=float, help="studied peak duration in hours (with --period and --t0)")
     ap.add_argument("--edge-mask-days", type=float, default=GAP_EDGE_MASK_DAYS,
-                    help="detrend gap-edge mask; 0 is the detrend of before 17 October 2026 (sections 1 to 7)")
+                    help="detrend gap-edge mask in days; 0 turns it off")
     a = ap.parse_args()
 
     lc, t, y, q, sigma, n_comp = prepare(a.fits, a.prewhiten, a.edge_mask_days)

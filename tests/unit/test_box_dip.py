@@ -41,9 +41,11 @@ def test_recovers_deep_transit():
 
 @pytest.mark.parametrize("seed", [7, 11, 21])
 def test_pure_noise_stays_below_threshold(seed):
+    # held to the detection threshold (sde_min 11). Mirror padding no longer flattens the noise at segment edges, so
+    # noise peaks rise a little: seed 7's 19.585 d peak went from SDE 8.82 to 9.39, the old bound of 9
     lc = make_lightcurve(n_days=500, seed=seed)
     sig = BoxDip().detect(lc, detrend(lc), NARROW)
-    assert all(s.sde < 9 for s in sig)
+    assert all(s.sde < Thresholds().sde_min for s in sig), [(s.period, s.sde) for s in sig]
 
 
 def test_short_or_empty_lightcurve_returns_nothing():
@@ -114,8 +116,9 @@ def test_gap_ramps_do_not_hide_a_long_period_transit():
     periods and bury a real 13.0 d transit; the gap-edge mask in ``detrend`` removes them. Two searches.
 
     Besides the quarter gaps the curve has Kepler's monthly downlinks, 0.9 d gaps every 25 to 35 d: with the 15
-    quarter gaps alone no trial period lines up more than one ramp and the mask changes nothing (SDE 46.0 against 45.9
-    for a 400 ppm transit). The downlink gaps are shorter than ``gap_days``, so this also checks the 0.5 d trigger."""
+    quarter gaps alone no trial period lines up more than one ramp and the mask changed nothing (SDE 46.0 against 45.9
+    for a 400 ppm transit, 1.0 d mask). The downlink gaps are shorter than ``gap_days``, so this also checks the 0.5 d
+    trigger. Measured: SDE 155.2 masked against 25.6 unmasked."""
     base = make_lightcurve(n_days=1400, seed=7, noise_ppm=600)
     rng = np.random.default_rng(1)
     keep = np.ones(base.time.size, bool)
@@ -178,11 +181,11 @@ ALIAS_WINDOW = Thresholds(min_period_days=0.5, max_period_days=15.0)
 
 @functools.cache
 def _half_period_planet():
-    """A 6.5 d, 20000 ppm planet that the per-band SDE ranks at 3.25 d (SDE 145.9 against 137.4 at 6.5 d). One search
-    with the alias resolution on and one with it off, shared by the tests below. The curve has no gap ramps, and the
-    gap-edge mask (about 1 percent of its points) flips this narrow ranking to 6.5 d, so the fixture keeps it off."""
-    lc = inject_transit(make_lightcurve(n_days=500, seed=42, noise_ppm=1500), 6.5, 133.0, 0.1, 20000)
-    fnorm = detrend(lc, edge_mask_days=0)    # masked, the planet ranks at its true period; this keeps the alias case
+    """A 6.5 d, 20000 ppm planet that the per-band SDE ranks at 3.25 d (SDE 147.3 against 136.0 at 6.5 d). One search
+    with the alias resolution on and one with it off, shared by the tests below. Seed 68 since the gap-edge mask and
+    mirror padding of 17 October 2026: under them the seed-42 curve (145.9 against 137.4 before) ranks at 6.5 d."""
+    lc = inject_transit(make_lightcurve(n_days=500, seed=68, noise_ppm=1500), 6.5, 133.0, 0.1, 20000)
+    fnorm = detrend(lc)
     on = BoxDip(mask_iterations=0).detect(lc, fnorm, ALIAS_WINDOW)
     off = BoxDip(mask_iterations=0, alias_resolution=0).detect(lc, fnorm, ALIAS_WINDOW)
     return lc, fnorm, on, off

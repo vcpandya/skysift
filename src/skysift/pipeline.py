@@ -19,7 +19,7 @@ from skysift import jsonutil, net
 from skysift.config import Settings, Thresholds, stop_request_path
 from skysift.detectors.base import get_detector
 from skysift.detectors.periodogram import PeriodogramSummary
-from skysift.lc.ops import DETREND_VERSION, GAP_EDGE_MASK_DAYS, GAP_EDGE_TRIGGER_DAYS, detrend
+from skysift.lc.ops import DETREND_VERSION, GAP_EDGE_MASK_DAYS, GAP_EDGE_TRIGGER_DAYS, MEDIAN_PAD_MODE, detrend
 from skysift.lc.prewhiten import PREWHITEN_VERSION, prewhiten
 from skysift.models import LightCurve, Target
 from skysift.net import ServiceUnavailable
@@ -72,9 +72,9 @@ def search_version(det, thresholds: Thresholds) -> str:
     done for a later full-window run. Used in the job key, the run row and every signal's detector_version."""
     cfg = {"min_period_days": thresholds.min_period_days, "max_period_days": thresholds.max_period_days,
            **{k: getattr(det, k, None) for k in SEARCH_CONFIG_KEYS},
-           # the gap-edge mask changes the flux every rung sees: runs from before it are searched again, not mixed
+           # the gap-edge mask and the median padding change the flux every rung sees: earlier runs are searched again
            "detrend": {"version": DETREND_VERSION, "edge_mask_days": GAP_EDGE_MASK_DAYS,
-                       "edge_gap_days": GAP_EDGE_TRIGGER_DAYS}}
+                       "edge_gap_days": GAP_EDGE_TRIGGER_DAYS, "median_mode": MEDIAN_PAD_MODE}}
     if thresholds.prewhiten_max_components:         # whitening changes what the detector sees: part of the version
         cfg["prewhiten"] = {"version": PREWHITEN_VERSION, "max_components": thresholds.prewhiten_max_components,
                             "fap": thresholds.prewhiten_fap}

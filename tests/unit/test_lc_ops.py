@@ -142,8 +142,27 @@ def test_detrend_masks_the_ramp_after_a_gap():
     after = t >= start
     f[after] *= 1 - 5000e-6 * np.exp(-(t[after] - start) / 0.5)     # a 5000 ppm thermal ramp decaying over 0.5 d
     lc = LightCurve(t, f, np.full(t.size, 300e-6), np.zeros(t.size, int), np.ones(t.size, int))
-    window = (t >= start) & (t < start + 1.0)
+    window = (t >= start) & (t < start + 1.5)
     fn = detrend(lc)
-    assert np.all(np.isnan(fn[window])) and np.all(np.isfinite(fn[~window]))
+    assert np.all(np.isnan(fn[window])) and np.all(np.isfinite(fn[~window]))      # 1.5 d after the gap
     assert int(np.isnan(fn).sum()) == int(window.sum())
     assert np.all(np.isfinite(detrend(lc, edge_mask_days=0)))       # the old behaviour: nothing masked
+
+
+def test_detrend_keeps_a_transit_at_a_segment_edge():
+    """A 3 h, 3000 ppm transit within half a running-median window of a segment edge: at the start of the data and
+    at the first point after a gap's masked 1.5 d. Padding the edge with copies of its first value (mode "nearest")
+    pulls the median to the transit level and flattens it (7 and 47 ppm left, measured); mirror padding duplicates
+    only the few in-transit points and the depth survives (2964 and 2996 ppm)."""
+    rng = np.random.default_rng(5)
+    t = np.arange(100.0, 120.0, 29.4 / 1440.0)
+    t = t[(t < 108.0) | (t >= 111.0)]                               # a 3 d gap, then 1.5 masked days from 111
+    f = 1.0 + rng.normal(0, 100e-6, t.size)
+    edge = t[t >= 112.5][0]                                         # first point the mask leaves after the gap
+    lc = LightCurve(t, f, np.full(t.size, 100e-6), np.zeros(t.size, int), np.ones(t.size, int))
+    for t0 in (t[0], edge):
+        transit = (t >= t0) & (t < t0 + 0.125)
+        ff = f.copy(); ff[transit] *= 1 - 3000e-6
+        fn = detrend(LightCurve(t, ff, lc.flux_err, lc.quality, lc.quarter))
+        depth = (1 - np.nanmean(fn[transit])) * 1e6
+        assert np.isfinite(fn[transit]).all() and depth > 0.8 * 3000, (t0, depth)
