@@ -8,7 +8,7 @@ import pytest
 from skysift.config import Thresholds
 from skysift.detectors.box_dip import BoxDip
 from skysift.lc.ops import detrend, stacked_depth
-from skysift.models import LightCurve
+from skysift.models import LightCurve, Signal
 from tests.synthetic import inject_transit, make_lightcurve
 
 NARROW = Thresholds(min_period_days=5.0, max_period_days=40.0)
@@ -181,7 +181,8 @@ ALIAS_WINDOW = Thresholds(min_period_days=0.5, max_period_days=15.0)
 
 @functools.cache
 def _half_period_planet():
-    """A 6.5 d, 20000 ppm planet that the per-band SDE ranks at 3.25 d (SDE 147.3 against 136.0 at 6.5 d). One search
+    """A 6.5 d, 20000 ppm planet that the per-band SDE ranks at 3.25 d (SDE 146.9 against 136.9 at 6.5 d; 147.3
+    against 136.0 before the start of the data was masked as a gap edge). One search
     with the alias resolution on and one with it off, shared by the tests below. Seed 68 since the gap-edge mask and
     mirror padding of 17 October 2026: under them the seed-42 curve (145.9 against 137.4 before) ranks at 6.5 d."""
     lc = inject_transit(make_lightcurve(n_days=500, seed=68, noise_ppm=1500), 6.5, 133.0, 0.1, 20000)
@@ -197,11 +198,30 @@ def test_deep_transit_ranked_at_half_period_is_doubled():
     assert abs(sig[0].extra["alias_resolved"]["from_period"] - 3.25) < 0.01
     assert abs(sig[0].depth_ppm - 20000) < 0.15 * 20000
     assert all(abs(s.period - 6.5) / 6.5 >= 0.02 for s in sig[1:])
-    # the dropped 6.5 d candidate lends its refined SDE to the doubled signal
+    # the dropped 6.5 d candidate lends its refined SDE as the 2P value; the doubled signal keeps the larger of that
+    # and the 3.25 d peak that made the detection (146.9 against 136.9), and records both
     dropped = [s for s in off if abs(s.period - 6.5) / 6.5 < 0.02]
-    assert dropped and abs(sig[0].sde - dropped[0].sde) < 1e-9
+    resolved = sig[0].extra["alias_resolved"]
+    assert dropped and abs(resolved["sde_double"] - dropped[0].sde) < 1e-9
+    assert abs(resolved["sde_half"] - off[0].sde) < 1e-9 and off[0].sde > dropped[0].sde
+    assert abs(sig[0].sde - max(off[0].sde, dropped[0].sde)) < 1e-9
+    assert sig[0].extra["band"] == off[0].extra["band"]           # the band of the SDE kept
     third = [s for s in sig[1:] if abs(s.period - 6.5 / 3) < 0.01]
     assert all(s.extra["alias_of"] == 0 for s in third)
+
+
+def test_the_duplicate_drop_after_doubling_is_three_coarse_steps_wide():
+    """Only a lower-ranked peak at the resolved period itself is dropped: three coarse frequency steps at the trial
+    nearest the new period, or 0.5 percent without a spectrum. An unrelated signal 2 percent away stays."""
+    from skysift.detectors.box_dip import _duplicates
+
+    def sig(p):
+        return Signal(target_id="x", detector="box_dip", detector_version="1", period=p, t0=0.0, duration=0.1,
+                      depth_ppm=1000, snr=10, sde=10, n_events=10)
+    spec = {"period": np.array([6.0, 6.5, 7.0]), "df": np.array([1e-4, 2e-5, 1e-4])}
+    near, edge, far = sig(1 / (1 / 6.5 + 5e-5)), sig(1 / (1 / 6.5 + 7e-5)), sig(6.5 * 1.02)
+    assert _duplicates(6.5, [near, edge, far], spec) == [near]
+    assert _duplicates(6.5, [sig(6.5 * 1.004), sig(6.5 * 1.006), far], None) == [sig(6.5 * 1.004)]
 
 
 def test_unequal_eclipses_are_doubled_to_the_binary_period():

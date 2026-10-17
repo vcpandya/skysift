@@ -499,7 +499,8 @@ def test_a_pool_broken_before_any_submit_ends_the_sweep_after_two_restarts(setti
 def test_disk_budget_exceeded_stops_run_after_planet_is_written(settings, monkeypatch):
     s, store, blob = _env(monkeypatch, settings, RETENTION="budget:0",
                           THRESHOLDS__MIN_PERIOD_DAYS="5", THRESHOLDS__MAX_PERIOD_DAYS="15")
-    planet = inject_transit(make_lightcurve(n_days=120, seed=1, noise_ppm=800), 7.3, 135.0, 0.1, 3000)
+    # 220 d spans three seasons, so rung 3 can pass (two seasons leave it undetermined)
+    planet = inject_transit(make_lightcurve(n_days=220, seed=1, noise_ppm=800), 7.3, 135.0, 0.1, 3000)
     src = ScriptedSource([_tgt("planet")], {"planet": planet}, store, blob)
     with pytest.raises(DiskBudgetExceeded) as exc:
         run(src, store, blob, s, filter={}, with_novelty=False)
@@ -516,7 +517,8 @@ def test_disk_budget_exceeded_stops_run_after_planet_is_written(settings, monkey
 
 def test_rung4_catalogue_queries_are_logged_during_a_sweep(settings, monkeypatch):
     s, store, blob = _env(monkeypatch, settings, THRESHOLDS__MIN_PERIOD_DAYS="5", THRESHOLDS__MAX_PERIOD_DAYS="15")
-    planet = inject_transit(make_lightcurve(n_days=120, seed=1, noise_ppm=800), 7.3, 135.0, 0.1, 3000)
+    # 220 d spans three seasons, so rung 3 can pass and the ladder reaches rung 4 with a passing signal
+    planet = inject_transit(make_lightcurve(n_days=220, seed=1, noise_ppm=800), 7.3, 135.0, 0.1, 3000)
     src = ScriptedSource([_tgt("planet")], {"planet": planet}, store, blob)
     out = run(src, store, blob, s, filter={}, with_novelty=True, fetch_module="tests.unit.fake_fetch")
     assert out["processed"] == 1 and out["errors"] == 0 and out["outcomes"]["pass"] >= 1

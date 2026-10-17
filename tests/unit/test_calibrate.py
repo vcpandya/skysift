@@ -24,7 +24,9 @@ def test_calibrate_resumes_and_summarises(settings, monkeypatch):
     s, store, blob = _env(monkeypatch, settings, THRESHOLDS__MIN_PERIOD_DAYS="2", THRESHOLDS__MAX_PERIOD_DAYS="15")
     # enumerated lowest priority first (3, 4, 5), so "the first N enumerated" would pick the wrong two
     targets = [_tgt("c", psffrac=0.3, crowdsap=0.3), _tgt("b", crowdsap=0.3), _tgt("a")]
-    lcs = {"a": inject_transit(make_lightcurve(n_days=60, seed=1, noise_ppm=800), 5.0, 133.0, 0.15, 4000),
+    # t0 134.0, not 133.0: the data start at 133.0 is masked for 1.5 d, and with that epoch gone the 15 d alias of
+    # this short curve outranks 5 d (SDE 31.6 against 23.3; 37.1 against 27.5 at 5 d with t0 134.0)
+    lcs = {"a": inject_transit(make_lightcurve(n_days=60, seed=1, noise_ppm=800), 5.0, 134.0, 0.15, 4000),
            "b": make_lightcurve(n_days=60, seed=2), "c": make_lightcurve(n_days=60, seed=3)}
     fetched = []
     src = ScriptedSource(targets, lcs, store, blob, on_fetch=lambda t: fetched.append(t.target_id))

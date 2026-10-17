@@ -24,11 +24,13 @@ DETREND_VERSION = 3             # 1: running median only; 2: 1.0 d gap-edge mask
 
 
 def _gap_edge_mask(time: np.ndarray, edge_mask_days: float, edge_gap_days: float) -> np.ndarray:
-    """True for every point less than ``edge_mask_days`` after the first point following a step longer than
-    ``edge_gap_days`` (``time`` sorted). The first point of the series is not a gap edge."""
-    starts = time[1:][np.diff(time) > edge_gap_days]
-    if edge_mask_days <= 0 or starts.size == 0:
+    """True for every point less than ``edge_mask_days`` after the first point of the series or the first point
+    following a step longer than ``edge_gap_days`` (``time`` sorted). The start of the data counts as a gap edge: the
+    spacecraft was just as cold before the first exposure (notes/2026-10-17-long-period-sde.md, section 5, shows a
+    3157 ppm dip 0.55 d after data start)."""
+    if edge_mask_days <= 0 or time.size == 0:
         return np.zeros(time.size, bool)
+    starts = np.concatenate([time[:1], time[1:][np.diff(time) > edge_gap_days]])
     j = np.searchsorted(starts, time, side="right") - 1
     return (j >= 0) & (time - starts[np.maximum(j, 0)] < edge_mask_days)
 
@@ -37,9 +39,9 @@ def detrend(lc: LightCurve, window_days: float = 2.0, gap_days: float = 1.0, flu
             edge_mask_days: float = GAP_EDGE_MASK_DAYS, edge_gap_days: float = GAP_EDGE_TRIGGER_DAYS,
             pad_mode: str = MEDIAN_PAD_MODE) -> np.ndarray:
     """Divide by a running median per contiguous segment (split at steps longer than ``gap_days``). Returns normalised
-    flux aligned with lc.time, NaN where bad and for the first ``edge_mask_days`` after every step longer than
-    ``edge_gap_days`` between consecutive good points: those points are dropped before the running median, so the
-    ramp neither enters the search nor pulls the trend. ``edge_mask_days=0`` turns the mask off.
+    flux aligned with lc.time, NaN where bad and for the first ``edge_mask_days`` of the data and after every step
+    longer than ``edge_gap_days`` between consecutive good points: those points are dropped before the running median,
+    so the ramp neither enters the search nor pulls the trend. ``edge_mask_days=0`` turns the mask off.
 
     The median is padded by mirroring each segment at its edges. Repeating the edge value instead (``"nearest"``) fills
     half the window with one point, so a transit touching a segment edge pulls the median to its own level and is

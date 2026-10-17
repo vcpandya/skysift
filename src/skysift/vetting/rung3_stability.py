@@ -60,10 +60,12 @@ class Rung3Stability:
                 st = stacked_depth(lc.time[k], fn[k], *args)
                 if st.n_in and np.isfinite(st.err_ppm) and st.err_ppm > 0:      # a zero error is unmeasurable
                     means[int(sn)], errs[int(sn)] = st.depth_ppm, st.err_ppm
-            if len(means) < 3:
-                return TestResult(rung=self.name, status=TestStatus.UNDETERMINED, reason="too few events",
-                                  metrics={"stacked": False, "n_events": n_events})
-            all_depth = stacked_depth(lc.time, fn, *args).depth_ppm
+            all_depth = stacked_depth(lc.time, fn, *args).depth_ppm if len(means) >= 3 else np.nan
+        if len(means) < 3:
+            # one or two seasons cannot show a season-dependent depth (with two, each leave-one-out z mirrors the
+            # other's), so the test has no answer on either path rather than a vacuous pass
+            return TestResult(rung=self.name, status=TestStatus.UNDETERMINED, reason="too few seasons",
+                              metrics={"stacked": stacked, "n_events": n_events, "n_seasons": len(means)})
         z, chi2, dof, p = _season_agreement(means, errs)
         ratio = np.nan
         if b.fnorm_alt is not None:

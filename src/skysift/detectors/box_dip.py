@@ -83,6 +83,22 @@ def _in_window(t: np.ndarray, period: float, t0: float, half_width: float) -> np
     return np.abs(ph) < half_width
 
 
+DUPLICATE_COARSE_STEPS = 3      # after a doubling, a lower-ranked peak this many coarse frequency steps from the new
+DUPLICATE_FALLBACK = 0.005      # period is the same signal; without a spectrum, this fraction of the period
+
+
+def _duplicates(period: float, others: list[Signal], spec: dict | None) -> list[Signal]:
+    """The signals of ``others`` that are the signal at ``period`` again: within DUPLICATE_COARSE_STEPS coarse
+    frequency steps (``spec["df"]`` at the trial period nearest ``period``) or, without a spectrum, within
+    DUPLICATE_FALLBACK of the period. That is the resolution the search itself has there, so an unrelated signal a
+    couple of percent away is kept."""
+    if spec is not None and spec["period"].size:
+        tol = DUPLICATE_COARSE_STEPS * float(spec["df"][int(np.argmin(np.abs(spec["period"] - period)))])
+    else:
+        tol = DUPLICATE_FALLBACK / period
+    return [s for s in others if abs(1.0 / s.period - 1.0 / period) < tol]
+
+
 def _separated(order: np.ndarray, periods: np.ndarray, k: int) -> list[int]:
     """Indices from `order` (best first) whose periods differ by more than 2 percent from every earlier pick."""
     picked: list[int] = []
@@ -177,10 +193,10 @@ class BoxDip:
         sdes = [float((c[1] - spec["band_med"][c[6]]) / spec["band_std"][c[6]]) for c in cands]
         return cands, sdes, n_refined
 
-    def _signal(self, lc: LightCurve, t: np.ndarray, spec: dict, cand: tuple, sde: float, baseline: float,
-                n_refined: int) -> Signal:
+    def _signal(self, lc: LightCurve, t: np.ndarray, y: np.ndarray, spec: dict, cand: tuple, sde: float,
+                baseline: float, n_refined: int) -> Signal:
         p, _pw, dur, t0, depth, err, b = cand
-        n_events = int(np.unique(np.round((t[_in_window(t, p, t0, 0.5 * dur)] - t0) / p)).size)
+        n_events = n_window_epochs(t, y, p, t0, dur)
         return Signal(target_id=str(lc.meta.get("target_id", "")), detector=self.name, detector_version=self.version,
                       period=p, t0=t0, duration=dur, depth_ppm=depth * 1e6, snr=float(depth / max(err, 1e-12)),
                       sde=sde, n_events=n_events,
@@ -188,15 +204,21 @@ class BoxDip:
                              "alias_of": None, "n_periods": int(spec["period"].size),
                              "n_bands": self.n_bands, "two_stage": self.two_stage, "n_refined": n_refined})
 
-    def _resolve_alias(self, t: np.ndarray, y: np.ndarray, sig: Signal, pmax: float, spec: dict | None) -> Signal:
+    def _resolve_alias(self, t: np.ndarray, y: np.ndarray, sig: Signal, pmax: float, spec: dict | None,
+                       others: list[Signal] = ()) -> Signal:
         """Per-band SDE ranking can put a deep signal at half its period: the P/2 fold stacks every event with an
         empty (or, for a binary, a secondary) window and still wins its band. At P/2 a planet's events alternate
         transit and nothing, a binary's alternate primary and secondary, so a strong contrast between the odd and the
         even stacked depths is the signature of a halved period. When the contrast exceeds ALIAS_PARITY_SIGMA combined
         errors and the shallower parity is under ALIAS_PARITY_RATIO of the deeper one, the signal is re-issued at
-        twice its period, t0 on the deeper parity, with that parity's depth and snr, events recounted, and the per-band
-        SDE of the trial period nearest the new one when the spectrum is given. A correctly ranked planet has equal
-        parities and is never touched; the ratio keeps a 5-sigma noise fluke from doubling a real planet."""
+        twice its period, t0 on the deeper parity, with that parity's depth and snr and events recounted. A correctly
+        ranked planet has equal parities and is never touched; the ratio keeps a 5-sigma noise fluke from doubling a
+        real planet.
+
+        The SDE at 2P is the refined SDE of the best lower-ranked signal of ``others`` at the new period (see
+        ``_duplicates``), else the per-band SDE of the trial period nearest it when the spectrum is given. The doubled
+        signal keeps the larger of that and the P/2 peak's own SDE, which made the detection, with the band of the one
+        kept; ``extra["alias_resolved"]`` records both (``sde_half``, ``sde_double``, None when neither source exists)."""
         p = sig.period
         if not self.alias_resolution or 2 * p > pmax:
             return sig
@@ -211,17 +233,24 @@ class BoxDip:
             return sig
         # epoch parity is round((t - t0) / p) % 2, as stacked_depth defines it: odd events sit at t0 + p (2k + 1)
         t0 = sig.t0 + p if deep is odd else sig.t0
+        sde_double, band_double = None, None
+        dup = _duplicates(2 * p, list(others), spec)
+        if dup:
+            sde_double, band_double = float(dup[0].sde), (dup[0].extra["band"], dup[0].extra["sde_spectrum_std"])
+        elif spec is not None and spec["period"].size:
+            i = int(np.argmin(np.abs(spec["period"] - 2 * p)))
+            b = int(spec["band"][i])
+            sde_double, band_double = float(spec["sde"][i]), (b, float(spec["band_std"][b]))
         extra = dict(sig.extra)
         extra["alias_resolved"] = {"from_period": float(p), "odd_ppm": float(odd.depth_ppm),
-                                   "even_ppm": float(even.depth_ppm), "parity_sigma": float(sigma)}
+                                   "even_ppm": float(even.depth_ppm), "parity_sigma": float(sigma),
+                                   "sde_half": float(sig.sde), "sde_double": sde_double}
         update = {"period": 2 * p, "t0": t0, "depth_ppm": float(deep.depth_ppm),
                   "snr": float(deep.depth_ppm / deep.err_ppm),
                   "n_events": n_window_epochs(t, y, 2 * p, t0, sig.duration), "extra": extra}
-        if spec is not None and spec["period"].size:
-            i = int(np.argmin(np.abs(spec["period"] - 2 * p)))
-            b = int(spec["band"][i])
-            update["sde"] = float(spec["sde"][i])
-            extra.update(band=b, sde_spectrum_std=float(spec["band_std"][b]))
+        if sde_double is not None and sde_double > sig.sde:
+            update["sde"] = sde_double
+            extra.update(band=band_double[0], sde_spectrum_std=band_double[1])
         return sig.model_copy(update=update)
 
     def _masked_pass(self, lc: LightCurve, t: np.ndarray, y: np.ndarray, sigma: float, baseline: float,
@@ -247,7 +276,7 @@ class BoxDip:
                 return []
             if _is_alias(cands[ci][0], earlier, baseline):
                 continue
-            sig = self._signal(lc, t2, spec, cands[ci], sdes[ci], baseline, n_refined)
+            sig = self._signal(lc, t2, y2, spec, cands[ci], sdes[ci], baseline, n_refined)
             sig.extra.update({"pass": 2, "masked_period": top.period, "masked_points": int((~keep).sum())})
             return [sig]
         return []
@@ -287,18 +316,15 @@ class BoxDip:
         keep = _separated(np.argsort(sdes)[::-1], cp, self.top_k)
         out: list[Signal] = []
         for ci in keep:
-            sig = self._signal(lc, t, spec, cands[ci], float(sdes[ci]), baseline, n_refined)
+            sig = self._signal(lc, t, y, spec, cands[ci], float(sdes[ci]), baseline, n_refined)
             sig.extra["alias_of"] = _alias_of(sig.period, out)
             out.append(sig)
-        top = self._resolve_alias(t, y, out[0], pmax, spec)
+        top = self._resolve_alias(t, y, out[0], pmax, spec, others=out[1:])
         if top is not out[0]:
-            # the doubled period may now coincide with a lower-ranked peak: drop those (the 2 percent rule of
-            # _separated), take the best one's refined SDE over the coarse nearest-trial value, and redo the alias
-            # bookkeeping of the rest against the resolved period (the first-pass list then holds top_k - 1 signals)
-            dup = [s for s in out[1:] if abs(s.period - top.period) / top.period < 0.02]
-            if dup:
-                extra = {**top.extra, "band": dup[0].extra["band"], "sde_spectrum_std": dup[0].extra["sde_spectrum_std"]}
-                top = top.model_copy(update={"sde": dup[0].sde, "extra": extra})
+            # the doubled period may now coincide with a lower-ranked peak: drop those (within three coarse frequency
+            # steps; the best one already lent its refined SDE as the 2P value) and redo the alias bookkeeping of the
+            # rest against the resolved period (the first-pass list then holds top_k - 1 signals)
+            dup = _duplicates(top.period, out[1:], spec)
             out = [top] + [s for s in out[1:] if all(s is not d for d in dup)]
             for j in range(1, len(out)):
                 out[j].extra["alias_of"] = _alias_of(out[j].period, out[:j])

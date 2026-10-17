@@ -230,6 +230,16 @@ def test_stacked_seasons_stay_undetermined_when_fewer_than_three_seasons_are_mea
     s = Signal(target_id="t", detector="box_dip", detector_version="1", period=0.6, t0=132.0, duration=1 / 24,
                depth_ppm=600, snr=25.0, sde=30.0, n_events=300)
     r = Rung3Stability().run(s, bundle(lc))
-    assert r.status == TestStatus.UNDETERMINED and r.reason == "too few events"
-    assert r.metrics["stacked"] is False and r.metrics["n_events"] > 0
+    assert r.status == TestStatus.UNDETERMINED and r.reason == "too few seasons"
+    assert r.metrics["stacked"] is True and r.metrics["n_events"] > 0 and r.metrics["n_seasons"] == 2
+    json.dumps(r.metrics, allow_nan=False)
+
+
+def test_per_event_seasons_stay_undetermined_when_fewer_than_three_seasons_are_measured():
+    """The per-event path used to pass two seasons vacuously (one leave-one-out z per season, never three to fail)."""
+    lc = inject_transit(make_lightcurve(n_days=150, noise_ppm=500, seed=39), P, T0, 0.2, 2000)
+    s = signal(2000).model_copy(update={"duration": 0.2, "n_events": 10})
+    r = Rung3Stability().run(s, bundle(lc))
+    assert r.status == TestStatus.UNDETERMINED and r.reason == "too few seasons"
+    assert r.metrics["stacked"] is False and r.metrics["n_events"] >= 4 and r.metrics["n_seasons"] == 2
     json.dumps(r.metrics, allow_nan=False)
