@@ -101,12 +101,18 @@ For each of the `--limit` highest-priority targets (the order `run` uses) the li
 pre-whitened exactly as in a sweep, then searched three times:
 
 * `real`: the flux as it is;
-* `inverted`: `2 - f`, so dips become bumps while systematics and stellar variability stay;
+* `inverted`: `2 - f`, so dips become bumps while systematics and stellar variability stay. The detector clips
+  upward outliers only (5 MAD), so the former dips are removed while former flares and upward ramps become dips:
+  this row is a "systematics as dips" null;
 * `scrambled`: the flux permuted within each quarter (seed 1), which leaves noise only.
 
-The detector is BoxDip without its masked second pass and alias resolution, so the numbers are the raw first-pass
-statistics that rung 1 thresholds. The window is 0.5 to 30 d unless `--min-period` and `--max-period` say otherwise,
-and `--nulls inverted` (or `scrambled`) searches one null only. Nothing is vetted and nothing is written to the results
+The flux preparation is the sweep's own code (`pipeline.whitened_flux`), so the calibrated flux cannot drift from the
+swept one. The detector is BoxDip without its masked second pass and alias resolution, so the numbers are the raw
+first-pass statistics that rung 1 thresholds. The period window is the production one from `thresholds`
+(`min_period_days` and `max_period_days`, 0.5 to 200 d today); `--min-period` and `--max-period` override it. The
+threshold must be calibrated at the window you sweep with: a wider window holds more trial periods and so higher noise
+peaks. The search version records the window, so files from different windows are never pooled by accident.
+`--nulls inverted` (or `scrambled`) searches one null only. Nothing is vetted and nothing is written to the results
 tables. Each target becomes one JSON line in `<data_dir>/calibration/<source>.jsonl` (or `--out`): `target_id`,
 `search_version`, `n_points`, the top three SDEs of each search, `real_top` (period, duration, depth, SDE and snr of the
 strongest real signal) and `seconds`.
@@ -118,9 +124,11 @@ reused; anything else is downloaded and recorded as in a sweep, and the retentio
 the next calibration cost CPU only. The file belongs to one search version (detector, period window, detrend and
 pre-whitening settings): after a change, `calibrate` refuses to append and asks for a new `--out`.
 
-Each target costs three searches of a 1400 d curve plus the pre-whitening: about 4.5 CPU-minutes over 0.5 to 30 d (264 s
-measured on one KBonus curve, 17 October 2026). The 1000-star pilot therefore takes about 9 to 10 hours on eight
-workers, and an interrupted run continues where it stopped.
+Each target costs the pre-whitening plus three searches of a 1400 d curve. Measured on one KBonus curve
+(gaia-dr3-2076514437343928064, 17 October 2026): at the production window of 0.5 to 200 d the preparation takes 4 s
+and one search 196 s, so a target takes about 10 CPU-minutes. At 0.5 to 30 d the whole target took 264 s. The
+1000-star pilot at the production window therefore takes about 20 to 21 hours on eight workers (about 9 hours at 0.5
+to 30 d), and an interrupted run continues where it stopped.
 
 `calibrate-report` prints one row per kind: the number of curves that gave a peak, the median and maximum top SDE,
 and how many top SDEs sit at or above 7, 8, 9, 10, 11, 12 and 15 (at or above, as rung 1 passes `sde >= sde_min`).

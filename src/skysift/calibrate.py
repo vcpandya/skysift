@@ -1,8 +1,10 @@
 """Null calibration of the detection threshold (the 1000-star pilot). For each of the highest-priority targets the
-detrended, pre-whitened flux is searched as it is, inverted (2 - f: the dips become bumps, systematics and variability
-stay) and scrambled within each quarter (noise only), with the raw first-pass statistics (no masked pass, no alias
-resolution). One JSON line per target holds the top three SDEs of each search; ``summarise`` turns a file into the
-distribution ``sde_min`` is read from. Lines carry the search version, so a file is tied to the code that wrote it."""
+detrended, pre-whitened flux is searched as it is, inverted and scrambled within each quarter (noise only), with the
+raw first-pass statistics (no masked pass, no alias resolution). Inverting (2 - f) turns dips into bumps and keeps
+systematics and variability; the detector clips upward outliers only, so the former dips are removed while former
+flares and upward ramps become dips: the inverted search is a "systematics as dips" null. One JSON line per target
+holds the top three SDEs of each search; ``summarise`` turns a file into the distribution ``sde_min`` is read from.
+Lines carry the search version, so a file is tied to the code that wrote it."""
 from __future__ import annotations
 
 import json
@@ -19,10 +21,8 @@ from sqlalchemy import select
 from skysift import jsonutil
 from skysift.config import Settings, Thresholds
 from skysift.detectors.box_dip import BoxDip
-from skysift.lc.ops import detrend
-from skysift.lc.prewhiten import prewhiten
 from skysift.models import LightCurve, Target
-from skysift.pipeline import _cpu_pool, _terminate_workers, ranked_targets, search_version
+from skysift.pipeline import _cpu_pool, _terminate_workers, ranked_targets, search_version, whitened_flux
 from skysift.store.db import ArtifactRow, Store
 from skysift.store.retention import Retention, RetentionPolicy
 
@@ -61,15 +61,13 @@ def scramble_within_quarters(fnorm: np.ndarray, quarter: np.ndarray, seed: int =
 
 
 def search_target(lc_pickle: bytes, thresholds_json: str, nulls: tuple[str, ...]) -> dict:
-    """Runs in a worker process. Detrend and pre-whiten exactly as the sweep does, then search the real flux and each
+    """Runs in a worker process. Detrend and pre-whiten with the sweep's own ``whitened_flux``, then search the real flux and each
     null; returns the line without its target id and version. The pickle comes only from this package's own main
     process (``run``), never from outside data."""
     start = time.perf_counter()
     lc: LightCurve = pickle.loads(lc_pickle)
     th = Thresholds.model_validate_json(thresholds_json)
-    fn = detrend(lc)
-    if th.prewhiten_max_components > 0:
-        fn = prewhiten(lc.time, fn, max_components=th.prewhiten_max_components, fap_max=th.prewhiten_fap).residual
+    fn, _record = whitened_flux(lc, th)
     flux = {"real": fn}
     if "inverted" in nulls: flux["inverted"] = 2.0 - fn
     if "scrambled" in nulls: flux["scrambled"] = scramble_within_quarters(fn, lc.quarter)
@@ -88,8 +86,8 @@ def search_target(lc_pickle: bytes, thresholds_json: str, nulls: tuple[str, ...]
 
 
 def read_rows(path: Path) -> list[dict]:
-    """Every parseable line of a calibration file. A line cut short by a hard kill is skipped with a warning (its
-    target is searched again on resume)."""
+    """Every parseable line of a calibration file. A line cut short by a hard kill is skipped with a warning (``run``
+    removes it and searches its target again)."""
     rows = []
     for i, line in enumerate(Path(path).read_text(encoding="utf-8").splitlines(), 1):
         if not line.strip(): continue
@@ -98,6 +96,17 @@ def read_rows(path: Path) -> list[dict]:
         except json.JSONDecodeError:
             log.warning("%s line %d is not valid JSON; skipped", path, i)
     return rows
+
+
+def _drop_cut_tail(path: Path) -> None:
+    """A hard kill while a line was being written leaves the file ending mid-line: cut it back to the last complete
+    line, so the file holds valid lines only and the target is searched again."""
+    data = path.read_bytes()
+    if not data or data.endswith(b"\n"): return
+    keep = data.rfind(b"\n") + 1
+    log.warning("%s ends with a line cut short; removing it (%d bytes) so its target is searched again", path,
+                len(data) - keep)
+    with path.open("r+b") as fh: fh.truncate(keep)
 
 
 def _cached_raw(store: Store, target_id: str) -> list[tuple[str, str]]:
@@ -139,6 +148,7 @@ def run(source, store: Store, blob, settings: Settings, filter: dict, limit: int
     th = settings.thresholds
     version = search_version(det, th)
     out = Path(out)
+    if out.exists(): _drop_cut_tail(out)
     rows = read_rows(out) if out.exists() else []
     other = sorted({str(r.get("search_version")) for r in rows} - {version})
     if other:
@@ -152,8 +162,6 @@ def run(source, store: Store, blob, settings: Settings, filter: dict, limit: int
     retention = Retention(RetentionPolicy.parse(settings.retention), store, blob)
     th_json = th.model_dump_json()
     out.parent.mkdir(parents=True, exist_ok=True)
-    if out.exists() and out.stat().st_size and not out.read_bytes().endswith(b"\n"):
-        with out.open("a", encoding="utf-8", newline="\n") as fh: fh.write("\n")     # a cut line must not swallow the next
     start = time.time()
     pool = _cpu_pool(settings)
     jobs: dict = {}
@@ -166,6 +174,7 @@ def run(source, store: Store, blob, settings: Settings, filter: dict, limit: int
             except Exception:
                 log.warning("could not load %s; a later run retries it", t.target_id, exc_info=True)
                 summary["errors"] += 1
+                retention.release_target(t.target_id)    # a download that failed after storing its file frees it
                 continue
             summary["from_cache"] += cached
             # the curve is in memory now: the raw file goes (stream) or becomes evictable (budget) as in a sweep
@@ -173,37 +182,44 @@ def run(source, store: Store, blob, settings: Settings, filter: dict, limit: int
             retention.enforce_budget()
             jobs[pool.submit(search_target, lc_pickle, th_json, tuple(nulls))] = t
 
-    try:
-        with out.open("a", encoding="utf-8", newline="\n") as fh:
+    with out.open("a", encoding="utf-8", newline="\n") as fh:
+        def write(fut, t: Target) -> None:
+            try:
+                row = fut.result()
+            except Exception:
+                log.exception("search failed for %s; a later run retries it", t.target_id)
+                summary["errors"] += 1
+                return
+            fh.write(jsonutil.dumps({"target_id": t.target_id, "search_version": version, **row}) + "\n")
+            fh.flush()
+            summary["written"] += 1
+            if progress: progress(summary)
+
+        try:
             top_up()
             while jobs:
                 # a timeout keeps the main thread returning to Python, so Ctrl+C is seen at once on Windows too
                 finished, _ = wait(jobs, timeout=1.0, return_when=FIRST_COMPLETED)
                 for fut in finished:
-                    t = jobs.pop(fut)
-                    try:
-                        row = fut.result()
-                    except Exception:
-                        log.exception("search failed for %s; a later run retries it", t.target_id)
-                        summary["errors"] += 1
-                        continue
-                    fh.write(jsonutil.dumps({"target_id": t.target_id, "search_version": version, **row}) + "\n")
-                    fh.flush()
-                    summary["written"] += 1
-                    if progress: progress(summary)
+                    write(fut, jobs.pop(fut))
                 top_up()
-    except BaseException as e:
-        if isinstance(e, KeyboardInterrupt): _terminate_workers(pool)     # workers ignore SIGINT: stop them now
-        pool.shutdown(wait=True, cancel_futures=True)
-        raise
+        except BaseException:
+            # Ctrl+C, a disk budget breach, a broken pool: keep what already finished, then stop the workers at once
+            # rather than wait minutes for searches whose results would be dropped; the same command resumes
+            for fut, t in list(jobs.items()):
+                if fut.done() and not fut.cancelled(): write(fut, t)
+            _terminate_workers(pool)                  # the workers ignore SIGINT: terminate them
+            pool.shutdown(wait=True, cancel_futures=True)
+            raise
     pool.shutdown()
     summary["seconds"] = round(time.time() - start, 1)
     return summary
 
 
 def _top(row: dict, kind: str) -> float | None:
-    values = row.get(kind) or []
-    return float(values[0]) if values else None
+    """The top SDE of one search; a None (a non-finite SDE written as null) is ignored."""
+    values = [float(v) for v in (row.get(kind) or []) if v is not None]
+    return max(values) if values else None
 
 
 def summarise(rows: list[dict], sde_min: float, all_versions: bool = False) -> dict:

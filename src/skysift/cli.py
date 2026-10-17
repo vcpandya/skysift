@@ -156,8 +156,9 @@ def calibrate(source: str = typer.Option(...),
               nulls: str = typer.Option("scrambled,inverted", help="Null curves to search besides the real flux."),
               workers_cpu: int | None = None,
               out: str | None = typer.Option(None, help="Output file (default <data_dir>/calibration/<source>.jsonl)."),
-              min_period: float = typer.Option(0.5, help="Minimum search period (days)."),
-              max_period: float = typer.Option(30.0, help="Maximum search period (days)."),
+              min_period: float | None = typer.Option(None, help="Override the minimum search period (days); "
+                                                                 "calibrate at the window you sweep with."),
+              max_period: float | None = typer.Option(None, help="Override the maximum search period (days)."),
               gmag_max: float = 19.0, background_only: bool = typer.Option(True, "--background-only/--all"),
               psffrac_min: float = 0.5, retention: str | None = None, verbose: bool = False):
     """Null calibration of sde_min: search each target's real, inverted and quarter-scrambled flux and append the top

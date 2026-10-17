@@ -109,6 +109,19 @@ def _search(det, lc, fn, th, keep_spectrum=False):
     return SearchResult(signals=det.detect(lc, fn, th))
 
 
+def whitened_flux(lc: LightCurve, th: Thresholds, flux=None) -> tuple:
+    """The flux the detector and every rung see: ``detrend`` (of ``flux``, default the primary flux), then harmonic
+    pre-whitening, which removes the star's significant sinusoids (``prewhiten_max_components`` 0 leaves the detrended
+    flux as it is). Returns (whitened flux, the record stored in each signal's ``extra["prewhitening"]``: the removed
+    components and the refused frequencies, so the dashboard subtracts the same model). The sweep and the null
+    calibration both call this, so the calibrated flux is the swept flux."""
+    white = prewhiten(lc.time, detrend(lc, flux=flux), max_components=th.prewhiten_max_components,
+                      fap_max=th.prewhiten_fap)
+    record = {"n": len(white.components), "components": [c.as_dict() for c in white.components],
+              "skipped": [float(f) for f in white.skipped]}
+    return white.residual, record
+
+
 def _cpu_work(lc_pickle: bytes, target_json: str, thresholds_json: str, detector_name: str, ladder_version: str,
               with_novelty: bool, fetch_module: str | None = None, store_periodogram: str = "all",
               spectrum_path: str | None = None) -> str:
@@ -129,15 +142,8 @@ def _cpu_work(lc_pickle: bytes, target_json: str, thresholds_json: str, detector
     # KBonus and other adapters set target_id themselves; their value wins on purpose (setdefault), and sources
     # that leave it out get the pipeline's target id so detector output names the right star
     lc.meta.setdefault("target_id", target.target_id)
-    fn = detrend(lc); fn_alt = detrend(lc, flux=lc.flux_alt) if lc.flux_alt is not None else None
-    # harmonic pre-whitening: the detector and every rung see the flux with the star's significant sinusoids removed;
-    # the removed model travels with each signal so the dashboard shows the same flux
-    white = prewhiten(lc.time, fn, max_components=th.prewhiten_max_components, fap_max=th.prewhiten_fap)
-    fn = white.residual
-    if fn_alt is not None:
-        fn_alt = prewhiten(lc.time, fn_alt, max_components=th.prewhiten_max_components, fap_max=th.prewhiten_fap).residual
-    prewhitening = {"n": len(white.components), "components": [c.as_dict() for c in white.components],
-                    "skipped": [float(f) for f in white.skipped]}
+    fn, prewhitening = whitened_flux(lc, th)
+    fn_alt = whitened_flux(lc, th, flux=lc.flux_alt)[0] if lc.flux_alt is not None else None
     det = get_detector(detector_name)
     res = _search(det, lc, fn, th, keep_spectrum=spectrum_path is not None)
     signals = res.signals

@@ -7,6 +7,7 @@ from typer.testing import CliRunner
 
 from skysift import calibrate
 from skysift.cli import app
+from skysift.config import load_settings
 from skysift.store import db
 from tests.synthetic import inject_transit, make_lightcurve
 from tests.unit.test_pipeline import ScriptedSource, _env, _tgt
@@ -119,6 +120,54 @@ def test_read_rows_skips_a_line_cut_short(tmp_path):
     assert [r["target_id"] for r in calibrate.read_rows(path)] == ["a"]
 
 
+def test_summarise_ignores_null_sdes():
+    rows = [_row("a", [None, 9.0], [8.0], [None]), _row("b", [12.0], [None], [7.5])]
+    out = calibrate.summarise(rows, sde_min=11.0)
+    assert out["kinds"]["real"]["n"] == 2 and out["kinds"]["real"]["max"] == 12.0 and out["kinds"]["real"]["median"] == 10.5
+    assert out["kinds"]["inverted"]["n"] == 1 and out["kinds"]["scrambled"]["n"] == 1
+
+
+def _fast_env(monkeypatch, settings):
+    """60 d curves over 2 to 15 d with pre-whitening off: one target searches in about a second."""
+    return _env(monkeypatch, settings, THRESHOLDS__MIN_PERIOD_DAYS="2", THRESHOLDS__MAX_PERIOD_DAYS="15",
+                THRESHOLDS__PREWHITEN_MAX_COMPONENTS="0")
+
+
+def test_calibrate_repairs_a_line_cut_short_and_resumes(settings, monkeypatch):
+    s, store, blob = _fast_env(monkeypatch, settings)
+    targets = [_tgt("a"), _tgt("b", crowdsap=0.3)]
+    lcs = {"a": make_lightcurve(n_days=60, seed=1), "b": make_lightcurve(n_days=60, seed=2)}
+    fetched = []
+    src = ScriptedSource(targets, lcs, store, blob, on_fetch=lambda t: fetched.append(t.target_id))
+    version = calibrate.search_version(calibrate.calibration_detector(), s.thresholds)
+    out = s.data_dir / "calibration" / "fake.jsonl"
+    out.parent.mkdir(parents=True)
+    line_a = json.dumps({**_row("a", [8.0], [8.0], [8.0]), "search_version": version})
+    cut_b = json.dumps({**_row("b", [9.0], [9.0], [9.0]), "search_version": version})[:50]     # a hard kill mid-write
+    out.write_text(line_a + "\n" + cut_b, encoding="utf-8")
+
+    summary = calibrate.run(src, store, blob, s, filter={}, limit=2, out=out)
+    assert summary["skipped"] == 1 and summary["written"] == 1 and fetched == ["b"]
+    text = out.read_text(encoding="utf-8")
+    assert text.startswith(line_a + "\n") and text.endswith("\n") and text.count('"target_id": "b"') == 1
+    rows = [json.loads(x) for x in text.splitlines()]           # every line parses: no corrupted line left
+    assert [r["target_id"] for r in rows] == ["a", "b"] and set(rows[1]) == ROW_KEYS
+
+
+def test_calibrate_counts_a_failed_fetch_and_continues(settings, monkeypatch):
+    s, store, blob = _fast_env(monkeypatch, settings)
+    targets = [_tgt("a"), _tgt("b", crowdsap=0.3)]
+    lcs = {"a": make_lightcurve(n_days=60, seed=1), "b": make_lightcurve(n_days=60, seed=2)}
+    src = ScriptedSource(targets, lcs, store, blob, bad_fetch={"a"})       # stores its file, then fails
+    out = s.data_dir / "calibration" / "fake.jsonl"
+    summary = calibrate.run(src, store, blob, s, filter={}, limit=2, out=out)
+    assert summary["errors"] == 1 and summary["written"] == 1
+    assert [r["target_id"] for r in _lines(out)] == ["b"]
+    with store.session() as ss:                                 # stream retention freed the failed download's file
+        arts = [a for a in ss.query(db.ArtifactRow) if a.target_id == "a"]
+        assert arts and all(a.deleted_at is not None for a in arts)
+
+
 def test_calibrate_refuses_to_append_another_version(settings, monkeypatch, tmp_path):
     s, store, blob = _env(monkeypatch, settings)
     out = tmp_path / "old.jsonl"
@@ -161,9 +210,13 @@ def test_calibrate_command_passes_options(settings, monkeypatch):
     assert r.exit_code == 0, r.output
     th = seen["settings"].thresholds
     assert seen["limit"] == 5 and seen["nulls"] == ("scrambled", "inverted") and seen["settings"].workers_cpu == 3
-    assert (th.min_period_days, th.max_period_days) == (0.5, 30.0) and seen["parse"] is not None
+    assert (th.min_period_days, th.max_period_days) == (0.5, 200.0) and seen["parse"] is not None   # production
+    assert seen["settings"].thresholds == load_settings().thresholds
     assert seen["out"] == seen["settings"].data_dir / "calibration" / "kbonus_bkg.jsonl"
     assert json.loads(r.stdout)["written"] == 0
+    r = CliRunner().invoke(app, ["calibrate", "--source", "kbonus_bkg", "--min-period", "1", "--max-period", "30"])
+    assert r.exit_code == 0, r.output
+    assert (seen["settings"].thresholds.min_period_days, seen["settings"].thresholds.max_period_days) == (1.0, 30.0)
 
     r = CliRunner().invoke(app, ["calibrate", "--source", "kbonus_bkg", "--nulls", "inverted,shuffled"])
     assert r.exit_code != 0 and "shuffled" in r.output
