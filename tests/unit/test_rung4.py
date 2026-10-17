@@ -302,7 +302,8 @@ def test_own_kepid_row_is_matched_before_a_neighbour():
 def test_row_without_coordinates_has_no_separation():
     resp = dict(EMPTY); resp["cumulative"] = b"kepid,kepoi_name,koi_period\n5689121,K99999.01,13.77\n"
     r = Rung4Novelty().run(SIG, bundle(resp))
-    assert r.metrics["period_matched"] == [{"catalog": "cumulative", "id": "K99999.01", "period": 13.77, "sep_arcsec": None}]
+    assert r.metrics["period_matched"] == [{"catalog": "cumulative", "id": "K99999.01", "period": 13.77, "sep_arcsec": None,
+                                            "ratio": 1.0}]
 
 
 def test_own_kepid_row_counts_even_when_its_coordinates_are_outside_the_circle():
@@ -377,3 +378,40 @@ def test_gaia_checks_run_only_for_a_numeric_source_id():
     r = Rung4Novelty().run(SIG, bundle(EMPTY, calls=calls, target=tgt))
     assert r.status == TestStatus.PASS and r.metrics["gaia_skipped"] == "non-numeric source_id"
     assert not any(s == "gaia" for s, _ in calls)
+
+
+# the live-run case of 18 October 2026: signal 166 at 3.4414 d on a star (no KIC) carrying K06356.01 at 24.0900 d
+SUBHARMONIC_SIG = SIG.model_copy(update={"period": 3.4414})
+NO_KIC = TGT.model_copy(update={"kic": None, "gaia_id": None, "target_id": "gaia-dr3-2052196018973519744"})
+
+
+def _koi_at(sep_arcsec, period=24.09, kepid=3757588):
+    return (f"kepid,kepoi_name,koi_period,ra,dec\n{kepid},K06356.01,{period},{TGT.ra},"
+            f"{TGT.dec + sep_arcsec / 3600}\n").encode()
+
+
+def test_known_object_on_the_same_star_matches_at_a_seventh_of_its_period():
+    """A row within SAME_STAR_ARCSEC of the target is the target's own even without a KIC, and own rows match at
+    integer period ratios both ways (1/8 .. 8): the signal at 24.09/7 d is K06356.01."""
+    r = Rung4Novelty().run(SUBHARMONIC_SIG, bundle({**EMPTY, "cumulative": _koi_at(0.7)}, target=NO_KIC))
+    assert r.status == TestStatus.FAIL and r.reason == "known:cumulative:K06356.01"
+    (hit,) = r.metrics["period_matched"]
+    assert hit["ratio"] == pytest.approx(1 / 7) and abs(hit["sep_arcsec"] - 0.7) < 0.01
+    json.dumps(r.metrics, allow_nan=False)
+
+
+def test_neighbour_does_not_match_at_a_seventh_of_its_period():
+    """A neighbour 90 arcsec away keeps the ratios 0.5, 1 and 2: a random catalogue period would otherwise land on
+    one of fifteen integer ratios far too often."""
+    r = Rung4Novelty().run(SUBHARMONIC_SIG, bundle({**EMPTY, "cumulative": _koi_at(90)}, target=NO_KIC))
+    assert r.status == TestStatus.PASS and "period_matched" not in r.metrics
+    assert r.metrics["other_period_objects"][0][:3] == ("cumulative", "K06356.01", 24.09)
+
+
+@pytest.mark.parametrize("factor", [7.0, 1 / 7])
+def test_own_kepid_row_matches_at_an_integer_period_ratio(factor):
+    row = (f"kepid,kepoi_name,koi_period,ra,dec\n5689121,K99999.01,{SIG.period * factor},{TGT.ra},"
+           f"{TGT.dec + 30 / 3600}\n").encode()
+    r = Rung4Novelty().run(SIG, bundle({**EMPTY, "cumulative": row}))
+    assert r.status == TestStatus.FAIL and r.reason == "known:cumulative:K99999.01"
+    assert r.metrics["period_matched"][0]["ratio"] == pytest.approx(1 / factor)
