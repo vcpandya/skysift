@@ -10,7 +10,9 @@ with two harmonics at that frequency, subtract it, repeat while the peak is sign
 Two guards keep transits and eclipses out of the model. A component is only removed when its false-alarm probability
 is below ``fap_max`` (so noise peaks stop the loop), and only when the fold of the residual at that period is better
 described by a wave than by a box (the same box-versus-sine contrast rung 2 uses): an eclipsing binary is periodic
-but box-shaped, so it is left for the detector and the EB branch. The removed model is returned as plain
+but box-shaped, so it is left for the detector and the EB branch. For short dips the guard also folds on a grid
+around the peak, since a short transit's peak sits off its true frequency and folding there smears the dip away
+(K04802.01, a 1 h, 130 ppm transit at 0.6056 d). The removed model is returned as plain
 coefficients, so the dashboard can show the same whitened flux without refitting.
 """
 from __future__ import annotations
@@ -20,9 +22,9 @@ from dataclasses import dataclass, field
 import numpy as np
 from astropy.timeseries import LombScargle
 
-from skysift.lc.ops import shape_contrast
+from skysift.lc.ops import fold_phase, shape_contrast
 
-PREWHITEN_VERSION = 1
+PREWHITEN_VERSION = 2               # 2: the shape guard scans around the peak for short dips
 HARMONICS = 2                       # fit a1 cos + b1 sin at f and at 2f
 SAMPLES_PER_PEAK = 5
 # trial box widths for the shape guard, as a fraction of the period: from a one-hour transit at 30 days (0.14 percent)
@@ -31,6 +33,14 @@ GUARD_BOX_FRACTIONS = tuple(float(x) for x in np.geomspace(0.0015, 0.5, 18))
 AMP_FLOOR_FRACTION = 0.06           # stop once a wave's amplitude is below this fraction of the point scatter
 GUARD_HARMONICS = 8                 # harmonics and sub-harmonics of a refused frequency are refused too
 GUARD_EXCLUSION = 4.0               # in resolution elements (1/baseline): covers the leakage sidelobes of a refused peak
+# the scan of the shape guard: short box widths are also tried at f0 + k * GUARD_SCAN_STEP * resolution for k in
+# -GUARD_SCAN_STEPS .. GUARD_SCAN_STEPS (plus or minus 2 resolution elements), the box on the fold's deepest bin
+GUARD_SCAN_MAX_FRACTION = 0.12
+GUARD_SCAN_STEP = 0.1
+GUARD_SCAN_STEPS = 20
+GUARD_SCAN_BINS = 100
+GUARD_SCAN_MIN_SNR = 7.0            # a scanned box must be a dip this many of its own errors deep to count
+GUARD_SCAN_MIN_POINTS = 10
 MIN_POINTS = 200
 
 
@@ -88,15 +98,51 @@ def _related(f: float, skipped: float, resolution: float) -> bool:
     return False
 
 
-def _box_like(t: np.ndarray, y: np.ndarray, f0: float, coef: list[float]) -> bool:
-    """The shape guard: fold at 1/f0 with the box centred on the wave's minimum and try several box widths; when any
-    box beats the two-harmonic sine the periodic signal is an eclipse or transit, not a wave."""
+def _deepest_t0(t: np.ndarray, y: np.ndarray, period: float) -> float:
+    """Mid-time of the deepest bin of a ``GUARD_SCAN_BINS``-bin fold at ``period``: where a short dip sits."""
+    phase = ((t - t[0]) / period) % 1.0
+    idx = np.minimum((phase * GUARD_SCAN_BINS).astype(int), GUARD_SCAN_BINS - 1)
+    counts = np.bincount(idx, minlength=GUARD_SCAN_BINS)
+    sums = np.bincount(idx, weights=y, minlength=GUARD_SCAN_BINS)
+    means = np.where(counts > 0, sums / np.maximum(counts, 1), np.inf)
+    return float(t[0] + (int(np.argmin(means)) + 0.5) / GUARD_SCAN_BINS * period)
+
+
+def _box_like(t: np.ndarray, y: np.ndarray, f0: float, coef: list[float], resolution: float, *,
+              scan: bool = True) -> bool:
+    """The shape guard: when any box beats the two-harmonic sine the periodic signal is an eclipse or transit, not a
+    wave. First the fold at 1/f0 with the box centred on the wave's minimum, every box width (``scan=False`` stops
+    here). Then the short widths (up to ``GUARD_SCAN_MAX_FRACTION`` of the period) on a grid of trial frequencies
+    within ``GUARD_SCAN_STEPS * GUARD_SCAN_STEP`` resolution elements of f0, the box centred on the fold's deepest
+    bin: the Lomb-Scargle peak of a short dip sits up to 1.5 resolution elements off its true frequency, and folded
+    there a 1 h dip drifts over every phase. A scanned trial only counts when its box is a dip at least
+    ``GUARD_SCAN_MIN_SNR`` of its own errors deep: among a few hundred trials on a fold with no dip (a wave smeared
+    at a neighbouring frequency) some box beats the sine by chance, which would refuse every real wave."""
     period = 1.0 / f0
     t0 = t[0] + (_wave_minimum_time(f0, coef) - t[0]) % period
     for frac in GUARD_BOX_FRACTIONS:
         box_chi2, sine_chi2, n = shape_contrast(t, y, period, t0, frac * period)
         if n and box_chi2 < sine_chi2:
             return True
+    if not scan:
+        return False
+    short = [frac for frac in GUARD_BOX_FRACTIONS if frac <= GUARD_SCAN_MAX_FRACTION]
+    sigma = 1.4826 * float(np.median(np.abs(y - np.median(y)))) or 1e-12
+    for k in range(-GUARD_SCAN_STEPS, GUARD_SCAN_STEPS + 1):
+        period = 1.0 / (f0 + k * GUARD_SCAN_STEP * resolution)
+        t0 = _deepest_t0(t, y, period)
+        offset = np.abs(fold_phase(t, period, t0))
+        for frac in short:
+            inside = offset < 0.5 * frac * period
+            n_in = int(inside.sum())
+            if n_in < GUARD_SCAN_MIN_POINTS or n_in == y.size:
+                continue
+            depth = float(y[~inside].mean() - y[inside].mean())
+            if depth < GUARD_SCAN_MIN_SNR * sigma * np.sqrt(1.0 / n_in + 1.0 / (y.size - n_in)):
+                continue
+            box_chi2, sine_chi2, n = shape_contrast(t, y, period, t0, frac * period)
+            if n and box_chi2 < sine_chi2:
+                return True
     return False
 
 
@@ -150,7 +196,7 @@ def prewhiten(time: np.ndarray, fnorm: np.ndarray, *, max_components: int = 50, 
         amp = float(np.hypot(coef[1], coef[2]))
         if amp < amp_floor:
             break
-        if shape_guard and _box_like(t, y, f0, coef):
+        if shape_guard and _box_like(t, y, f0, coef, resolution):
             out.skipped.append(f0)
             continue
         y = y - (design @ np.asarray(coef)) + coef[0]

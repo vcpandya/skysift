@@ -4,8 +4,8 @@ import numpy as np
 
 from skysift.config import Thresholds
 from skysift.detectors.box_dip import BoxDip
-from skysift.lc.ops import detrend
-from skysift.lc.prewhiten import prewhiten, prewhiten_model
+from skysift.lc.ops import detrend, stacked_depth
+from skysift.lc.prewhiten import _box_like, _design, prewhiten, prewhiten_model
 from skysift.models import LightCurve
 from tests.synthetic import inject_transit, make_lightcurve
 
@@ -85,3 +85,44 @@ def test_component_record_is_plain_json_friendly():
     d = c.as_dict()
     assert set(d) == {"frequency", "amplitude_ppm", "snr", "coef"} and len(d["coef"]) == 5
     assert abs(d["frequency"] - PULSATION[0][0]) < 0.01 and abs(d["amplitude_ppm"] - PULSATION[0][1]) < 0.2 * PULSATION[0][1]
+
+
+SHORT_P, SHORT_T0, SHORT_DUR, SHORT_DEPTH = 0.6056, 131.9, 1 / 24, 130.0      # K04802.01: 0.6056 d, 1 h, 130 ppm
+
+
+def _short_transit_curve(noise_ppm):
+    return inject_transit(make_lightcurve(n_days=1400, seed=61, noise_ppm=noise_ppm), SHORT_P, SHORT_T0, SHORT_DUR,
+                          SHORT_DEPTH)
+
+
+def test_guard_catches_a_short_transit_at_a_smeared_frequency():
+    """The Lomb-Scargle peak of a short box sits up to 1.5 resolution elements off the true frequency; folded there a
+    1 h dip drifts 1.5 cycles over the baseline and smears over every phase, so the single-frequency guard sees no box.
+    The scan around the peak folds at the true frequency too and recognises the transit."""
+    lc = _short_transit_curve(200)
+    fn = detrend(lc)
+    good = np.isfinite(fn)
+    t, y = lc.time[good], fn[good]
+    resolution = 1.0 / (t.max() - t.min())
+    f0 = 1 / SHORT_P + 1.5 * resolution
+    coef = [float(c) for c in np.linalg.lstsq(_design(t, f0), y, rcond=None)[0]]
+    assert not _box_like(t, y, f0, coef, resolution, scan=False), "the single fold at the smeared peak sees no box"
+    assert _box_like(t, y, f0, coef, resolution)
+
+
+def test_prewhiten_keeps_a_shallow_short_transit():
+    """End to end: three 40 ppm waves of a few days (the kind K04802's star has) are removed and the 130 ppm, 1 h
+    transit keeps its stacked depth. The waves are added to the detrended flux, so they enter at 40 ppm whatever the
+    2 d running median would have taken from them."""
+    lc = _short_transit_curve(500)
+    fn = detrend(lc)
+    waves = [(2.9, 0.1), (3.1, 0.7), (5.5, 1.9)]
+    for period, phase in waves:
+        fn = fn + 40e-6 * np.cos(2 * np.pi * (lc.time / period + phase))
+    before = stacked_depth(lc.time, fn, SHORT_P, SHORT_T0, SHORT_DUR).depth_ppm
+    pw = prewhiten(lc.time, fn)
+    after = stacked_depth(lc.time, pw.residual, SHORT_P, SHORT_T0, SHORT_DUR).depth_ppm
+    found = [c.frequency for c in pw.components]
+    for period, _ in waves:
+        assert min((abs(f - 1 / period) for f in found), default=np.inf) < 0.002, (period, found, pw.skipped)
+    assert abs(after - before) < 0.15 * before, f"stacked depth {before:.0f} ppm before whitening, {after:.0f} after"
