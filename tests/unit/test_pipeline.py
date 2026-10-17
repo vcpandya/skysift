@@ -776,3 +776,20 @@ def test_pipeline_whitens_a_pulsator_and_records_the_components(settings, monkey
     assert all(set(c) == {"frequency", "amplitude_ppm", "snr", "coef"} for c in pw["components"])
     det = get_detector("box_dip")
     assert search_version(det, s.thresholds) != search_version(det, s.thresholds.model_copy(update={"prewhiten_max_components": 0}))
+
+
+def test_every_signal_stores_the_detrend_it_was_measured_with():
+    """The dashboard replays the stored detrend settings, so a later change to the detrend never redraws an old signal
+    on flux it was not measured on. The record crosses the process boundary: strict JSON."""
+    lc = inject_transit(make_lightcurve(n_days=120, seed=3, noise_ppm=500), 7.3, 135.0, 0.1, 3000)
+    target = Target(source="fake", target_id="w1", ra=0, dec=0, gmag=16.5)
+    th = Thresholds(min_period_days=5, max_period_days=15)
+    out = _cpu_work(pickle.dumps(lc), target.model_dump_json(), th.model_dump_json(), "box_dip", "1", False)
+    items = json.loads(out)["signals"]
+    expected = {"version": pipeline.DETREND_VERSION, "edge_mask_days": pipeline.GAP_EDGE_MASK_DAYS,
+                "edge_gap_days": pipeline.GAP_EDGE_TRIGGER_DAYS, "median_mode": pipeline.MEDIAN_PAD_MODE}
+    assert items and all(i["signal"]["extra"]["detrend"] == expected for i in items)
+    assert expected == {"version": 3, "edge_mask_days": 1.5, "edge_gap_days": 0.5, "median_mode": "mirror"}
+    fn, prewhitening, record = pipeline.whitened_flux(lc, th)
+    assert record == expected and prewhitening["n"] == len(prewhitening["components"])
+    json.dumps(record, allow_nan=False)

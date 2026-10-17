@@ -67,6 +67,13 @@ def priority_score(t: Target) -> float:
     return s
 
 
+def detrend_settings() -> dict:
+    """The detrend the sweep applies, as stored with every signal (``extra["detrend"]``) and hashed into
+    ``search_version``: strict JSON, and enough for the dashboard to redo exactly this detrend later."""
+    return {"version": DETREND_VERSION, "edge_mask_days": GAP_EDGE_MASK_DAYS, "edge_gap_days": GAP_EDGE_TRIGGER_DAYS,
+            "median_mode": MEDIAN_PAD_MODE}
+
+
 def search_version(det, thresholds: Thresholds) -> str:
     """Detector version plus an 8-hex hash of the search configuration (period window and the detector's grid
     knobs), so a run with a different window or grid is a different job: a narrow-window run never marks a target
@@ -74,8 +81,7 @@ def search_version(det, thresholds: Thresholds) -> str:
     cfg = {"min_period_days": thresholds.min_period_days, "max_period_days": thresholds.max_period_days,
            **{k: getattr(det, k, None) for k in SEARCH_CONFIG_KEYS},
            # the gap-edge mask and the median padding change the flux every rung sees: earlier runs are searched again
-           "detrend": {"version": DETREND_VERSION, "edge_mask_days": GAP_EDGE_MASK_DAYS,
-                       "edge_gap_days": GAP_EDGE_TRIGGER_DAYS, "median_mode": MEDIAN_PAD_MODE}}
+           "detrend": detrend_settings()}
     if thresholds.prewhiten_max_components:         # whitening changes what the detector sees: part of the version
         cfg["prewhiten"] = {"version": PREWHITEN_VERSION, "max_components": thresholds.prewhiten_max_components,
                             "fap": thresholds.prewhiten_fap}
@@ -114,13 +120,16 @@ def whitened_flux(lc: LightCurve, th: Thresholds, flux=None) -> tuple:
     """The flux the detector and every rung see: ``detrend`` (of ``flux``, default the primary flux), then harmonic
     pre-whitening, which removes the star's significant sinusoids (``prewhiten_max_components`` 0 leaves the detrended
     flux as it is). Returns (whitened flux, the record stored in each signal's ``extra["prewhitening"]``: the removed
-    components and the refused frequencies, so the dashboard subtracts the same model). The sweep and the null
-    calibration both call this, so the calibrated flux is the swept flux."""
-    white = prewhiten(lc.time, detrend(lc, flux=flux), max_components=th.prewhiten_max_components,
-                      fap_max=th.prewhiten_fap)
+    components and the refused frequencies, so the dashboard subtracts the same model; the detrend settings stored in
+    ``extra["detrend"]``, so the dashboard redoes the same detrend). The sweep and the null calibration both call
+    this, so the calibrated flux is the swept flux."""
+    settings = detrend_settings()
+    fn = detrend(lc, flux=flux, edge_mask_days=settings["edge_mask_days"], edge_gap_days=settings["edge_gap_days"],
+                 pad_mode=settings["median_mode"])
+    white = prewhiten(lc.time, fn, max_components=th.prewhiten_max_components, fap_max=th.prewhiten_fap)
     record = {"n": len(white.components), "components": [c.as_dict() for c in white.components],
               "skipped": [float(f) for f in white.skipped]}
-    return white.residual, record
+    return white.residual, record, settings
 
 
 def _cpu_work(lc_pickle: bytes, target_json: str, thresholds_json: str, detector_name: str, ladder_version: str,
@@ -143,7 +152,7 @@ def _cpu_work(lc_pickle: bytes, target_json: str, thresholds_json: str, detector
     # KBonus and other adapters set target_id themselves; their value wins on purpose (setdefault), and sources
     # that leave it out get the pipeline's target id so detector output names the right star
     lc.meta.setdefault("target_id", target.target_id)
-    fn, prewhitening = whitened_flux(lc, th)
+    fn, prewhitening, detrend_record = whitened_flux(lc, th)
     fn_alt = whitened_flux(lc, th, flux=lc.flux_alt)[0] if lc.flux_alt is not None else None
     det = get_detector(detector_name)
     res = _search(det, lc, fn, th, keep_spectrum=spectrum_path is not None)
@@ -161,6 +170,7 @@ def _cpu_work(lc_pickle: bytes, target_json: str, thresholds_json: str, detector
         sig.target_id, sig.detector_version = target.target_id, version
         sig.extra["search_window"] = {"min_period_days": th.min_period_days, "max_period_days": th.max_period_days}
         sig.extra["prewhitening"] = prewhitening
+        sig.extra["detrend"] = detrend_record
         timings = []
         outcome, results = ladder.run(sig, bundle, on_result=lambda r, dt, ts=timings: ts.append(dt))
         out.append({"signal": sig.model_dump(), "outcome": outcome,

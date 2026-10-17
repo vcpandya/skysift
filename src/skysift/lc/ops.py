@@ -34,7 +34,8 @@ def _gap_edge_mask(time: np.ndarray, edge_mask_days: float, edge_gap_days: float
 
 
 def detrend(lc: LightCurve, window_days: float = 2.0, gap_days: float = 1.0, flux: np.ndarray | None = None,
-            edge_mask_days: float = GAP_EDGE_MASK_DAYS, edge_gap_days: float = GAP_EDGE_TRIGGER_DAYS) -> np.ndarray:
+            edge_mask_days: float = GAP_EDGE_MASK_DAYS, edge_gap_days: float = GAP_EDGE_TRIGGER_DAYS,
+            pad_mode: str = MEDIAN_PAD_MODE) -> np.ndarray:
     """Divide by a running median per contiguous segment (split at steps longer than ``gap_days``). Returns normalised
     flux aligned with lc.time, NaN where bad and for the first ``edge_mask_days`` after every step longer than
     ``edge_gap_days`` between consecutive good points: those points are dropped before the running median, so the
@@ -43,7 +44,9 @@ def detrend(lc: LightCurve, window_days: float = 2.0, gap_days: float = 1.0, flu
     The median is padded by mirroring each segment at its edges. Repeating the edge value instead (``"nearest"``) fills
     half the window with one point, so a transit touching a segment edge pulls the median to its own level and is
     flattened; mirroring duplicates only its few in-transit points and the median barely moves. The mask adds a
-    segment edge after every downlink gap, so this matters on every real curve."""
+    segment edge after every downlink gap, so this matters on every real curve. ``pad_mode`` is passed to the running
+    median; the dashboard sets it (with the mask arguments) from the settings stored with a signal, so a signal is
+    drawn on the flux it was measured on."""
     m = lc.good_mask()
     f = (lc.flux if flux is None else flux)
     m = m & np.isfinite(f)
@@ -56,7 +59,7 @@ def detrend(lc: LightCurve, window_days: float = 2.0, gap_days: float = 1.0, flu
             continue
         dt = np.nanmedian(np.diff(t[seg]))
         n = max(5, round(window_days / dt) | 1)
-        trend = median_filter(y[seg], size=n, mode=MEDIAN_PAD_MODE)
+        trend = median_filter(y[seg], size=n, mode=pad_mode)
         out[idx[seg]] = y[seg] / trend
     return out
 

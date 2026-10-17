@@ -12,7 +12,7 @@ from sqlalchemy import select
 
 from skysift.detectors.periodogram import PeriodogramSummary
 from skysift.lc.kbonus import parse_kbonus_fits
-from skysift.lc.ops import detrend, fold_phase
+from skysift.lc.ops import GAP_EDGE_TRIGGER_DAYS, detrend, fold_phase
 from skysift.lc.prewhiten import prewhiten_model
 from skysift.models import LightCurve, Target
 from skysift.net import ServiceUnavailable
@@ -27,6 +27,8 @@ PANEL_POINTS = 4_000        # each scatter in the fold, odd/even and secondary p
 BIN_MINUTES = 15.0
 ALIAS_FACTORS = (0.5, 2.0, 3.0)
 TARGET_FIELDS = ("source", "target_id", "ra", "dec", "gaia_id", "kic", "gmag")
+# the detrend of every signal stored before signals carried their detrend settings (DETREND_VERSION 1)
+LEGACY_DETREND = {"version": 1, "edge_mask_days": 0.0, "edge_gap_days": GAP_EDGE_TRIGGER_DAYS, "median_mode": "nearest"}
 
 
 class IntegrityError(ValueError):
@@ -151,10 +153,15 @@ def _fold_hours(t, period, t0):
 
 
 def whitened_fnorm(lc: LightCurve, signal: dict) -> np.ndarray:
-    """The engine's detrended flux minus the pre-whitening model stored with the signal, so the plots show exactly
-    what the detector and the rungs saw; a signal without a stored model gets the plain detrend."""
-    fnorm = detrend(lc)
-    comps = ((signal.get("extra") or {}).get("prewhitening") or {}).get("components") or []
+    """The detrended flux minus the pre-whitening model stored with the signal, so the plots show exactly what the
+    detector and the rungs saw. The detrend replays the settings stored in ``extra["detrend"]``; a signal without
+    them was stored before the record existed and was measured on the version-1 detrend (``LEGACY_DETREND``: no
+    gap-edge mask, nearest padding). A signal without a stored model gets the detrend alone."""
+    extra = signal.get("extra") or {}
+    d = extra.get("detrend") or LEGACY_DETREND
+    fnorm = detrend(lc, edge_mask_days=float(d["edge_mask_days"]), edge_gap_days=float(d["edge_gap_days"]),
+                    pad_mode=str(d["median_mode"]))
+    comps = (extra.get("prewhitening") or {}).get("components") or []
     if comps:
         fnorm = fnorm - prewhiten_model(lc.time, comps)
     return fnorm

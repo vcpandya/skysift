@@ -67,7 +67,7 @@ def search_target(lc_pickle: bytes, thresholds_json: str, nulls: tuple[str, ...]
     start = time.perf_counter()
     lc: LightCurve = pickle.loads(lc_pickle)
     th = Thresholds.model_validate_json(thresholds_json)
-    fn, _record = whitened_flux(lc, th)
+    fn = whitened_flux(lc, th)[0]
     flux = {"real": fn}
     if "inverted" in nulls: flux["inverted"] = 2.0 - fn
     if "scrambled" in nulls: flux["scrambled"] = scramble_within_quarters(fn, lc.quarter)

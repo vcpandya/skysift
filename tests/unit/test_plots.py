@@ -244,9 +244,33 @@ def test_whitened_fnorm_subtracts_the_stored_model():
     fn = detrend(lc); good = np.isfinite(fn)
     pw = prewhiten(lc.time, fn)
     assert pw.components
-    signal = {"extra": {"prewhitening": {"n": len(pw.components), "components": [c.as_dict() for c in pw.components]}}}
+    record = {"version": 3, "edge_mask_days": 1.5, "edge_gap_days": 0.5, "median_mode": "mirror"}
+    signal = {"extra": {"prewhitening": {"n": len(pw.components), "components": [c.as_dict() for c in pw.components]},
+                        "detrend": record}}
     white = whitened_fnorm(lc, signal)
     assert np.std(white[good]) < 0.5 * np.std(fn[good])
     assert np.allclose(white[good], pw.residual[good], atol=1e-9)
-    plain = whitened_fnorm(lc, {"extra": {}})
+    plain = whitened_fnorm(lc, {"extra": {"detrend": record}})
     assert np.allclose(plain[good], fn[good])
+
+
+def test_a_signal_without_a_detrend_record_is_drawn_with_the_version_1_detrend():
+    """Signals stored before the detrend record existed were measured on the version-1 detrend (no gap-edge mask,
+    nearest padding); the dashboard must draw them on that flux, not on today's."""
+    from skysift.ui.plots import whitened_fnorm
+    lc = inject_transit(make_lightcurve(n_days=200, seed=22, noise_ppm=500), 7.3, 135.0, 0.1, 3000)
+    old = detrend(lc, edge_mask_days=0, pad_mode="nearest")
+    assert not np.array_equal(old, detrend(lc), equal_nan=True)          # the two detrends differ on this curve
+    assert np.array_equal(whitened_fnorm(lc, {"extra": {}}), old, equal_nan=True)
+    assert np.array_equal(whitened_fnorm(lc, {}), old, equal_nan=True)
+
+
+def test_a_signal_with_a_detrend_record_is_drawn_with_that_detrend():
+    from skysift.pipeline import whitened_flux
+    from skysift.ui.plots import whitened_fnorm
+    lc = inject_transit(make_lightcurve(n_days=200, seed=22, noise_ppm=500), 7.3, 135.0, 0.1, 3000)
+    _fn, _pw, record = whitened_flux(lc, Thresholds(prewhiten_max_components=0))
+    assert np.array_equal(whitened_fnorm(lc, {"extra": {"detrend": record}}), detrend(lc), equal_nan=True)
+    other = {**record, "version": 1, "edge_mask_days": 0, "median_mode": "nearest"}     # the record wins over defaults
+    assert np.array_equal(whitened_fnorm(lc, {"extra": {"detrend": other}}),
+                          detrend(lc, edge_mask_days=0, pad_mode="nearest"), equal_nan=True)
