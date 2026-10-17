@@ -3,12 +3,14 @@
 Usage (from the repository root, with the project venv):
 
     .venv/Scripts/python.exe docs/superpowers/notes/scripts/long_period_sde.py <kbonus.fits> [--prewhiten]
-        [--period P] [--inject P] [--inject-depth PPM]
+        [--period P [--t0 T0 --duration HOURS]] [--inject P] [--inject-depth PPM] [--edge-mask-days D]
 
-The flux is ``detrend(lc)``, optionally pre-whitened as the pipeline does today (``--prewhiten``), then put through the
-same finite mask and upward 5-MAD clip as ``BoxDip.search``. The coarse search and ranking are ``BoxDip._coarse_search``
-and ``BoxDip._rank`` with ``BoxDip(mask_iterations=0, alias_resolution=0)`` and the 0.5 to 30 d window. The peak studied
-is the refined candidate nearest ``--period`` (default: the longest-period signal among the top three). ``--inject`` is
+The flux is ``detrend(lc)`` with its gap-edge mask (``--edge-mask-days 0`` gives the detrend of sections 1 to 7),
+optionally pre-whitened as the pipeline does today (``--prewhiten``), then put through the same finite mask and upward
+5-MAD clip as ``BoxDip.search``. The coarse search and ranking are ``BoxDip._coarse_search`` and ``BoxDip._rank`` with
+``BoxDip(mask_iterations=0, alias_resolution=0)`` and the 0.5 to 30 d window. The peak studied is the refined candidate
+nearest ``--period`` (default: the longest-period signal among the top three); with ``--t0`` and ``--duration`` as well
+it is exactly that ephemeris, so an injection lands where an earlier run put it. ``--inject`` is
 the period of the injected box (default: the band period farthest from the band's eight strongest separated peaks).
 One run costs one coarse search (about 2 minutes) plus eight single-band searches.
 """
@@ -25,7 +27,7 @@ from astropy.timeseries import BoxLeastSquares
 from skysift.config import Thresholds
 from skysift.detectors.box_dip import BoxDip, _separated
 from skysift.lc.kbonus import parse_kbonus_fits
-from skysift.lc.ops import detrend, event_depths, fold_phase
+from skysift.lc.ops import GAP_EDGE_MASK_DAYS, detrend, event_depths, fold_phase
 from skysift.lc.prewhiten import prewhiten
 from skysift.vetting.rung1_detection import SYSTEMATIC_PERIODS
 
@@ -44,9 +46,9 @@ def table(header: list[str], rows: list[list]) -> None:
     print()
 
 
-def prepare(fits_path: str, white: bool):
+def prepare(fits_path: str, white: bool, edge_mask_days: float = GAP_EDGE_MASK_DAYS):
     lc = parse_kbonus_fits(Path(fits_path).read_bytes())
-    fn = detrend(lc)
+    fn = detrend(lc, edge_mask_days=edge_mask_days)
     pw = prewhiten(lc.time, fn, max_components=50, fap_max=1e-6)
     fnorm = pw.residual if white else fn
     m = np.isfinite(fnorm) & np.isfinite(lc.time)                      # BoxDip.search preprocessing, verbatim
@@ -98,9 +100,13 @@ def main() -> None:
     ap.add_argument("--period", type=float)
     ap.add_argument("--inject", type=float)
     ap.add_argument("--inject-depth", type=float, help="injected depth in ppm (default: the peak's BLS depth)")
+    ap.add_argument("--t0", type=float, help="with --period and --duration: study exactly this peak")
+    ap.add_argument("--duration", type=float, help="studied peak duration in hours (with --period and --t0)")
+    ap.add_argument("--edge-mask-days", type=float, default=GAP_EDGE_MASK_DAYS,
+                    help="detrend gap-edge mask; 0 is the detrend of before 17 October 2026 (sections 1 to 7)")
     a = ap.parse_args()
 
-    lc, t, y, q, sigma, n_comp = prepare(a.fits, a.prewhiten)
+    lc, t, y, q, sigma, n_comp = prepare(a.fits, a.prewhiten, a.edge_mask_days)
     th = Thresholds(min_period_days=0.5, max_period_days=30.0)
     det = BoxDip(mask_iterations=0, alias_resolution=0)
     baseline = float(t.max() - t.min()); pmax = min(th.max_period_days, baseline / 3.0)
@@ -110,6 +116,8 @@ def main() -> None:
     keep = _separated(np.argsort(sdes)[::-1], np.array([c[0] for c in cands]), det.top_k)
     top = [dict(zip(KEYS, cands[i], strict=True)) | {"sde": sdes[i]} for i in keep]
     pk = pick_peak(spec, cands, sdes, a.period, top)
+    if a.period and a.t0 is not None and a.duration:      # pinned: keep the band and powers, fix the ephemeris
+        pk = pk | {"period": a.period, "t0": a.t0, "duration": a.duration / 24}
     P, T0, D, PW, B = pk["period"], pk["t0"], pk["duration"], pk["power"], int(pk["band"])
     edges = np.geomspace(th.min_period_days, pmax, det.n_bands + 1)
     per, pw, band, dur = spec["period"], spec["power"], spec["band"], spec["duration"]

@@ -576,6 +576,13 @@ def test_job_key_depends_on_the_search_window(settings, monkeypatch):
     assert search_version(BoxDip(alias_resolution=0), s.thresholds) != search_version(det, s.thresholds)
 
 
+def test_search_version_depends_on_the_gap_edge_mask(monkeypatch):
+    det, th = get_detector("box_dip"), Thresholds()
+    before = search_version(det, th)
+    monkeypatch.setattr(pipeline, "GAP_EDGE_MASK_DAYS", 0)
+    assert search_version(det, th) != before
+
+
 def test_errors_are_retried_at_most_three_times(settings, monkeypatch):
     from typer.testing import CliRunner
 

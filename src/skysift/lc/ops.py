@@ -13,11 +13,35 @@ def _segments(time: np.ndarray, gap_days: float):
     return np.split(np.arange(time.size), breaks)
 
 
-def detrend(lc: LightCurve, window_days: float = 2.0, gap_days: float = 1.0, flux: np.ndarray | None = None) -> np.ndarray:
-    """Divide by a running median per contiguous segment. Returns normalised flux aligned with lc.time (NaN where bad)."""
+# Kepler data resume after every downlink and safe mode with a thermal ramp, up to 3 percent deep and lasting under a
+# day, that the 2 d running median cannot follow. The downlink gaps are 0.7 to 1.0 d long, so the mask triggers on any
+# gap longer than GAP_EDGE_TRIGGER_DAYS, not on the 1.0 d segment split (notes/2026-10-17-long-period-sde.md, section 8).
+GAP_EDGE_MASK_DAYS = 1.0        # points this close after a gap are dropped before detrending (NaN in the output)
+GAP_EDGE_TRIGGER_DAYS = 0.5     # a time step longer than this between consecutive points is a gap for the mask
+DETREND_VERSION = 2             # 1: running median only; 2: gap-edge mask before the running median
+
+
+def _gap_edge_mask(time: np.ndarray, edge_mask_days: float, edge_gap_days: float) -> np.ndarray:
+    """True for every point less than ``edge_mask_days`` after the first point following a step longer than
+    ``edge_gap_days`` (``time`` sorted). The first point of the series is not a gap edge."""
+    starts = time[1:][np.diff(time) > edge_gap_days]
+    if edge_mask_days <= 0 or starts.size == 0:
+        return np.zeros(time.size, bool)
+    j = np.searchsorted(starts, time, side="right") - 1
+    return (j >= 0) & (time - starts[np.maximum(j, 0)] < edge_mask_days)
+
+
+def detrend(lc: LightCurve, window_days: float = 2.0, gap_days: float = 1.0, flux: np.ndarray | None = None,
+            edge_mask_days: float = GAP_EDGE_MASK_DAYS, edge_gap_days: float = GAP_EDGE_TRIGGER_DAYS) -> np.ndarray:
+    """Divide by a running median per contiguous segment (split at steps longer than ``gap_days``). Returns normalised
+    flux aligned with lc.time, NaN where bad and for the first ``edge_mask_days`` after every step longer than
+    ``edge_gap_days`` between consecutive good points: those points are dropped before the running median, so the
+    ramp neither enters the search nor pulls the trend. ``edge_mask_days=0`` turns the mask off."""
     m = lc.good_mask()
     f = (lc.flux if flux is None else flux)
     m = m & np.isfinite(f)
+    good = np.where(m)[0]
+    m[good[_gap_edge_mask(lc.time[good], edge_mask_days, edge_gap_days)]] = False
     out = np.full(lc.time.size, np.nan)
     t, y, idx = lc.time[m], f[m], np.where(m)[0]
     for seg in _segments(t, gap_days):

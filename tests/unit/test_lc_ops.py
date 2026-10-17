@@ -131,3 +131,19 @@ def test_stacked_depth_inflation_ignores_a_real_secondary_among_its_controls():
     fn = detrend(lc)
     pri = stacked_depth(lc.time, fn, 4.0, 133.0, 0.1)
     assert pri.inflation < 3 and abs(pri.depth_ppm - 20000) < 0.1 * 20000
+
+
+def test_detrend_masks_the_ramp_after_a_gap():
+    rng = np.random.default_rng(12)
+    t = np.arange(100.0, 120.0, 29.4 / 1440.0)
+    t = t[(t < 108.0) | (t >= 111.0)]                               # a 3 d gap from 108 to 111
+    start = t[t >= 111.0][0]
+    f = 1.0 + rng.normal(0, 300e-6, t.size)
+    after = t >= start
+    f[after] *= 1 - 5000e-6 * np.exp(-(t[after] - start) / 0.5)     # a 5000 ppm thermal ramp decaying over 0.5 d
+    lc = LightCurve(t, f, np.full(t.size, 300e-6), np.zeros(t.size, int), np.ones(t.size, int))
+    window = (t >= start) & (t < start + 1.0)
+    fn = detrend(lc)
+    assert np.all(np.isnan(fn[window])) and np.all(np.isfinite(fn[~window]))
+    assert int(np.isnan(fn).sum()) == int(window.sum())
+    assert np.all(np.isfinite(detrend(lc, edge_mask_days=0)))       # the old behaviour: nothing masked

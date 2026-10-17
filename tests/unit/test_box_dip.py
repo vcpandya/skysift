@@ -109,6 +109,38 @@ def test_second_pass_adds_nothing_when_only_the_binary_is_there():
     assert not [s for s in sig if s.extra.get("pass") == 2]
 
 
+def test_gap_ramps_do_not_hide_a_long_period_transit():
+    """Thermal ramps after every data gap (1 percent, decaying over 0.5 d) left in the flux line up at many long trial
+    periods and bury a real 13.0 d transit; the gap-edge mask in ``detrend`` removes them. Two searches.
+
+    Besides the quarter gaps the curve has Kepler's monthly downlinks, 0.9 d gaps every 25 to 35 d: with the 15
+    quarter gaps alone no trial period lines up more than one ramp and the mask changes nothing (SDE 46.0 against 45.9
+    for a 400 ppm transit). The downlink gaps are shorter than ``gap_days``, so this also checks the 0.5 d trigger."""
+    base = make_lightcurve(n_days=1400, seed=7, noise_ppm=600)
+    rng = np.random.default_rng(1)
+    keep = np.ones(base.time.size, bool)
+    g = base.time[0] + rng.uniform(25, 35)
+    while g < base.time[-1]:
+        keep &= (base.time < g) | (base.time >= g + 0.9)
+        g += rng.uniform(25, 35)
+    t, f = base.time[keep], base.flux[keep].copy()
+    for start in t[1:][np.diff(t) > 0.5]:                            # the first point after each gap
+        after = t >= start
+        f[after] *= 1 - 0.01 * np.exp(-(t[after] - start) / 0.5)
+    lc = LightCurve(t, f, base.flux_err[keep], base.quality[keep], base.quarter[keep], f.copy())
+    lc = inject_transit(lc, 13.0, 140.0, 0.25, 1500)
+    det = BoxDip(mask_iterations=0)
+    masked = det.detect(lc, detrend(lc), NARROW)
+    res = det.search(lc, detrend(lc, edge_mask_days=0), NARROW, keep_spectrum=True)
+    near = [s.sde for s in res.signals if abs(s.period - 13.0) < 0.01]
+    spec = res.spectrum
+    sde_off = near[0] if near else float(np.max(spec["sde"][np.abs(spec["period"] / 13.0 - 1) < 0.001]))
+    msg = f"masked: top {masked[0].period:.4f} d, SDE {masked[0].sde:.2f}; unmasked: SDE at 13.0 d {sde_off:.2f}, " \
+          f"top {res.signals[0].period:.4f} d, SDE {res.signals[0].sde:.2f}"
+    assert abs(masked[0].period - 13.0) < 0.01, msg
+    assert masked[0].sde >= 1.5 * sde_off, msg
+
+
 def test_flat_curve_runs_a_single_pass(monkeypatch):
     det = BoxDip()
     calls = []
@@ -147,9 +179,10 @@ ALIAS_WINDOW = Thresholds(min_period_days=0.5, max_period_days=15.0)
 @functools.cache
 def _half_period_planet():
     """A 6.5 d, 20000 ppm planet that the per-band SDE ranks at 3.25 d (SDE 145.9 against 137.4 at 6.5 d). One search
-    with the alias resolution on and one with it off, shared by the tests below."""
+    with the alias resolution on and one with it off, shared by the tests below. The curve has no gap ramps, and the
+    gap-edge mask (about 1 percent of its points) flips this narrow ranking to 6.5 d, so the fixture keeps it off."""
     lc = inject_transit(make_lightcurve(n_days=500, seed=42, noise_ppm=1500), 6.5, 133.0, 0.1, 20000)
-    fnorm = detrend(lc)
+    fnorm = detrend(lc, edge_mask_days=0)    # masked, the planet ranks at its true period; this keeps the alias case
     on = BoxDip(mask_iterations=0).detect(lc, fnorm, ALIAS_WINDOW)
     off = BoxDip(mask_iterations=0, alias_resolution=0).detect(lc, fnorm, ALIAS_WINDOW)
     return lc, fnorm, on, off
