@@ -39,6 +39,8 @@ class Base(DeclarativeBase):
 
 
 UNAVAILABLE_PREFIX = "unavailable:"      # run error text for a service outage; never counted as an attempt
+POOL_BROKE_ERROR = f"{UNAVAILABLE_PREFIX} worker pool broke"     # several runs held at a pool break: none charged
+WORKER_DIED_ERROR = "worker died: pool broke"                    # one run held: its target is charged an attempt
 PERIODOGRAM_URL = "skysift://periodogram/{target_id}"     # artifact url of a target's periodogram summary
 
 
@@ -197,6 +199,15 @@ class Store:
         with self.session() as s:
             return s.scalar(select(func.count()).select_from(RunRow).where(
                 RunRow.job_key == job_key, RunRow.status == "error", *_ATTEMPT_FILTERS))
+
+    def pool_breaks(self, job_key: str) -> int:
+        """Runs of a job that ended in a broken CPU pool, charged (``WORKER_DIED_ERROR``) or not
+        (``POOL_BROKE_ERROR``). A break that held several runs charges none of them, so a target that always kills its
+        worker would otherwise be retried every sweep; the sweep gives a job up after a few of these."""
+        with self.session() as s:
+            return s.scalar(select(func.count()).select_from(RunRow).where(
+                RunRow.job_key == job_key, RunRow.status == "error",
+                RunRow.error.in_((POOL_BROKE_ERROR, WORKER_DIED_ERROR))))
 
     def error_capped_targets(self, max_attempts: int) -> int:
         """Targets whose latest job key has at least ``max_attempts`` failed attempts and no done run."""

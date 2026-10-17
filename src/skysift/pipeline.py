@@ -26,7 +26,9 @@ from skysift.net import ServiceUnavailable
 from skysift.store.blob import Blob
 from skysift.store.db import (
     PERIODOGRAM_URL,  # noqa: F401  re-exported: the summary artifact url
+    POOL_BROKE_ERROR,  # several runs held at a pool break: culprit unknown, none charged
     UNAVAILABLE_PREFIX,
+    WORKER_DIED_ERROR,  # one run held: its target is charged an attempt
     Store,
     make_job_key,
     utcnow,
@@ -43,8 +45,7 @@ DEFAULT_LADDER_VERSION = "1"
 UPSERT_BATCH = 1000
 MAX_ATTEMPTS = 3            # spec section 9: a target that errors three times is left for a human
 MAX_POOL_RESTARTS = 2       # a CPU pool that breaks a third time in one sweep ends the sweep
-POOL_BROKE_ERROR = f"{UNAVAILABLE_PREFIX} worker pool broke"     # several runs held: culprit unknown, none charged
-WORKER_DIED_ERROR = "worker died: pool broke"                    # one run held: its target is charged an attempt
+MAX_POOL_BREAKS = 3         # a job held by three broken pools (charged or not) is given up: it may be the killer
 SEARCH_CONFIG_KEYS = ("oversample", "n_bands", "n_refine", "refine_oversample", "two_stage", "mask_iterations",
                      "alias_resolution")
 
@@ -223,14 +224,16 @@ def ranked_targets(source, store: Store, filter: dict, max_targets: int | None) 
 
 def _select_targets(source, store: Store, filter: dict, det, version: str, ladder_version: str,
                     max_targets: int | None) -> tuple[list[tuple[Target, str]], int, int]:
-    """Enumerate the whole source, record every target (in batches), skip done job keys and keys that already
-    errored MAX_ATTEMPTS times, and return (the top ``max_targets`` remaining targets by priority, highest first;
-    skipped count; gave-up count)."""
+    """Enumerate the whole source, record every target (in batches), skip done job keys, keys that already errored
+    MAX_ATTEMPTS times and keys whose runs were lost in MAX_POOL_BREAKS broken pools (uncharged breaks included: at
+    production depth a break holds several runs and charges none, so a target that always kills its worker would
+    otherwise take its neighbours' work down every sweep), and return (the top ``max_targets`` remaining targets by
+    priority, highest first; skipped count; gave-up count)."""
     todo, skipped, gave_up = [], 0, 0
     for t in _enumerate_targets(source, store, filter):
         key = make_job_key(t.target_id, det.name, version, ladder_version)
         if store.job_done(key): skipped += 1
-        elif store.attempts(key) >= MAX_ATTEMPTS: gave_up += 1
+        elif store.attempts(key) >= MAX_ATTEMPTS or store.pool_breaks(key) >= MAX_POOL_BREAKS: gave_up += 1
         else: todo.append((t, key))
     todo.sort(key=lambda x: priority_score(x[0]), reverse=True)     # stable: ties keep source order
     return (todo if max_targets is None else todo[:max_targets]), skipped, gave_up
@@ -314,9 +317,9 @@ def run(source, store: Store, blob: Blob, settings: Settings, filter: dict, dete
 
     def pool_broke(e: BrokenProcessPool, popped: dict[Future, tuple[Target, int]] | None = None) -> None:
         """A worker died and took the pool with it. Held jobs that finished before the break are written as usual;
-        the rest fail. A lone unfinished run is charged an attempt (its target most likely killed the worker, and one
-        that always does is capped after three sweeps); several are all marked unavailable, uncharged, as the culprit
-        is unknown. The pool is rebuilt MAX_POOL_RESTARTS times per sweep, then the break ends the sweep. Fetched
+        the rest fail. A lone unfinished run is charged an attempt (its target most likely killed the worker); several
+        are all marked unavailable, uncharged, as the culprit is unknown. Either way the run counts toward
+        MAX_POOL_BREAKS, so a target that always kills its worker is given up after three breaks. The pool is rebuilt MAX_POOL_RESTARTS times per sweep, then the break ends the sweep. Fetched
         targets in ``ready`` go to the new pool."""
         nonlocal cpu_pool
         held = {**(popped or {}), **cpu_jobs}

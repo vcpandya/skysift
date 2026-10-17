@@ -605,6 +605,33 @@ def test_errors_are_retried_at_most_three_times(settings, monkeypatch):
     assert json.loads(r.stdout)["error_capped_targets"] == 1
 
 
+def test_a_job_in_three_pool_breaks_is_given_up(settings, monkeypatch):
+    """At production depth a break almost always holds several runs, so none is charged an attempt; a target that
+    always kills its worker must still stop being retried. Three pool-break runs of one job (either text) give it up,
+    whatever the attempt count; two leave it in the sweep."""
+    s, store, blob = _env(monkeypatch, settings)
+    lc = make_lightcurve(n_days=60, seed=4)
+    targets = [_tgt("killer"), _tgt("twice"), _tgt("calm")]
+    store.upsert_targets(targets)
+    version = search_version(get_detector("box_dip"), s.thresholds)
+    texts = {"killer": [pipeline.POOL_BROKE_ERROR, pipeline.WORKER_DIED_ERROR, pipeline.POOL_BROKE_ERROR],
+             "twice": [pipeline.POOL_BROKE_ERROR, pipeline.POOL_BROKE_ERROR]}
+    for tid, errors in texts.items():
+        key = make_job_key(tid, "box_dip", version, pipeline.DEFAULT_LADDER_VERSION)
+        for text in errors:
+            store.finish_run(store.start_run(key, tid, "box_dip", version, pipeline.DEFAULT_LADDER_VERSION), "error",
+                             text)
+    killer = make_job_key("killer", "box_dip", version, pipeline.DEFAULT_LADDER_VERSION)
+    assert store.attempts(killer) == 1 < MAX_ATTEMPTS                 # attempts() keeps its meaning
+    assert store.pool_breaks(killer) == pipeline.MAX_POOL_BREAKS == 3
+    src = ScriptedSource(targets, {t.target_id: lc for t in targets}, store, blob)
+    out = run(src, store, blob, s, filter={}, with_novelty=False)
+    assert out["gave_up"] == 1 and out["processed"] == 2 and out["errors"] == 0
+    with store.session() as ss:
+        assert ss.query(db.RunRow).filter_by(target_id="killer").count() == 3        # not selected: no fourth run
+        assert ss.query(db.RunRow).filter_by(target_id="twice", status="done").count() == 1
+
+
 def test_service_outages_do_not_use_up_attempts(settings, monkeypatch):
     from skysift.net import ServiceUnavailable
 
