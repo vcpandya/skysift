@@ -1,5 +1,6 @@
 import functools
 import itertools
+import json
 import time
 
 import numpy as np
@@ -198,19 +199,23 @@ def _half_period_planet():
 def test_deep_transit_ranked_at_half_period_is_doubled():
     _, _, sig, off = _half_period_planet()
     assert abs(sig[0].period - 6.5) < 0.01
-    assert abs(sig[0].extra["alias_resolved"]["from_period"] - 3.25) < 0.01
+    resolved = sig[0].extra["alias_resolved"]
+    assert abs(resolved["from_period"] - 3.25) < 0.01 and resolved["factor"] == 2 and resolved["factors"] == [2]
+    assert resolved["class_depths_ppm"][0] > 15000 or resolved["class_depths_ppm"][1] > 15000
+    assert resolved["contrast_sigma"] > 5
+    json.dumps(resolved, allow_nan=False)                          # strict JSON
     assert abs(sig[0].depth_ppm - 20000) < 0.15 * 20000
     assert all(abs(s.period - 6.5) / 6.5 >= 0.02 for s in sig[1:])
-    # the dropped 6.5 d candidate lends its refined SDE as the 2P value; the doubled signal keeps the larger of that
-    # and the 3.25 d peak that made the detection (146.9 against 136.9), and records both
+    # the dropped 6.5 d candidate lends its refined SDE at the resolved period; the resolved signal keeps the larger
+    # of that and the 3.25 d peak that made the detection (146.9 against 136.9), and records both
     dropped = [s for s in off if abs(s.period - 6.5) / 6.5 < 0.02]
-    resolved = sig[0].extra["alias_resolved"]
-    assert dropped and abs(resolved["sde_double"] - dropped[0].sde) < 1e-9
-    assert abs(resolved["sde_half"] - off[0].sde) < 1e-9 and off[0].sde > dropped[0].sde
+    assert dropped and abs(resolved["sde_resolved"] - dropped[0].sde) < 1e-9
+    assert abs(resolved["sde_original"] - off[0].sde) < 1e-9 and off[0].sde > dropped[0].sde
     assert abs(sig[0].sde - max(off[0].sde, dropped[0].sde)) < 1e-9
     assert sig[0].extra["band"] == off[0].extra["band"]           # the band of the SDE kept
-    third = [s for s in sig[1:] if abs(s.period - 6.5 / 3) < 0.01]
-    assert all(s.extra["alias_of"] == 0 for s in third)
+    # a lower-ranked P/3 peak is resolved too and collapses onto the 6.5 d signal; anything left is flagged
+    assert all(abs(s.period - 6.5 / 3) / (6.5 / 3) >= 0.02 for s in sig[1:])
+    assert all(s.extra["alias_of"] == 0 for s in sig[1:] if abs(s.period - 6.5 / 4) < 0.01)
 
 
 def test_the_duplicate_drop_after_doubling_is_three_coarse_steps_wide():
@@ -236,8 +241,9 @@ def test_unequal_eclipses_are_doubled_to_the_binary_period():
     m = np.isfinite(fnorm)
     on_t0 = stacked_depth(lc.time[m], fnorm[m], sig[0].period, sig[0].t0, sig[0].duration)
     assert on_t0.depth_ppm > 15000, "t0 sits on the primary eclipse"
-    quarter = [s for s in sig[1:] if abs(s.period - 1.0) < 0.01]
-    assert all(s.extra["alias_of"] == 0 for s in quarter), "the P/4 peak stays flagged after the doubling"
+    assert sig[0].extra["alias_resolved"]["factor"] == 2
+    # a lower-ranked P/4 or P/2 peak resolves (through P/2 for the quarter) onto the binary period and is dropped
+    assert all(abs(s.period - a) / a >= 0.02 for s in sig[1:] for a in (1.0, 2.0)), "sub-harmonics collapse"
 
 
 def test_correctly_ranked_planet_keeps_its_period():
@@ -257,3 +263,68 @@ def test_doubling_stays_inside_the_search_window():
     det = BoxDip(mask_iterations=0)
     assert det._resolve_alias(lc.time[m], fnorm[m], off[0], 6.0, None) is off[0]       # 6.5 d is past pmax
     assert abs(det._resolve_alias(lc.time[m], fnorm[m], off[0], 15.0, None).period - 6.5) < 0.01
+
+
+SUB_WINDOW = Thresholds(min_period_days=0.5, max_period_days=30.0)
+ECLIPSE_P, ECLIPSE_T0, ECLIPSE_DUR, ECLIPSE_PPM = 24.0, 140.0, 4 / 24, 5000
+
+
+@functools.cache
+def _long_period_eclipse():
+    """A 24.0 d, 4 h, 5000 ppm box on a 1400 d curve (seed 51, 800 ppm noise): the K06356.01 configuration of the
+    live run, whose first pass held 24.09/2, /3, /7 and /35 d."""
+    lc = inject_transit(make_lightcurve(n_days=1400, seed=51, noise_ppm=800), ECLIPSE_P, ECLIPSE_T0, ECLIPSE_DUR,
+                        ECLIPSE_PPM)
+    return lc, detrend(lc)
+
+
+def test_deep_eclipse_ranked_at_a_third_of_its_period_is_resolved():
+    """Whatever period BLS ranks first, one object leaves one signal at its true period. Measured 18 October 2026:
+    the raw first pass ranks 24.0 d first (SDE 173.9), then 12.0 (126.7) and 8.0 d (110.6), which the resolver
+    folds back onto 24.0 d and drops as duplicates; the factor is asserted only when a sub-harmonic ranked first."""
+    from skysift.detectors.box_dip import MAX_SUBHARMONIC
+    lc, fnorm = _long_period_eclipse()
+    sig = BoxDip(mask_iterations=0).detect(lc, fnorm, SUB_WINDOW)
+    off = BoxDip(mask_iterations=0, alias_resolution=0).detect(lc, fnorm, SUB_WINDOW)
+    assert abs(sig[0].period - ECLIPSE_P) < 0.02
+    if abs(off[0].period - ECLIPSE_P) >= 0.02:                     # the raw ranking put a sub-harmonic first
+        resolved = sig[0].extra["alias_resolved"]
+        assert resolved["factor"] in {2, 3, 4, 5, 6, 7}
+        assert abs(resolved["from_period"] - off[0].period) < 1e-9
+    aliases = [ECLIPSE_P / n for n in range(1, MAX_SUBHARMONIC + 1)]
+    assert all(abs(s.period - a) / a >= 0.02 for s in sig[1:] for a in aliases)
+
+
+def test_resolver_handles_every_residue_class():
+    """A hand-built signal at P/7, t0 on each of the seven sub-harmonic epochs in turn (the first on an eclipse), so
+    the eclipses sit in every residue class modulo 7 once: each resolves to factor 7 with t0 on an eclipse."""
+    lc, fnorm = _long_period_eclipse()
+    m = np.isfinite(fnorm)
+    t, y, p = lc.time[m], fnorm[m], ECLIPSE_P / 7
+    det = BoxDip()
+    for shift in range(7):
+        hand = Signal(target_id="x", detector="box_dip", detector_version=det.version, period=p,
+                      t0=ECLIPSE_T0 + 3 * ECLIPSE_P + shift * p, duration=ECLIPSE_DUR, depth_ppm=ECLIPSE_PPM / 7,
+                      snr=10, sde=20, n_events=300, extra={"band": 11, "sde_spectrum_std": 1.0, "alias_of": None})
+        r = det._resolve_alias(t, y, hand, SUB_WINDOW.max_period_days, None)
+        resolved = r.extra["alias_resolved"]
+        assert resolved["factor"] == 7 and resolved["factors"] == [7] and len(resolved["class_depths_ppm"]) == 7
+        assert abs(r.period - ECLIPSE_P) < 1e-9 and resolved["from_period"] == p
+        assert abs(r.t0 - (ECLIPSE_T0 + ECLIPSE_P * round((r.t0 - ECLIPSE_T0) / ECLIPSE_P))) < 0.05
+        assert abs(r.depth_ppm - ECLIPSE_PPM) < 0.15 * ECLIPSE_PPM
+        assert resolved["sde_original"] == 20 and resolved["sde_resolved"] is None and r.sde == 20
+        json.dumps(resolved, allow_nan=False)                      # strict JSON
+
+
+def test_a_binary_with_a_deep_secondary_is_not_folded_away():
+    """Primary 5000 and secondary 3500 ppm at 6.0 d, ranked at 3.0 d: the secondary is above half the primary, so the
+    signal stays at 3.0 d and rung 2 sees the odd and even eclipses differ."""
+    lc = inject_transit(make_lightcurve(n_days=500, seed=42, noise_ppm=800), 6.0, 133.0, 0.1, 5000)
+    lc = inject_transit(lc, 6.0, 136.0, 0.1, 3500)
+    fnorm = detrend(lc)
+    sig = BoxDip(mask_iterations=0).detect(lc, fnorm, ALIAS_WINDOW)
+    assert abs(sig[0].period - 3.0) < 0.01 and "alias_resolved" not in sig[0].extra
+    m = np.isfinite(fnorm)
+    odd, even = (stacked_depth(lc.time[m], fnorm[m], sig[0].period, sig[0].t0, sig[0].duration, epochs=e)
+                 for e in ("odd", "even"))
+    assert abs(odd.depth_ppm - even.depth_ppm) > Thresholds().parity_sigma * np.hypot(odd.err_ppm, even.err_ppm)

@@ -172,12 +172,17 @@ def test_rung4_shows_the_period_matched_object_and_its_separation(settings, tmp_
     assert '<span class="muted">period_matched</span> cumulative K77777.01, no position' in shown
 
 
-def test_signal_header_says_when_the_period_was_doubled(settings, tmp_path):
+def test_signal_header_says_when_the_period_was_multiplied(settings, tmp_path):
     client, app, ids, _launcher = make_seeded_client(settings, tmp_path)
-    extra = json.dumps({"baseline_days": 1400.0, "alias_resolved": {"from_period": 6.88475, "odd_ppm": 3600.0,
-                                                                    "even_ppm": 10.0, "parity_sigma": 40.0,
-                                                                    "sde_half": 21.1, "sde_double": 19.0}})
+    resolved = {"from_period": 3.44143, "factor": 7, "factors": [7], "class_depths_ppm": [960.0] + [5.0] * 6,
+                "contrast_sigma": 40.0, "sde_original": 61.5, "sde_resolved": 58.0}
+    legacy = {"from_period": 6.88475, "odd_ppm": 3600.0, "even_ppm": 10.0, "parity_sigma": 40.0, "sde_half": 21.1,
+              "sde_double": 19.0}                                  # a version-1 record: always a doubling
     with app.state.store.session() as s:
-        s.execute(text("update signals set extra = :e where id = :i"), {"e": extra, "i": ids["candidate"]}); s.commit()
-    assert "period doubled from 6.88475 d" in client.get(f"/signals/{ids['candidate']}").text
-    assert "period doubled" not in client.get(f"/signals/{ids['undetermined']}").text
+        for key, ar in (("candidate", resolved), ("rejected", legacy)):
+            extra = json.dumps({"baseline_days": 1400.0, "alias_resolved": ar})
+            s.execute(text("update signals set extra = :e where id = :i"), {"e": extra, "i": ids[key]})
+        s.commit()
+    assert "period multiplied by 7 from 3.44143 d" in client.get(f"/signals/{ids['candidate']}").text
+    assert "period multiplied by 2 from 6.88475 d" in client.get(f"/signals/{ids['rejected']}").text
+    assert "period multiplied" not in client.get(f"/signals/{ids['undetermined']}").text

@@ -18,8 +18,9 @@ DURATIONS_H = np.array([1, 1.5, 2, 3, 4, 6, 9, 12])
 ALIAS_RATIOS = (2.0, 3.0, 4.0, 0.5, 1 / 3, 0.25)   # 4 and 1/4: a P/2 peak becomes P/4 once the top signal is doubled
 MIN_BAND_PERIODS = 50
 MAX_DURATION_FRACTION = 0.9     # trial durations must stay below this fraction of the band's shortest period
-ALIAS_PARITY_SIGMA = 5.0        # odd and even stacked depths of a half-period alias differ by this many combined errors
-ALIAS_PARITY_RATIO = 0.5        # and the shallower parity is under this fraction of the deeper one
+ALIAS_PARITY_SIGMA = 5.0        # the deepest epoch class of a sub-harmonic alias beats the others by this many combined errors
+ALIAS_PARITY_RATIO = 0.5        # and every other class (and their mean) is under this fraction of the deepest one
+MAX_SUBHARMONIC = 8             # sub-harmonics P/2 .. P/8 are tested (n = 7 caught K06356.01 ranked at 24.09/7 d)
 
 
 @dataclass
@@ -112,7 +113,7 @@ def _separated(order: np.ndarray, periods: np.ndarray, k: int) -> list[int]:
 
 class BoxDip:
     name = "box_dip"
-    version = "1"
+    version = "2"           # 2: sub-harmonic resolution up to P/8 on every first-pass signal (18 October 2026)
     cost_class = "cpu_medium"
 
     def __init__(self, top_k: int = 3, oversample: float = 1.5, n_bands: int = 24, refine_oversample: float = 6.0,
@@ -122,7 +123,8 @@ class BoxDip:
         # after a first pass whose top peak clears the detection threshold, mask that signal (primary and phase 0.5)
         # and search the remaining points once more, so a dominant variable cannot hide an independent signal
         self.mask_iterations = mask_iterations
-        # re-issue the strongest signal at twice its period when its odd and even events differ (0 turns it off)
+        # re-issue each first-pass signal at n times its period (n up to MAX_SUBHARMONIC) when one residue class of
+        # its epochs modulo n holds the events and the others are empty (0 turns it off)
         self.alias_resolution = alias_resolution
 
     def _coarse_search(self, model: BoxLeastSquares, baseline: float, thresholds: Thresholds, pmax: float) -> dict:
@@ -204,53 +206,82 @@ class BoxDip:
                              "alias_of": None, "n_periods": int(spec["period"].size),
                              "n_bands": self.n_bands, "two_stage": self.two_stage, "n_refined": n_refined})
 
+    def _subharmonic(self, t: np.ndarray, y: np.ndarray, p: float, t0: float, duration: float,
+                     pmax: float) -> tuple | None:
+        """The smallest ``n`` in 2 .. MAX_SUBHARMONIC (with ``n * p`` inside the window) at which the fold at ``p`` is
+        a sub-harmonic alias, as ``(n, r_deep, class_depths, deep, contrast_sigma)``, or None. At ``p = P / n`` the
+        events of a period-P signal sit in one residue class of the epoch number modulo ``n``, so that class's
+        stacked depth stands out and the other classes are empty (or, for a binary, hold a shallower eclipse). A class
+        whose depth cannot be measured skips that ``n``."""
+        for n in range(2, MAX_SUBHARMONIC + 1):
+            if n * p > pmax:
+                return None
+            cls = [stacked_depth(t, y, p, t0, duration, epochs=(n, r)) for r in range(n)]
+            if not all(c.n_in and np.isfinite(c.depth_ppm) and np.isfinite(c.err_ppm) and c.err_ppm > 0 for c in cls):
+                continue
+            r_deep = int(np.argmax([c.depth_ppm for c in cls]))
+            deep = cls[r_deep]
+            rest = [c for r, c in enumerate(cls) if r != r_deep]
+            w = np.array([1.0 / c.err_ppm ** 2 for c in rest])
+            rest_depth = float(np.sum(w * np.array([c.depth_ppm for c in rest])) / w.sum())
+            rest_err = float(1.0 / np.sqrt(w.sum()))
+            contrast = (deep.depth_ppm - rest_depth) / float(np.hypot(deep.err_ppm, rest_err))
+            limit = ALIAS_PARITY_RATIO * deep.depth_ppm
+            if (deep.depth_ppm > 0 and contrast > ALIAS_PARITY_SIGMA and rest_depth < limit
+                    and all(c.depth_ppm < limit for c in rest)):
+                return n, r_deep, [float(c.depth_ppm) for c in cls], deep, float(contrast)
+        return None
+
     def _resolve_alias(self, t: np.ndarray, y: np.ndarray, sig: Signal, pmax: float, spec: dict | None,
                        others: list[Signal] = ()) -> Signal:
-        """Per-band SDE ranking can put a deep signal at half its period: the P/2 fold stacks every event with an
-        empty (or, for a binary, a secondary) window and still wins its band. At P/2 a planet's events alternate
-        transit and nothing, a binary's alternate primary and secondary, so a strong contrast between the odd and the
-        even stacked depths is the signature of a halved period. When the contrast exceeds ALIAS_PARITY_SIGMA combined
-        errors and the shallower parity is under ALIAS_PARITY_RATIO of the deeper one, the signal is re-issued at
-        twice its period, t0 on the deeper parity, with that parity's depth and snr and events recounted. A correctly
-        ranked planet has equal parities and is never touched; the ratio keeps a 5-sigma noise fluke from doubling a
-        real planet.
+        """Per-band SDE ranking can put a deep signal at an integer fraction of its period: the P/n fold stacks every
+        event with n - 1 empty (or, for a binary, secondary) windows and can still win its quieter band. KOI K06356.01
+        (24.09 d) came out of the live run at 24.09/7, /3, /2 and /35 d. At P/n the events sit in one residue class of
+        the epoch number modulo n, so a strong contrast between that class and the others is the signature
+        (``_subharmonic``). The smallest triggering n is taken and the test repeated at the new period, so a
+        composite factor (P/4 resolves through P/2) reaches the true period; a multiple of the true factor never
+        triggers, because it splits the events over several classes. The signal is re-issued at the product of the
+        factors, t0 on the deepest class, with that class's depth and snr and events recounted. A correctly ranked
+        planet has equal classes and is never touched; the ratio keeps a 5-sigma noise fluke from multiplying a real
+        planet, and a binary whose secondary is at least half its primary is left to rung 2.
 
-        The SDE at 2P is the refined SDE of the best lower-ranked signal of ``others`` at the new period (see
-        ``_duplicates``), else the per-band SDE of the trial period nearest it when the spectrum is given. The doubled
-        signal keeps the larger of that and the P/2 peak's own SDE, which made the detection, with the band of the one
-        kept; ``extra["alias_resolved"]`` records both (``sde_half``, ``sde_double``, None when neither source exists)."""
-        p = sig.period
-        if not self.alias_resolution or 2 * p > pmax:
+        The SDE at the new period is the refined SDE of the best signal of ``others`` there (see ``_duplicates``),
+        else the per-band SDE of the trial period nearest it when the spectrum is given. The resolved signal keeps the
+        larger of that and the original peak's own SDE, which made the detection, with the band of the one kept;
+        ``extra["alias_resolved"]`` records the original period, the total factor, the factor of each step, the class
+        depths and contrast of the last step, and both SDEs (``sde_original``, ``sde_resolved``, None when neither
+        source exists)."""
+        if not self.alias_resolution:
             return sig
-        odd = stacked_depth(t, y, p, sig.t0, sig.duration, epochs="odd")
-        even = stacked_depth(t, y, p, sig.t0, sig.duration, epochs="even")
-        vals = (odd.depth_ppm, odd.err_ppm, even.depth_ppm, even.err_ppm)
-        if not (odd.n_in and even.n_in and np.all(np.isfinite(vals)) and odd.err_ppm > 0 and even.err_ppm > 0):
+        p, t0, factors, last = sig.period, sig.t0, [], None
+        while (hit := self._subharmonic(t, y, p, t0, sig.duration, pmax)) is not None:
+            n, r_deep, depths, deep, contrast = hit
+            # stacked_depth numbers epochs round((t - t0) / p): class r holds the events at t0 + p (r + n k)
+            t0, p = t0 + r_deep * p, n * p
+            factors.append(n)
+            last = (depths, deep, contrast)
+        if not factors:
             return sig
-        sigma = abs(odd.depth_ppm - even.depth_ppm) / float(np.hypot(odd.err_ppm, even.err_ppm))
-        deep, shallow = (odd, even) if odd.depth_ppm > even.depth_ppm else (even, odd)
-        if not (sigma > ALIAS_PARITY_SIGMA and shallow.depth_ppm < ALIAS_PARITY_RATIO * deep.depth_ppm):
-            return sig
-        # epoch parity is round((t - t0) / p) % 2, as stacked_depth defines it: odd events sit at t0 + p (2k + 1)
-        t0 = sig.t0 + p if deep is odd else sig.t0
-        sde_double, band_double = None, None
-        dup = _duplicates(2 * p, list(others), spec)
+        depths, deep, contrast = last
+        sde_new, band_new = None, None
+        dup = _duplicates(p, list(others), spec)
         if dup:
-            sde_double, band_double = float(dup[0].sde), (dup[0].extra["band"], dup[0].extra["sde_spectrum_std"])
+            best = max(dup, key=lambda s: s.sde)
+            sde_new, band_new = float(best.sde), (best.extra["band"], best.extra["sde_spectrum_std"])
         elif spec is not None and spec["period"].size:
-            i = int(np.argmin(np.abs(spec["period"] - 2 * p)))
+            i = int(np.argmin(np.abs(spec["period"] - p)))
             b = int(spec["band"][i])
-            sde_double, band_double = float(spec["sde"][i]), (b, float(spec["band_std"][b]))
+            sde_new, band_new = float(spec["sde"][i]), (b, float(spec["band_std"][b]))
         extra = dict(sig.extra)
-        extra["alias_resolved"] = {"from_period": float(p), "odd_ppm": float(odd.depth_ppm),
-                                   "even_ppm": float(even.depth_ppm), "parity_sigma": float(sigma),
-                                   "sde_half": float(sig.sde), "sde_double": sde_double}
-        update = {"period": 2 * p, "t0": t0, "depth_ppm": float(deep.depth_ppm),
+        extra["alias_resolved"] = {"from_period": float(sig.period), "factor": int(np.prod(factors)),
+                                   "factors": [int(f) for f in factors], "class_depths_ppm": depths,
+                                   "contrast_sigma": contrast, "sde_original": float(sig.sde), "sde_resolved": sde_new}
+        update = {"period": float(p), "t0": float(t0), "depth_ppm": float(deep.depth_ppm),
                   "snr": float(deep.depth_ppm / deep.err_ppm),
-                  "n_events": n_window_epochs(t, y, 2 * p, t0, sig.duration), "extra": extra}
-        if sde_double is not None and sde_double > sig.sde:
-            update["sde"] = sde_double
-            extra.update(band=band_double[0], sde_spectrum_std=band_double[1])
+                  "n_events": n_window_epochs(t, y, p, t0, sig.duration), "extra": extra}
+        if sde_new is not None and sde_new > sig.sde:
+            update["sde"] = sde_new
+            extra.update(band=band_new[0], sde_spectrum_std=band_new[1])
         return sig.model_copy(update=update)
 
     def _masked_pass(self, lc: LightCurve, t: np.ndarray, y: np.ndarray, sigma: float, baseline: float,
@@ -314,20 +345,18 @@ class BoxDip:
         cands, sdes, n_refined = self._rank(model, spec)
         cp = np.array([c[0] for c in cands])
         keep = _separated(np.argsort(sdes)[::-1], cp, self.top_k)
+        raw = [self._signal(lc, t, y, spec, cands[ci], float(sdes[ci]), baseline, n_refined) for ci in keep]
+        # every first-pass signal is tested for a sub-harmonic alias, in rank order; a resolved period may coincide
+        # with a signal kept before it (the sub-harmonics of one object, or a lower-ranked peak at the true period,
+        # which already lent its refined SDE): those are dropped, within three coarse frequency steps, so one object
+        # leaves one signal (the first-pass list may then hold fewer than top_k signals)
         out: list[Signal] = []
-        for ci in keep:
-            sig = self._signal(lc, t, y, spec, cands[ci], float(sdes[ci]), baseline, n_refined)
-            sig.extra["alias_of"] = _alias_of(sig.period, out)
-            out.append(sig)
-        top = self._resolve_alias(t, y, out[0], pmax, spec, others=out[1:])
-        if top is not out[0]:
-            # the doubled period may now coincide with a lower-ranked peak: drop those (within three coarse frequency
-            # steps; the best one already lent its refined SDE as the 2P value) and redo the alias bookkeeping of the
-            # rest against the resolved period (the first-pass list then holds top_k - 1 signals)
-            dup = _duplicates(top.period, out[1:], spec)
-            out = [top] + [s for s in out[1:] if all(s is not d for d in dup)]
-            for j in range(1, len(out)):
-                out[j].extra["alias_of"] = _alias_of(out[j].period, out[:j])
+        for j, sig in enumerate(raw):
+            sig = self._resolve_alias(t, y, sig, pmax, spec, others=raw[:j] + raw[j + 1:])
+            if not _duplicates(sig.period, out, spec):
+                out.append(sig)
+        for j, sig in enumerate(out):
+            sig.extra["alias_of"] = _alias_of(sig.period, out[:j])
         # the periodogram summary and its peaks describe the first-pass spectrum only; a second-pass signal has its
         # own SDE on the masked spectrum and is not drawn on this envelope
         edges = np.geomspace(th.min_period_days, pmax, self.n_bands + 1)

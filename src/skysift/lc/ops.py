@@ -151,6 +151,7 @@ class StackedDepth:
 
 
 STACK_MIN_IN, STACK_MIN_BASELINE, STACK_MIN_CONTROLS = 10, 50, 3
+EPOCH_CLASSES = {"odd": (2, 1), "even": (2, 0)}     # the string forms of stacked_depth's residue-class selector
 
 
 def _circular(x: np.ndarray, period: float) -> np.ndarray:
@@ -175,7 +176,9 @@ def stacked_depth(time, fnorm, period, t0, duration_days, *, epochs="all", phase
     """Box depth on the stacked fold, for signals whose single events hold too few points to measure.
 
     The window is ``duration_days`` wide, centred ``phase_offset`` of a period from mid-transit (0.5 for the secondary).
-    ``epochs`` keeps all events or only the odd or the even ones (epoch number ``round((t - t0) / period)``). The formal
+    ``epochs`` keeps all events (``"all"``), only the odd or the even ones (``"odd"``, ``"even"``), or one residue
+    class ``(n, r)``: the epochs whose number ``round((t - t0) / period)`` is ``r`` modulo ``n`` (``"odd"`` is
+    ``(2, 1)``, ``"even"`` is ``(2, 0)``). The formal
     error is the out-of-window scatter over the square root of the in-window count; it is multiplied by the ratio of
     the robust spread (1.4826 times the median absolute deviation) of the same window's depth at nine control phases
     (0.1 to 0.9, at least 1.5 durations from the primary and from the window) to that formal error whenever the ratio
@@ -184,8 +187,8 @@ def stacked_depth(time, fnorm, period, t0, duration_days, *, epochs="all", phase
     than 10 points or the baseline fewer than 50."""
     good = np.isfinite(fnorm) & np.isfinite(time)
     if epochs != "all":
-        parity = np.round((time - t0) / period).astype(int) % 2
-        good &= parity == (1 if epochs == "odd" else 0)
+        n, r = EPOCH_CLASSES[epochs] if isinstance(epochs, str) else epochs
+        good &= np.round((time - t0) / period).astype(int) % int(n) == int(r)
     ph, fn = fold_phase(time[good], period, t0), fnorm[good]
     r = _window_depth(ph, fn, period, duration_days, phase_offset * period)
     if r is None:

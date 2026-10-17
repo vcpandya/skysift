@@ -117,6 +117,21 @@ def test_stacked_depth_measures_a_short_transit_and_its_parity():
     assert stacked_depth(lc.time[:40], fn[:40], 0.6, 132.0, 1 / 24).n_in == 0
 
 
+def test_stacked_depth_residue_classes():
+    """``epochs=(n, r)`` keeps the epochs with ``round((t - t0) / period) % n == r``: a transit injected at 3P and
+    folded at P sits in class 0 only. The string forms are the classes of n = 2."""
+    lc = inject_transit(make_lightcurve(n_days=500, seed=33, noise_ppm=800), 9.0, 133.0, 0.15, 3000)
+    fn = detrend(lc)
+    cls = [stacked_depth(lc.time, fn, 3.0, 133.0, 0.15, epochs=(3, r)) for r in range(3)]
+    assert all(c.n_in > 0 for c in cls)
+    assert abs(cls[0].depth_ppm - 3000) < 0.15 * 3000 and cls[0].depth_ppm > 10 * cls[0].err_ppm
+    assert all(abs(c.depth_ppm) < 5 * c.err_ppm for c in cls[1:])
+    for name, pair in (("odd", (2, 1)), ("even", (2, 0))):
+        a = stacked_depth(lc.time, fn, 3.0, 133.0, 0.15, epochs=name)
+        b = stacked_depth(lc.time, fn, 3.0, 133.0, 0.15, epochs=pair)
+        assert (a.depth_ppm, a.err_ppm, a.n_in) == (b.depth_ppm, b.err_ppm, b.n_in)
+
+
 def test_stacked_depth_inflates_its_error_under_red_noise():
     base = make_lightcurve(n_days=300, cadence_min=30, noise_ppm=300, seed=32)
     f = base.flux * (1 - 1500e-6 * np.cos(2 * np.pi * (base.time - 132.0) / 0.3 + np.pi / 2))     # a 0.3 d wave repeats on every fold: red noise, zero at t0
