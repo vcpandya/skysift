@@ -15,12 +15,34 @@ router = APIRouter()
 
 RUNG_METRICS = {
     "rung1_detection": ["sde", "snr", "n_events", "duration_ratio", "stellar_source"],
-    "rung2_shape": ["depth_ppm", "depth_err_ppm", "odd_ppm", "even_ppm", "parity_sigma", "secondary_ppm",
+    "rung2_shape": ["stacked", "depth_ppm", "depth_err_ppm", "odd_ppm", "even_ppm", "parity_sigma", "secondary_ppm",
                     "secondary_sigma", "free_secondary_phase", "free_secondary_sigma", "box_chi2", "sine_chi2"],
-    "rung3_stability": ["p_value", "chi2", "dof", "n_events", "sap_psf_ratio"],
-    "rung4_novelty": ["cumulative", "q1_q17_dr25_tce", "toi", "kepler_eb", "gaia_nss_two_body_orbit",
+    "rung3_stability": ["stacked", "p_value", "chi2", "dof", "n_events", "sap_psf_ratio"],
+    "rung4_novelty": ["period_matched", "cumulative", "q1_q17_dr25_tce", "toi", "kepler_eb", "gaia_nss_two_body_orbit",
                       "gaia_vari_eclipsing_binary", "gaia_skipped"],
 }
+
+
+_HIDDEN = object()     # a metric the key-metrics cell cannot show; it stays in the raw metrics
+
+
+def _period_matched(rows):
+    """Rung 4's matching catalogue row as "catalogue id at N arcsec" (a row without coordinates has no separation)."""
+    if not rows or not isinstance(rows, list) or not isinstance(rows[0], dict): return _HIDDEN
+    r = rows[0]
+    sep = r.get("sep_arcsec")
+    if isinstance(sep, (int, float)) and not isinstance(sep, bool):
+        return f"{r.get('catalog')} {r.get('id')} at {sep:.1f} arcsec"
+    return f"{r.get('catalog')} {r.get('id')}, no position"
+
+
+def _display(key: str, value):
+    """A key metric as the ladder shows it: flags as yes or no, the period-matched row as text, anything else as it
+    is; other dicts and lists are hidden."""
+    if key == "period_matched": return _period_matched(value)
+    if isinstance(value, bool): return "yes" if value else "no"
+    if isinstance(value, (dict, list)): return _HIDDEN
+    return value
 COLUMNS = [("target_id", "target"), ("period", "period d"), ("depth_ppm", "depth ppm"), ("duration", "duration h"),
            ("sde", "SDE"), ("snr", "SNR"), ("n_events", "events"), ("detected", "detected")]
 
@@ -42,8 +64,7 @@ def _ladder_rows(tests: list[dict]) -> list[dict]:
     rows = []
     for t in tests:
         keys = RUNG_METRICS.get(t["rung"], [])
-        shown = [(k, t["metrics"].get(k)) for k in keys
-                 if k in t["metrics"] and not isinstance(t["metrics"][k], (dict, list))]
+        shown = [(k, v) for k in keys if k in t["metrics"] and (v := _display(k, t["metrics"][k])) is not _HIDDEN]
         rows.append({**t, "shown": shown, "raw": jsonutil.dumps(t["metrics"], indent=1)})
     return rows
 

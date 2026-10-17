@@ -132,3 +132,52 @@ def test_signal_page_lists_the_removed_waves(settings, tmp_path):
     r = client.get(f"/signals/{ids['candidate']}")
     assert r.status_code == 200 and "whitened: 2 waves removed (strongest P = 0.0665 d, 1,100 ppm)" in r.text
     assert "whitened" not in client.get(f"/signals/{ids['undetermined']}").text
+
+
+def _set_metrics(app, signal_id, rung, metrics, status=None):
+    with app.state.store.session() as s:
+        s.execute(text("update tests set metrics = :m where signal_id = :i and rung = :r"),
+                  {"m": json.dumps(metrics), "i": signal_id, "r": rung})
+        if status: s.execute(text("update tests set status = :st where signal_id = :i and rung = :r"),
+                             {"st": status, "i": signal_id, "r": rung})
+        s.commit()
+
+
+def _shown(html, rung):
+    """The key-metrics cell of one ladder row."""
+    row = html[html.index(f"<tr><td>{rung}</td>"):]
+    return row[:row.index("<details")]
+
+
+def test_rungs_2_and_3_show_whether_the_stacked_fold_answered(settings, tmp_path):
+    client, app, ids, _launcher = make_seeded_client(settings, tmp_path)
+    _set_metrics(app, ids["candidate"], "rung2_shape", {"stacked": True, "parity_sigma": 0.4, "n_events": 480})
+    _set_metrics(app, ids["candidate"], "rung3_stability", {"stacked": False, "p_value": 0.9, "n_events": 99})
+    r = client.get(f"/signals/{ids['candidate']}")
+    assert r.status_code == 200
+    assert '<span class="muted">stacked</span> yes' in _shown(r.text, "rung2_shape")
+    assert '<span class="muted">stacked</span> no' in _shown(r.text, "rung3_stability")
+
+
+def test_rung4_shows_the_period_matched_object_and_its_separation(settings, tmp_path):
+    client, app, ids, _launcher = make_seeded_client(settings, tmp_path)
+    matched = [{"catalog": "cumulative", "id": "K77777.01", "period": 13.77, "sep_arcsec": 90.04}]
+    _set_metrics(app, ids["candidate"], "rung4_novelty", {"cumulative": 1, "period_matched": matched}, status="fail")
+    r = client.get(f"/signals/{ids['candidate']}")
+    shown = _shown(r.text, "rung4_novelty")
+    assert '<span class="muted">period_matched</span> cumulative K77777.01 at 90.0 arcsec' in shown
+    without = [{**matched[0], "sep_arcsec": None}]
+    _set_metrics(app, ids["candidate"], "rung4_novelty", {"cumulative": 1, "period_matched": without})
+    shown = _shown(client.get(f"/signals/{ids['candidate']}").text, "rung4_novelty")
+    assert '<span class="muted">period_matched</span> cumulative K77777.01, no position' in shown
+
+
+def test_signal_header_says_when_the_period_was_doubled(settings, tmp_path):
+    client, app, ids, _launcher = make_seeded_client(settings, tmp_path)
+    extra = json.dumps({"baseline_days": 1400.0, "alias_resolved": {"from_period": 6.88475, "odd_ppm": 3600.0,
+                                                                    "even_ppm": 10.0, "parity_sigma": 40.0,
+                                                                    "sde_half": 21.1, "sde_double": 19.0}})
+    with app.state.store.session() as s:
+        s.execute(text("update signals set extra = :e where id = :i"), {"e": extra, "i": ids["candidate"]}); s.commit()
+    assert "period doubled from 6.88475 d" in client.get(f"/signals/{ids['candidate']}").text
+    assert "period doubled" not in client.get(f"/signals/{ids['undetermined']}").text
