@@ -194,12 +194,9 @@ def _salvage_queries(store: Store, payload, target_id: str) -> None:
         log.warning("could not salvage query log", exc_info=True)
 
 
-def _select_targets(source, store: Store, filter: dict, det, version: str, ladder_version: str,
-                    max_targets: int | None) -> tuple[list[tuple[Target, str]], int, int]:
-    """Enumerate the whole source, record every target (in batches), skip done job keys and keys that already
-    errored MAX_ATTEMPTS times, and return (the top ``max_targets`` remaining targets by priority, highest first;
-    skipped count; gave-up count)."""
-    todo, skipped, gave_up = [], 0, 0
+def _enumerate_targets(source, store: Store, filter: dict) -> list[Target]:
+    """Enumerate the whole source, record every target (in batches) and return them once each, in source order."""
+    out: list[Target] = []
     seen: set[str] = set()         # a source yielding one target twice must not start two runs of one job
     targets = iter(source.list_targets(filter))
     while batch := list(islice(targets, UPSERT_BATCH)):
@@ -207,10 +204,28 @@ def _select_targets(source, store: Store, filter: dict, det, version: str, ladde
         for t in batch:
             if t.target_id in seen: continue
             seen.add(t.target_id)
-            key = make_job_key(t.target_id, det.name, version, ladder_version)
-            if store.job_done(key): skipped += 1
-            elif store.attempts(key) >= MAX_ATTEMPTS: gave_up += 1
-            else: todo.append((t, key))
+            out.append(t)
+    return out
+
+
+def ranked_targets(source, store: Store, filter: dict, max_targets: int | None) -> list[Target]:
+    """The top ``max_targets`` targets of the source by priority, highest first, whatever has been searched before
+    (the null calibration takes the same stars a sweep would start with)."""
+    targets = sorted(_enumerate_targets(source, store, filter), key=priority_score, reverse=True)   # stable
+    return targets if max_targets is None else targets[:max_targets]
+
+
+def _select_targets(source, store: Store, filter: dict, det, version: str, ladder_version: str,
+                    max_targets: int | None) -> tuple[list[tuple[Target, str]], int, int]:
+    """Enumerate the whole source, record every target (in batches), skip done job keys and keys that already
+    errored MAX_ATTEMPTS times, and return (the top ``max_targets`` remaining targets by priority, highest first;
+    skipped count; gave-up count)."""
+    todo, skipped, gave_up = [], 0, 0
+    for t in _enumerate_targets(source, store, filter):
+        key = make_job_key(t.target_id, det.name, version, ladder_version)
+        if store.job_done(key): skipped += 1
+        elif store.attempts(key) >= MAX_ATTEMPTS: gave_up += 1
+        else: todo.append((t, key))
     todo.sort(key=lambda x: priority_score(x[0]), reverse=True)     # stable: ties keep source order
     return (todo if max_targets is None else todo[:max_targets]), skipped, gave_up
 

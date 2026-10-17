@@ -86,6 +86,52 @@ told otherwise. `skysift run --periodogram all|signals|off` sets this for one sw
 (`all`, `signals` or `off`, default `all`) sets the default. The envelopes of targets without a signal form the null
 set for calibrating `sde_min`. `skysift vet --spectrum` also writes the raw BLS spectrum for one target.
 
+## Calibrating the detection threshold
+
+Rung 1 passes a peak whose per-band SDE is at least `thresholds.sde_min`. That threshold is read from searches of
+curves that cannot hold a real transit, so it has to be measured again after every change to the detrend, the
+pre-whitening or the detector: each of them moves the noise peaks. `calibrate` runs that null search.
+
+```bash
+python -m skysift calibrate --source kbonus_bkg --limit 1000 --workers-cpu 8 --retention keep
+python -m skysift calibrate-report data/calibration/kbonus_bkg.jsonl
+```
+
+For each of the `--limit` highest-priority targets (the order `run` uses) the light curve is detrended and
+pre-whitened exactly as in a sweep, then searched three times:
+
+* `real`: the flux as it is;
+* `inverted`: `2 - f`, so dips become bumps while systematics and stellar variability stay;
+* `scrambled`: the flux permuted within each quarter (seed 1), which leaves noise only.
+
+The detector is BoxDip without its masked second pass and alias resolution, so the numbers are the raw first-pass
+statistics that rung 1 thresholds. The window is 0.5 to 30 d unless `--min-period` and `--max-period` say otherwise,
+and `--nulls inverted` (or `scrambled`) searches one null only. Nothing is vetted and nothing is written to the results
+tables. Each target becomes one JSON line in `<data_dir>/calibration/<source>.jsonl` (or `--out`): `target_id`,
+`search_version`, `n_points`, the top three SDEs of each search, `real_top` (period, duration, depth, SDE and snr of the
+strongest real signal) and `seconds`.
+
+A line is written and flushed as soon as its target finishes, so Ctrl+C loses only the targets being searched at that
+moment, and the same command resumes by skipping every target already in the file. A raw file still in the blob is
+reused; anything else is downloaded and recorded as in a sweep, and the retention mode then applies. With the default
+`stream` the file is deleted once loaded, so `--retention keep` (1000 KBonus curves take about 9 GB) or a budget makes
+the next calibration cost CPU only. The file belongs to one search version (detector, period window, detrend and
+pre-whitening settings): after a change, `calibrate` refuses to append and asks for a new `--out`.
+
+Each target costs three searches of a 1400 d curve plus the pre-whitening: about 4.5 CPU-minutes over 0.5 to 30 d (264 s
+measured on one KBonus curve, 17 October 2026). The 1000-star pilot therefore takes about 9 to 10 hours on eight
+workers, and an interrupted run continues where it stopped.
+
+`calibrate-report` prints one row per kind: the number of curves that gave a peak, the median and maximum top SDE,
+and how many top SDEs sit at or above 7, 8, 9, 10, 11, 12 and 15 (at or above, as rung 1 passes `sde >= sde_min`).
+The last line gives the fraction of real curves at or above the configured `sde_min`. It refuses a file that mixes
+search versions unless `--all-versions` is given.
+
+The rule used on 17 October 2026: `sde_min` sits above the maximum scrambled-null top SDE of a few hundred curves,
+with margin. The scrambled row is pure noise, so its tail is the false-alarm rate on a quiet star. The inverted row
+keeps systematics and variability; its tail shows what pre-whitening and the later rungs must still reject. On 30
+curves the scrambled maximum was 10.1, hence the interim value of 11.
+
 ## Development setup
 
 ```bash

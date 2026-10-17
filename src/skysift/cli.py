@@ -50,6 +50,17 @@ def _ctx(retention: str | None = None, workers_io: int | None = None, workers_cp
     return s, store, blob_from_url(s.blob_url)
 
 
+def _period_window(s, min_period: float | None, max_period: float | None) -> None:
+    """Apply --min-period/--max-period to the settings' thresholds; an impossible window is a usage error."""
+    overrides = {k: v for k, v in (("min_period_days", min_period), ("max_period_days", max_period)) if v is not None}
+    if not overrides: return
+    try:
+        s.thresholds = Thresholds(**{**s.thresholds.model_dump(), **overrides})
+    except ValidationError as e:
+        msg = "; ".join(err["msg"] for err in e.errors())
+        raise typer.BadParameter(msg, param_hint="--min-period/--max-period") from e
+
+
 def _source(name: str, store, blob):
     from skysift.sources.factory import make_source
     try:
@@ -106,13 +117,7 @@ def run(source: str = typer.Option(...), gmag_max: float = 19.0,
                         format="%(asctime)s %(levelname)s %(name)s %(message)s")
     console = _console(stderr=True)
     s, store, blob = _ctx(retention, workers_io, workers_cpu)
-    overrides = {k: v for k, v in (("min_period_days", min_period), ("max_period_days", max_period)) if v is not None}
-    if overrides:
-        try:
-            s.thresholds = Thresholds(**{**s.thresholds.model_dump(), **overrides})
-        except ValidationError as e:
-            msg = "; ".join(err["msg"] for err in e.errors())
-            raise typer.BadParameter(msg, param_hint="--min-period/--max-period") from e
+    _period_window(s, min_period, max_period)
     if periodogram is not None:
         if periodogram not in ("all", "signals", "off"):
             raise typer.BadParameter("one of all, signals, off", param_hint="--periodogram")
@@ -143,6 +148,69 @@ def run(source: str = typer.Option(...), gmag_max: float = 19.0,
     if summary.get("stopped"):
         _plain(console, "\nstopped early: the same command resumes with the targets not yet done")
     _plain(_console(), jsonutil.dumps(summary, indent=1))
+
+
+@app.command()
+def calibrate(source: str = typer.Option(...),
+              limit: int = typer.Option(1000, min=1, help="Search the N highest-priority targets (the order of run)."),
+              nulls: str = typer.Option("scrambled,inverted", help="Null curves to search besides the real flux."),
+              workers_cpu: int | None = None,
+              out: str | None = typer.Option(None, help="Output file (default <data_dir>/calibration/<source>.jsonl)."),
+              min_period: float = typer.Option(0.5, help="Minimum search period (days)."),
+              max_period: float = typer.Option(30.0, help="Maximum search period (days)."),
+              gmag_max: float = 19.0, background_only: bool = typer.Option(True, "--background-only/--all"),
+              psffrac_min: float = 0.5, retention: str | None = None, verbose: bool = False):
+    """Null calibration of sde_min: search each target's real, inverted and quarter-scrambled flux and append the top
+    SDEs to a JSON-lines file. Resumable: targets already in the file are skipped."""
+    from skysift import calibrate as cal
+    from skysift.ui.plots import PARSERS
+    kinds = tuple(k.strip() for k in nulls.split(",") if k.strip())
+    if bad := [k for k in kinds if k not in cal.NULLS]:
+        raise typer.BadParameter(f"unknown null {', '.join(bad)}; choose from {', '.join(cal.NULLS)}",
+                                 param_hint="--nulls")
+    logging.basicConfig(level=logging.INFO if verbose else logging.WARNING,
+                        format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    console = _console(stderr=True)
+    s, store, blob = _ctx(retention, workers_cpu=workers_cpu)
+    _period_window(s, min_period, max_period)
+    src = _source(source, store, blob)
+    path = Path(out) if out else cal.default_path(s.data_dir, source)
+    _plain(console, f"period window: {s.thresholds.min_period_days:g} to {s.thresholds.max_period_days:g} days; "
+                    f"writing {path}")
+    try:
+        summary = cal.run(src, store, blob, s,
+                          filter={"gmag_max": gmag_max, "background_only": background_only, "psffrac_min": psffrac_min},
+                          limit=limit, out=path, nulls=kinds, parse=PARSERS.get(source),
+                          progress=lambda sm: _plain(console, f"written {sm['written']} of {sm['targets']}"
+                                                              f" (skipped {sm['skipped']}, errors {sm['errors']})",
+                                                     end="\r"))
+    except cal.VersionMismatch as e:
+        raise typer.BadParameter(str(e), param_hint="--out") from e
+    except DiskBudgetExceeded as e:
+        _plain(console, f"\nstopped: {e}; the same command resumes")
+        raise typer.Exit(3) from None
+    except KeyboardInterrupt:
+        _plain(console, "\ninterrupted: every finished target is in the file; the same command resumes")
+        raise typer.Exit(130) from None
+    _plain(console, "")
+    _plain(_console(), jsonutil.dumps(summary, indent=1))
+
+
+@app.command("calibrate-report")
+def calibrate_report(file: str = typer.Argument(..., help="A calibrate output file."),
+                     all_versions: bool = typer.Option(False, "--all-versions",
+                                                       help="Pool lines written by different search versions.")):
+    """Per kind (real, inverted, scrambled): curves, median and maximum top SDE, counts at or above 7 to 15, and how
+    many real curves clear sde_min."""
+    from skysift import calibrate as cal
+    if not Path(file).is_file():
+        raise typer.BadParameter(f"{file} is not a file", param_hint="FILE")
+    s = load_settings()
+    try:
+        summary = cal.summarise(cal.read_rows(Path(file)), s.thresholds.sde_min, all_versions=all_versions)
+    except ValueError as e:
+        raise typer.BadParameter(str(e), param_hint="--all-versions") from e
+    _plain(_console(), cal.format_table(summary))
 
 
 @app.command()
