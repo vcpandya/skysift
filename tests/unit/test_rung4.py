@@ -74,7 +74,7 @@ def test_other_period_passes_and_is_listed():
     r = Rung4Novelty().run(SIG, bundle(resp))
     assert r.status == TestStatus.PASS
     assert r.metrics["cumulative"] == 1
-    assert r.metrics["other_period_objects"] == [("cumulative", "K99999.01", 3.1)]
+    assert r.metrics["other_period_objects"] == [("cumulative", "K99999.01", 3.1, None)]
 
 
 def test_other_period_lists_eb_and_gaia_rows_too():
@@ -83,8 +83,8 @@ def test_other_period_lists_eb_and_gaia_rows_too():
     resp["nss_two_body_orbit"] = b"source_id,period\n2103792461826460288,7.0\n"
     r = Rung4Novelty().run(SIG, bundle(resp))
     assert r.status == TestStatus.PASS
-    assert ("kepler_eb", "5689121", 5.0) in r.metrics["other_period_objects"]
-    assert ("gaia_nss_two_body_orbit", "2103792461826460288", 7.0) in r.metrics["other_period_objects"]
+    assert ("kepler_eb", "5689121", 5.0, None) in r.metrics["other_period_objects"]
+    assert ("gaia_nss_two_body_orbit", "2103792461826460288", 7.0, None) in r.metrics["other_period_objects"]
 
 
 def test_unparseable_periods_are_not_listed():
@@ -152,7 +152,7 @@ def test_gaia_eclipsing_binary_other_frequency_is_listed_as_period():
     resp = dict(EMPTY); resp["vari_eclipsing_binary"] = b"source_id,frequency\n2103792461826460288,0.2\n"
     r = Rung4Novelty().run(SIG, bundle(resp))
     assert r.status == TestStatus.PASS
-    assert r.metrics["other_period_objects"] == [("gaia_vari_eclipsing_binary", "2103792461826460288", pytest.approx(5.0))]
+    assert r.metrics["other_period_objects"] == [("gaia_vari_eclipsing_binary", "2103792461826460288", pytest.approx(5.0), None)]
 
 
 @pytest.mark.parametrize("key", ["cumulative", "q1_q17_dr25_tce", "J/AJ/151/68", "vari_eclipsing_binary"])
@@ -262,8 +262,41 @@ def test_period_matched_neighbour_beyond_120_arcsec_is_not_known():
 def test_unrelated_neighbour_at_another_period_is_not_known():
     r = Rung4Novelty().run(SIG, bundle({**EMPTY, "cumulative": _neighbour(90, period=13.77 * 1.37)}))
     assert r.status == TestStatus.PASS and r.metrics["cumulative"] == 1
-    assert r.metrics["other_period_objects"] == [("cumulative", "K77777.01", pytest.approx(13.77 * 1.37))]
+    assert r.metrics["other_period_objects"] == [("cumulative", "K77777.01", pytest.approx(13.77 * 1.37),
+                                                  pytest.approx(90, abs=1.0))]
     assert "period_matched" not in r.metrics
+
+
+def test_neighbour_at_exactly_the_signal_period_is_known():
+    r = Rung4Novelty().run(SIG, bundle({**EMPTY, "cumulative": _neighbour(90, period=SIG.period)}))
+    assert r.status == TestStatus.FAIL and r.reason == "known:cumulative:K77777.01"
+
+
+def test_neighbour_half_a_percent_off_the_signal_period_is_not_known():
+    """A neighbour matched by position only needs 0.1 percent: a random catalogue period lands within 1 percent of
+    one of three aliases about 0.9 percent of the time in a 120 arcsec cone, while a real blend's Kepler and BLS
+    periods agree to about 1e-4."""
+    r = Rung4Novelty().run(SIG, bundle({**EMPTY, "cumulative": _neighbour(90, period=SIG.period * 1.005)}))
+    assert r.status == TestStatus.PASS and "period_matched" not in r.metrics
+    ((label, ident, period, sep),) = r.metrics["other_period_objects"]
+    assert (label, ident, period) == ("cumulative", "K77777.01", pytest.approx(SIG.period * 1.005))
+    assert abs(sep - 90) < 1.0
+    json.dumps(r.metrics, allow_nan=False)
+
+
+def test_own_kepid_row_half_a_percent_off_is_still_known():
+    row = f"kepid,kepoi_name,koi_period,ra,dec\n5689121,K99999.01,{SIG.period * 1.005},{TGT.ra},{TGT.dec}\n".encode()
+    r = Rung4Novelty().run(SIG, bundle({**EMPTY, "cumulative": row}))
+    assert r.status == TestStatus.FAIL and r.reason == "known:cumulative:K99999.01"
+    assert r.metrics["period_matched"][0]["sep_arcsec"] == pytest.approx(0.0, abs=1e-6)
+
+
+def test_own_kepid_row_is_matched_before_a_neighbour():
+    rows = ("kepid,kepoi_name,koi_period,ra,dec\n"
+            f"5689999,K77777.01,{SIG.period},{TGT.ra},{TGT.dec + 30 / 3600}\n"
+            f"5689121,K99999.01,{SIG.period},{TGT.ra},{TGT.dec}\n").encode()
+    r = Rung4Novelty().run(SIG, bundle({**EMPTY, "cumulative": rows}))
+    assert r.status == TestStatus.FAIL and r.reason == "known:cumulative:K99999.01"
 
 
 def test_row_without_coordinates_has_no_separation():

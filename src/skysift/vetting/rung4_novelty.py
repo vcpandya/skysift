@@ -51,8 +51,26 @@ def _tsv_rows(data: bytes) -> tuple[list[str] | None, list[dict]]:
     return header, [dict(zip(header, r)) for r in rows if len(r) == len(header)]
 
 
-def _period_match(p_signal: float, p_cat: float, tol=0.01) -> bool:
+OWN_PERIOD_TOL = 0.01          # rows of the target itself: its own kepid, or the Gaia tables queried by source_id
+NEIGHBOUR_PERIOD_TOL = 0.001   # rows matched by position only
+
+
+def _period_match(p_signal: float, p_cat: float, tol=OWN_PERIOD_TOL) -> bool:
+    """True when ``p_signal`` is within ``tol`` (relative) of 0.5, 1 or 2 times the catalogue period.
+
+    The tolerance depends on whose row it is. A row of the target itself keeps 1 percent, which absorbs the period
+    error of a short or noisy detection. A neighbour inside the 120 arcsec cone (36 times the area of the old 20 arcsec
+    one) gets 0.1 percent: a random catalogue period lands in one of three 2-percent windows about 0.9 percent of the
+    time, so the old tolerance would reject about one genuine new signal in a hundred as known, while the Kepler and
+    BLS periods of a real blend agree to about 1e-4."""
     return any(abs(p_signal - k * p_cat) / (k * p_cat) < tol for k in (0.5, 1.0, 2.0)) if p_cat and p_cat > 0 else False
+
+
+def _same_kic(value, kic: int | None) -> bool:
+    """True when a catalogue KIC or kepid field names ``kic`` (VizieR may pad it with spaces or zeros)."""
+    if not kic: return False
+    try: return int(str(value).strip()) == int(kic)
+    except (TypeError, ValueError): return False
 
 
 def _box(ra: float, dec: float, radius_deg: float) -> str:
@@ -128,7 +146,6 @@ class Rung4Novelty:
         t = b.target
         cone = _box(t.ra, t.dec, self.radius_deg)                 # exact circle applied by _within on the rows
         where_cum = f"kepid={t.kic} or {cone}" if t.kic else cone   # the target's own KOI/TCE rows, plus any neighbour
-        own_kepid = str(t.kic) if t.kic else None
         koi_id = lambda r: r.get("kepoi_name")
         tce_id = lambda r: f"{r.get('kepid')}.{r.get('tce_plnt_num')}"
         toi_id = lambda r: r.get("toi")
@@ -140,21 +157,26 @@ class Rung4Novelty:
         found, metrics = [], {}
 
         def scan(label, parsed, pcol, ident, period=None):
-            """Record counts and other-period rows; return a known-reason identifier on a period match (the matching
-            row goes to ``period_matched`` with its separation from the target)."""
+            """Record counts and other-period rows (catalogue, id, period, separation in arcsec or None); return a
+            known-reason identifier on a period match (the matching row goes to ``period_matched`` with its
+            separation from the target). Rows of the target itself (its own kepid or KIC; every row of a Gaia table,
+            which is queried by source_id) are matched first and at 1 percent; neighbours at 0.1 percent."""
             header, rows = parsed
             if header is None: raise _SchemaError(f"schema:{label}:empty response")
             if rows and pcol not in header: raise _SchemaError(f"schema:{label}:missing {pcol}")
+            by_id = label.startswith("gaia_")
+            own = lambda r: by_id or _same_kic(r.get("kepid"), t.kic) or _same_kic(r.get("KIC"), t.kic)
             if "ra" in header and "dec" in header:                 # box query: keep only rows inside the circle
-                rows = [r for r in rows if (own_kepid and r.get("kepid") == own_kepid) or _within(r, t.ra, t.dec, self.radius_deg)]
+                rows = [r for r in rows if own(r) or _within(r, t.ra, t.dec, self.radius_deg)]
             metrics[label] = len(rows)
-            for r in rows:
+            for r in sorted(rows, key=lambda r: not own(r)):       # stable: the target's own rows first
                 p = period(r) if period else _to_float(r.get(pcol))
                 if p <= 0: continue
-                if _period_match(s.period, p):
-                    metrics["period_matched"] = [{"catalog": label, "id": ident(r), "period": p, "sep_arcsec": _sep_arcsec(r, t.ra, t.dec)}]
+                sep = _sep_arcsec(r, t.ra, t.dec)
+                if _period_match(s.period, p, OWN_PERIOD_TOL if own(r) else NEIGHBOUR_PERIOD_TOL):
+                    metrics["period_matched"] = [{"catalog": label, "id": ident(r), "period": p, "sep_arcsec": sep}]
                     return ident(r)
-                found.append((label, ident(r), p))
+                found.append((label, ident(r), p, sep))
             return None
 
         svc = "exoarchive"
