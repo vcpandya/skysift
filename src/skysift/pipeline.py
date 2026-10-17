@@ -5,12 +5,14 @@ import importlib
 import json
 import logging
 import multiprocessing
+import os
 import pickle
 import signal
 import time
 from collections import deque
 from collections.abc import Callable
 from concurrent.futures import FIRST_COMPLETED, Future, ProcessPoolExecutor, ThreadPoolExecutor, wait
+from concurrent.futures.process import BrokenProcessPool
 from itertools import islice
 
 from skysift import jsonutil, net
@@ -40,6 +42,8 @@ log = logging.getLogger(__name__)
 DEFAULT_LADDER_VERSION = "1"
 UPSERT_BATCH = 1000
 MAX_ATTEMPTS = 3            # spec section 9: a target that errors three times is left for a human
+MAX_POOL_RESTARTS = 2       # a CPU pool that breaks a third time in one sweep ends the sweep
+POOL_BROKE_ERROR = f"{UNAVAILABLE_PREFIX} worker pool broke"     # never counted as an attempt
 SEARCH_CONFIG_KEYS = ("oversample", "n_bands", "n_refine", "refine_oversample", "two_stage", "mask_iterations",
                      "alias_resolution")
 
@@ -93,6 +97,14 @@ class _QueryRecorder:
                           "nbytes": nbytes, "sha256": sha256, "error": error, "utc": utcnow().isoformat()})
 
 
+def _error_text(e: Exception) -> str:
+    """Run error text. An outage (MAST down, TLS failure) or a worker process dying under the pool (killed by the OS,
+    out of memory) is not the target's fault: the ``unavailable:`` prefix keeps it from counting as an attempt."""
+    if isinstance(e, ServiceUnavailable): return f"{UNAVAILABLE_PREFIX} {e}"
+    if isinstance(e, BrokenProcessPool): return POOL_BROKE_ERROR
+    return repr(e)
+
+
 def _search(det, lc, fn, th, keep_spectrum=False):
     """Detectors that implement search() give signals plus the periodogram; older ones give signals only."""
     if hasattr(det, "search"):
@@ -111,8 +123,12 @@ def _cpu_work(lc_pickle: bytes, target_json: str, thresholds_json: str, detector
 
     ``fetch_module`` names a module whose ``fetch`` replaces ``net.fetch`` for the rungs (tests use it to keep rung 4
     off the network; a monkeypatch in the parent never reaches a spawned worker). The pickle comes only from this
-    package's own main process (``_fetch``), never from outside data."""
+    package's own main process (``_fetch``), never from outside data.
+
+    Test-only hook: a light curve whose ``meta["__crash_worker__"]`` is truthy makes the worker process die at once
+    (``os._exit(3)``), as an out-of-memory kill would, so the tests can break the pool for real."""
     lc: LightCurve = pickle.loads(lc_pickle)
+    if lc.meta.get("__crash_worker__"): os._exit(3)
     target = Target.model_validate_json(target_json); th = Thresholds.model_validate_json(thresholds_json)
     # KBonus and other adapters set target_id themselves; their value wins on purpose (setdefault), and sources
     # that leave it out get the pipeline's target id so detector output names the right star
@@ -250,7 +266,7 @@ def run(source, store: Store, blob: Blob, settings: Settings, filter: dict, dete
     th_json = settings.thresholds.model_dump_json()
     version = search_version(det, settings.thresholds)
     todo, skipped, gave_up = _select_targets(source, store, filter, det, version, ladder_version, max_targets)
-    summary = {"processed": 0, "skipped": skipped, "gave_up": gave_up, "errors": 0, "signals": 0,
+    summary = {"processed": 0, "skipped": skipped, "gave_up": gave_up, "errors": 0, "signals": 0, "pool_restarts": 0,
                "outcomes": {"pass": 0, "fail": 0, "undetermined": 0}}
     start = time.time()
     max_fetch, max_cpu = 2 * settings.workers_io, 2 * settings.workers_cpu
@@ -261,9 +277,7 @@ def run(source, store: Store, blob: Blob, settings: Settings, filter: dict, dete
     cpu_jobs: dict[Future, tuple[Target, int]] = {}
 
     def fail(t: Target, rid: int | None, e: Exception) -> None:
-        # an outage (MAST down, TLS failure) is recorded but never counted toward the target's three attempts
-        text = f"{UNAVAILABLE_PREFIX} {e}" if isinstance(e, ServiceUnavailable) else repr(e)
-        if rid is not None: store.finish_run(rid, "error", text)
+        if rid is not None: store.finish_run(rid, "error", _error_text(e))
         store.set_target_state(t.target_id, "error")
         retention.release_target(t.target_id)            # nothing to pin: free whatever the fetch left behind
         summary["errors"] += 1
@@ -279,6 +293,19 @@ def run(source, store: Store, blob: Blob, settings: Settings, filter: dict, dete
             log.warning("fetch or run start failed for %s", t.target_id, exc_info=True)
             fail(t, rid, e)
 
+    def pool_broke(e: BrokenProcessPool, *popped: tuple[Target, int]) -> None:
+        """A worker died and took the pool with it: every held run fails with it, uncharged. The pool is rebuilt
+        (MAX_POOL_RESTARTS times per sweep, then the sweep ends); fetched targets in ``ready`` go to the new pool."""
+        nonlocal cpu_pool
+        held = [*popped, *cpu_jobs.values()]
+        cpu_jobs.clear()
+        log.error("CPU worker pool broke (a worker process died): %d held runs marked unavailable", len(held))
+        for t, rid in held: fail(t, rid, e)
+        if summary["pool_restarts"] >= MAX_POOL_RESTARTS: raise e
+        summary["pool_restarts"] += 1
+        cpu_pool.shutdown(wait=True, cancel_futures=True)
+        cpu_pool = _cpu_pool(settings)
+
     def on_vetted(fut: Future) -> None:
         t, rid = cpu_jobs.pop(fut)
         payload = None
@@ -286,6 +313,8 @@ def run(source, store: Store, blob: Blob, settings: Settings, filter: dict, dete
             payload = fut.result()
             # one transaction: signals, tests, queries, periodogram row, evidence pins, finished run, target state
             counts = _write_results(store, blob, rid, t.target_id, payload)
+        except BrokenProcessPool as e:
+            pool_broke(e, (t, rid)); return
         except Exception as e:
             log.exception("processing failed for %s", t.target_id)
             _salvage_queries(store, payload, t.target_id)
@@ -307,9 +336,13 @@ def run(source, store: Store, blob: Blob, settings: Settings, filter: dict, dete
         nonlocal stopping
         # fetched targets always go on to the CPU pool: their run has started and the file is on disk
         while ready and len(cpu_jobs) < max_cpu:
-            t, rid, lc_pickle = ready.popleft()
-            cpu_jobs[cpu_pool.submit(_cpu_work, lc_pickle, t.model_dump_json(), th_json, detector_name,
-                                     ladder_version, with_novelty, fetch_module, settings.store_periodogram)] = (t, rid)
+            t, rid, lc_pickle = ready[0]
+            try:
+                fut = cpu_pool.submit(_cpu_work, lc_pickle, t.model_dump_json(), th_json, detector_name,
+                                      ladder_version, with_novelty, fetch_module, settings.store_periodogram)
+            except BrokenProcessPool as e:      # broke since the last result: this target stays first in line
+                pool_broke(e); continue
+            ready.popleft(); cpu_jobs[fut] = (t, rid)
         if not stopping and stop_requested():
             stopping = True
             summary["stopped"] = "graceful"
@@ -326,7 +359,7 @@ def run(source, store: Store, blob: Blob, settings: Settings, filter: dict, dete
             done, _ = wait([*fetches, *cpu_jobs], return_when=FIRST_COMPLETED)
             for fut in done:
                 if fut in fetches: on_fetched(fut)
-                else: on_vetted(fut)
+                elif fut in cpu_jobs: on_vetted(fut)        # absent: a pool break in this batch already failed it
             done = fut = None                              # drop the last references to payloads and results
             top_up()
     except BaseException as e:
