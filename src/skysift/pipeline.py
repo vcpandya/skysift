@@ -262,7 +262,7 @@ def _ignore_sigint() -> None:
     signal.signal(signal.SIGINT, signal.SIG_IGN)
 
 
-def _terminate_workers(pool: ProcessPoolExecutor) -> None:
+def terminate_workers(pool: ProcessPoolExecutor) -> None:
     """The hard stop: kill the pool's worker processes so shutdown() returns at once instead of after their current
     target (up to a few minutes of BLS). The workers ignore SIGINT, so a terminal's Ctrl+C alone does not end them."""
     for proc in list(getattr(pool, "_processes", {}).values()):     # the executor keeps no public handle on them
@@ -270,10 +270,14 @@ def _terminate_workers(pool: ProcessPoolExecutor) -> None:
         except OSError: pass
 
 
-def _cpu_pool(settings: Settings) -> ProcessPoolExecutor:
+def cpu_pool(settings: Settings) -> ProcessPoolExecutor:
+    """The CPU worker pool of a sweep (and of calibrate): ``workers_cpu`` spawned processes that ignore SIGINT."""
     # spawn everywhere (the Windows default): forking while the I/O threads run is unsafe on POSIX
     return ProcessPoolExecutor(settings.workers_cpu, mp_context=multiprocessing.get_context("spawn"),
                                initializer=_ignore_sigint)
+
+
+_cpu_pool, _terminate_workers = cpu_pool, terminate_workers     # the former private names
 
 
 def run(source, store: Store, blob: Blob, settings: Settings, filter: dict, detector_name: str = "box_dip",
@@ -331,7 +335,7 @@ def run(source, store: Store, blob: Blob, settings: Settings, filter: dict, dete
         are all marked unavailable, uncharged, as the culprit is unknown. Either way the run counts toward
         MAX_POOL_BREAKS, so a target that always kills its worker is given up after three breaks. The pool is rebuilt MAX_POOL_RESTARTS times per sweep, then the break ends the sweep. Fetched
         targets in ``ready`` go to the new pool."""
-        nonlocal cpu_pool
+        nonlocal workers
         held = {**(popped or {}), **cpu_jobs}
         cpu_jobs.clear()
         # settled before the break: a result, or the worker's own exception (vetted fails it with that error)
@@ -346,8 +350,8 @@ def run(source, store: Store, blob: Blob, settings: Settings, filter: dict, dete
             vetted(f, *held[f], unwritten=frozenset(held[g][0].target_id for g in settled[i + 1:]))
         if summary["pool_restarts"] >= MAX_POOL_RESTARTS: raise e
         summary["pool_restarts"] += 1
-        cpu_pool.shutdown(wait=True, cancel_futures=True)
-        cpu_pool = _cpu_pool(settings)
+        workers.shutdown(wait=True, cancel_futures=True)
+        workers = cpu_pool(settings)
 
     def on_vetted(fut: Future) -> None:
         vetted(fut, *cpu_jobs.pop(fut))
@@ -383,7 +387,7 @@ def run(source, store: Store, blob: Blob, settings: Settings, filter: dict, dete
         while ready and len(cpu_jobs) < max_cpu:
             t, rid, lc_pickle = ready[0]
             try:
-                fut = cpu_pool.submit(_cpu_work, lc_pickle, t.model_dump_json(), th_json, detector_name,
+                fut = workers.submit(_cpu_work, lc_pickle, t.model_dump_json(), th_json, detector_name,
                                       ladder_version, with_novelty, fetch_module, settings.store_periodogram)
             except BrokenProcessPool as e:      # broke since the last result: this target stays first in line
                 pool_broke(e); continue
@@ -397,7 +401,7 @@ def run(source, store: Store, blob: Blob, settings: Settings, filter: dict, dete
             fetches[io_pool.submit(_fetch, source, nxt[0])] = nxt
 
     io_pool = ThreadPoolExecutor(settings.workers_io)
-    cpu_pool = _cpu_pool(settings)
+    workers = cpu_pool(settings)
     try:
         top_up()
         while fetches or cpu_jobs:
@@ -409,11 +413,11 @@ def run(source, store: Store, blob: Blob, settings: Settings, filter: dict, dete
             top_up()
     except BaseException as e:
         # stop now: queued fetches and CPU jobs are dropped; their runs stay 'running' (superseded when redone)
-        if isinstance(e, KeyboardInterrupt): _terminate_workers(cpu_pool)     # "stop now" means now
-        io_pool.shutdown(wait=True, cancel_futures=True); cpu_pool.shutdown(wait=True, cancel_futures=True)
+        if isinstance(e, KeyboardInterrupt): terminate_workers(workers)     # "stop now" means now
+        io_pool.shutdown(wait=True, cancel_futures=True); workers.shutdown(wait=True, cancel_futures=True)
         if isinstance(e, DiskBudgetExceeded):
             e.summary = {**summary, "seconds": time.time() - start}       # the CLI still reports the work done
         raise
-    io_pool.shutdown(); cpu_pool.shutdown()
+    io_pool.shutdown(); workers.shutdown()
     summary["seconds"] = time.time() - start
     return summary

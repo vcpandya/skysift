@@ -55,6 +55,32 @@ def test_run_passes_limit_as_max_targets_and_period_overrides(settings, monkeypa
     assert "period window: 5 to 40 days" in r.stderr
 
 
+def test_run_warns_when_sde_min_is_not_calibrated_for_its_search_version(settings, monkeypatch):
+    """The warning compares the calibration file with the version calibrate would write for this sweep's window
+    (calibrate searches with the masked pass and alias resolution off, so its version is never the sweep's own)."""
+    from skysift import calibrate, cli, pipeline
+    monkeypatch.setattr(pipeline, "run", lambda *a, **kw: {"processed": 0})
+    monkeypatch.setattr(cli, "_source", lambda name, store, blob: object())
+    warning = "sde_min is not calibrated for this search version; run skysift calibrate"
+    path = settings.data_dir / "calibration" / "kbonus_bkg.jsonl"
+
+    r = CliRunner().invoke(app, ["run", "--source", "kbonus_bkg"])                  # no file at all
+    assert r.exit_code == 0 and warning in r.stderr and str(path) in r.stderr
+    assert len([x for x in r.stderr.splitlines() if warning in x]) == 1 and json.loads(r.stdout) == {"processed": 0}
+
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({"target_id": "a", "search_version": "1+00000000"}) + "\n", encoding="utf-8")
+    r = CliRunner().invoke(app, ["run", "--source", "kbonus_bkg"])                  # another version
+    assert r.exit_code == 0 and warning in r.stderr and "1+00000000" in r.stderr
+
+    current = calibrate.search_version(calibrate.calibration_detector(), settings.thresholds)
+    path.write_text(json.dumps({"target_id": "a", "search_version": current}) + "\n", encoding="utf-8")
+    r = CliRunner().invoke(app, ["run", "--source", "kbonus_bkg"])                  # calibrated: silent
+    assert r.exit_code == 0 and warning not in r.stderr
+    r = CliRunner().invoke(app, ["run", "--source", "kbonus_bkg", "--max-period", "30"])     # another window
+    assert r.exit_code == 0 and warning in r.stderr
+
+
 def test_run_passes_periodogram_mode(settings, monkeypatch):
     from skysift import cli, pipeline
     seen = {}

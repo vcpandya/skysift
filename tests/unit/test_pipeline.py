@@ -372,12 +372,12 @@ class _FakePool:
 
 
 def _fake_pools(monkeypatch, *scripts):
-    """Every _cpu_pool call builds the next scripted pool (the last script repeats); returns the pools built."""
+    """Every cpu_pool call builds the next scripted pool (the last script repeats); returns the pools built."""
     pools = []
 
     def make(_settings):
         pools.append(_FakePool(scripts[min(len(pools), len(scripts) - 1)])); return pools[-1]
-    monkeypatch.setattr(pipeline, "_cpu_pool", make)
+    monkeypatch.setattr(pipeline, "cpu_pool", make)
     return pools
 
 
@@ -715,9 +715,9 @@ def test_default_stop_check_is_the_stop_file_under_the_data_dir(settings, monkey
 def test_cpu_workers_ignore_sigint_so_a_terminal_ctrl_c_reaches_only_the_scheduler(settings):
     import signal
 
-    from skysift.pipeline import _cpu_pool
+    from skysift.pipeline import cpu_pool
     s = load_settings()
-    pool = _cpu_pool(s)
+    pool = cpu_pool(s)
     try:
         assert pool.submit(signal.getsignal, signal.SIGINT).result(timeout=60) == signal.SIG_IGN
     finally:
@@ -727,11 +727,12 @@ def test_cpu_workers_ignore_sigint_so_a_terminal_ctrl_c_reaches_only_the_schedul
 def test_terminate_workers_makes_the_hard_stop_immediate():
     import time
 
-    from skysift.pipeline import _cpu_pool, _terminate_workers
-    pool = _cpu_pool(load_settings())
+    from skysift.pipeline import _cpu_pool, _terminate_workers, cpu_pool, terminate_workers
+    assert (_cpu_pool, _terminate_workers) == (cpu_pool, terminate_workers)     # the old names stay
+    pool = cpu_pool(load_settings())
     fut = pool.submit(time.sleep, 60)
     t0 = time.monotonic()
-    _terminate_workers(pool)
+    terminate_workers(pool)
     pool.shutdown(wait=True, cancel_futures=True)
     assert time.monotonic() - t0 < 20 and fut.done() and multiprocessing.active_children() == []
 

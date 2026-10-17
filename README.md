@@ -119,10 +119,14 @@ strongest real signal) and `seconds`.
 
 A line is written and flushed as soon as its target finishes, so Ctrl+C loses only the targets being searched at that
 moment, and the same command resumes by skipping every target already in the file. A raw file still in the blob is
-reused; anything else is downloaded and recorded as in a sweep, and the retention mode then applies. With the default
-`stream` the file is deleted once loaded, so `--retention keep` (1000 KBonus curves take about 9 GB) or a budget makes
-the next calibration cost CPU only. The file belongs to one search version (detector, period window, detrend and
-pre-whitening settings): after a change, `calibrate` refuses to append and asks for a new `--out`.
+reused and left where it is; anything else is downloaded and recorded as in a sweep, and the retention mode then
+applies to it. With the default `stream` a downloaded file is deleted once loaded, so every recalibration would download
+the curves again. `--retention keep` is the pilot setting: it keeps the files (1000 KBonus curves take about 9 GB), so
+the next calibration, after a change to the detrend or the detector, costs CPU only. Under a budget, the files of
+targets still being searched are never evicted. The file belongs to one search version (detector, period window,
+detrend and pre-whitening settings): after a change, `calibrate` refuses to append and asks for a new `--out`.
+`skysift run` prints a one-line warning before a sweep when `<data_dir>/calibration/<source>.jsonl` is missing or was
+written by another search version than this sweep's settings need.
 
 Each target costs the pre-whitening plus three searches of a 1400 d curve. Measured on one KBonus curve
 (gaia-dr3-2076514437343928064, 17 October 2026): at the production window of 0.5 to 200 d the preparation takes 4 s

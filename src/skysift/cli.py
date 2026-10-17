@@ -61,6 +61,23 @@ def _period_window(s, min_period: float | None, max_period: float | None) -> Non
         raise typer.BadParameter(msg, param_hint="--min-period/--max-period") from e
 
 
+def _calibration_warning(s, source: str) -> str | None:
+    """One line when ``<data_dir>/calibration/<source>.jsonl`` is missing or holds lines of another search version
+    than calibrate would write for this sweep's window and search settings (calibrate searches without the masked
+    pass and the alias resolution, so its version is compared with that, not with the sweep's own); None when the
+    file matches."""
+    from skysift import calibrate as cal
+    path = cal.default_path(s.data_dir, source)
+    expected = cal.search_version(cal.calibration_detector(), s.thresholds)
+    if not path.is_file():
+        found = f"no calibration file {path}"
+    else:
+        versions = sorted({str(r.get("search_version")) for r in cal.read_rows(path)})
+        if versions == [expected]: return None
+        found = f"{path} holds search version {', '.join(versions) or 'none'}, this sweep needs {expected}"
+    return f"warning: sde_min is not calibrated for this search version; run skysift calibrate ({found})"
+
+
 def _source(name: str, store, blob):
     from skysift.sources.factory import make_source
     try:
@@ -125,6 +142,7 @@ def run(source: str = typer.Option(...), gmag_max: float = 19.0,
     from skysift import pipeline
     src = _source(source, store, blob)
     _plain(console, f"period window: {s.thresholds.min_period_days:g} to {s.thresholds.max_period_days:g} days")
+    if warning := _calibration_warning(s, source): _plain(console, warning)
     interrupt = InterruptOnce(lambda text: _plain(console, f"\n{text}"), stop_request_path(s.data_dir))
     try:
         previous = signal.signal(signal.SIGINT, interrupt)
@@ -164,7 +182,7 @@ def calibrate(source: str = typer.Option(...),
     """Null calibration of sde_min: search each target's real, inverted and quarter-scrambled flux and append the top
     SDEs to a JSON-lines file. Resumable: targets already in the file are skipped."""
     from skysift import calibrate as cal
-    from skysift.ui.plots import PARSERS
+    from skysift.sources import PARSERS
     kinds = tuple(k.strip() for k in nulls.split(",") if k.strip())
     if bad := [k for k in kinds if k not in cal.NULLS]:
         raise typer.BadParameter(f"unknown null {', '.join(bad)}; choose from {', '.join(cal.NULLS)}",

@@ -22,7 +22,7 @@ from skysift import jsonutil
 from skysift.config import Settings, Thresholds
 from skysift.detectors.box_dip import BoxDip
 from skysift.models import LightCurve, Target
-from skysift.pipeline import _cpu_pool, _terminate_workers, ranked_targets, search_version, whitened_flux
+from skysift.pipeline import cpu_pool, ranked_targets, search_version, terminate_workers, whitened_flux
 from skysift.store.db import ArtifactRow, Store
 from skysift.store.retention import Retention, RetentionPolicy
 
@@ -163,7 +163,7 @@ def run(source, store: Store, blob, settings: Settings, filter: dict, limit: int
     th_json = th.model_dump_json()
     out.parent.mkdir(parents=True, exist_ok=True)
     start = time.time()
-    pool = _cpu_pool(settings)
+    pool = cpu_pool(settings)
     jobs: dict = {}
 
     def top_up() -> None:
@@ -177,10 +177,12 @@ def run(source, store: Store, blob, settings: Settings, filter: dict, limit: int
                 retention.release_target(t.target_id)    # a download that failed after storing its file frees it
                 continue
             summary["from_cache"] += cached
-            # the curve is in memory now: the raw file goes (stream) or becomes evictable (budget) as in a sweep
-            retention.release_target(t.target_id)
-            retention.enforce_budget()
+            # the curve is in memory now: a file this run downloaded goes (stream) as in a sweep; a file served from
+            # the blob was kept by someone (an earlier sweep, a --retention keep pilot) and stays
+            if not cached: retention.release_target(t.target_id)
             jobs[pool.submit(search_target, lc_pickle, th_json, tuple(nulls))] = t
+            # budget: evict least recently used files, never those of targets still being searched (as the sweep)
+            retention.enforce_budget(exclude_targets={x.target_id for x in jobs.values()})
 
     with out.open("a", encoding="utf-8", newline="\n") as fh:
         def write(fut, t: Target) -> None:
@@ -208,7 +210,7 @@ def run(source, store: Store, blob, settings: Settings, filter: dict, limit: int
             # rather than wait minutes for searches whose results would be dropped; the same command resumes
             for fut, t in list(jobs.items()):
                 if fut.done() and not fut.cancelled(): write(fut, t)
-            _terminate_workers(pool)                  # the workers ignore SIGINT: terminate them
+            terminate_workers(pool)                   # the workers ignore SIGINT: terminate them
             pool.shutdown(wait=True, cancel_futures=True)
             raise
     pool.shutdown()

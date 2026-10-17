@@ -170,6 +170,44 @@ def test_calibrate_counts_a_failed_fetch_and_continues(settings, monkeypatch):
         assert arts and all(a.deleted_at is not None for a in arts)
 
 
+def test_calibrate_keeps_a_raw_file_served_from_the_blob(settings, monkeypatch):
+    """A cache hit is a file someone kept (an earlier sweep's evidence or a --retention keep pilot): stream retention
+    must not delete it just because calibrate read it. A file calibrate downloaded itself still goes."""
+    s, store, blob = _fast_env(monkeypatch, settings)
+    assert s.retention == "stream"
+    targets = [_tgt("kept"), _tgt("fresh", crowdsap=0.3)]
+    lcs = {"kept": make_lightcurve(n_days=60, seed=1), "fresh": make_lightcurve(n_days=60, seed=2)}
+    data = pickle.dumps(lcs["kept"])
+    sha, loc = blob.put(data, "kept.fits")
+    store.add_artifact(sha, len(data), "https://fake/kept", loc, "kept")
+    src = ScriptedSource(targets, lcs, store, blob)
+    out = s.data_dir / "calibration" / "fake.jsonl"
+    summary = calibrate.run(src, store, blob, s, filter={}, limit=2, out=out, parse=pickle.loads)
+    assert summary["written"] == 2 and summary["from_cache"] == 1
+    with store.session() as ss:
+        arts = {a.target_id: a for a in ss.query(db.ArtifactRow)}
+        assert arts["kept"].deleted_at is None and blob.exists(arts["kept"].local_path)
+        assert arts["fresh"].deleted_at is not None
+
+
+def test_calibrate_never_evicts_the_files_of_targets_in_flight(settings, monkeypatch):
+    s, store, blob = _env(monkeypatch, settings, THRESHOLDS__MIN_PERIOD_DAYS="2", THRESHOLDS__MAX_PERIOD_DAYS="15",
+                          THRESHOLDS__PREWHITEN_MAX_COMPONENTS="0", RETENTION="budget:0")
+    calls = []
+    real = calibrate.Retention.enforce_budget
+
+    def spy(self, exclude_targets=None):
+        calls.append(set(exclude_targets or ()))
+        return real(self, exclude_targets=exclude_targets)
+    monkeypatch.setattr(calibrate.Retention, "enforce_budget", spy)
+    targets = [_tgt("a"), _tgt("b", crowdsap=0.3)]
+    lcs = {"a": make_lightcurve(n_days=60, seed=1), "b": make_lightcurve(n_days=60, seed=2)}
+    out = s.data_dir / "calibration" / "fake.jsonl"
+    summary = calibrate.run(ScriptedSource(targets, lcs, store, blob), store, blob, s, filter={}, limit=2, out=out)
+    assert summary["written"] == 2
+    assert calls[:2] == [{"a"}, {"a", "b"}]            # the target just loaded and every one still searching
+
+
 def test_calibrate_refuses_to_append_another_version(settings, monkeypatch, tmp_path):
     s, store, blob = _env(monkeypatch, settings)
     out = tmp_path / "old.jsonl"
