@@ -43,7 +43,8 @@ DEFAULT_LADDER_VERSION = "1"
 UPSERT_BATCH = 1000
 MAX_ATTEMPTS = 3            # spec section 9: a target that errors three times is left for a human
 MAX_POOL_RESTARTS = 2       # a CPU pool that breaks a third time in one sweep ends the sweep
-POOL_BROKE_ERROR = f"{UNAVAILABLE_PREFIX} worker pool broke"     # never counted as an attempt
+POOL_BROKE_ERROR = f"{UNAVAILABLE_PREFIX} worker pool broke"     # several runs held: culprit unknown, none charged
+WORKER_DIED_ERROR = "worker died: pool broke"                    # one run held: its target is charged an attempt
 SEARCH_CONFIG_KEYS = ("oversample", "n_bands", "n_refine", "refine_oversample", "two_stage", "mask_iterations",
                      "alias_resolution")
 
@@ -95,14 +96,6 @@ class _QueryRecorder:
         # target_id is accepted for net.fetch's sake; record_results stamps every row with the run's own target
         self.rows.append({"service": service, "url": url, "params": dict(params or {}), "status": status,
                           "nbytes": nbytes, "sha256": sha256, "error": error, "utc": utcnow().isoformat()})
-
-
-def _error_text(e: Exception) -> str:
-    """Run error text. An outage (MAST down, TLS failure) or a worker process dying under the pool (killed by the OS,
-    out of memory) is not the target's fault: the ``unavailable:`` prefix keeps it from counting as an attempt."""
-    if isinstance(e, ServiceUnavailable): return f"{UNAVAILABLE_PREFIX} {e}"
-    if isinstance(e, BrokenProcessPool): return POOL_BROKE_ERROR
-    return repr(e)
 
 
 def _search(det, lc, fn, th, keep_spectrum=False):
@@ -276,8 +269,10 @@ def run(source, store: Store, blob: Blob, settings: Settings, filter: dict, dete
     ready: deque[tuple[Target, int, bytes]] = deque()      # fetched, run started, waiting for a CPU slot
     cpu_jobs: dict[Future, tuple[Target, int]] = {}
 
-    def fail(t: Target, rid: int | None, e: Exception) -> None:
-        if rid is not None: store.finish_run(rid, "error", _error_text(e))
+    def fail(t: Target, rid: int | None, e: Exception, text: str | None = None) -> None:
+        # an outage (MAST down, TLS failure) is recorded but never counted toward the target's three attempts
+        if text is None: text = f"{UNAVAILABLE_PREFIX} {e}" if isinstance(e, ServiceUnavailable) else repr(e)
+        if rid is not None: store.finish_run(rid, "error", text)
         store.set_target_state(t.target_id, "error")
         retention.release_target(t.target_id)            # nothing to pin: free whatever the fetch left behind
         summary["errors"] += 1
@@ -293,28 +288,38 @@ def run(source, store: Store, blob: Blob, settings: Settings, filter: dict, dete
             log.warning("fetch or run start failed for %s", t.target_id, exc_info=True)
             fail(t, rid, e)
 
-    def pool_broke(e: BrokenProcessPool, *popped: tuple[Target, int]) -> None:
-        """A worker died and took the pool with it: every held run fails with it, uncharged. The pool is rebuilt
-        (MAX_POOL_RESTARTS times per sweep, then the sweep ends); fetched targets in ``ready`` go to the new pool."""
+    def pool_broke(e: BrokenProcessPool, popped: dict[Future, tuple[Target, int]] | None = None) -> None:
+        """A worker died and took the pool with it. Held jobs that finished before the break are written as usual;
+        the rest fail. A lone unfinished run is charged an attempt (its target most likely killed the worker, and one
+        that always does is capped after three sweeps); several are all marked unavailable, uncharged, as the culprit
+        is unknown. The pool is rebuilt MAX_POOL_RESTARTS times per sweep, then the break ends the sweep. Fetched
+        targets in ``ready`` go to the new pool."""
         nonlocal cpu_pool
-        held = [*popped, *cpu_jobs.values()]
+        held = {**(popped or {}), **cpu_jobs}
         cpu_jobs.clear()
-        log.error("CPU worker pool broke (a worker process died): %d held runs marked unavailable", len(held))
-        for t, rid in held: fail(t, rid, e)
+        finished = [f for f in held if f.done() and not f.cancelled() and f.exception() is None]
+        lost = [job for f, job in held.items() if f not in finished]
+        log.error("CPU worker pool broke (a worker process died): %d held runs lost, %d finished results kept",
+                  len(lost), len(finished))
+        text = WORKER_DIED_ERROR if len(lost) == 1 else POOL_BROKE_ERROR
+        for t, rid in lost: fail(t, rid, e, text)
+        for f in finished: vetted(f, *held[f])
         if summary["pool_restarts"] >= MAX_POOL_RESTARTS: raise e
         summary["pool_restarts"] += 1
         cpu_pool.shutdown(wait=True, cancel_futures=True)
         cpu_pool = _cpu_pool(settings)
 
     def on_vetted(fut: Future) -> None:
-        t, rid = cpu_jobs.pop(fut)
+        vetted(fut, *cpu_jobs.pop(fut))
+
+    def vetted(fut: Future, t: Target, rid: int) -> None:
         payload = None
         try:
             payload = fut.result()
             # one transaction: signals, tests, queries, periodogram row, evidence pins, finished run, target state
             counts = _write_results(store, blob, rid, t.target_id, payload)
         except BrokenProcessPool as e:
-            pool_broke(e, (t, rid)); return
+            pool_broke(e, {fut: (t, rid)}); return
         except Exception as e:
             log.exception("processing failed for %s", t.target_id)
             _salvage_queries(store, payload, t.target_id)
@@ -359,7 +364,7 @@ def run(source, store: Store, blob: Blob, settings: Settings, filter: dict, dete
             done, _ = wait([*fetches, *cpu_jobs], return_when=FIRST_COMPLETED)
             for fut in done:
                 if fut in fetches: on_fetched(fut)
-                elif fut in cpu_jobs: on_vetted(fut)        # absent: a pool break in this batch already failed it
+                elif fut in cpu_jobs: on_vetted(fut)        # absent: a pool break in this batch already handled it
             done = fut = None                              # drop the last references to payloads and results
             top_up()
     except BaseException as e:

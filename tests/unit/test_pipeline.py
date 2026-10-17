@@ -3,18 +3,20 @@ import multiprocessing
 import pickle
 import threading
 import warnings
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import Future, ProcessPoolExecutor
+from concurrent.futures.process import BrokenProcessPool
 from pathlib import Path
 
 import numpy as np
 import pytest
 
-from skysift import jsonutil
+from skysift import jsonutil, pipeline
 from skysift.config import Thresholds, load_settings
 from skysift.detectors.base import get_detector
 from skysift.models import LightCurve, Signal, Target, TestResult, TestStatus
 from skysift.pipeline import (
     MAX_ATTEMPTS,
+    MAX_POOL_RESTARTS,
     _cpu_work,
     _write_results,
     build_ladder,
@@ -321,9 +323,9 @@ def test_worker_failure_marks_error_and_continues(settings, monkeypatch):
     assert store.unpinned_artifacts() == [] and multiprocessing.active_children() == []
 
 
-def test_worker_crash_marks_runs_unavailable_and_the_sweep_continues(settings, monkeypatch):
-    """A worker process that dies (here os._exit through the test hook) breaks the whole pool. The held run is an
-    outage, not the target's fault: it ends 'unavailable', uses up no attempt, and the sweep goes on in a new pool."""
+def test_worker_crash_charges_the_lone_target_and_the_sweep_continues(settings, monkeypatch):
+    """A worker process that dies (here os._exit through the test hook) breaks the whole pool. Alone in the pool, the
+    crashing target is the culprit: its run is charged an attempt, and the sweep goes on in a new pool."""
     s, store, blob = _env(monkeypatch, settings, WORKERS_IO="1")
     good = make_lightcurve(n_days=60, seed=4)
     crash = make_lightcurve(n_days=60, seed=5); crash.meta["__crash_worker__"] = True
@@ -335,7 +337,7 @@ def test_worker_crash_marks_runs_unavailable_and_the_sweep_continues(settings, m
 
     def on_fetch(t):
         # two CPU jobs may be in flight (2 * WORKERS_CPU): hold the fetches back so the crashing job is alone in the
-        # pool when it dies, otherwise a neighbour sharing the pool would be marked unavailable with it
+        # pool when it dies, otherwise a neighbour sharing the pool would fail with it
         if t.target_id == "crash": first_done.wait(120)
         if t.target_id == "third": crash_failed.wait(120)
 
@@ -345,29 +347,108 @@ def test_worker_crash_marks_runs_unavailable_and_the_sweep_continues(settings, m
     assert out["pool_restarts"] == 1 and out["processed"] == 2 and out["errors"] == 1
     assert json.loads(jsonutil.dumps(out))["pool_restarts"] == 1                  # strict JSON for the CLI
     runs = _runs(store)
-    assert runs == {"first": ("done", ""), "crash": ("error", "unavailable: worker pool broke"), "third": ("done", "")}
+    assert runs == {"first": ("done", ""), "crash": ("error", "worker died: pool broke"), "third": ("done", "")}
     assert _states(store) == {"first": "done", "crash": "error", "third": "done"}
-    with store.session() as ss:
-        key = ss.query(db.RunRow).filter_by(target_id="crash").one().job_key
-    assert store.attempts(key) == 0 and store.error_capped_targets(1) == 0         # not charged toward the cap
+    assert store.attempts(_job_key(store, "crash")) == 1                           # charged toward the cap
     assert store.unpinned_artifacts() == [] and multiprocessing.active_children() == []
 
 
-def test_a_pool_that_keeps_breaking_ends_the_sweep_after_two_restarts(settings, monkeypatch):
-    from concurrent.futures.process import BrokenProcessPool
+_EMPTY_PAYLOAD = json.dumps({"signals": [], "queries": [], "periodogram": None})
 
-    from skysift import pipeline
 
-    class DeadPool:                                     # broken before the first submit, as after a worker death
-        def submit(self, *a, **kw): raise BrokenProcessPool("a child process terminated abruptly")
-        def shutdown(self, *a, **kw): pass
+class _FakePool:
+    """Stands in for the CPU pool: submit() hands out futures that ``script(pool, future)`` settles (or raises), so a
+    test decides which job finishes, which one breaks the pool, and when."""
+
+    def __init__(self, script):
+        self.script, self.futures = script, []
+
+    def submit(self, *a, **kw):
+        f = Future(); self.futures.append(f)
+        self.script(self, f)
+        return f
+
+    def shutdown(self, *a, **kw): pass
+
+
+def _fake_pools(monkeypatch, *scripts):
+    """Every _cpu_pool call builds the next scripted pool (the last script repeats); returns the pools built."""
     pools = []
-    monkeypatch.setattr(pipeline, "_cpu_pool", lambda _s: pools.append(DeadPool()) or pools[-1])
+
+    def make(_settings):
+        pools.append(_FakePool(scripts[min(len(pools), len(scripts) - 1)])); return pools[-1]
+    monkeypatch.setattr(pipeline, "_cpu_pool", make)
+    return pools
+
+
+def _job_key(store, target_id):
+    with store.session() as ss:
+        return ss.query(db.RunRow).filter_by(target_id=target_id).one().job_key
+
+
+def test_a_pool_break_holding_several_runs_charges_none(settings, monkeypatch):
+    def break_both(pool, _f):         # the first job waits until the second is submitted; then the pool breaks
+        if len(pool.futures) == 2:
+            for f in pool.futures: f.set_exception(BrokenProcessPool("a child process terminated abruptly"))
+    pools = _fake_pools(monkeypatch, break_both)
+    s, store, blob = _env(monkeypatch, settings)
+    lc = make_lightcurve(n_days=60, seed=4)
+    src = ScriptedSource([_tgt("a"), _tgt("b")], {"a": lc, "b": lc}, store, blob)
+    out = run(src, store, blob, s, filter={}, with_novelty=False)
+    assert out["pool_restarts"] == 1 and out["errors"] == 2 and len(pools) == 2
+    assert _runs(store) == {"a": ("error", "unavailable: worker pool broke"), "b": ("error", "unavailable: worker pool broke")}
+    assert store.attempts(_job_key(store, "a")) == store.attempts(_job_key(store, "b")) == 0
+    assert store.unpinned_artifacts() == []
+
+
+def test_a_result_finished_before_the_break_is_still_written(settings, monkeypatch):
+    def finish_first_then_break(pool, _f):      # the first job finishes; the pool breaks on the next submit
+        if len(pool.futures) == 2:
+            pool.futures[0].set_result(_EMPTY_PAYLOAD)
+            raise BrokenProcessPool("a child process terminated abruptly")
+
+    def healthy(_pool, f): f.set_result(_EMPTY_PAYLOAD)
+    pools = _fake_pools(monkeypatch, finish_first_then_break, healthy)
+    s, store, blob = _env(monkeypatch, settings)
+    lc = make_lightcurve(n_days=60, seed=4)
+    src = ScriptedSource([_tgt("a"), _tgt("b")], {"a": lc, "b": lc}, store, blob)
+    out = run(src, store, blob, s, filter={}, with_novelty=False)
+    assert out["pool_restarts"] == 1 and out["processed"] == 2 and out["errors"] == 0 and len(pools) == 2
+    assert _runs(store) == {"a": ("done", ""), "b": ("done", "")}     # a salvaged, b resubmitted to the new pool
+
+
+def test_a_third_break_ends_the_sweep_after_two_restarts(settings, monkeypatch):
+    def break_at_once(_pool, f): f.set_exception(BrokenProcessPool("a child process terminated abruptly"))
+    pools = _fake_pools(monkeypatch, break_at_once)
+    s, store, blob = _env(monkeypatch, settings, WORKERS_IO="1")
+    failed = [threading.Event() for _ in range(3)]
+    seen = []
+
+    def progress(summary):
+        seen.append(dict(summary))
+        if summary["errors"]: failed[summary["errors"] - 1].set()
+
+    def on_fetch(t):                  # one job per pool: t1 breaks the first, t2 the second, t3 the third
+        if t.target_id != "t1": failed[int(t.target_id[1]) - 2].wait(30)
+
+    lc = make_lightcurve(n_days=60, seed=4)
+    src = ScriptedSource([_tgt("t1"), _tgt("t2"), _tgt("t3")], {"t1": lc, "t2": lc, "t3": lc}, store, blob,
+                         on_fetch=on_fetch)
+    with pytest.raises(BrokenProcessPool):
+        run(src, store, blob, s, filter={}, with_novelty=False, progress=progress)
+    assert len(pools) == 1 + MAX_POOL_RESTARTS == 3
+    assert seen[-1]["pool_restarts"] == 2 and seen[-1]["errors"] == 3
+    assert _runs(store) == {f"t{i}": ("error", "worker died: pool broke") for i in (1, 2, 3)}
+
+
+def test_a_pool_broken_before_any_submit_ends_the_sweep_after_two_restarts(settings, monkeypatch):
+    def dead(_pool, _f): raise BrokenProcessPool("a child process terminated abruptly")
+    pools = _fake_pools(monkeypatch, dead)
     s, store, blob = _env(monkeypatch, settings)
     src = ScriptedSource([_tgt("t1")], {"t1": make_lightcurve(n_days=60, seed=4)}, store, blob)
     with pytest.raises(BrokenProcessPool):
         run(src, store, blob, s, filter={}, with_novelty=False)
-    assert len(pools) == 1 + pipeline.MAX_POOL_RESTARTS == 3
+    assert len(pools) == 1 + MAX_POOL_RESTARTS == 3
     assert _runs(store) == {"t1": ("running", "")}      # never submitted: the next sweep supersedes it, uncharged
 
 
