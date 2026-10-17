@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 from scipy.stats import chi2 as chi2_dist
 
-from skysift.lc.ops import event_depths, fold_phase, season_of, stacked_depth
+from skysift.lc.ops import event_depths, n_window_epochs, season_of, stacked_depth
 from skysift.models import Signal, TestResult, TestStatus
 from skysift.vetting.base import DataBundle
 
@@ -36,20 +36,23 @@ class Rung3Stability:
         th = b.thresholds
         lc, fn = b.lc, b.fnorm
         ed = event_depths(lc.time, fn, lc.quarter, s.period, s.t0, s.duration)
-        stacked = ed.n < 4
+        # an event with a zero or non-finite error (a flat baseline) carries no usable weight
+        usable = np.isfinite(ed.depths) & np.isfinite(ed.errors) & (ed.errors > 0)
+        stacked = int(usable.sum()) < 4
         if not stacked:
-            seasons = season_of(ed.quarters)
+            depths, errors, seasons = ed.depths[usable], ed.errors[usable], season_of(ed.quarters[usable])
             means, errs = {}, {}
             for sn in np.unique(seasons):
-                k = seasons == sn; w = 1 / ed.errors[k] ** 2
-                mu = np.sum(w * ed.depths[k]) / np.sum(w); e = 1 / np.sqrt(np.sum(w))
-                c2 = np.sum(w * (ed.depths[k] - mu) ** 2); e *= max(1.0, np.sqrt(c2 / max(1, k.sum() - 1)))
+                k = seasons == sn; w = 1 / errors[k] ** 2
+                mu = np.sum(w * depths[k]) / np.sum(w); e = 1 / np.sqrt(np.sum(w))
+                c2 = np.sum(w * (depths[k] - mu) ** 2); e *= max(1.0, np.sqrt(c2 / max(1, k.sum() - 1)))
                 means[int(sn)], errs[int(sn)] = float(mu), float(e)
-            n_events, all_depth = ed.n, ed.mean
+            n_events, all_depth = int(usable.sum()), float(np.average(depths, weights=1 / errors ** 2))
         else:
             # Single events hold too few points to measure (about two per event for sub-day periods at 30-minute
             # cadence), so measure each season on its own stacked fold, which holds every point of that season.
             args = (s.period, s.t0, s.duration)
+            n_events = n_window_epochs(lc.time, fn, *args)
             season = season_of(lc.quarter)
             means, errs = {}, {}
             for sn in np.unique(season):
@@ -59,9 +62,7 @@ class Rung3Stability:
                     means[int(sn)], errs[int(sn)] = st.depth_ppm, st.err_ppm
             if len(means) < 3:
                 return TestResult(rung=self.name, status=TestStatus.UNDETERMINED, reason="too few events",
-                                  metrics={"stacked": False, "n_events": ed.n})
-            in_window = np.isfinite(fn) & (np.abs(fold_phase(lc.time, s.period, s.t0)) < 0.5 * s.duration)
-            n_events = int(np.unique(np.round((lc.time[in_window] - s.t0) / s.period)).size)
+                                  metrics={"stacked": False, "n_events": n_events})
             all_depth = stacked_depth(lc.time, fn, *args).depth_ppm
         z, chi2, dof, p = _season_agreement(means, errs)
         ratio = np.nan

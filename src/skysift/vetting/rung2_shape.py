@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from skysift.lc.ops import event_depths, fold_phase, secondary_search, shape_contrast, stacked_depth
+from skysift.lc.ops import event_depths, n_window_epochs, secondary_search, shape_contrast, stacked_depth
 from skysift.models import Signal, TestResult, TestStatus
 from skysift.vetting.base import DataBundle
 
@@ -47,11 +47,10 @@ class Rung2Shape:
             parity_sigma = abs(st_odd.depth_ppm - st_even.depth_ppm) / parity_err
             sec_ok = bool(st_sec.n_in and st_sec.err_ppm > 0)       # a zero error is unmeasurable, not infinitely sure
             sec_sigma = st_sec.depth_ppm / st_sec.err_ppm if sec_ok else 0.0
-            in_window = np.isfinite(fn) & (np.abs(fold_phase(lc.time, s.period, s.t0)) < 0.5 * s.duration)
             m.update({"stacked": True, "odd_ppm": st_odd.depth_ppm, "even_ppm": st_even.depth_ppm,
                       "parity_sigma": float(parity_sigma), "depth_ppm": st_all.depth_ppm, "depth_err_ppm": st_all.err_ppm,
                       "secondary_ppm": st_sec.depth_ppm if sec_ok else None, "secondary_sigma": float(sec_sigma),
-                      "n_events": int(np.unique(np.round((lc.time[in_window] - s.t0) / s.period)).size)})
+                      "n_events": n_window_epochs(lc.time, fn, s.period, s.t0, s.duration)})
         if not np.isfinite(parity_sigma):
             return TestResult(rung=self.name, status=TestStatus.UNDETERMINED, metrics=m, reason="too few odd/even events")
         if parity_sigma > th.parity_sigma:

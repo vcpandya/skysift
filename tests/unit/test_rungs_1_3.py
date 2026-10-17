@@ -1,3 +1,5 @@
+import json
+
 import numpy as np
 
 from skysift.config import Thresholds
@@ -204,20 +206,7 @@ def test_stacked_seasons_are_determinate_for_a_short_period_planet():
                depth_ppm=600, snr=25.0, sde=30.0, n_events=2300)
     r = Rung3Stability().run(s, bundle(lc))
     assert r.status == TestStatus.PASS and r.metrics["stacked"] is True and len(r.metrics["season_depths"]) == 4
-
-
-def test_stacked_seasons_catch_a_contaminated_season():
-    lc = inject_transit(make_lightcurve(n_days=1400, cadence_min=30, noise_ppm=500, seed=36), 0.6, 132.0, 1 / 24, 600)
-    f = lc.flux.copy()
-    half = season_of(lc.quarter) == 2
-    ph = fold_phase(lc.time, 0.6, 132.0)
-    dip = np.abs(ph) < 0.5 / 24
-    f[half & dip] = 1 - 0.5 * (1 - f[half & dip])            # season 2 shows half the depth: contamination signature
-    lc = LightCurve(lc.time, f, lc.flux_err, lc.quality, lc.quarter, f.copy())
-    s = Signal(target_id="t", detector="box_dip", detector_version="1", period=0.6, t0=132.0, duration=1 / 24,
-               depth_ppm=600, snr=25.0, sde=30.0, n_events=2300)
-    r = Rung3Stability().run(s, bundle(lc))
-    assert r.status == TestStatus.FAIL and "season-dependent" in r.reason and r.metrics["stacked"] is True
+    json.dumps(r.metrics, allow_nan=False)
 
 
 def test_stacked_seasons_catch_a_half_depth_season():
@@ -233,3 +222,14 @@ def test_stacked_seasons_catch_a_half_depth_season():
     r = Rung3Stability().run(s, bundle(lc))
     assert r.status == TestStatus.FAIL and r.metrics["stacked"] is True
     assert abs(r.metrics["season_depths"]["2"] - 300) < 80 and abs(r.metrics["season_z"]["2"]) > 4
+
+
+def test_stacked_seasons_stay_undetermined_when_fewer_than_three_seasons_are_measurable():
+    """150 days cover quarters 1 and 2 only, so two seasons are present."""
+    lc = inject_transit(make_lightcurve(n_days=150, cadence_min=30, noise_ppm=500, seed=38), 0.6, 132.0, 1 / 24, 600)
+    s = Signal(target_id="t", detector="box_dip", detector_version="1", period=0.6, t0=132.0, duration=1 / 24,
+               depth_ppm=600, snr=25.0, sde=30.0, n_events=300)
+    r = Rung3Stability().run(s, bundle(lc))
+    assert r.status == TestStatus.UNDETERMINED and r.reason == "too few events"
+    assert r.metrics["stacked"] is False and r.metrics["n_events"] > 0
+    json.dumps(r.metrics, allow_nan=False)

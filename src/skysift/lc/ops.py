@@ -34,6 +34,14 @@ def fold_phase(time: np.ndarray, period: float, t0: float) -> np.ndarray:
     return (time - t0 + 0.5 * period) % period - 0.5 * period
 
 
+def n_window_epochs(time, fnorm, period, t0, duration_days) -> int:
+    """Number of distinct events (epoch ``round((t - t0) / period)``) with a finite point within half a duration of
+    mid-transit."""
+    time, fnorm = np.asarray(time), np.asarray(fnorm)
+    inside = np.isfinite(time) & np.isfinite(fnorm) & (np.abs(fold_phase(time, period, t0)) < 0.5 * duration_days)
+    return int(np.unique(np.round((time[inside] - t0) / period)).size)
+
+
 def season_of(quarter: np.ndarray) -> np.ndarray:
     """Kepler season of each quarter (``quarter % 4``): the spacecraft rolls every quarter, so a star returns to the
     same CCD module every fourth quarter."""
