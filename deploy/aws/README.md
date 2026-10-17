@@ -9,6 +9,9 @@ The image runs `python -m skysift` as its entry point, so the job `command` star
    aws ecr get-login-password | docker login --username AWS --password-stdin ACCOUNT.dkr.ecr.REGION.amazonaws.com
    docker push ACCOUNT.dkr.ecr.REGION.amazonaws.com/skysift:latest
    ```
+   Behind a TLS-inspecting proxy or antivirus (pip inside the build then fails with `CERTIFICATE_VERIFY_FAILED`),
+   export that product's root certificate as PEM and add `--secret id=pipcert,src=root.pem` to the build; the
+   Dockerfile points pip at it only when the secret is present, so CI and production builds are unaffected.
 2. **Create an S3 bucket** for the blob store and set `SKYSIFT_BLOB_URL=s3://YOUR-BUCKET/blobs`. The image installs the
    `s3` extra (boto3).
 3. **Optional: RDS Postgres** for the results database. Set `SKYSIFT_DATABASE_URL=postgresql+psycopg://...`. The image

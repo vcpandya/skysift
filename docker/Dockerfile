@@ -5,7 +5,11 @@ COPY pyproject.toml README.md ./
 COPY src ./src
 COPY config ./config
 # Editable install so that config/ (resolved relative to the source tree) is found at run time.
-RUN pip install --no-cache-dir -e ".[s3,pg,ui]"
+# Behind a TLS-inspecting proxy or antivirus, pass its root certificate as a build secret
+# (docker build --secret id=pipcert,src=root.pem ...); production builds pass nothing and verify PyPI as usual.
+RUN --mount=type=secret,id=pipcert \
+    if [ -f /run/secrets/pipcert ]; then export PIP_CERT=/run/secrets/pipcert; fi; \
+    pip install --no-cache-dir -e ".[s3,pg,ui]"
 RUN mkdir -p /data && chown skysift:skysift /data
 USER skysift
 ENV PYTHONUNBUFFERED=1
