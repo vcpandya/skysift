@@ -119,7 +119,7 @@ def test_stacked_depth_measures_a_short_transit_and_its_parity():
 
 def test_stacked_depth_inflates_its_error_under_red_noise():
     base = make_lightcurve(n_days=300, cadence_min=30, noise_ppm=300, seed=32)
-    f = base.flux * (1 - 1500e-6 * np.cos(2 * np.pi * base.time / 0.3))        # a 0.3 d wave: it repeats on every fold, so it is red noise
+    f = base.flux * (1 - 1500e-6 * np.cos(2 * np.pi * (base.time - 132.0) / 0.3 + np.pi / 2))     # a 0.3 d wave repeats on every fold: red noise, zero at t0
     red = inject_transit(LightCurve(base.time, f, base.flux_err, base.quality, base.quarter, f.copy()), 0.6, 132.0, 1 / 24, 600)
     d = stacked_depth(red.time, detrend(red), 0.6, 132.0, 1 / 24)
     assert d.inflation > 1.5 and abs(d.depth_ppm - 600) < 3 * d.err_ppm

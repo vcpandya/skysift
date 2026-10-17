@@ -25,7 +25,7 @@ class Rung2Shape:
         sec_sigma = d_sec.mean / d_sec.err_scaled if d_sec.n else 0.0
         timing_rms_min = float(np.nan)
         box_chi2, sine_chi2, shape_n = shape_contrast(lc.time, fn, s.period, s.t0, s.duration)
-        m = {"depth_ppm": all_d.mean, "depth_err_ppm": all_d.err_scaled, "n_events": all_d.n,
+        m = {"stacked": False, "depth_ppm": all_d.mean, "depth_err_ppm": all_d.err_scaled, "n_events": all_d.n,
              "odd_ppm": d_odd.mean, "even_ppm": d_even.mean,
              "parity_sigma": float(parity_sigma), "secondary_ppm": d_sec.mean, "secondary_sigma": float(sec_sigma),
              "free_secondary_phase": free_phase, "free_secondary_ppm": free_depth, "free_secondary_sigma": free_sigma,
@@ -35,21 +35,22 @@ class Rung2Shape:
         # (about two points per event for sub-day periods at 30-minute cadence)
         if np.isfinite(sine_chi2) and sine_chi2 <= box_chi2:
             return TestResult(rung=self.name, status=TestStatus.FAIL, metrics=m, reason="sinusoidal")
-        m["stacked"] = False
         if not np.isfinite(parity_sigma) or d_odd.n < 2 or d_even.n < 2:
             # per-event depths are starved (about two points per event for sub-day periods at 30-minute cadence), so
             # measure odd, even and secondary on the stacked fold, which holds every point
             args = (lc.time, fn, s.period, s.t0, s.duration)
             st_odd, st_even = (stacked_depth(*args, epochs=e) for e in ("odd", "even"))
             st_sec, st_all = stacked_depth(*args, phase_offset=0.5), stacked_depth(*args)
-            if not (st_odd.n_in and st_even.n_in):
+            parity_err = np.hypot(st_odd.err_ppm, st_even.err_ppm)
+            if not (st_odd.n_in and st_even.n_in and parity_err > 0):
                 return TestResult(rung=self.name, status=TestStatus.UNDETERMINED, metrics=m, reason="too few odd/even events")
-            parity_sigma = abs(st_odd.depth_ppm - st_even.depth_ppm) / np.hypot(st_odd.err_ppm, st_even.err_ppm)
-            sec_sigma = st_sec.depth_ppm / st_sec.err_ppm if st_sec.n_in else 0.0
+            parity_sigma = abs(st_odd.depth_ppm - st_even.depth_ppm) / parity_err
+            sec_ok = bool(st_sec.n_in and st_sec.err_ppm > 0)       # a zero error is unmeasurable, not infinitely sure
+            sec_sigma = st_sec.depth_ppm / st_sec.err_ppm if sec_ok else 0.0
             in_window = np.isfinite(fn) & (np.abs(fold_phase(lc.time, s.period, s.t0)) < 0.5 * s.duration)
             m.update({"stacked": True, "odd_ppm": st_odd.depth_ppm, "even_ppm": st_even.depth_ppm,
                       "parity_sigma": float(parity_sigma), "depth_ppm": st_all.depth_ppm, "depth_err_ppm": st_all.err_ppm,
-                      "secondary_ppm": st_sec.depth_ppm if st_sec.n_in else None, "secondary_sigma": float(sec_sigma),
+                      "secondary_ppm": st_sec.depth_ppm if sec_ok else None, "secondary_sigma": float(sec_sigma),
                       "n_events": int(np.unique(np.round((lc.time[in_window] - s.t0) / s.period)).size)})
         if not np.isfinite(parity_sigma):
             return TestResult(rung=self.name, status=TestStatus.UNDETERMINED, metrics=m, reason="too few odd/even events")
