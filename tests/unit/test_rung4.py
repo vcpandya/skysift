@@ -1,3 +1,6 @@
+import json
+import re
+
 import numpy as np
 import pytest
 
@@ -231,10 +234,66 @@ def test_box_query_rows_outside_the_circle_are_dropped():
     far = "kepid,kepoi_name,koi_period,ra,dec" + NL + f"1,K1.01,13.7695,{TGT.ra + 25 / 3600 / 0.7555},{TGT.dec}" + NL   # cos(40.94 deg)
     near = "kepid,kepoi_name,koi_period,ra,dec" + NL + f"1,K1.01,13.7695,{TGT.ra},{TGT.dec + 10 / 3600}" + NL
     tgt = TGT.model_copy(update={"kic": None, "gaia_id": None, "target_id": "tic-1"})
-    r = Rung4Novelty().run(SIG, bundle({**EMPTY, "cumulative": far.encode()}, target=tgt))
+    r = Rung4Novelty(radius_arcsec=20.0).run(SIG, bundle({**EMPTY, "cumulative": far.encode()}, target=tgt))
     assert r.status == TestStatus.PASS and r.metrics["cumulative"] == 0
-    r = Rung4Novelty().run(SIG, bundle({**EMPTY, "cumulative": near.encode()}, target=tgt))
+    r = Rung4Novelty(radius_arcsec=20.0).run(SIG, bundle({**EMPTY, "cumulative": near.encode()}, target=tgt))
     assert r.status == TestStatus.FAIL and r.reason == "known:cumulative:K1.01"
+
+
+def _neighbour(sep_arcsec, period=13.77):
+    """A cumulative-table row for a different KIC star `sep_arcsec` north of the target."""
+    return (f"kepid,kepoi_name,koi_period,ra,dec\n5689999,K77777.01,{period},{TGT.ra},{TGT.dec + sep_arcsec / 3600}\n").encode()
+
+
+def test_period_matched_neighbour_within_120_arcsec_is_known():
+    r = Rung4Novelty().run(SIG, bundle({**EMPTY, "cumulative": _neighbour(90)}))
+    assert r.status == TestStatus.FAIL and r.reason == "known:cumulative:K77777.01"
+    (hit,) = r.metrics["period_matched"]
+    assert hit["catalog"] == "cumulative" and hit["id"] == "K77777.01" and hit["period"] == 13.77
+    assert abs(hit["sep_arcsec"] - 90) < 1.0
+    json.dumps(r.metrics, allow_nan=False)
+
+
+def test_period_matched_neighbour_beyond_120_arcsec_is_not_known():
+    r = Rung4Novelty().run(SIG, bundle({**EMPTY, "cumulative": _neighbour(150)}))
+    assert r.status == TestStatus.PASS and r.metrics["cumulative"] == 0
+
+
+def test_unrelated_neighbour_at_another_period_is_not_known():
+    r = Rung4Novelty().run(SIG, bundle({**EMPTY, "cumulative": _neighbour(90, period=13.77 * 1.37)}))
+    assert r.status == TestStatus.PASS and r.metrics["cumulative"] == 1
+    assert r.metrics["other_period_objects"] == [("cumulative", "K77777.01", pytest.approx(13.77 * 1.37))]
+    assert "period_matched" not in r.metrics
+
+
+def test_row_without_coordinates_has_no_separation():
+    resp = dict(EMPTY); resp["cumulative"] = b"kepid,kepoi_name,koi_period\n5689121,K99999.01,13.77\n"
+    r = Rung4Novelty().run(SIG, bundle(resp))
+    assert r.metrics["period_matched"] == [{"catalog": "cumulative", "id": "K99999.01", "period": 13.77, "sep_arcsec": None}]
+
+
+def test_own_kepid_row_counts_even_when_its_coordinates_are_outside_the_circle():
+    row = f"kepid,kepoi_name,koi_period,ra,dec\n5689121,K99999.01,13.77,{TGT.ra},{TGT.dec + 300 / 3600}\n".encode()
+    r = Rung4Novelty().run(SIG, bundle({**EMPTY, "cumulative": row}))
+    assert r.status == TestStatus.FAIL and r.reason == "known:cumulative:K99999.01"
+
+
+def test_toi_row_beyond_the_circle_is_dropped_for_a_target_without_kic():
+    row = f"tid,toi,pl_orbper,ra,dec\n1,1234.01,13.77,{TGT.ra},{TGT.dec + 150 / 3600}\n".encode()
+    tgt = TGT.model_copy(update={"kic": None, "gaia_id": None, "target_id": "tic-1"})
+    r = Rung4Novelty().run(SIG, bundle({**EMPTY, "toi": row}, target=tgt))
+    assert r.status == TestStatus.PASS and r.metrics["toi"] == 0
+
+
+def test_koi_query_covers_the_target_kic_and_the_cone():
+    calls = []
+    Rung4Novelty().run(SIG, bundle(EMPTY, calls=calls))
+    half = 120 / 3600
+    for query in [p["query"] for s, p in calls if s == "exoarchive"][:2]:
+        assert "kepid=5689121" in query and " or " in query and "CONTAINS" not in query
+        lo, hi = (float(x) for x in re.search(r"dec between ([-\d.]+) and ([-\d.]+)", query).groups())
+        assert abs((hi - lo) / 2 - half) < 1e-6 and abs((hi + lo) / 2 - TGT.dec) < 1e-6
+    assert [p["-c.rs"] for s, p in calls if s == "vizier"] == [120]
 
 
 def test_box_handles_ra_wrap_and_poles():

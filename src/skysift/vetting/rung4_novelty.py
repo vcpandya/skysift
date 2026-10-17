@@ -83,15 +83,21 @@ def _separation_deg(ra1: float, dec1: float, ra2: float, dec2: float) -> float:
     return math.degrees(2 * math.asin(min(1.0, math.sqrt(a))))
 
 
-def _within(row: dict, ra: float, dec: float, radius_deg: float) -> bool:
-    """True when the row lies inside the search circle; rows without parseable ra/dec are kept (box-limited)."""
+def _sep_arcsec(row: dict, ra: float, dec: float) -> float | None:
+    """Separation of the row from (ra, dec) in arcsec, or None when the row has no parseable finite ra/dec."""
     try:
         r_ra, r_dec = float(row.get("ra")), float(row.get("dec"))
     except (TypeError, ValueError):
-        return True
+        return None
     if not (math.isfinite(r_ra) and math.isfinite(r_dec)):
-        return True
-    return _separation_deg(ra, dec, r_ra, r_dec) <= radius_deg
+        return None
+    return _separation_deg(ra, dec, r_ra, r_dec) * 3600.0
+
+
+def _within(row: dict, ra: float, dec: float, radius_deg: float) -> bool:
+    """True when the row lies inside the search circle; rows without parseable ra/dec are kept (box-limited)."""
+    sep = _sep_arcsec(row, ra, dec)
+    return sep is None or sep <= radius_deg * 3600.0
 
 
 def _frequency_to_period(row: dict) -> float:
@@ -103,7 +109,9 @@ class Rung4Novelty:
     name = "rung4_novelty"
     cost = 1.0
 
-    def __init__(self, radius_arcsec: float = 20.0):
+    def __init__(self, radius_arcsec: float = 120.0):
+        # Kepler blends share pixels out to about two arcminutes, so a period-matched neighbour counts as known
+        self.radius_arcsec = radius_arcsec
         self.radius_deg = radius_arcsec / 3600.0
 
     def _get(self, b: DataBundle, service, url, params, key):
@@ -119,7 +127,8 @@ class Rung4Novelty:
     def run(self, s: Signal, b: DataBundle) -> TestResult:
         t = b.target
         cone = _box(t.ra, t.dec, self.radius_deg)                 # exact circle applied by _within on the rows
-        where_cum = f"kepid={t.kic}" if t.kic else cone
+        where_cum = f"kepid={t.kic} or {cone}" if t.kic else cone   # the target's own KOI/TCE rows, plus any neighbour
+        own_kepid = str(t.kic) if t.kic else None
         koi_id = lambda r: r.get("kepoi_name")
         tce_id = lambda r: f"{r.get('kepid')}.{r.get('tce_plnt_num')}"
         toi_id = lambda r: r.get("toi")
@@ -131,17 +140,20 @@ class Rung4Novelty:
         found, metrics = [], {}
 
         def scan(label, parsed, pcol, ident, period=None):
-            """Record counts and other-period rows; return a known-reason identifier on a period match."""
+            """Record counts and other-period rows; return a known-reason identifier on a period match (the matching
+            row goes to ``period_matched`` with its separation from the target)."""
             header, rows = parsed
             if header is None: raise _SchemaError(f"schema:{label}:empty response")
             if rows and pcol not in header: raise _SchemaError(f"schema:{label}:missing {pcol}")
             if "ra" in header and "dec" in header:                 # box query: keep only rows inside the circle
-                rows = [r for r in rows if _within(r, t.ra, t.dec, self.radius_deg)]
+                rows = [r for r in rows if (own_kepid and r.get("kepid") == own_kepid) or _within(r, t.ra, t.dec, self.radius_deg)]
             metrics[label] = len(rows)
             for r in rows:
                 p = period(r) if period else _to_float(r.get(pcol))
                 if p <= 0: continue
-                if _period_match(s.period, p): return ident(r)
+                if _period_match(s.period, p):
+                    metrics["period_matched"] = [{"catalog": label, "id": ident(r), "period": p, "sep_arcsec": _sep_arcsec(r, t.ra, t.dec)}]
+                    return ident(r)
                 found.append((label, ident(r), p))
             return None
 
@@ -155,7 +167,7 @@ class Rung4Novelty:
             svc = "vizier"
             # the table-level source: the catalogue also holds table9 (non-repeating events, no Per column), and a
             # catalogue-level query returns every table that matches
-            parsed = _tsv_rows(self._get(b, "vizier", VIZIER, {"-source": "J/AJ/151/68/catalog", "-c": f"{t.ra} {t.dec:+}", "-c.rs": self.radius_deg * 3600, "-out.max": 50},
+            parsed = _tsv_rows(self._get(b, "vizier", VIZIER, {"-source": "J/AJ/151/68/catalog", "-c": f"{t.ra} {t.dec:+}", "-c.rs": self.radius_arcsec, "-out.max": 50},
                                          ("vizier", "J/AJ/151/68", t.target_id)))
             hit = scan("kepler_eb", parsed, "Per", lambda r: r.get("KIC"))
             if hit is not None:
