@@ -50,6 +50,7 @@ MASK_EXTENT_BINS = 400          # phase bins of the fold on which the extent of 
 MASK_EXTENT_SIGMA = 3.0         # a bin belongs to the event while its mean is this many binned scatters below the rest
 MASK_EXTENT_MIN_POINTS = 3      # bins with fewer points are not used
 MASK_EXTENT_MAX_PHASE = 0.25    # the walk stops this far in phase from the deepest bin on either side
+MASK_EXTENT_MAX_HALF = 0.15     # no mask half-width exceeds this fraction of the masked period
 
 
 def _event_extent(t: np.ndarray, y: np.ndarray, period: float, t0: float, duration: float,
@@ -104,9 +105,26 @@ def _event_extent(t: np.ndarray, y: np.ndarray, period: float, t0: float, durati
     return (ends[1] - ends[0] + 1) * period / nb
 
 
-def _alias_of(period: float, earlier: list[Signal]) -> int | None:
-    """Index of the first signal of ``earlier`` whose period times a ratio p/q (p and q up to MASK_ALIAS_ORDER, 1
-    included) lies within 1 percent of ``period``, or None."""
+ALIAS_COARSE_STEPS = 10         # alias window of the first pass, in coarse frequency steps at the peak's period
+
+
+def _alias_of(period: float, earlier: list[Signal], spec: dict | None = None) -> int | None:
+    """Index of the first signal of ``earlier`` whose frequency times a ratio p/q (p and q up to MASK_ALIAS_ORDER, 1
+    included) lies within ALIAS_COARSE_STEPS coarse frequency steps (``spec["df"]`` at the trial period nearest
+    ``period``) of ``1 / period``, or None; without a spectrum the window is 1 percent of the period. The window
+    follows the search's own resolution, so a real planet a percent away from a small-integer ratio of a stronger
+    signal (a near-resonant pair, 2.02 x 0.61 d sits 580 steps from the 2:1 alias) is not an alias. It is wider than
+    the DUPLICATE_COARSE_STEPS of ``_duplicates``: an alias peak lands a few steps off the exact ratio and a resolved
+    one carries that offset (3.2002 d, 4 steps from 24.0 x 2/15 d, resolved to 9.6007 d, missed the 3-step window of
+    24.0 x 2/5 d on the 6000 ppm V binary). Ten steps cover 0.05 percent of the 0.5 to 30 d frequency axis for a 24 d
+    signal and 0.4 percent for a 0.6 d one, against 2.7 and 24 percent for the 1 percent windows."""
+    if spec is not None and spec["period"].size:
+        tol = ALIAS_COARSE_STEPS * float(spec["df"][int(np.argmin(np.abs(spec["period"] - period)))])
+        f = 1.0 / period
+        for j, s in enumerate(earlier):
+            if any(abs(f - r / s.period) < tol for r in MASK_ALIAS_RATIOS):
+                return j
+        return None
     for j, s in enumerate(earlier):
         ratio = period / s.period
         if any(abs(ratio / r - 1.0) < 0.01 for r in MASK_ALIAS_RATIOS):
@@ -179,8 +197,9 @@ def _harmonic_of(period: float, earlier: list[Signal], spec: dict | None) -> int
     None without a spectrum). A deep periodic signal raises a peak at every fold that stacks a fraction of its events
     (P/11 and 2P/11 as well as P/2), and the sub-harmonic resolution stops at MAX_SUBHARMONIC: on a 24.0 d V binary
     (1400 d, 6000 ppm) 24.0/11 and 24.0/13 d took the slots a real 2.1 d planet needed. The tolerance is the search's
-    own resolution there (as in ``_duplicates``); with a up to 2 the windows cover under 0.2 percent of the frequency
-    axis for a 24 d signal, where a up to 8 would cover several percent and caught the 2.1 d planet at 24.0 x 7/80 d.
+    own resolution there (as in ``_duplicates``); with a up to 2 the windows cover 0.5 percent of the 0.5 to 30 d
+    frequency axis for a 24 d signal, where a up to 8 would cover 5.9 percent and caught the 2.1 d planet at 24.0 x
+    7/80 d.
     """
     if spec is None or not spec["period"].size:
         return None
@@ -386,26 +405,31 @@ class BoxDip:
 
     def _masked_pass(self, lc: LightCurve, t: np.ndarray, y: np.ndarray, sigma: float, baseline: float,
                      th: Thresholds, pmax: float, first: list[Signal]) -> list[Signal]:
-        """Second pass with the strongest first-pass signal masked: its points around every primary and every phase-0.5
-        secondary are dropped, the same grid is searched again, and the strongest remaining peak is kept when it clears
-        the detection threshold on the masked spectrum and is neither a small-integer alias (``_is_alias``) nor an exact
-        harmonic (``_harmonic_of``) of any first-pass period. One iteration, at most one extra signal: the cost is one
-        more coarse search.
+        """Second pass with every independent first-pass signal (``alias_of`` None) at or above ``sde_min`` masked:
+        their points around every primary and every phase-0.5 secondary are dropped, the same grid is searched again,
+        and the strongest remaining peak is kept when it clears the detection threshold on the masked spectrum and is
+        neither a small-integer alias (``_is_alias``) nor an exact harmonic (``_harmonic_of``) of an independent
+        first-pass period. Masking every detected signal, not only the strongest, keeps a companion's own
+        sub-harmonics (2.1 x 11/3 d next to a 24.0 d binary) out of the second pass. One iteration, at most one extra
+        signal: the cost is one more coarse search.
 
-        The mask half-width around each event is max(MASK_WINDOW_DURATIONS x duration, 0.5 x extent + 0.25 x
+        Around each masked signal the half-width is max(MASK_WINDOW_DURATIONS x duration, 0.5 x extent + 0.25 x
         duration), with the extent measured on the fold (``_event_extent``) for the primary and for the secondary on
-        its own; a secondary without a measurable run takes the primary's half-width. ``extra["mask_half_days"]``
-        records both."""
-        top = first[0]
-        floor = MASK_WINDOW_DURATIONS * top.duration
-
-        def half_width(ext: float | None) -> float | None:
-            return None if ext is None else max(floor, 0.5 * ext + 0.25 * top.duration)
-
-        half_p = half_width(_event_extent(t, y, top.period, top.t0, top.duration, 0.0)) or floor
-        half_s = half_width(_event_extent(t, y, top.period, top.t0, top.duration, 0.5)) or half_p
-        keep = (~_in_window(t, top.period, top.t0, half_p)
-                & ~_in_window(t, top.period, top.t0 + 0.5 * top.period, half_s))
+        its own; a secondary without a measurable run takes the primary's half-width. No half-width exceeds
+        MASK_EXTENT_MAX_HALF (0.15) of the signal's period, so a strong residual sinusoid cannot mask most of the
+        curve. ``extra["masked_period"]`` lists the masked periods and ``extra["mask_half_days"]`` the (primary,
+        secondary) half-widths of each."""
+        masked = [s for s in first if s.extra.get("alias_of") is None and s.sde >= th.sde_min] or first[:1]
+        keep = np.ones(t.size, bool)
+        halves = []
+        for m in masked:
+            floor, cap = MASK_WINDOW_DURATIONS * m.duration, MASK_EXTENT_MAX_HALF * m.period
+            ext_p = _event_extent(t, y, m.period, m.t0, m.duration, 0.0)
+            ext_s = _event_extent(t, y, m.period, m.t0, m.duration, 0.5)
+            half_p = min(cap, floor if ext_p is None else max(floor, 0.5 * ext_p + 0.25 * m.duration))
+            half_s = min(cap, half_p if ext_s is None else max(floor, 0.5 * ext_s + 0.25 * m.duration))
+            keep &= ~_in_window(t, m.period, m.t0, half_p) & ~_in_window(t, m.period, m.t0 + 0.5 * m.period, half_s)
+            halves.append([float(half_p), float(half_s)])
         if keep.sum() < MIN_POINTS:
             return []
         t2, y2 = t[keep], y[keep]
@@ -414,15 +438,18 @@ class BoxDip:
         if spec["period"].size == 0:
             return []
         cands, sdes, n_refined = self._rank(model, spec)
-        earlier = [s.period for s in first]
+        # the filters test the independent signals only: an alias row is itself a ratio of one of them, and its own
+        # p/q windows would only widen the net (2.1 d sits at 8/7 of the 24.0/13 d row of a deep binary)
+        indep = [s for s in first if s.extra.get("alias_of") is None]
+        earlier = [s.period for s in indep]
         for ci in np.argsort(sdes)[::-1]:
             if sdes[ci] < th.sde_min:
                 return []
-            if _is_alias(cands[ci][0], earlier, baseline) or _harmonic_of(cands[ci][0], first, spec) is not None:
+            if _is_alias(cands[ci][0], earlier, baseline) or _harmonic_of(cands[ci][0], indep, spec) is not None:
                 continue
             sig = self._signal(lc, t2, y2, spec, cands[ci], sdes[ci], baseline, n_refined)
-            sig.extra.update({"pass": 2, "masked_period": top.period, "masked_points": int((~keep).sum()),
-                              "mask_half_days": (float(half_p), float(half_s))})
+            sig.extra.update({"pass": 2, "masked_period": [float(m.period) for m in masked],
+                              "masked_points": int((~keep).sum()), "mask_half_days": halves})
             return [sig]
         return []
 
@@ -433,14 +460,17 @@ class BoxDip:
         """Signals plus the periodogram summary built from the same per-band SDE spectrum the ranking uses; the full
         spectrum arrays come back only with ``keep_spectrum``.
 
-        The first-pass list holds up to ``top_k`` mutually independent signals, filled from the SDE ranking (every
-        separated peak of ``_rank``: n_refine of them, or REFILL_FACTOR x top_k without the refine stage). Each peak
-        goes through the sub-harmonic resolution, then is skipped when it lands on a kept signal (``_duplicates``),
-        within 1 percent of a kept period times p/q (p and q up to MASK_ALIAS_ORDER, ``_alias_of``) or at an exact
-        harmonic of one (``_harmonic_of``); the next peak down the ranking takes the slot. A peak whose resolution
-        lands on n times a kept period with about n times its depth is kept, since the kept signal is then its P/n fold.
-        Skipped peaks are not returned; each kept signal counts those it absorbed in ``extra["aliases_skipped"]``.
-        ``extra["alias_of"]`` is therefore always None; the key stays for the schema and the dashboard."""
+        The first-pass list holds up to ``top_k`` mutually independent signals, then up to ``top_k`` alias rows, filled
+        from the SDE ranking (the separated peaks of ``_rank``: n_refine of them, or REFILL_FACTOR x top_k without the
+        refine stage). Each peak goes through the sub-harmonic resolution; one that lands on a signal already listed
+        (``_duplicates``) is dropped. One within ALIAS_COARSE_STEPS coarse frequency steps of an independent signal
+        times p/q (p and q up to MASK_ALIAS_ORDER, ``_alias_of``) or at an exact harmonic of one (``_harmonic_of``)
+        becomes an alias row with ``extra["alias_of"]`` set to that signal's index, so the rungs vet it (rung 2 rejects
+        a true alias, a near-resonant planet can pass); the others take the independent slots. A peak whose resolution
+        lands on n times an independent period with about n times its depth is independent, since the kept signal is
+        then its P/n fold. Alias rows follow the independent signals in SDE order. The walk stops once both lists are
+        full or the peaks run out, and no later peak is resolved; each independent signal counts the peaks it absorbed
+        but which were not returned (duplicates, aliases past the cap) in ``extra["aliases_skipped"]``."""
         th = thresholds
         m = np.isfinite(fnorm) & np.isfinite(lc.time)
         if m.sum() < MIN_POINTS:
@@ -469,31 +499,39 @@ class BoxDip:
         cp = np.array([c[0] for c in cands])
         ranked = _separated(np.argsort(sdes)[::-1], cp, len(cands))
         raw = [self._signal(lc, t, y, spec, cands[ci], float(sdes[ci]), baseline, n_refined) for ci in ranked]
-        # in rank order, each peak is tested for a sub-harmonic alias first; it is skipped when its (resolved) period
-        # coincides with a kept signal (the sub-harmonics of one object, or a lower-ranked peak at the true period,
-        # which lends its refined SDE; three coarse frequency steps) or sits at a p/q alias or an exact harmonic of
-        # one, so one object leaves one signal and the next peak takes the slot. One exception: a peak whose
-        # resolution lands on n times a kept period with n times its depth (``_reveals_subharmonic``) shows that the
-        # kept signal is itself a sub-harmonic the resolver could not fold back (too few events), and is kept (0.7/2 d
-        # resolved to 0.7 d next to an unresolved 0.7/3 d on a 15 d curve)
+        # in rank order, each peak is resolved first (lazily: the walk stops once top_k independent signals and top_k
+        # alias rows are listed). A resolved period on a listed signal (the sub-harmonics of one object, or a
+        # lower-ranked peak at the true period, which lends its refined SDE; three coarse frequency steps) is
+        # dropped; one at a p/q alias or an exact harmonic of an independent signal is an alias row. One exception: a
+        # peak whose resolution lands on n times an independent period with n times its depth
+        # (``_reveals_subharmonic``) shows that the kept signal is itself a sub-harmonic the resolver could not fold
+        # back (too few events), and is independent (0.7/2 d resolved to 0.7 d next to an unresolved 0.7/3 d on a
+        # 15 d curve)
         out: list[Signal] = []
+        rows: list[Signal] = []
         for j, raw_sig in enumerate(raw):
-            if len(out) >= self.top_k:
+            if len(out) >= self.top_k and len(rows) >= self.top_k:
                 break
             sig = self._resolve_alias(t, y, raw_sig, pmax, spec, others=raw[:j] + raw[j + 1:])
-            dup = _duplicates(sig.period, out, spec)
+            dup = _duplicates(sig.period, out + rows, spec)
             if dup:
-                a = next(i for i, s in enumerate(out) if s is dup[0])
-            else:
-                a = _alias_of(sig.period, out)
-                if a is None:
-                    a = _harmonic_of(sig.period, out, spec)
-                if a is not None and sig is not raw_sig and _reveals_subharmonic(sig, out[a]):
-                    a = None
-            if a is not None:
-                out[a].extra["aliases_skipped"] += 1
+                owner = dup[0] if dup[0].extra["alias_of"] is None else out[dup[0].extra["alias_of"]]
+                owner.extra["aliases_skipped"] += 1
                 continue
-            out.append(sig)
+            a = _alias_of(sig.period, out, spec)
+            if a is None:
+                a = _harmonic_of(sig.period, out, spec)
+            if a is not None and sig is not raw_sig and _reveals_subharmonic(sig, out[a]):
+                a = None
+            if a is None:
+                if len(out) < self.top_k:
+                    out.append(sig)
+            elif len(rows) < self.top_k:
+                sig.extra["alias_of"] = a
+                rows.append(sig)
+            else:
+                out[a].extra["aliases_skipped"] += 1
+        out += sorted(rows, key=lambda r: -r.sde)
         # the periodogram summary and its peaks describe the first-pass spectrum only; a second-pass signal has its
         # own SDE on the masked spectrum and is not drawn on this envelope
         edges = np.geomspace(th.min_period_days, pmax, self.n_bands + 1)

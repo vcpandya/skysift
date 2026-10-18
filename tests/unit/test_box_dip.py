@@ -24,13 +24,23 @@ def test_recovers_injected_transit():
     assert sig[0].extra["alias_of"] is None and sig[0].extra["n_periods"] > 0
     coarse = BoxDip(two_stage=False).detect(lc, detrend(lc), NARROW)
     assert coarse and abs(coarse[0].period - sig[0].period) < 0.002 and coarse[0].sde > 9
-    # the aliases of the transit are skipped and counted on it, and the slots go to independent peaks
-    assert sig[0].extra["aliases_skipped"] >= 1
-    assert all(s.extra["alias_of"] is None for s in sig)
+    # the aliases of the transit come back as alias rows after the independent signals, which hold none of them
+    assert any(s.extra["alias_of"] == 0 for s in sig[1:])
     assert all(isinstance(s.extra["band"], int) and s.extra["sde_spectrum_std"] > 0 for s in sig)
+    rows = [i for i, s in enumerate(sig) if s.extra["alias_of"] is not None]
+    assert rows and min(rows) > max(i for i, s in enumerate(sig) if s.extra["alias_of"] is None)
     for s in sig[1:]:
         ratio = s.period / sig[0].period
-        assert all(abs(ratio / r - 1) >= 0.01 for r in (2, 3, 0.5, 1 / 3)), (s.period, sig[0].period)
+        if s.extra["alias_of"] is None:
+            assert all(abs(ratio / r - 1) >= 0.01 for r in (2, 3, 0.5, 1 / 3)), (s.period, sig[0].period)
+        else:
+            assert s.extra["alias_of"] == 0 and _small_ratio(ratio), (s.period, sig[0].period)
+
+
+def _small_ratio(ratio: float) -> bool:
+    """Within 1 percent of n/q or q/n for some q up to 8 and any integer n."""
+    return any(abs(x * q - round(x * q)) < 0.01 * x * q and round(x * q) >= 1
+               for x in (ratio, 1 / ratio) for q in range(1, 9))
 
 
 def test_recovers_deep_transit():
@@ -38,7 +48,9 @@ def test_recovers_deep_transit():
     sig = BoxDip().detect(lc, detrend(lc), NARROW)
     assert sig and abs(sig[0].period - 13.769) < 0.002
     assert abs(sig[0].depth_ppm - 20000) < 0.15 * 20000 and sig[0].n_events >= 30
-    assert all(a.sde >= b.sde for a, b in itertools.pairwise(sig))
+    # independent signals in SDE order, then the alias rows in SDE order
+    for group in ([s for s in sig if s.extra["alias_of"] is None], [s for s in sig if s.extra["alias_of"] is not None]):
+        assert all(a.sde >= b.sde for a, b in itertools.pairwise(group))
 
 
 @pytest.mark.parametrize("seed", [7, 11, 21])
@@ -104,7 +116,7 @@ def test_second_pass_recovers_a_planet_hidden_behind_a_dominant_binary():
     s2 = second[0]
     assert abs(s2.period - 9.9) < 0.02 and s2.sde >= 9
     assert abs(s2.depth_ppm - 900) < 0.3 * 900
-    assert abs(s2.extra["masked_period"] - first[0].period) < 1e-9 and s2.extra["alias_of"] is None
+    assert abs(s2.extra["masked_period"][0] - first[0].period) < 1e-9 and s2.extra["alias_of"] is None
     assert sig.index(s2) == len(sig) - 1, "second-pass signals come after every first-pass peak"
 
 
@@ -223,10 +235,9 @@ def test_deep_transit_ranked_at_half_period_is_doubled():
     assert abs(sig[0].sde - max(off[0].sde, dropped[0])) < 1e-9
     assert sig[0].extra["aliases_skipped"] >= 1                    # the 6.5 d peak at least
     assert sig[0].extra["band"] == off[0].extra["band"]           # the band of the SDE kept
-    # lower-ranked P/3 and P/4 peaks are skipped as aliases of the 6.5 d signal; no slot holds one
+    # lower-ranked P/3 and P/4 peaks resolve onto the 6.5 d signal and are dropped as duplicates
     assert all(abs(s.period - 6.5 / 3) / (6.5 / 3) >= 0.02 for s in sig[1:])
     assert all(abs(s.period - 6.5 / 4) >= 0.01 for s in sig[1:])
-    assert all(s.extra["alias_of"] is None for s in sig)
 
 
 def test_the_duplicate_drop_after_doubling_is_three_coarse_steps_wide():
@@ -383,7 +394,7 @@ def test_masked_pass_recovers_a_companion_behind_a_v_shaped_binary():
     assert all(abs(s.period - r) / r >= 0.01 for s in sig for r in residues), found
     for s in sig:
         if s.extra.get("pass") == 2:                               # the mask covers the whole eclipse, not the box
-            assert s.extra["mask_half_days"][0] >= 0.5 * V_WIDTH, s.extra["mask_half_days"]
+            assert s.extra["mask_half_days"][0][0] >= 0.5 * V_WIDTH, s.extra["mask_half_days"]
 
 
 def test_mask_extent_is_measured_on_the_fold():
@@ -409,38 +420,71 @@ def test_second_pass_filters_aliases_to_order_eight():
 
 
 @functools.cache
-def _v_binary_first_pass():
-    """The first pass alone (``mask_iterations=0``) of the 6000 ppm V binary with a 500 ppm companion. Measured 18
-    October 2026: the ranking holds 24.0/n and 24.0 p/q peaks down to rank 17 and the companion at rank 18 (SDE 49.7),
-    so a list of top_k raw peaks collapsed to the single 24.0 d signal."""
+def _v_binary_search():
+    """One full search of the 6000 ppm V binary with a 500 ppm companion, shared by the two tests below (the first
+    pass is the same with ``mask_iterations=0``). Measured 18 October 2026: the ranking holds 24.0/n and 24.0 p/q peaks
+    down to rank 17 and the companion at rank 18 (SDE 49.7), so a list of top_k raw peaks collapsed to the single
+    24.0 d signal."""
     lc, fnorm = _v_binary(6000, 500)
-    return BoxDip(mask_iterations=0).detect(lc, fnorm, SUB_WINDOW)
+    return BoxDip().detect(lc, fnorm, SUB_WINDOW)
 
 
 def test_first_pass_list_is_refilled_after_an_alias_collapse():
-    first = _v_binary_first_pass()
-    found = [(round(s.period, 4), round(s.sde, 1), s.extra.get("aliases_skipped")) for s in first]
-    eclipse = [s for s in first if abs(s.period - V_P) / V_P < 0.01]
-    assert eclipse and any(abs(s.period - COMP_P) / COMP_P < 0.01 for s in first), found
+    first = [s for s in _v_binary_search() if s.extra.get("pass", 1) == 1]
+    found = [(round(s.period, 4), round(s.sde, 1), s.extra["alias_of"], s.extra["aliases_skipped"]) for s in first]
+    indep = [s for s in first if s.extra["alias_of"] is None]
+    eclipse = [s for s in indep if abs(s.period - V_P) / V_P < 0.01]
+    assert eclipse and any(abs(s.period - COMP_P) / COMP_P < 0.01 for s in indep), found
     residues = [V_P / n for n in range(2, 9)]
     assert all(abs(s.period - r) / r >= 0.01 for s in first for r in residues), found
     assert eclipse[0].extra["aliases_skipped"] >= 2, found
-    assert all(s.extra["alias_of"] is None for s in first)
+    assert all(s.extra["alias_of"] is None or s.extra["alias_of"] < len(indep) for s in first)
+
+
+def test_masked_pass_masks_every_first_pass_signal():
+    """The companion's own sub-harmonics came back from a pass that masked the binary alone (7.7 d = 2.1 x 11/3, SDE
+    12.9, measured 18 October 2026); with both signals masked no independent signal sits at 2.1 x p/q."""
+    sig = _v_binary_search()
+    found = [(round(s.period, 4), round(s.sde, 1), s.extra.get("pass", 1), s.extra["alias_of"]) for s in sig]
+    ratios = {p / q for p in range(1, 13) for q in range(1, 13) if p != q}
+    for s in sig:
+        if s.extra["alias_of"] is None:
+            assert all(abs(s.period / (COMP_P * r) - 1) >= 0.01 for r in ratios), found
+    for s in sig:
+        if s.extra.get("pass") == 2:
+            assert len(s.extra["masked_period"]) == 2 and len(s.extra["mask_half_days"]) == 2, s.extra
+
+
+def _two_planets(p2: float, dur2_h: float):
+    """A 0.61 d, 1 h, 2000 ppm box plus a second 1500 ppm box (1400 d, seed 73, 700 ppm noise), one full search."""
+    lc = inject_transit(make_lightcurve(n_days=1400, seed=73, noise_ppm=700), 0.61, 131.8, 1 / 24, 2000)
+    lc = inject_transit(lc, p2, 135.2, dur2_h / 24, 1500)
+    return BoxDip().detect(lc, detrend(lc), SUB_WINDOW)
 
 
 def test_aliases_of_a_kept_signal_do_not_consume_slots():
-    """A 0.61 d, 1 h, 2000 ppm box and a 10.6 d, 4 h, 1500 ppm box (1400 d, seed 73, 700 ppm noise): the K04802.01
-    miss, whose three slots went to 0.6056 d and its aliases at 1.2111 and 1.8167 d. Exact harmonics past the p/q
-    order (9 x 0.61 d in the first pass, 10.6/9 d in the second, measured 18 October 2026) take no slot either."""
-    lc = inject_transit(make_lightcurve(n_days=1400, seed=73, noise_ppm=700), 0.61, 131.8, 1 / 24, 2000)
-    lc = inject_transit(lc, 10.6, 135.2, 4 / 24, 1500)
-    sig = BoxDip().detect(lc, detrend(lc), SUB_WINDOW)
-    found = [(round(s.period, 4), round(s.sde, 1), s.extra.get("pass", 1)) for s in sig]
-    first = [s for s in sig if s.extra.get("pass", 1) == 1]
+    """With a 10.6 d, 4 h second box: the K04802.01 miss, whose three slots went to 0.6056 d and its aliases at 1.2111
+    and 1.8167 d. The aliases come back as alias rows after the independent signals, and exact harmonics past the p/q
+    order (9 x 0.61 d in the first pass, 10.6/9 d in the second, measured 18 October 2026) take no independent slot."""
+    sig = _two_planets(10.6, 4)
+    found = [(round(s.period, 4), round(s.sde, 1), s.extra.get("pass", 1), s.extra["alias_of"]) for s in sig]
+    indep = [i for i, s in enumerate(sig) if s.extra.get("pass", 1) == 1 and s.extra["alias_of"] is None]
     for p in (0.61, 10.6):
-        assert any(abs(s.period - p) / p < 0.01 for s in first), found
-    assert all(abs(s.period - a) / a >= 0.01 for s in sig for a in (1.22, 1.83)), found
-    for s in sig:
-        for p in (0.61, 10.6):
-            for n in range(2, 21):
-                assert abs(s.period / (n * p) - 1) >= 0.001 and abs(s.period * n / p - 1) >= 0.001, found
+        assert any(abs(sig[i].period - p) / p < 0.01 for i in indep), found
+    for i, s in enumerate(sig):
+        if any(abs(s.period - a) / a < 0.01 for a in (1.22, 1.83)):
+            assert s.extra["alias_of"] == 0 and i > max(indep), found
+        if s.extra["alias_of"] is None:
+            for p in (0.61, 10.6):
+                for n in range(2, 21):
+                    assert abs(s.period / (n * p) - 1) >= 0.001 and abs(s.period * n / p - 1) >= 0.001, found
+
+
+def test_near_resonant_planet_is_returned_as_an_alias_row():
+    """A second planet at 2.02 x 0.61 d (1.2322 d, 2 h) sits a percent from the 2:1 alias of the first: the alias
+    window is the search's frequency resolution, not 1 percent of the period, so it is returned (as an independent
+    signal or an alias row) for the rungs to judge."""
+    sig = _two_planets(1.2322, 2)
+    found = [(round(s.period, 4), round(s.sde, 1), s.extra.get("pass", 1), s.extra["alias_of"]) for s in sig]
+    assert abs(sig[0].period - 0.61) / 0.61 < 0.002, found
+    assert any(abs(s.period - 1.2322) / 1.2322 < 0.002 for s in sig), found
