@@ -26,14 +26,28 @@ RUNG_METRICS = {
 _HIDDEN = object()     # a metric the key-metrics cell cannot show; it stays in the raw metrics
 
 
+def _number(x) -> bool:
+    return isinstance(x, (int, float)) and not isinstance(x, bool)
+
+
+def _epoch_note(r: dict) -> str:
+    """Whether the catalogue epoch lines up with the signal's transits (rung 4's ``epoch_agrees``), or nothing when the
+    check could not be made."""
+    agrees, offset = r.get("epoch_agrees"), r.get("epoch_offset_h")
+    if agrees is None or not _number(offset):
+        return ""
+    return f", epoch agrees (offset {offset:.1f} h)" if agrees else f", epoch differs by {offset:.1f} h"
+
+
 def _period_matched(rows):
-    """Rung 4's matching catalogue row as "catalogue id at N arcsec" (a row without coordinates has no separation)."""
+    """Rung 4's matching catalogue row as "catalogue id at N arcsec" (a row without coordinates has no separation),
+    followed by the epoch check when rung 4 made one."""
     if not rows or not isinstance(rows, list) or not isinstance(rows[0], dict): return _HIDDEN
     r = rows[0]
     sep = r.get("sep_arcsec")
-    if isinstance(sep, (int, float)) and not isinstance(sep, bool):
-        return f"{r.get('catalog')} {r.get('id')} at {sep:.1f} arcsec"
-    return f"{r.get('catalog')} {r.get('id')}, no position"
+    if _number(sep):
+        return f"{r.get('catalog')} {r.get('id')} at {sep:.1f} arcsec{_epoch_note(r)}"
+    return f"{r.get('catalog')} {r.get('id')}, no position{_epoch_note(r)}"
 
 
 def _display(key: str, value):

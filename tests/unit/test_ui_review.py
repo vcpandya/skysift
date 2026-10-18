@@ -218,3 +218,34 @@ def test_signal_neighbours_stay_inside_the_search_version(settings, tmp_path):
     assert (f'id="link-prev" href="/signals/{old}?status=candidate_stage1{amp}sort=sde{amp}dir=desc{amp}versions=all"'
             in r.text)
     assert client.get(f"/signals/{ids['candidate']}?versions=some").status_code == 400
+
+
+def test_signal_page_says_how_many_waves_were_put_back(settings, tmp_path):
+    client, app, ids, _launcher = make_seeded_client(settings, tmp_path)
+    comps = [{"frequency": 15.0479, "amplitude_ppm": 1100.0, "snr": 19000.0, "coef": [1.0, -0.0011, 0.0, 0.0, 0.0]}]
+    restored = [{"frequency": 0.14526, "amplitude_ppm": 420.0}]
+    with app.state.store.session() as s:
+        for key, pw in (("candidate", {"n": 1, "components": comps, "skipped": [], "restored": restored}),
+                        ("undetermined", {"n": 1, "components": comps, "skipped": []})):
+            extra = json.dumps({"baseline_days": 1400.0, "prewhitening": pw})
+            s.execute(text("update signals set extra = :e where id = :i"), {"e": extra, "i": ids[key]})
+        s.commit()
+    r = client.get(f"/signals/{ids['candidate']}")
+    assert ("whitened: 1 wave removed (strongest P = 0.0665 d, 1,100 ppm) · 1 wave put back at the detection's "
+            "harmonics") in r.text
+    r = client.get(f"/signals/{ids['undetermined']}")
+    assert "whitened: 1 wave removed" in r.text and "put back" not in r.text
+
+
+def test_rung4_notes_whether_the_known_object_epoch_agrees(settings, tmp_path):
+    client, app, ids, _launcher = make_seeded_client(settings, tmp_path)
+    base = {"catalog": "cumulative", "id": "K77777.01", "period": 13.77, "sep_arcsec": 0.4}
+    prefix = '<span class="muted">period_matched</span> cumulative K77777.01 at 0.4 arcsec'
+    for extra, expected in (({"epoch_offset_h": 0.26, "epoch_agrees": True}, f"{prefix}, epoch agrees (offset 0.3 h)<"),
+                            ({"epoch_offset_h": 122.04, "epoch_agrees": False}, f"{prefix}, epoch differs by 122.0 h<"),
+                            ({"epoch_offset_h": None, "epoch_agrees": None}, f"{prefix}<"),
+                            ({}, f"{prefix}<")):
+        _set_metrics(app, ids["candidate"], "rung4_novelty", {"cumulative": 1, "period_matched": [{**base, **extra}]},
+                     status="fail")
+        shown = _shown(client.get(f"/signals/{ids['candidate']}").text, "rung4_novelty")
+        assert expected in shown, (extra, shown)
