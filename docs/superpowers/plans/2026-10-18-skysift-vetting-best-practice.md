@@ -291,12 +291,12 @@ like `fnorm` when a mask is present.
   0.5, which is the odd transit of the train; odd and even depths on the 6.0 d fold are equal, so the odd/even rule
   passes): expected status UNDETERMINED, reason starts "equal secondary", `suggested_period == 3.0` within 1e-6
   (amended after review: the 6.0 d detection is twice the 3.0 d truth).
-- `test_rung2_keeps_a_planet_with_a_shallow_occultation`: the albedo rule `A_g = (d_sec / d_pri) (a / R_p)^2 < 1`
+- `test_rung2_keeps_a_planet_with_a_shallow_occultation`: the albedo rule `A_g = d_sec (a / R_p)^2 < 1` (d_sec the fractional secondary depth)
   uses `a` from the meta mass and the period, so the fixture is a close-in giant planet on a very low-mass host:
   1500 d curve, noise 100 ppm, seed 29; inject with `tests.synthetic.inject_model` (Task 1) k = 0.3, b = 0.3,
   a_over_r = 3, P = 2.2 d (primary depth about 90000 ppm) plus a 60 ppm box of the model's t14 at phase 0.5; target
   meta radius 0.2 and mass 0.02. Then R_p = 0.3 x 0.2 R_sun = 6.5 R_earth (< 30), a = 1.37e9 m, (a / R_p)^2 = 1080,
-  d_sec / d_pri = 6.7e-4, albedo about 0.72 (< 1), b = 0.3 (< 0.95), d_sec < 0.1 d_pri. The 60 ppm secondary over
+  d_sec = 6e-5 (fractional), albedo about 0.065 (< 1; amended in the final fix round: the test as built uses a 0.2 M_sun host and measures about 0.36, the detrend reading the secondary as 75 ppm), b = 0.3 (< 0.95), d_sec < 0.1 d_pri. The 60 ppm secondary over
   about 680 events at 100 ppm noise is detected at the phase-0.5 rule (state the measured `secondary_sigma`; if it
   is below 3 sigma, raise the secondary depth and lower the meta mass together so the albedo stays below 1, and record
   the values used). Assert PASS, reason "secondary consistent with planet occultation", `occultation_albedo` < 1.

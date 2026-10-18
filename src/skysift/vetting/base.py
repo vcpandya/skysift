@@ -23,6 +23,9 @@ class DataBundle:
     thresholds: Thresholds
     fnorm_alt: np.ndarray | None = None
     flux_detrended: np.ndarray | None = None    # the detrended flux before pre-whitening (rung 2's SWEET)
+    # ``fnorm`` before a detector mask was applied (second-pass signals only, else None): its finite points are the
+    # observed cadences, so rung 1 events does not read the mask as missing data
+    fnorm_unmasked: np.ndarray | None = None
     store: object | None = None
     fetch: Callable = net.fetch
     cache: dict = field(default_factory=dict)   # per-field shared data (catalogue cones, etc.)

@@ -302,6 +302,10 @@ EVENT_COVERAGE_MIN = 0.75       # an event is covered when it holds at least thi
 CHASES_MAX_EVENTS = 5           # Chases is computed only for signals with at most this many events
 CHASES_FRACTION = 0.8           # a slid box counts as a competing dip above this fraction of the event's own SES
 CHASES_MIN = 0.01               # C_i below this marks the event bad (applied by the rung)
+# an epoch is an expected transit only when an observed cadence lies this close to its mid-transit (days): Kepler's
+# inter-quarter and monthly gaps plus the 1.5 d gap-edge mask span about 3 d, so a transit inside such a gap is still
+# expected (and uncovered), while one in a quarter the target was never observed in is not
+EXPECTED_EPOCH_MAX_GAP_DAYS = 3.0
 SWEET_FACTORS = (0.5, 1.0, 2.0)
 PHASE_MIN_BOX, PHASE_MIN_BASELINE = 5, 50
 
@@ -489,8 +493,8 @@ def sweet(time, flux, period, depth_ppm) -> SweetResult:
 
 @dataclass
 class EventQuality:
-    epochs: np.ndarray          # every expected epoch (mid-transit within the span of the finite times)
-    coverage: np.ndarray        # points within +-1 duration / expected (2 duration / median cadence); NaN at cadence 0
+    epochs: np.ndarray          # every expected epoch (mid-transit within EXPECTED_EPOCH_MAX_GAP_DAYS of an observed time)
+    coverage: np.ndarray        # observed cadences within +-1 duration / expected (2 duration / median cadence); NaN at cadence 0
     ses: np.ndarray             # depth / error per epoch from _box_depth; NaN with fewer than 3 box points or no data
     chases: np.ndarray | None   # C_i per epoch when len(epochs) <= CHASES_MAX_EVENTS, else None
 
@@ -519,32 +523,47 @@ def _chases_one(t, y, t_event, ses, period, duration_days) -> float:
     return float(min(dt, reach) / reach)
 
 
-def event_quality(time, fnorm, period, t0, duration_days) -> EventQuality:
-    """Per-event coverage, single-event statistic and Chases (Thompson et al. 2018, Appendix A) on the finite points.
+def event_quality(time, fnorm, period, t0, duration_days, *, observed=None) -> EventQuality:
+    """Per-event coverage, single-event statistic and Chases (Thompson et al. 2018, Appendix A).
 
-    The events are every epoch ``round((t - t0) / period)`` whose mid-transit falls within the span of the finite
-    times, as the expected transits are counted; an epoch with no point near mid-transit has coverage 0.0 and a NaN ses.
-    ``coverage`` counts the points within one duration of mid-transit over the 2 x duration / median cadence expected;
-    it is NaN for every epoch when the median cadence is 0 (more than half the time stamps duplicated), which the rung
-    treats as not covered.
+    ``observed`` marks the cadences that were observed (default: the finite points of ``fnorm``). A caller whose
+    ``fnorm`` carries a detector mask (NaN at the first-pass eclipses of a second-pass signal) passes the finite points
+    of the unmasked flux: a masked cadence was observed, so it counts towards coverage and the epoch expectation, while
+    ses and Chases read only the finite ``fnorm``.
+
+    The events are the expected epochs: every epoch ``round((t - t0) / period)`` whose mid-transit lies within the span
+    of the observed times and within ``EXPECTED_EPOCH_MAX_GAP_DAYS`` of an observed cadence. A transit in an
+    inter-quarter or monthly gap (with the gap-edge mask about 3 d) is still expected and counts as uncovered; a transit
+    in a quarter the target was never observed in is not expected. An expected epoch with no point near mid-transit has
+    coverage 0.0 and a NaN ses.
+    ``coverage`` counts the observed cadences within one duration of mid-transit over the 2 x duration / median
+    observed cadence expected; it is NaN for every epoch when the median cadence is 0 (more than half the time stamps
+    duplicated), which the rung treats as not covered.
     ``ses`` is the depth over the error of ``_box_depth`` on the epoch's points, as ``event_depths`` takes it, NaN when
     the box holds fewer than 3 points or the baseline fewer than 20. ``chases`` is computed only when the number of
     events is at most ``CHASES_MAX_EVENTS`` (otherwise None), and is NaN for an event without a positive finite ses: a box of the
     duration slid across +-P/10 of mid-transit must not find a dip as significant as 0.8 x the event's own ses closer
     than P/10 (``_chases_one``); 1 means none nearer than the window, 0 a competing dip on top of the event."""
     time, fnorm = np.asarray(time, float), np.asarray(fnorm, float)
+    obs_mask = np.isfinite(fnorm) if observed is None else np.asarray(observed, bool)
+    t_obs = np.sort(time[np.isfinite(time) & obs_mask])
     good = np.isfinite(time) & np.isfinite(fnorm)
     time, fn = time[good], fnorm[good]
-    if time.size < 2:
+    if t_obs.size < 2:
         return EventQuality(np.array([], int), np.array([]), np.array([]), np.array([]))
-    cadence = float(np.median(np.diff(np.sort(time))))
+    cadence = float(np.median(np.diff(t_obs)))
     ph = fold_phase(time, period, t0)
     ep = np.round((time - t0) / period).astype(int)
-    near = np.abs(ph) < duration_days
-    epochs = np.arange(int(np.ceil((time.min() - t0) / period)), int(np.floor((time.max() - t0) / period)) + 1)
+    epochs = np.arange(int(np.ceil((t_obs[0] - t0) / period)), int(np.floor((t_obs[-1] - t0) / period)) + 1)
+    mids = t0 + epochs * period
+    k = np.clip(np.searchsorted(t_obs, mids), 1, t_obs.size - 1)          # the observed times either side of each
+    gap = np.minimum(np.abs(t_obs[k] - mids), np.abs(mids - t_obs[k - 1]))
+    epochs = epochs[gap <= EXPECTED_EPOCH_MAX_GAP_DAYS]
     expected = 2.0 * duration_days / cadence if cadence > 0 else np.nan     # duplicated stamps: coverage undefined
     half = duration_days / 2.0
-    coverage = np.array([np.count_nonzero(near & (ep == e)) / expected for e in epochs])
+    ep_obs = np.round((t_obs - t0) / period).astype(int)
+    near_obs = np.abs(fold_phase(t_obs, period, t0)) < duration_days
+    coverage = np.array([np.count_nonzero(near_obs & (ep_obs == e)) / expected for e in epochs])
     ses = np.full(epochs.size, np.nan)
     for i, e in enumerate(epochs):
         s = ep == e

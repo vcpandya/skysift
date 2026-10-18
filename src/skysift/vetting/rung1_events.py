@@ -11,10 +11,28 @@ ZUMA_SES_MIN = -1.0             # an event whose own SES is below this is an exc
 SES_DOMINANCE_MIN_PERIOD = 90.0 # the single-event dominance test is made only on signals longer than this (days)
 SES_DOMINANCE_MAX = 0.8         # max(SES) / sqrt(sum SES^2) above this: one event carries the signal
 CHASES_MEDIAN_MIN = 0.8         # the median C_i below this: the events sit among dips as strong as themselves
+METRIC_LIST_MAX = 60            # per-epoch lists are stored only up to this many expected epochs; summaries above it
 
 
 def _round(values, ndigits: int) -> list:
     return [round(float(v), ndigits) if np.isfinite(v) else None for v in values]
+
+
+def _stat(values: np.ndarray, fn, ndigits: int):
+    return round(float(fn(values)), ndigits) if values.size else None
+
+
+def _coverage_summary(coverage: np.ndarray) -> dict:
+    """The coverage of many epochs in four numbers; a NaN coverage (cadence 0) counts as below the minimum."""
+    finite = coverage[np.isfinite(coverage)]
+    return {"n": int(coverage.size), "min": _stat(finite, np.min, 3), "median": _stat(finite, np.median, 3),
+            "below_min": int(np.count_nonzero(~(coverage >= EVENT_COVERAGE_MIN)))}
+
+
+def _ses_summary(ses: np.ndarray) -> dict:
+    finite = ses[np.isfinite(ses)]
+    return {"n_finite": int(finite.size), "min": _stat(finite, np.min, 2), "median": _stat(finite, np.median, 2),
+            "max": _stat(finite, np.max, 2)}
 
 
 class Rung1Events:
@@ -33,15 +51,24 @@ class Rung1Events:
       "tunable" there and SkySift takes 0.8).
     The SES rules (Zuma, dominance, Chases) apply only when at least ``min_events`` events have a finite SES.
 
-    ``n_events_with_data`` in the metrics counts every expected epoch in the span of the data, since ``event_quality``
-    enumerates them all; an epoch with no points has coverage 0.0, so it counts here and is never covered."""
+    ``n_events_with_data`` in the metrics counts every expected epoch: a mid-transit within the span of the observed
+    cadences and within ``lc.ops.EXPECTED_EPOCH_MAX_GAP_DAYS`` (3 d) of one, so a transit in a quarter gap counts (coverage
+    0.0, never covered) and one in a quarter the star was never observed in does not. A second-pass signal is vetted
+    on flux with the detector's mask set to NaN; when the bundle carries ``fnorm_unmasked`` its finite points are the
+    observed cadences, so masked cadences count towards coverage (SES and Chases still read only the finite ``fnorm``).
+
+    The per-epoch lists ``coverage``, ``ses`` and ``chases`` are stored only when there are at most ``METRIC_LIST_MAX``
+    expected epochs. Above that they are None and ``coverage_summary`` (``n``, ``min``, ``median``, ``below_min``: the
+    epochs not covered) and ``ses_summary`` (``n_finite``, ``min``, ``median``, ``max``) stand in for them; both
+    summaries are None when the lists are stored."""
 
     name = "rung1_events"
     cost = 0.02
 
     def run(self, s: Signal, b: DataBundle) -> TestResult:
         th = b.thresholds
-        q = event_quality(b.lc.time, b.fnorm, s.period, s.t0, s.duration)
+        observed = None if b.fnorm_unmasked is None else np.isfinite(b.fnorm_unmasked)
+        q = event_quality(b.lc.time, b.fnorm, s.period, s.t0, s.duration, observed=observed)
         n = len(q.epochs)
         covered = q.coverage >= EVENT_COVERAGE_MIN
         has_ses = np.isfinite(q.ses)
@@ -62,10 +89,15 @@ class Rung1Events:
             good = covered
         n_good = int(good.sum())
         m = {"n_events_with_data": n, "n_covered": int(covered.sum()), "n_good": n_good,
-             "coverage": _round(q.coverage, 3), "ses": _round(q.ses, 2), "ses_rules_applied": applied,
-             "ses_max_over_mes": None if np.isnan(ratio) else round(ratio, 3),
-             "chases": None if q.chases is None else _round(q.chases, 3),
+             "ses_rules_applied": applied, "ses_max_over_mes": None if np.isnan(ratio) else round(ratio, 3),
              "chases_median": chases_median}
+        if n <= METRIC_LIST_MAX:
+            m.update(coverage=_round(q.coverage, 3), ses=_round(q.ses, 2),
+                     chases=None if q.chases is None else _round(q.chases, 3),
+                     coverage_summary=None, ses_summary=None)
+        else:
+            m.update(coverage=None, ses=None, chases=None,
+                     coverage_summary=_coverage_summary(q.coverage), ses_summary=_ses_summary(q.ses))
 
         def fail(reason: str) -> TestResult:
             return TestResult(rung=self.name, status=TestStatus.FAIL, metrics=m, reason=reason)

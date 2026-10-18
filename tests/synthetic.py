@@ -17,6 +17,26 @@ def make_lightcurve(n_days=1400, cadence_min=29.4, noise_ppm=1500, seed=0, quart
     return LightCurve(time=t, flux=f, flux_err=e, quality=np.zeros(t.size, int), quarter=q, flux_alt=f.copy())
 
 
+def keep_quarters(lc: LightCurve, quarters) -> LightCurve:
+    """``lc`` with only the points of the given quarters, as a star observed in some seasons and off silicon in the
+    others."""
+    keep = np.isin(lc.quarter, list(quarters))
+    alt = None if lc.flux_alt is None else lc.flux_alt[keep]
+    return LightCurve(lc.time[keep], lc.flux[keep], lc.flux_err[keep], lc.quality[keep], lc.quarter[keep], alt,
+                      dict(lc.meta))
+
+
+FQ_P, FQ_T0, FQ_DUR, FQ_QUARTERS = 12.0, 137.5, 4 / 24, (1, 5, 9, 13)
+
+
+def four_quarter_planet(seed=13, noise_ppm=600):
+    """A 12.0 d, 4 h, 3000 ppm planet on a 1400 d curve kept only in quarters 1, 5, 9 and 13: a star seen in one season.
+    The kept quarters start 372 d (31 periods) apart, so each meets the transits at the same phase; t0 puts mid-transit
+    6 d after the start of a quarter's data, clear of the quarter edges and of the 1.5 d gap-edge mask."""
+    lc = inject_transit(make_lightcurve(noise_ppm=noise_ppm, seed=seed), FQ_P, FQ_T0, FQ_DUR, 3000)
+    return keep_quarters(lc, FQ_QUARTERS)
+
+
 def _with_dip(lc: LightCurve, factor: np.ndarray) -> LightCurve:
     """``lc`` with ``flux`` and ``flux_alt`` both multiplied by ``factor``: a signal on the target star shows in the
     SAP and the PSF photometry alike, which is what rung 3's aperture-dependent depth check assumes of a planet."""

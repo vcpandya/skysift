@@ -77,12 +77,19 @@ fit cover its purpose), Tracker, Marshall and Skye as above.
 rung 3 stability (0.05), rung 4 novelty (network). The search version is unchanged.
 
 ### 4.1 Rung 1 events (new module `vetting/rung1_events.py`, class `Rung1Events`, name `rung1_events`)
-Per event (epochs `round((t - t0) / P)` with any point within one duration of mid-transit), on the vetting flux:
-- coverage = points present within +-1 duration of mid-transit / (2 x duration / median cadence); good if >= 0.75
-  (`EVENT_COVERAGE_MIN`).
+Per expected event, on the vetting flux. The expected events are the epochs `round((t - t0) / P)` whose mid-transit
+lies within the span of the observed cadences and within 3 d (`EXPECTED_EPOCH_MAX_GAP_DAYS`) of an observed cadence
+(`lc.ops.event_quality`). Kepler's inter-quarter and monthly gaps plus the 1.5 d gap-edge mask span about 3 d, so a
+transit inside such a gap is still expected and counts as uncovered, while a transit in a quarter the target was never
+observed in is not expected (a KBonus star seen in four quarters over four years is not failed for the other twelve).
+- coverage = observed cadences within +-1 duration of mid-transit / (2 x duration / median observed cadence); good
+  if >= 0.75 (`EVENT_COVERAGE_MIN`). A second-pass signal is vetted on flux with the detector's mask set to NaN
+  (`pipeline._vetting_bundle`); a masked cadence was observed, so the bundle carries the unmasked flux
+  (`DataBundle.fnorm_unmasked`) and its finite points are the observed cadences for coverage and the epoch
+  expectation. SES and Chases read only the finite (masked) flux.
 - depth and error from `_box_depth` as `event_depths` computes them; SES_i = depth_i / err_i; an event with
   SES_i < -1 is bad (Zuma).
-- Chases, only when the number of events with data is <= 5 (`CHASES_MAX_EVENTS`): slide a box of the detected
+- Chases, only when the number of expected events is <= 5 (`CHASES_MAX_EVENTS`): slide a box of the detected
   duration across +-P/10 of mid-transit (step one cadence), significance at each offset = (baseline - box mean) /
   (scatter / sqrt(n_in)) with the baseline and scatter from the points of the window outside the box; ignore offsets
   within 1.5 durations of mid-transit; dt = the nearest offset with abs(significance) > 0.8 x SES_i
@@ -90,8 +97,11 @@ Per event (epochs `round((t - t0) / P)` with any point within one duration of mi
 Verdict: n_good = events that are covered and not bad; FAIL "gapped events" if the covered fraction <= 0.5; FAIL
 "n_good < min_events"; FAIL "single event dominates" if P > 90 d (`SES_DOMINANCE_MIN_PERIOD`) and SES_max /
 sqrt(sum SES_i^2) > 0.8 (`SES_DOMINANCE_MAX`); FAIL "chases" if Chases applied and the median C_i < 0.8
-(`CHASES_MEDIAN_MIN`). Metrics: `n_events_with_data`, `n_good`, `coverage` (list), `ses` (list), `ses_max_over_mes`,
-`chases` (list or None), `chases_median`. Sub-day periods at 30-minute cadence hold about two points per event: an
+(`CHASES_MEDIAN_MIN`). Metrics: `n_events_with_data` (the expected events), `n_covered`, `n_good`, `coverage` (list),
+`ses` (list), `ses_max_over_mes`, `chases` (list or None), `chases_median`, `ses_rules_applied`. The per-epoch lists
+are stored only up to `METRIC_LIST_MAX` = 60 expected events; above that `coverage`, `ses` and `chases` are None and
+`coverage_summary` (`n`, `min`, `median`, `below_min`) and `ses_summary` (`n_finite`, `min`, `median`, `max`) stand
+in for them (a 0.5 d signal on a 1400 d curve would otherwise store about 5,600 values). Sub-day periods at 30-minute cadence hold about two points per event: an
 event whose box holds fewer than 3 points has no SES; when fewer than `min_events` events have an SES the SES-based
 rules (Zuma, dominance, Chases) are skipped and recorded as not applied, and the coverage rules alone decide (the
 stacked fold of rung 2 vets such signals).
@@ -132,7 +142,7 @@ New helpers in `lc/ops.py` and a new module `lc/transit_model.py`.
   depth (a reflecting planet's occultation depth is A_g (R_p / a)^2 of the stellar flux; HAT-P-7 b gives about 0.2);
   when the fit is ok, A_g < 1,
   R_p < 30 R_earth, d_sec < 0.1 d_pri and b < 0.95, the secondary does not fail the signal: PASS continues with
-  metrics `occultation_albedo`, `planet_radius_rearth`, reason "secondary consistent with planet occultation".
+  metrics `occultation_albedo`, `planet_radius_rearth`, `occultation_exception` (True only when every gate held), reason "secondary consistent with planet occultation".
 Order inside rung 2: sinusoidal (shape contrast) -> SWEET -> uniqueness MS2/MS3 -> odd/even -> secondary (with the
 exceptions) -> V shape. The transit fit runs once and feeds the V-shape rule and exception (b).
 
@@ -148,10 +158,13 @@ row: UNDETERMINED "period matches <catalogue id> but epoch differs" (was FAIL kn
 present FAIL.
 
 ### 4.5 Dashboard
-The signal page already renders every rung's metrics generically; reasons are plain strings. One sentence is added
-for `suggested_period` ("the secondary matches the primary; the true period may be ... d, half the detected
-one") and for
-`occultation_albedo`.
+Key metrics are whitelisted on the signal page (`RUNG_METRICS` in `ui/routes/review.py`), the rest under raw;
+ladder version 3 adds `n_events_with_data`, `n_covered`, `n_good`, `ses_max_over_mes` and `chases_median` for rung 1
+events, `ms2`, `ms3`, `sweet_snr`, `sweet_amplitude_ppm`, `fit_k`, `fit_b`, `fit_depth_ppm`, `occultation_albedo` and
+`suggested_period` for rung 2, and `aperture_z` and `aperture_ratio` for rung 3. Reasons are plain strings. One
+sentence is added for `suggested_period` ("the secondary matches the primary; the true period may be ... d, half the
+detected one") and one keyed on the boolean `occultation_exception` ("secondary consistent with a planet occultation
+(albedo ...)"), so an albedo computed for a secondary that failed the other gates says nothing.
 
 ## 5. `skysift inject`: completeness as a standing regression
 `skysift inject --source kbonus_bkg --limit N --per-star 4 --snr 7,10,15,25 --workers-cpu W --out <jsonl>`: for each

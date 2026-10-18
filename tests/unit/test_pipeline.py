@@ -617,6 +617,7 @@ def test_a_masked_signal_sees_the_detrended_flux_masked_too():
     vb = pipeline._vetting_bundle(b, sig)
     assert np.isnan(vb.flux_detrended).any()
     assert np.array_equal(vb.flux_detrended, apply_mask(lc.time, fn, mask), equal_nan=True)
+    assert vb.fnorm_unmasked is fn and b.fnorm_unmasked is None          # the observed cadences for rung 1 events
     assert pipeline._vetting_bundle(b, sig.model_copy(update={"extra": {}})) is b
 
 
@@ -882,6 +883,18 @@ def test_second_pass_signal_is_vetted_on_the_masked_flux():
     mask = comp[0]["signal"]["extra"].get("mask")
     assert mask and all(set(m) == {"period", "t0", "half_primary_days", "half_secondary_days"} for m in mask), mask
     assert any(abs(m["period"] - 24.0) / 24.0 < 0.01 for m in mask), mask
+    # the mask is not missing data: rung 1 events counts the masked cadences as observed (final review, finding 2).
+    # The 15 quarter gaps of the curve still leave about 22 of the 665 epochs uncovered (measured 18 October 2026),
+    # so the masked counts must equal those of the same signal on the unmasked flux: the mask costs no coverage
+    events = [r for r in comp[0]["tests"] if r["rung"] == "rung1_events"]
+    assert events and events[0]["status"] == "pass", found
+    from skysift.lc.ops import EVENT_COVERAGE_MIN, event_quality
+    sig = comp[0]["signal"]
+    unmasked = event_quality(lc.time, pipeline.whitened_flux(lc, th)[0], sig["period"], sig["t0"], sig["duration"])
+    m = events[0]["metrics"]
+    assert m["n_events_with_data"] == unmasked.epochs.size, m
+    assert m["n_covered"] == int(np.count_nonzero(unmasked.coverage >= EVENT_COVERAGE_MIN)), m
+    assert m["n_covered"] >= 0.95 * m["n_events_with_data"], m
 
 
 class _InlinePool:

@@ -1,11 +1,13 @@
+from dataclasses import replace
+
 import numpy as np
 
 from skysift.config import Thresholds
-from skysift.lc.ops import detrend
+from skysift.lc.ops import apply_mask, detrend
 from skysift.models import LightCurve, Signal, Target, TestStatus
 from skysift.vetting.base import DataBundle
-from skysift.vetting.rung1_events import Rung1Events
-from tests.synthetic import inject_transit, make_lightcurve
+from skysift.vetting.rung1_events import METRIC_LIST_MAX, Rung1Events
+from tests.synthetic import FQ_DUR, FQ_P, FQ_T0, four_quarter_planet, inject_transit, make_lightcurve
 
 TGT = Target(source="test", target_id="t", ra=0, dec=0)
 NOISE = 600
@@ -101,3 +103,44 @@ def test_short_period_signal_skips_the_ses_rules():
     r = Rung1Events().run(signal(period, t0, dur, 2000.0), bundle(lc))
     assert r.status == TestStatus.PASS, r.reason
     assert r.metrics["ses_rules_applied"] is False and r.metrics["ses_max_over_mes"] is None
+
+
+def test_caps_the_per_epoch_lists_on_short_periods():
+    """More than ``METRIC_LIST_MAX`` expected epochs store summaries instead of one value per epoch."""
+    period, t0, dur = 0.6, 140.0, 1 / 24
+    lc = inject_transit(make_lightcurve(seed=17, noise_ppm=NOISE), period, t0, dur, 2000)
+    m = Rung1Events().run(signal(period, t0, dur, 2000.0), bundle(lc)).metrics
+    assert m["n_events_with_data"] > METRIC_LIST_MAX
+    assert m["coverage"] is None and m["ses"] is None and m["chases"] is None
+    cs, ss = m["coverage_summary"], m["ses_summary"]
+    assert cs["n"] == m["n_events_with_data"] and cs["below_min"] == m["n_events_with_data"] - m["n_covered"]
+    assert 0.0 <= cs["min"] <= cs["median"] and set(ss) == {"n_finite", "min", "median", "max"}
+    assert ss["n_finite"] <= cs["n"]
+    long = Rung1Events().run(signal(40.0, 140.0, 0.25), bundle(inject_transit(make_lightcurve(seed=17, noise_ppm=NOISE),
+                                                                             40.0, 140.0, 0.25, 3000))).metrics
+    assert len(long["coverage"]) == long["n_events_with_data"] <= METRIC_LIST_MAX
+    assert long["coverage_summary"] is None and long["ses_summary"] is None
+
+
+def test_passes_a_planet_observed_in_four_quarters():
+    """A star observed in one season of four quarters: transits in the quarters it never had are not expected."""
+    lc = four_quarter_planet()
+    r = Rung1Events().run(signal(FQ_P, FQ_T0, FQ_DUR), bundle(lc))
+    assert r.status == TestStatus.PASS, (r.reason, r.metrics["n_covered"], r.metrics["n_events_with_data"])
+    assert not (r.reason or "").startswith("gapped events")
+    assert r.metrics["n_events_with_data"] < 40 and r.metrics["n_good"] >= 25
+
+
+def test_a_detector_mask_is_not_missing_data():
+    """A second-pass signal is vetted with the first-pass eclipses NaN; ``fnorm_unmasked`` tells the rung which
+    cadences were observed, so a mask of 40 percent of the points does not fail the signal as gapped."""
+    period, t0, dur = 2.1, 132.3, 2.2 / 24
+    lc = inject_transit(make_lightcurve(n_days=400, seed=17, noise_ppm=NOISE), period, t0, dur, 1500)
+    b = bundle(lc)
+    mask = [{"period": 0.72, "t0": 131.9, "half_primary_days": 0.144, "half_secondary_days": 0.0}]
+    masked = replace(b, fnorm=apply_mask(lc.time, b.fnorm, mask))
+    r = Rung1Events().run(signal(period, t0, dur, 1500.0), masked)
+    assert r.status == TestStatus.FAIL and r.reason.startswith("gapped events"), r.reason   # the mask read as gaps
+    r = Rung1Events().run(signal(period, t0, dur, 1500.0), replace(masked, fnorm_unmasked=b.fnorm))
+    assert r.status == TestStatus.PASS, r.reason
+    assert r.metrics["n_covered"] >= 0.9 * r.metrics["n_events_with_data"]

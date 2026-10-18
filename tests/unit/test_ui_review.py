@@ -160,6 +160,23 @@ def test_rungs_2_and_3_show_whether_the_stacked_fold_answered(settings, tmp_path
     assert '<span class="muted">stacked</span> no' in _shown(r.text, "rung3_stability")
 
 
+def test_signal_page_shows_the_key_metrics_of_rung1_events(settings, tmp_path):
+    """Ladder version 3's per-event rung has its key metrics in the cell, not only under raw (final review, finding 4)."""
+    from skysift.store.db import TestRow
+    client, app, ids, _launcher = make_seeded_client(settings, tmp_path)
+    metrics = {"n_events_with_data": 102, "n_covered": 97, "n_good": 95, "ses_rules_applied": True,
+               "ses_max_over_mes": 0.123, "chases_median": None, "coverage": None, "ses": None, "chases": None,
+               "coverage_summary": {"n": 102, "min": 0.0, "median": 1.0, "below_min": 5},
+               "ses_summary": {"n_finite": 99, "min": -0.5, "median": 3.1, "max": 6.2}}
+    with app.state.store.session() as s:
+        s.add(TestRow(signal_id=ids["candidate"], rung="rung1_events", status="pass", metrics=metrics)); s.commit()
+    r = client.get(f"/signals/{ids['candidate']}")
+    assert r.status_code == 200
+    shown = _shown(r.text, "rung1_events")
+    assert '<span class="muted">n_good</span> 95' in shown, shown
+    assert '<span class="muted">n_covered</span> 97' in shown and "ses_max_over_mes" in shown
+
+
 def test_rung4_shows_the_period_matched_object_and_its_separation(settings, tmp_path):
     client, app, ids, _launcher = make_seeded_client(settings, tmp_path)
     matched = [{"catalog": "cumulative", "id": "K77777.01", "period": 13.77, "sep_arcsec": 90.04}]

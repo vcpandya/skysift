@@ -6,6 +6,7 @@ from skysift.lc.ops import (
     EVENT_COVERAGE_MIN,
     SHAPE_BINS_PER_DURATION,
     _circular,
+    apply_mask,
     detrend,
     event_depths,
     event_quality,
@@ -16,7 +17,7 @@ from skysift.lc.ops import (
     sweet,
 )
 from skysift.models import LightCurve
-from tests.synthetic import inject_transit, make_lightcurve
+from tests.synthetic import FQ_DUR, FQ_P, FQ_QUARTERS, FQ_T0, four_quarter_planet, inject_transit, make_lightcurve
 
 P, T0, DUR, DEPTH = 13.769, 136.3, 0.09, 2000.0
 
@@ -324,6 +325,46 @@ def test_event_quality_counts_an_epoch_without_points():
     assert np.array_equal(eq.epochs, full.epochs)
     assert eq.coverage[k] == 0.0 and np.isnan(eq.ses[k]) and np.isnan(eq.chases[k])
     assert np.isfinite(np.delete(eq.ses, k)).all()
+
+
+def test_event_quality_ignores_epochs_in_unobserved_quarters():
+    lc = four_quarter_planet()
+    eq = event_quality(lc.time, detrend(lc), FQ_P, FQ_T0, FQ_DUR)
+    mids = FQ_T0 + FQ_P * np.arange(-20, 200)
+    inside = sum(int(np.count_nonzero((mids >= lc.time[lc.quarter == q].min()) & (mids <= lc.time[lc.quarter == q].max())))
+                 for q in FQ_QUARTERS)
+    assert inside > 25 and abs(eq.epochs.size - inside) <= 0.1 * inside, (eq.epochs.size, inside)
+    assert np.all(eq.coverage >= 0.9), eq.coverage
+
+
+def test_event_quality_counts_masked_cadences_as_observed():
+    """A detector mask (a second-pass signal is vetted with the first-pass eclipses NaN) is not missing data: with
+    ``observed`` from the unmasked flux the masked cadences still count towards coverage, while SES uses only the
+    finite points. The mask is a 0.72 d binary's primary at +-0.144 d, 40 percent of the points."""
+    period, t0, dur = 2.1, 133.6, 2.2 / 24
+    lc = inject_transit(make_lightcurve(n_days=210, noise_ppm=600, seed=13, quarters=False, gaps=False),
+                        period, t0, dur, 1500)
+    fn = detrend(lc)
+    masked = apply_mask(lc.time, fn, [{"period": 0.72, "t0": 131.9, "half_primary_days": 0.144,
+                                       "half_secondary_days": 0.0}])
+    frac = np.isnan(masked[np.isfinite(fn)]).mean()
+    assert 0.35 < frac < 0.45, frac
+    plain = event_quality(lc.time, masked, period, t0, dur)
+    assert np.mean(plain.coverage >= EVENT_COVERAGE_MIN) < 0.9          # without ``observed`` the mask reads as gaps
+    eq = event_quality(lc.time, masked, period, t0, dur, observed=np.isfinite(fn))
+    assert eq.epochs.size > 90 and np.all(eq.coverage >= 0.9), eq.coverage
+    ph = fold_phase(lc.time, period, t0)
+    ep = np.round((lc.time - t0) / period).astype(int)
+    ok = np.isfinite(masked)
+    half = dur / 2
+    for i, e in enumerate(eq.epochs):
+        s = ok & (ep == e)
+        n_box = np.count_nonzero(s & (np.abs(ph) < 0.8 * half))
+        n_base = np.count_nonzero(s & (np.abs(ph) > 1.5 * half) & (np.abs(ph) < max(0.5, 4 * half)))
+        if n_box >= 3 and n_base >= 20:
+            assert np.isfinite(eq.ses[i]), (e, n_box, n_base)
+        else:
+            assert np.isnan(eq.ses[i]), (e, n_box, n_base)
 
 
 def _chases_curve(extra=()):

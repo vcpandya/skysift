@@ -210,14 +210,16 @@ def _vetting_bundle(bundle: DataBundle, sig: Signal) -> DataBundle:
     signals masked, so its rungs see the same flux: every masked point NaN in ``fnorm`` and ``fnorm_alt``. On the
     unmasked flux a binary's eclipses, folded at the companion's period, built a spurious secondary and rung 2
     rejected the companion (K06356.01, 18 October 2026). The copy shares the catalogue cache; other signals get
-    ``bundle`` itself. The detrended flux of SWEET (``flux_detrended``) is masked the same way."""
+    ``bundle`` itself. The detrended flux of SWEET (``flux_detrended``) is masked the same way. ``fnorm_unmasked`` keeps
+    the flux before the mask: a masked cadence was observed, and rung 1 events must not count it as missing data."""
     mask = sig.extra.get("mask")
     if not mask:
         return bundle
     t = bundle.lc.time
     alt = None if bundle.fnorm_alt is None else apply_mask(t, bundle.fnorm_alt, mask)
     detrended = None if bundle.flux_detrended is None else apply_mask(t, bundle.flux_detrended, mask)
-    return replace(bundle, fnorm=apply_mask(t, bundle.fnorm, mask), fnorm_alt=alt, flux_detrended=detrended)
+    return replace(bundle, fnorm=apply_mask(t, bundle.fnorm, mask), fnorm_alt=alt, flux_detrended=detrended,
+                   fnorm_unmasked=bundle.fnorm)
 
 
 def _cpu_work(lc_pickle: bytes, target_json: str, thresholds_json: str, detector_name: str, ladder_version: str,
