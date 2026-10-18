@@ -7,9 +7,10 @@ from skysift.lc.ops import event_depths, n_window_epochs, season_of, stacked_dep
 from skysift.models import Signal, TestResult, TestStatus
 from skysift.vetting.base import DataBundle
 
-# A factor two between the PSF and the SAP depth is beyond the dilution difference of two apertures on the same star; the
-# Kepler Robovetter's ghost diagnostic analogue uses a halo/core ratio of 4. The aperture verdict needs this ratio as
-# well as aperture_sigma, so ordinary dilution differences do not flood the review queue.
+# A factor two between the PSF and the SAP depth is beyond the dilution difference of two apertures on the same star.
+# It is a SkySift analogue of the Robovetter's ghost diagnostic, which compares the halo and core depths against a ratio
+# of 4 (Thompson et al. 2018, section A.5.2). The aperture verdict needs this ratio as well as aperture_sigma, so
+# ordinary dilution differences do not flood the review queue.
 APERTURE_RATIO_MAX = 2.0
 
 
@@ -52,7 +53,7 @@ class Rung3Stability:
                 mu = np.sum(w * depths[k]) / np.sum(w); e = 1 / np.sqrt(np.sum(w))
                 c2 = np.sum(w * (depths[k] - mu) ** 2); e *= max(1.0, np.sqrt(c2 / max(1, k.sum() - 1)))
                 means[int(sn)], errs[int(sn)] = float(mu), float(e)
-            n_events, all_depth = int(usable.sum()), float(np.average(depths, weights=1 / errors ** 2))
+            n_events = int(usable.sum())
         else:
             # Single events hold too few points to measure (about two per event for sub-day periods at 30-minute
             # cadence), so measure each season on its own stacked fold, which holds every point of that season.
@@ -65,14 +66,13 @@ class Rung3Stability:
                 st = stacked_depth(lc.time[k], fn[k], *args)
                 if st.n_in and np.isfinite(st.err_ppm) and st.err_ppm > 0:      # a zero error is unmeasurable
                     means[int(sn)], errs[int(sn)] = st.depth_ppm, st.err_ppm
-            all_depth = stacked_depth(lc.time, fn, *args).depth_ppm if len(means) >= 3 else np.nan
         if len(means) < 3:
             # one or two seasons cannot show a season-dependent depth (with two, each leave-one-out z mirrors the
             # other's), so the test has no answer on either path rather than a vacuous pass
             return TestResult(rung=self.name, status=TestStatus.UNDETERMINED, reason="too few seasons",
                               metrics={"stacked": stacked, "n_events": n_events, "n_seasons": len(means)})
         z, chi2, dof, p = _season_agreement(means, errs)
-        ratio = d_alt = e_alt = az = ap_ratio = np.nan
+        d_alt = e_alt = az = ap_ratio = np.nan
         if b.fnorm_alt is not None:
             if stacked:
                 alt = stacked_depth(lc.time, b.fnorm_alt, s.period, s.t0, s.duration)
@@ -82,16 +82,16 @@ class Rung3Stability:
                 alt = event_depths(lc.time, b.fnorm_alt, lc.quarter, s.period, s.t0, s.duration)
                 d_alt, e_alt = (alt.mean, alt.err_scaled) if alt.n else (np.nan, np.nan)
                 d_prim, e_prim = ed.mean, ed.err_scaled
-            if all_depth and np.isfinite(d_alt): ratio = float(d_alt / all_depth)
             # the aperture check compares the two fluxes with one estimator and the errors added in quadrature
             err = float(np.hypot(e_alt, e_prim))
             if np.isfinite(d_alt) and np.isfinite(d_prim) and np.isfinite(err) and err > 0:
                 az = float((d_alt - d_prim) / err)
             if np.isfinite(d_alt) and np.isfinite(d_prim) and d_prim != 0: ap_ratio = float(d_alt / d_prim)
+        # the PSF-to-SAP depth ratio, as stored since the first version, is the aperture ratio from the same primary depth
         m = {"stacked": stacked, "season_depths": {str(k): v for k, v in means.items()},
              "season_errs": {str(k): v for k, v in errs.items()}, "season_z": {str(k): v for k, v in z.items()},
              "chi2": chi2, "dof": dof, "p_value": p, "n_events": n_events,
-             "sap_psf_ratio": float(ratio) if np.isfinite(ratio) else None,
+             "sap_psf_ratio": float(ap_ratio) if np.isfinite(ap_ratio) else None,
              "alt_depth_ppm": float(d_alt) if np.isfinite(d_alt) else None,
              "alt_depth_err_ppm": float(e_alt) if np.isfinite(e_alt) else None,
              "aperture_z": az if np.isfinite(az) else None,

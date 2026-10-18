@@ -188,17 +188,17 @@ class Rung4Novelty:
         b.cache[key] = data
         return data
 
-    def _known(self, metrics: dict, catalog: str, reason: str) -> TestResult:
-        """The verdict of a period match: FAIL (known), unless the matched row carries an epoch and it disagrees.
+    def _known(self, metrics: dict, reason: str) -> TestResult:
+        return TestResult(rung=self.name, status=TestStatus.FAIL, metrics=metrics, reason=reason)
+
+    def _epoch_differs(self, metrics: dict, hit: dict) -> TestResult:
+        """Every period-matched row that carries an epoch disagrees with the signal's: for a person to look at.
 
         The Kepler DR25 Robovetter (Thompson et al. 2018) needs period and epoch to agree before it calls a signal a
-        known object; a period match on a different epoch (a second planet in resonance, a stale ephemeris) is for a
-        person to look at, so it is UNDETERMINED."""
-        (hit,) = metrics["period_matched"]
-        if hit["epoch_agrees"] is False:
-            return TestResult(rung=self.name, status=TestStatus.UNDETERMINED, metrics=metrics,
-                              reason=f"period matches {catalog} {hit['id']} but epoch differs ({hit['epoch_offset_h']:.1f} h)")
-        return TestResult(rung=self.name, status=TestStatus.FAIL, metrics=metrics, reason=reason)
+        known object; a period match on a different epoch (a second planet in resonance, a stale ephemeris) is
+        UNDETERMINED. ``run`` reaches this only when no period-matched row, in any table, agrees or lacks an epoch."""
+        return TestResult(rung=self.name, status=TestStatus.UNDETERMINED, metrics=metrics,
+                          reason=f"period matches {hit['catalog']} {hit['id']} but epoch differs ({hit['epoch_offset_h']:.1f} h)")
 
     def run(self, s: Signal, b: DataBundle) -> TestResult:
         t = b.target
@@ -218,12 +218,15 @@ class Rung4Novelty:
             ("toi", f"select tid,toi,pl_orbper,pl_tranmid,ra,dec from toi where {cone}", "pl_orbper", toi_id, toi_t0),
         ]
         found, metrics = [], {}
+        disagreeing = []        # the first period-matched row whose catalogue epoch disagrees; a later agreeing row wins
 
         def scan(label, parsed, pcol, ident, period=None, epoch=None):
             """Record counts and other-period rows (catalogue, id, period, separation in arcsec or None); return a
             known-reason identifier on a period match (the matching row goes to ``period_matched`` with its
             separation from the target, the period ratio, and ``epoch_offset_h`` and ``epoch_agrees`` from
-            ``_epoch_check``, None when the table has no epoch; ``run`` turns a disagreeing epoch into UNDETERMINED).
+            ``_epoch_check``, None when the table has no epoch). A period-matched row whose epoch disagrees is not
+            known yet: the first such row is kept in ``disagreeing`` (and in ``period_matched``) and the scan goes on,
+            so a later row that agrees, or has no epoch, still gives the known-reason identifier.
             Rows of the target itself (its own kepid or KIC; every row of a Gaia table, which is queried by
             source_id; any row within SAME_STAR_ARCSEC of the target) are matched first, at 1 percent for ratio 1 and 0.1 percent at every other integer ratio up to 8 both ways;
             neighbours at 0.1 percent and the ratios 0.5, 1 and 2."""
@@ -248,8 +251,14 @@ class Rung4Novelty:
                          else _period_match(s.period, p, NEIGHBOUR_PERIOD_TOL, NEIGHBOUR_RATIOS))
                 if ratio is not None:
                     offset_h, agrees = _epoch_check(s.t0, s.period, s.duration, epoch(r) if epoch else None, p)
-                    metrics["period_matched"] = [{"catalog": label, "id": ident(r), "period": p, "sep_arcsec": sep,
-                                                  "ratio": ratio, "epoch_offset_h": offset_h, "epoch_agrees": agrees}]
+                    hit = {"catalog": label, "id": ident(r), "period": p, "sep_arcsec": sep,
+                           "ratio": ratio, "epoch_offset_h": offset_h, "epoch_agrees": agrees}
+                    if agrees is False:
+                        if not disagreeing:
+                            disagreeing.append(hit)
+                            metrics["period_matched"] = [hit]
+                        continue
+                    metrics["period_matched"] = [hit]
                     return ident(r)
                 found.append((label, ident(r), p, sep))
             return None
@@ -260,7 +269,7 @@ class Rung4Novelty:
                 parsed = _csv_rows(self._get(b, "exoarchive", EXO_TAP, {"query": query, "format": "csv"}, ("exoarchive", table, t.target_id)))
                 hit = scan(table, parsed, pcol, ident, epoch=epoch)
                 if hit is not None:
-                    return self._known(metrics, table, f"known:{table}:{hit}")
+                    return self._known(metrics, f"known:{table}:{hit}")
             svc = "vizier"
             # the table-level source: the catalogue also holds table9 (non-repeating events, no Per column), and a
             # catalogue-level query returns every table that matches
@@ -268,7 +277,7 @@ class Rung4Novelty:
                                          ("vizier", "J/AJ/151/68", t.target_id)))
             hit = scan("kepler_eb", parsed, "Per", lambda r: r.get("KIC"))
             if hit is not None:
-                return self._known(metrics, "kepler_eb", f"known:kepler_eb:{hit}")
+                return self._known(metrics, f"known:kepler_eb:{hit}")
             if t.gaia_id and not str(t.gaia_id).isdigit():
                 # source_id is interpolated into ADQL: anything but digits is never sent
                 metrics["gaia_skipped"] = "non-numeric source_id"
@@ -280,10 +289,12 @@ class Rung4Novelty:
                                                  ("gaia", table, t.gaia_id)))
                     hit = scan(f"gaia_{table}", parsed, pcol, lambda r: r.get("source_id") or t.gaia_id, period)
                     if hit is not None:
-                        return self._known(metrics, f"gaia_{table}", f"known:gaia_{table}:{t.gaia_id}")
+                        return self._known(metrics, f"known:gaia_{table}:{t.gaia_id}")
         except _SchemaError as e:
             return TestResult(rung=self.name, status=TestStatus.UNDETERMINED, metrics=metrics, reason=str(e))
         except ServiceUnavailable as e:
             return TestResult(rung=self.name, status=TestStatus.UNDETERMINED, metrics=metrics, reason=f"outage:{svc}: {e}")
+        if disagreeing:
+            return self._epoch_differs(metrics, disagreeing[0])
         metrics["other_period_objects"] = found
         return TestResult(rung=self.name, status=TestStatus.PASS, metrics=metrics)

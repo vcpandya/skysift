@@ -484,6 +484,39 @@ def test_period_match_with_a_shifted_epoch_is_undetermined():
     assert hit["epoch_agrees"] is False and hit["id"] == "K99999.01"
 
 
+def _koi_rows(*epoch_offsets_in_periods):
+    """Own cumulative rows K99999.01, .02, ... at the signal's period, each with its epoch shifted by the given number
+    of periods from the signal's t0."""
+    rows = "".join(f"5689121,K99999.{i:02d},{SIG.period},{TGT.ra},{TGT.dec},{SIG.t0 + off * SIG.period}\n"
+                   for i, off in enumerate(epoch_offsets_in_periods, 1))
+    return ("kepid,kepoi_name,koi_period,ra,dec,koi_time0bk\n" + rows).encode()
+
+
+def test_a_later_row_with_an_agreeing_epoch_makes_the_signal_known():
+    """Two period-matched rows of the star, the first with the wrong epoch: the second one explains the signal."""
+    r = Rung4Novelty().run(SIG, bundle({**EMPTY, "cumulative": _koi_rows(0.3, 0.0)}))
+    assert r.status == TestStatus.FAIL and r.reason == "known:cumulative:K99999.02"
+    assert r.metrics["period_matched"][0]["epoch_agrees"] is True
+
+
+def test_every_period_matched_row_disagreeing_names_the_first():
+    r = Rung4Novelty().run(SIG, bundle({**EMPTY, "cumulative": _koi_rows(0.3, 0.4)}))
+    assert r.status == TestStatus.UNDETERMINED and r.reason.startswith("period matches cumulative K99999.01 but epoch differs")
+
+
+def test_an_agreeing_row_in_a_later_table_makes_the_signal_known():
+    tce = f"kepid,tce_plnt_num,tce_period,tce_time0bk\n5689121,1,{SIG.period},{SIG.t0}\n".encode()
+    r = Rung4Novelty().run(SIG, bundle({**EMPTY, "cumulative": _koi_rows(0.3), "q1_q17_dr25_tce": tce}))
+    assert r.status == TestStatus.FAIL and r.reason == "known:q1_q17_dr25_tce:5689121.1"
+
+
+def test_a_later_row_without_an_epoch_makes_the_signal_known():
+    """A row without an epoch cannot disagree, so it keeps the old verdict."""
+    toi = f"tid,toi,pl_orbper\n1,5.01,{SIG.period}\n".encode()
+    r = Rung4Novelty().run(SIG, bundle({**EMPTY, "cumulative": _koi_rows(0.3), "toi": toi}))
+    assert r.status == TestStatus.FAIL and r.reason == "known:toi:5.01"
+
+
 def test_period_match_with_the_signals_epoch_is_known():
     row = _own_koi(SIG.period, EPOCH_COLS, f",{SIG.t0}")
     r = Rung4Novelty().run(SIG, bundle({**EMPTY, "cumulative": row}))
