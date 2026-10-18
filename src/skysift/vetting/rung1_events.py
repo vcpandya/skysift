@@ -18,8 +18,22 @@ def _round(values, ndigits: int) -> list:
 
 
 class Rung1Events:
-    """Per-event tests of the Kepler Robovetter (Thompson et al. 2018): coverage ("Rubble"), gapped fraction,
-    single-event dominance, Chases and Zuma, on top of ``lc.ops.event_quality``."""
+    """Per-event tests of the Kepler Robovetter (Thompson et al. 2018, Appendix A) on top of ``lc.ops.event_quality``.
+
+    Each rule and its source:
+    - coverage ("Rubble", A.3.7.1): an event is covered when it holds at least ``EVENT_COVERAGE_MIN`` (0.75) of the
+      points expected within one duration of mid-transit;
+    - gapped fraction (A.3.8): FAIL when no more than ``GAPPED_FRACTION_MAX`` of the events are covered;
+    - Zuma (A.3.7.5): an event whose own SES is below ``ZUMA_SES_MIN`` is an excess of flux and is not counted good;
+    - single-event dominance (A.3.5): on signals longer than ``SES_DOMINANCE_MIN_PERIOD``, FAIL when the largest SES
+      over the root sum of squares of the good events' SES exceeds ``SES_DOMINANCE_MAX``;
+    - Chases (A.3.3 for the C_i statistic, A.3.7.3 for its use): an event with C_i below ``CHASES_MIN`` is not good, and
+      FAIL when the median C_i is below ``CHASES_MEDIAN_MIN`` (the constants and the median rule are SkySift's reading
+      of the published tests).
+    The SES rules (Zuma, dominance, Chases) apply only when at least ``min_events`` events have a finite SES.
+
+    ``n_events_with_data`` in the metrics counts every expected epoch in the span of the data, since ``event_quality``
+    enumerates them all; an epoch with no points has coverage 0.0, so it counts here and is never covered."""
 
     name = "rung1_events"
     cost = 0.02
@@ -48,7 +62,7 @@ class Rung1Events:
         n_good = int(good.sum())
         m = {"n_events_with_data": n, "n_covered": int(covered.sum()), "n_good": n_good,
              "coverage": _round(q.coverage, 3), "ses": _round(q.ses, 2), "ses_rules_applied": applied,
-             "ses_max_over_mes": None if np.isnan(ratio) else ratio,
+             "ses_max_over_mes": None if np.isnan(ratio) else round(ratio, 3),
              "chases": None if q.chases is None else _round(q.chases, 3),
              "chases_median": chases_median}
 
