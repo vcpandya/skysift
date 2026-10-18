@@ -579,14 +579,14 @@ def test_job_key_depends_on_the_search_window(settings, monkeypatch):
 
 
 def test_search_version_follows_the_detector_version(monkeypatch):
-    """The sub-harmonic resolution of 18 October 2026 changed what BoxDip returns, so its version is 2 and every
-    stored version-1 run is a different job and is searched again."""
+    """The masked-pass extent and the refilled first-pass list of 18 October 2026 changed what BoxDip returns, so its
+    version is 3 and every stored run of an earlier version is a different job and is searched again."""
     from skysift.detectors.box_dip import BoxDip
     det, th = BoxDip(), Thresholds()
     now = search_version(det, th)
-    assert BoxDip.version == "2" and now.startswith("2+")
-    monkeypatch.setattr(BoxDip, "version", "1")
-    assert search_version(det, th) != now and search_version(det, th).startswith("1+")
+    assert BoxDip.version == "3" and now.startswith("3+")
+    monkeypatch.setattr(BoxDip, "version", "2")
+    assert search_version(det, th) != now and search_version(det, th).startswith("2+")
 
 
 @pytest.mark.parametrize("name,value", [("DETREND_VERSION", 2), ("GAP_EDGE_MASK_DAYS", 0),

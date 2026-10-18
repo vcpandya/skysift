@@ -15,7 +15,6 @@ from skysift.models import LightCurve, Signal
 
 MIN_POINTS = 500
 DURATIONS_H = np.array([1, 1.5, 2, 3, 4, 6, 9, 12])
-ALIAS_RATIOS = (2.0, 3.0, 4.0, 0.5, 1 / 3, 0.25)   # 4 and 1/4: a P/2 peak becomes P/4 once the top signal is doubled
 MIN_BAND_PERIODS = 50
 MAX_DURATION_FRACTION = 0.9     # trial durations must stay below this fraction of the band's shortest period
 ALIAS_PARITY_SIGMA = 5.0        # the deepest epoch class of a sub-harmonic alias beats the others by this many combined errors
@@ -38,14 +37,6 @@ def _band_durations(p_mid: float) -> np.ndarray:
     if keep.size < 3:
         keep = np.sort(all_d[np.argsort(np.abs(all_d - t_circ))[:3]])
     return keep
-
-
-def _alias_of(period: float, earlier: list[Signal]) -> int | None:
-    for j, s in enumerate(earlier):
-        ratio = period / s.period
-        if any(abs(ratio / r - 1.0) < 0.01 for r in ALIAS_RATIOS):
-            return j
-    return None
 
 
 # every ratio p/q with 1 <= p, q <= MASK_ALIAS_ORDER: the harmonics and sub-harmonics a masked periodic signal (and the
@@ -113,6 +104,28 @@ def _event_extent(t: np.ndarray, y: np.ndarray, period: float, t0: float, durati
     return (ends[1] - ends[0] + 1) * period / nb
 
 
+def _alias_of(period: float, earlier: list[Signal]) -> int | None:
+    """Index of the first signal of ``earlier`` whose period times a ratio p/q (p and q up to MASK_ALIAS_ORDER, 1
+    included) lies within 1 percent of ``period``, or None."""
+    for j, s in enumerate(earlier):
+        ratio = period / s.period
+        if any(abs(ratio / r - 1.0) < 0.01 for r in MASK_ALIAS_RATIOS):
+            return j
+    return None
+
+
+def _reveals_subharmonic(sig: Signal, kept: Signal) -> bool:
+    """True when ``sig`` sits within 1 percent of n times the period of ``kept`` (n at least 2) and is at least half
+    of n times as deep: then ``kept`` is the P/n fold of ``sig``, which stacks each event with n - 1 empty windows,
+    and not a signal of its own (a true period folded at nP keeps its depth: 0.61 d against 3 x 0.61 d)."""
+    n = round(sig.period / kept.period)
+    return (n >= 2 and abs(sig.period / (n * kept.period) - 1.0) < 0.01
+            and sig.depth_ppm >= 0.5 * n * kept.depth_ppm)
+
+
+REFILL_FACTOR = 4               # without the refine stage the ranking offers this many times top_k separated peaks
+
+
 COMBINATION_ORDER = 2           # m f_i - n f_j with m, n up to this, plus f_i + f_j
 COMBINATION_RESOLUTION = 2.0    # frequency tolerance for a combination match, in units of 1/baseline
 
@@ -157,6 +170,34 @@ def _duplicates(period: float, others: list[Signal], spec: dict | None) -> list[
     return [s for s in others if abs(1.0 / s.period - 1.0 / period) < tol]
 
 
+HARMONIC_ORDER = 2              # exact harmonics P b/a and P a/b of a kept signal, a up to this and any integer b
+
+
+def _harmonic_of(period: float, earlier: list[Signal], spec: dict | None) -> int | None:
+    """Index of the first signal of ``earlier`` whose frequency times b/a or a/b (a up to HARMONIC_ORDER, b any
+    positive integer) lies within DUPLICATE_COARSE_STEPS coarse frequency steps of ``1 / period``, or None (always
+    None without a spectrum). A deep periodic signal raises a peak at every fold that stacks a fraction of its events
+    (P/11 and 2P/11 as well as P/2), and the sub-harmonic resolution stops at MAX_SUBHARMONIC: on a 24.0 d V binary
+    (1400 d, 6000 ppm) 24.0/11 and 24.0/13 d took the slots a real 2.1 d planet needed. The tolerance is the search's
+    own resolution there (as in ``_duplicates``); with a up to 2 the windows cover under 0.2 percent of the frequency
+    axis for a 24 d signal, where a up to 8 would cover several percent and caught the 2.1 d planet at 24.0 x 7/80 d.
+    """
+    if spec is None or not spec["period"].size:
+        return None
+    tol = DUPLICATE_COARSE_STEPS * float(spec["df"][int(np.argmin(np.abs(spec["period"] - period)))])
+    f = 1.0 / period
+    for j, s in enumerate(earlier):
+        fk = 1.0 / s.period
+        for a in range(1, HARMONIC_ORDER + 1):
+            b = round(a * f / fk)                                   # f = fk b / a: a fold at a/b of the period
+            if b >= 1 and abs(f - fk * b / a) < tol:
+                return j
+            b = round(a * fk / f)                                   # f = fk a / b: b/a times the period
+            if b >= 1 and abs(f - fk * a / b) < tol:
+                return j
+    return None
+
+
 def _separated(order: np.ndarray, periods: np.ndarray, k: int) -> list[int]:
     """Indices from `order` (best first) whose periods differ by more than 2 percent from every earlier pick."""
     picked: list[int] = []
@@ -170,7 +211,9 @@ def _separated(order: np.ndarray, periods: np.ndarray, k: int) -> list[int]:
 
 class BoxDip:
     name = "box_dip"
-    version = "2"           # 2: sub-harmonic resolution up to P/8 on every first-pass signal (18 October 2026)
+    version = "3"           # 2: sub-harmonic resolution up to P/8 on every first-pass signal (18 October 2026)
+                            # 3: extent-sized mask, alias filter to order 8, first pass refilled to top_k independent
+                            # signals (18 October 2026)
     cost_class = "cpu_medium"
 
     def __init__(self, top_k: int = 3, oversample: float = 1.5, n_bands: int = 24, refine_oversample: float = 6.0,
@@ -247,7 +290,7 @@ class BoxDip:
         else:
             cands = [(float(periods[i]), float(power[i]), float(spec["duration"][i]), float(spec["t0"][i]),
                       float(spec["depth"][i]), float(spec["err"][i]), int(spec["band"][i]))
-                     for i in _separated(order, periods, self.top_k)]
+                     for i in _separated(order, periods, REFILL_FACTOR * self.top_k)]
             n_refined = 0
         sdes = [float((c[1] - spec["band_med"][c[6]]) / spec["band_std"][c[6]]) for c in cands]
         return cands, sdes, n_refined
@@ -260,7 +303,7 @@ class BoxDip:
                       period=p, t0=t0, duration=dur, depth_ppm=depth * 1e6, snr=float(depth / max(err, 1e-12)),
                       sde=sde, n_events=n_events,
                       extra={"baseline_days": baseline, "sde_spectrum_std": float(spec["band_std"][b]), "band": b,
-                             "alias_of": None, "n_periods": int(spec["period"].size),
+                             "alias_of": None, "aliases_skipped": 0, "n_periods": int(spec["period"].size),
                              "n_bands": self.n_bands, "two_stage": self.two_stage, "n_refined": n_refined})
 
     def _subharmonic(self, t: np.ndarray, y: np.ndarray, p: float, t0: float, duration: float,
@@ -345,8 +388,9 @@ class BoxDip:
                      th: Thresholds, pmax: float, first: list[Signal]) -> list[Signal]:
         """Second pass with the strongest first-pass signal masked: its points around every primary and every phase-0.5
         secondary are dropped, the same grid is searched again, and the strongest remaining peak is kept when it clears
-        the detection threshold on the masked spectrum and is not a small-integer alias of any first-pass period. One
-        iteration, at most one extra signal: the cost is one more coarse search.
+        the detection threshold on the masked spectrum and is neither a small-integer alias (``_is_alias``) nor an exact
+        harmonic (``_harmonic_of``) of any first-pass period. One iteration, at most one extra signal: the cost is one
+        more coarse search.
 
         The mask half-width around each event is max(MASK_WINDOW_DURATIONS x duration, 0.5 x extent + 0.25 x
         duration), with the extent measured on the fold (``_event_extent``) for the primary and for the secondary on
@@ -374,7 +418,7 @@ class BoxDip:
         for ci in np.argsort(sdes)[::-1]:
             if sdes[ci] < th.sde_min:
                 return []
-            if _is_alias(cands[ci][0], earlier, baseline):
+            if _is_alias(cands[ci][0], earlier, baseline) or _harmonic_of(cands[ci][0], first, spec) is not None:
                 continue
             sig = self._signal(lc, t2, y2, spec, cands[ci], sdes[ci], baseline, n_refined)
             sig.extra.update({"pass": 2, "masked_period": top.period, "masked_points": int((~keep).sum()),
@@ -387,7 +431,16 @@ class BoxDip:
 
     def search(self, lc: LightCurve, fnorm: np.ndarray, thresholds: Thresholds, keep_spectrum: bool = False) -> SearchResult:
         """Signals plus the periodogram summary built from the same per-band SDE spectrum the ranking uses; the full
-        spectrum arrays come back only with ``keep_spectrum``."""
+        spectrum arrays come back only with ``keep_spectrum``.
+
+        The first-pass list holds up to ``top_k`` mutually independent signals, filled from the SDE ranking (every
+        separated peak of ``_rank``: n_refine of them, or REFILL_FACTOR x top_k without the refine stage). Each peak
+        goes through the sub-harmonic resolution, then is skipped when it lands on a kept signal (``_duplicates``),
+        within 1 percent of a kept period times p/q (p and q up to MASK_ALIAS_ORDER, ``_alias_of``) or at an exact
+        harmonic of one (``_harmonic_of``); the next peak down the ranking takes the slot. A peak whose resolution
+        lands on n times a kept period with about n times its depth is kept, since the kept signal is then its P/n fold.
+        Skipped peaks are not returned; each kept signal counts those it absorbed in ``extra["aliases_skipped"]``.
+        ``extra["alias_of"]`` is therefore always None; the key stays for the schema and the dashboard."""
         th = thresholds
         m = np.isfinite(fnorm) & np.isfinite(lc.time)
         if m.sum() < MIN_POINTS:
@@ -414,19 +467,33 @@ class BoxDip:
             return SearchResult()
         cands, sdes, n_refined = self._rank(model, spec)
         cp = np.array([c[0] for c in cands])
-        keep = _separated(np.argsort(sdes)[::-1], cp, self.top_k)
-        raw = [self._signal(lc, t, y, spec, cands[ci], float(sdes[ci]), baseline, n_refined) for ci in keep]
-        # every first-pass signal is tested for a sub-harmonic alias, in rank order; a resolved period may coincide
-        # with a signal kept before it (the sub-harmonics of one object, or a lower-ranked peak at the true period,
-        # which already lent its refined SDE): those are dropped, within three coarse frequency steps, so one object
-        # leaves one signal (the first-pass list may then hold fewer than top_k signals)
+        ranked = _separated(np.argsort(sdes)[::-1], cp, len(cands))
+        raw = [self._signal(lc, t, y, spec, cands[ci], float(sdes[ci]), baseline, n_refined) for ci in ranked]
+        # in rank order, each peak is tested for a sub-harmonic alias first; it is skipped when its (resolved) period
+        # coincides with a kept signal (the sub-harmonics of one object, or a lower-ranked peak at the true period,
+        # which lends its refined SDE; three coarse frequency steps) or sits at a p/q alias or an exact harmonic of
+        # one, so one object leaves one signal and the next peak takes the slot. One exception: a peak whose
+        # resolution lands on n times a kept period with n times its depth (``_reveals_subharmonic``) shows that the
+        # kept signal is itself a sub-harmonic the resolver could not fold back (too few events), and is kept (0.7/2 d
+        # resolved to 0.7 d next to an unresolved 0.7/3 d on a 15 d curve)
         out: list[Signal] = []
-        for j, sig in enumerate(raw):
-            sig = self._resolve_alias(t, y, sig, pmax, spec, others=raw[:j] + raw[j + 1:])
-            if not _duplicates(sig.period, out, spec):
-                out.append(sig)
-        for j, sig in enumerate(out):
-            sig.extra["alias_of"] = _alias_of(sig.period, out[:j])
+        for j, raw_sig in enumerate(raw):
+            if len(out) >= self.top_k:
+                break
+            sig = self._resolve_alias(t, y, raw_sig, pmax, spec, others=raw[:j] + raw[j + 1:])
+            dup = _duplicates(sig.period, out, spec)
+            if dup:
+                a = next(i for i, s in enumerate(out) if s is dup[0])
+            else:
+                a = _alias_of(sig.period, out)
+                if a is None:
+                    a = _harmonic_of(sig.period, out, spec)
+                if a is not None and sig is not raw_sig and _reveals_subharmonic(sig, out[a]):
+                    a = None
+            if a is not None:
+                out[a].extra["aliases_skipped"] += 1
+                continue
+            out.append(sig)
         # the periodogram summary and its peaks describe the first-pass spectrum only; a second-pass signal has its
         # own SDE on the masked spectrum and is not drawn on this envelope
         edges = np.geomspace(th.min_period_days, pmax, self.n_bands + 1)
