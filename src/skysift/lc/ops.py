@@ -452,7 +452,8 @@ def _chases_one(t, y, t_event, ses, period, duration_days) -> float:
 def event_quality(time, fnorm, period, t0, duration_days) -> EventQuality:
     """Per-event coverage, single-event statistic and Chases (Thompson et al. 2018, Appendix A) on the finite points.
 
-    The events are the epochs ``round((t - t0) / period)`` with a point within one duration of mid-transit.
+    The events are every epoch ``round((t - t0) / period)`` whose mid-transit falls within the span of the finite
+    times, as the expected transits are counted; an epoch with no point near mid-transit has coverage 0.0 and a NaN ses.
     ``coverage`` counts the points within one duration of mid-transit over the 2 x duration / median cadence expected.
     ``ses`` is the depth over the error of ``_box_depth`` on the epoch's points, as ``event_depths`` takes it, NaN when
     the box holds fewer than 3 points or the baseline fewer than 20. ``chases`` is computed only when the number of
@@ -468,14 +469,14 @@ def event_quality(time, fnorm, period, t0, duration_days) -> EventQuality:
     ph = fold_phase(time, period, t0)
     ep = np.round((time - t0) / period).astype(int)
     near = np.abs(ph) < duration_days
-    epochs = np.unique(ep[near])
+    epochs = np.arange(int(np.ceil((time.min() - t0) / period)), int(np.floor((time.max() - t0) / period)) + 1)
     expected = 2.0 * duration_days / cadence
     half = duration_days / 2.0
     coverage = np.array([np.count_nonzero(near & (ep == e)) / expected for e in epochs])
     ses = np.full(epochs.size, np.nan)
     for i, e in enumerate(epochs):
         s = ep == e
-        r = _box_depth(ph[s], fn[s], half)
+        r = _box_depth(ph[s], fn[s], half) if s.any() else None
         if r is not None and r[1] > 0:
             ses[i] = r[0] / r[1]
     chases = None

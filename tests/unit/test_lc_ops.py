@@ -306,6 +306,19 @@ def test_event_quality_coverage_and_ses():
     assert eq2.coverage[j] < 0.75 and eq2.coverage[j] < eq.coverage[k]
 
 
+def test_event_quality_counts_an_epoch_without_points():
+    lc = _box_curve(EP, ET0, EDUR, 3000, n_days=130)
+    fn = detrend(lc)
+    full = event_quality(lc.time, fn, EP, ET0, EDUR)
+    k = 2
+    cut = fn.copy()
+    cut[np.abs(lc.time - (ET0 + full.epochs[k] * EP)) < 2 * EDUR] = np.nan
+    eq = event_quality(lc.time, cut, EP, ET0, EDUR)
+    assert np.array_equal(eq.epochs, full.epochs)
+    assert eq.coverage[k] == 0.0 and np.isnan(eq.ses[k]) and np.isnan(eq.chases[k])
+    assert np.isfinite(np.delete(eq.ses, k)).all()
+
+
 def _chases_curve(extra=()):
     return _box_curve(EP, ET0, EDUR, 3000, n_days=130, extra=extra)
 

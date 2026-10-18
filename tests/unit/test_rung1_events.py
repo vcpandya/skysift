@@ -47,7 +47,19 @@ def test_fails_gapped_events():
     lc = inject_transit(make_lightcurve(seed=17, noise_ppm=NOISE), period, t0, dur, 3000)
     ep = np.round((lc.time - t0) / period).astype(int)
     near = np.abs(lc.time - t0 - ep * period) < dur
-    # every event but two keeps one point in five of its window: still an event, but at a coverage of about 0.2
+    # no point within one duration of any event but two: those epochs are expected transits with coverage 0
+    r = Rung1Events().run(signal(period, t0, dur), bundle(thin(lc, ~(near & ~np.isin(ep, [3, 7])))))
+    assert r.status == TestStatus.FAIL and r.reason.startswith("gapped events"), r.reason
+    assert r.metrics["n_events_with_data"] > 30 and r.metrics["n_covered"] == 2
+    assert r.metrics["coverage"].count(0.0) == r.metrics["n_events_with_data"] - 2
+
+
+def test_fails_sparsely_covered_events():
+    period, t0, dur = 40.0, 140.0, 0.25
+    lc = inject_transit(make_lightcurve(seed=17, noise_ppm=NOISE), period, t0, dur, 3000)
+    ep = np.round((lc.time - t0) / period).astype(int)
+    near = np.abs(lc.time - t0 - ep * period) < dur
+    # every event but two keeps one point in five of its window: present, but at a coverage of about 0.2
     sparse = near & ~np.isin(ep, [3, 7]) & (np.arange(lc.time.size) % 5 != 0)
     r = Rung1Events().run(signal(period, t0, dur), bundle(thin(lc, ~sparse)))
     assert r.status == TestStatus.FAIL and r.reason.startswith("gapped events"), r.reason
