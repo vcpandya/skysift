@@ -28,8 +28,9 @@ class Rung1Events:
     - single-event dominance (A.3.5): on signals longer than ``SES_DOMINANCE_MIN_PERIOD``, FAIL when the largest SES
       over the root sum of squares of the good events' SES exceeds ``SES_DOMINANCE_MAX``;
     - Chases (A.3.3 for the C_i statistic, A.3.7.3 for its use): an event with C_i below ``CHASES_MIN`` is not good, and
-      FAIL when the median C_i is below ``CHASES_MEDIAN_MIN`` (the constants and the median rule are SkySift's reading
-      of the published tests).
+      FAIL when the median C_i is below ``CHASES_MEDIAN_MIN`` (T18 A.3.3: "TCE Chases" is the median of the per-event
+      values and fails below 0.8, computed only for TCEs with five or fewer transits; the feature fraction f is
+      "tunable" there and SkySift takes 0.8).
     The SES rules (Zuma, dominance, Chases) apply only when at least ``min_events`` events have a finite SES.
 
     ``n_events_with_data`` in the metrics counts every expected epoch in the span of the data, since ``event_quality``
