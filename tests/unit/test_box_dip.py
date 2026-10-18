@@ -163,8 +163,8 @@ def test_is_alias_covers_small_integer_ratios():
     from skysift.detectors.box_dip import _is_alias
     earlier = [0.7]
     assert _is_alias(1.4, earlier) and _is_alias(0.35, earlier) and _is_alias(1.05, earlier) and _is_alias(0.7 * 4 / 3, earlier)
-    assert _is_alias(0.7 * 1.004, earlier)
-    assert not _is_alias(9.9, earlier) and not _is_alias(0.7 * 5 / 4, earlier) and not _is_alias(0.7 * 1.02, earlier)
+    assert _is_alias(0.7 * 1.004, earlier) and _is_alias(0.7 * 5 / 4, earlier)        # p/q up to 8 since 18 October
+    assert not _is_alias(9.9, earlier) and not _is_alias(0.7 * 9 / 8, earlier) and not _is_alias(0.7 * 1.02, earlier)
 
 
 def test_is_alias_catches_combination_frequencies_of_a_multiperiodic_variable():
@@ -328,3 +328,70 @@ def test_a_binary_with_a_deep_secondary_is_not_folded_away():
     odd, even = (stacked_depth(lc.time[m], fnorm[m], sig[0].period, sig[0].t0, sig[0].duration, epochs=e)
                  for e in ("odd", "even"))
     assert abs(odd.depth_ppm - even.depth_ppm) > Thresholds().parity_sigma * np.hypot(odd.err_ppm, even.err_ppm)
+
+
+def inject_v_eclipse(lc: LightCurve, period, t0, width_days, depth_ppm):
+    """A triangular (V-shaped) eclipse: ``depth_ppm`` at mid-eclipse falling linearly to zero at +-width_days/2."""
+    ph = (lc.time - t0 + 0.5 * period) % period - 0.5 * period
+    shape = np.clip(1.0 - np.abs(ph) / (0.5 * width_days), 0.0, None)
+    f = lc.flux * (1 - depth_ppm * 1e-6 * shape)
+    return LightCurve(lc.time, f, lc.flux_err, lc.quality, lc.quarter, lc.flux_alt, dict(lc.meta))
+
+
+V_P, V_T0, V_WIDTH = 24.0, 140.0, 11 / 24
+COMP_P, COMP_T0, COMP_DUR = 2.1, 132.3, 2.2 / 24
+
+
+def _v_binary(depth_ppm: float, comp_ppm: float):
+    """The K06356.01 configuration of the injection study: a V-shaped 24.0 d eclipse of 11 h total width on a 1400 d
+    curve (seed 71, 700 ppm noise) plus a 2.1 d, 2.2 h box transit (the companion)."""
+    lc = inject_v_eclipse(make_lightcurve(n_days=1400, seed=71, noise_ppm=700), V_P, V_T0, V_WIDTH, depth_ppm)
+    lc = inject_transit(lc, COMP_P, COMP_T0, COMP_DUR, comp_ppm)
+    return lc, detrend(lc)
+
+
+@functools.cache
+def _deep_v_binary_search():
+    """One full search (both passes) of a 40000 ppm V binary with a 271 ppm companion (the injected depth of the real
+    miss). At 6000 ppm on white noise the wings a 0.75-duration mask leaves stay under the threshold (SDE 11.6 at
+    24.0 d and at most 7.0 at 24.0/n, measured 18 October 2026), so the defect needs a deeper eclipse to show; at 40000
+    ppm the old mask left 24.0/5 d at SDE 47.0 above the companion's 28.2, and the order-8 filter alone would have
+    taken 24.0/9 d (SDE 34.0)."""
+    lc, fnorm = _v_binary(40000, 271)
+    return BoxDip().detect(lc, fnorm, SUB_WINDOW)
+
+
+def test_masked_pass_recovers_a_companion_behind_a_v_shaped_binary():
+    """A narrow box fits the V better than a wide one (6 h for the 11 h eclipse), so a mask sized from the box left the
+    eclipse wings in the masked curve and they, not the companion, ruled the second pass (24.09/7 d on the real
+    binary)."""
+    sig = _deep_v_binary_search()
+    found = [(round(s.period, 4), round(s.sde, 1), s.extra.get("pass", 1)) for s in sig]
+    assert any(abs(s.period - COMP_P) / COMP_P < 0.01 for s in sig), found
+    residues = [V_P / n for n in range(2, 9)]
+    assert all(abs(s.period - r) / r >= 0.01 for s in sig for r in residues), found
+    for s in sig:
+        if s.extra.get("pass") == 2:                               # the mask covers the whole eclipse, not the box
+            assert s.extra["mask_half_days"][0] >= 0.5 * V_WIDTH, s.extra["mask_half_days"]
+
+
+def test_mask_extent_is_measured_on_the_fold():
+    from skysift.detectors.box_dip import _event_extent
+    lc, fnorm = _v_binary(40000, 271)
+    m = np.isfinite(fnorm)
+    ext = _event_extent(lc.time[m], fnorm[m], V_P, V_T0, 6 / 24, 0.0)
+    assert ext is not None and abs(ext - V_WIDTH) < 0.25 * V_WIDTH, ext
+    assert _event_extent(lc.time[m], fnorm[m], V_P, V_T0, 6 / 24, 0.5) is None          # no secondary
+    box = inject_transit(make_lightcurve(n_days=500, seed=72, noise_ppm=700), 7.3, 135.0, 3 / 24, 1500)
+    fb = detrend(box); mb = np.isfinite(fb)
+    ext = _event_extent(box.time[mb], fb[mb], 7.3, 135.0, 3 / 24, 0.0)
+    assert ext is not None and abs(ext - 3 / 24) < 0.25 * 3 / 24, ext
+    noise = make_lightcurve(n_days=500, seed=72, noise_ppm=700)
+    fn = detrend(noise); mn = np.isfinite(fn)
+    assert _event_extent(noise.time[mn], fn[mn], 7.3, 135.0, 3 / 24, 0.0) is None
+
+
+def test_second_pass_filters_aliases_to_order_eight():
+    from skysift.detectors.box_dip import _is_alias
+    assert _is_alias(24.0 / 7, [24.0], 1400.0)
+    assert not _is_alias(24.0 / 9, [24.0], 1400.0)

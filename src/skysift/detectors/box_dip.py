@@ -49,11 +49,68 @@ def _alias_of(period: float, earlier: list[Signal]) -> int | None:
 
 
 # every ratio p/q with 1 <= p, q <= MASK_ALIAS_ORDER: the harmonics and sub-harmonics a masked periodic signal (and the
-# window function its mask leaves behind) can still raise in the second-pass spectrum
-MASK_ALIAS_ORDER = 4
+# window function its mask leaves behind) can still raise in the second-pass spectrum; 8 like MAX_SUBHARMONIC (the
+# 24.09/7 d residue of K06356.01 passed the filter at order 4)
+MASK_ALIAS_ORDER = 8
 MASK_ALIAS_RATIOS = tuple(sorted({p / q for p in range(1, MASK_ALIAS_ORDER + 1) for q in range(1, MASK_ALIAS_ORDER + 1)}))
-MASK_WINDOW_DURATIONS = 0.75    # half-width of the mask in durations (a 1.5-duration window) around the primary and
-                                # around phase 0.5; wider windows swallow a short-period curve entirely
+MASK_WINDOW_DURATIONS = 0.75    # floor of the mask half-width in durations (a 1.5-duration window) around the primary
+                                # and around phase 0.5; wider fixed windows swallow a short-period curve entirely
+MASK_EXTENT_BINS = 400          # phase bins of the fold on which the extent of the masked event is measured
+MASK_EXTENT_SIGMA = 3.0         # a bin belongs to the event while its mean is this many binned scatters below the rest
+MASK_EXTENT_MIN_POINTS = 3      # bins with fewer points are not used
+MASK_EXTENT_MAX_PHASE = 0.25    # the walk stops this far in phase from the deepest bin on either side
+
+
+def _event_extent(t: np.ndarray, y: np.ndarray, period: float, t0: float, duration: float,
+                  phase: float) -> float | None:
+    """Total width in days of the event around ``phase`` (0 for the primary, 0.5 for the secondary) on the fold at
+    ``period`` from ``t0``, or None when no event is seen there. The fold is binned in MASK_EXTENT_BINS phase bins
+    (bins with at least MASK_EXTENT_MIN_POINTS points); the out-of-event level and scatter are the median and 1.4826 x
+    MAD of the bin means more than two durations from phase 0 and from phase 0.5. From the deepest bin within one
+    duration of ``phase`` the run walks outwards on each side while the bin mean stays more than MASK_EXTENT_SIGMA
+    scatters below that level, letting one bin break the run on each side; the extent is the phase span of the run.
+    The box BLS fits to a V-shaped eclipse is narrower than the eclipse (a 6 h box on the 11 h eclipses of
+    K06356.01), so a mask sized from the box alone leaves the wings in the curve."""
+    nb = MASK_EXTENT_BINS
+    ph = ((t - t0) / period - phase + 0.5) % 1.0 - 0.5                 # phase from the event centre, in [-0.5, 0.5)
+    idx = np.minimum(((ph + 0.5) * nb).astype(int), nb - 1)
+    count = np.bincount(idx, minlength=nb)
+    total = np.bincount(idx, weights=y, minlength=nb)
+    valid = count >= MASK_EXTENT_MIN_POINTS
+    mean = np.where(valid, total / np.maximum(count, 1), np.nan)
+    centre = (np.arange(nb) + 0.5) / nb - 0.5                          # bin centres, phase from the event centre
+    absolute = (centre + phase) % 1.0                                  # bin centres, phase from t0
+    d0 = np.minimum(absolute, 1.0 - absolute)
+    d5 = np.abs(absolute - 0.5)
+    w = 2.0 * duration / period
+    out = valid & (d0 > w) & (d5 > w)
+    if out.sum() < 10:
+        return None
+    level = float(np.median(mean[out]))
+    scatter = 1.4826 * float(np.median(np.abs(mean[out] - level)))
+    if not scatter > 0:
+        return None
+    low = valid & (mean - level < -MASK_EXTENT_SIGMA * scatter)
+    near = np.where(valid & (np.abs(centre) <= duration / period))[0]
+    if near.size == 0:
+        return None
+    deep = int(near[np.argmin(mean[near])])
+    if not low[deep]:
+        return None
+    reach = int(MASK_EXTENT_MAX_PHASE * nb)
+    ends = []
+    for step in (-1, 1):
+        end, broken = deep, False
+        for k in range(1, reach + 1):
+            j = (deep + step * k) % nb
+            if low[j]:
+                end = deep + step * k
+            elif broken:
+                break
+            else:
+                broken = True
+        ends.append(end)
+    return (ends[1] - ends[0] + 1) * period / nb
 
 
 COMBINATION_ORDER = 2           # m f_i - n f_j with m, n up to this, plus f_i + f_j
@@ -61,12 +118,12 @@ COMBINATION_RESOLUTION = 2.0    # frequency tolerance for a combination match, i
 
 
 def _is_alias(period: float, earlier_periods: list[float], baseline: float | None = None) -> bool:
-    """True when ``period`` sits within 1 percent of a small-integer ratio (p/q, p and q up to 4) of an earlier period,
-    or, given the baseline, within COMBINATION_RESOLUTION/baseline in frequency of a combination of two earlier
-    frequencies (m f_i - n f_j with m, n up to COMBINATION_ORDER, or f_i + f_j). A multi-periodic variable (pulsation,
-    differential rotation) raises sidelobes at exactly those combination frequencies, equally spaced in frequency with
-    its main peaks, and masking the strongest peak only promotes the next sidelobe (gaia-dr3-2075988698983795072:
-    1.574, 1.386 and 1.762 per day, spaced by 0.188)."""
+    """True when ``period`` sits within 1 percent of a small-integer ratio (p/q, p and q up to MASK_ALIAS_ORDER) of an
+    earlier period, or, given the baseline, within COMBINATION_RESOLUTION/baseline in frequency of a combination of
+    two earlier frequencies (m f_i - n f_j with m, n up to COMBINATION_ORDER, or f_i + f_j). A multi-periodic variable
+    (pulsation, differential rotation) raises sidelobes at exactly those combination frequencies, equally spaced in
+    frequency with its main peaks, and masking the strongest peak only promotes the next sidelobe
+    (gaia-dr3-2075988698983795072: 1.574, 1.386 and 1.762 per day, spaced by 0.188)."""
     if any(abs(period / e / r - 1.0) < 0.01 for e in earlier_periods for r in MASK_ALIAS_RATIOS):
         return True
     if baseline is None or len(earlier_periods) < 2:
@@ -286,13 +343,25 @@ class BoxDip:
 
     def _masked_pass(self, lc: LightCurve, t: np.ndarray, y: np.ndarray, sigma: float, baseline: float,
                      th: Thresholds, pmax: float, first: list[Signal]) -> list[Signal]:
-        """Second pass with the strongest first-pass signal masked: its points within MASK_WINDOW_DURATIONS durations of
-        every primary and of every phase-0.5 secondary are dropped, the same grid is searched again, and the strongest
-        remaining peak is kept when it clears the detection threshold on the masked spectrum and is not a small-integer
-        alias of any first-pass period. One iteration, at most one extra signal: the cost is one more coarse search."""
+        """Second pass with the strongest first-pass signal masked: its points around every primary and every phase-0.5
+        secondary are dropped, the same grid is searched again, and the strongest remaining peak is kept when it clears
+        the detection threshold on the masked spectrum and is not a small-integer alias of any first-pass period. One
+        iteration, at most one extra signal: the cost is one more coarse search.
+
+        The mask half-width around each event is max(MASK_WINDOW_DURATIONS x duration, 0.5 x extent + 0.25 x
+        duration), with the extent measured on the fold (``_event_extent``) for the primary and for the secondary on
+        its own; a secondary without a measurable run takes the primary's half-width. ``extra["mask_half_days"]``
+        records both."""
         top = first[0]
-        half = MASK_WINDOW_DURATIONS * top.duration
-        keep = ~_in_window(t, top.period, top.t0, half) & ~_in_window(t, top.period, top.t0 + 0.5 * top.period, half)
+        floor = MASK_WINDOW_DURATIONS * top.duration
+
+        def half_width(ext: float | None) -> float | None:
+            return None if ext is None else max(floor, 0.5 * ext + 0.25 * top.duration)
+
+        half_p = half_width(_event_extent(t, y, top.period, top.t0, top.duration, 0.0)) or floor
+        half_s = half_width(_event_extent(t, y, top.period, top.t0, top.duration, 0.5)) or half_p
+        keep = (~_in_window(t, top.period, top.t0, half_p)
+                & ~_in_window(t, top.period, top.t0 + 0.5 * top.period, half_s))
         if keep.sum() < MIN_POINTS:
             return []
         t2, y2 = t[keep], y[keep]
@@ -308,7 +377,8 @@ class BoxDip:
             if _is_alias(cands[ci][0], earlier, baseline):
                 continue
             sig = self._signal(lc, t2, y2, spec, cands[ci], sdes[ci], baseline, n_refined)
-            sig.extra.update({"pass": 2, "masked_period": top.period, "masked_points": int((~keep).sum())})
+            sig.extra.update({"pass": 2, "masked_period": top.period, "masked_points": int((~keep).sum()),
+                              "mask_half_days": (float(half_p), float(half_s))})
             return [sig]
         return []
 
