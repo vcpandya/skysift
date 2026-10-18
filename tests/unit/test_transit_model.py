@@ -28,6 +28,8 @@ def test_fit_recovers_a_box_like_planet():
     assert fit.k + fit.b < 1.04
     assert abs(fit.depth_ppm - 6400) < 0.15 * 6400
     assert fit.n_bins >= 20
+    # a central transit lies in the non-grazing family, so the comparison fit finds the same minimum
+    assert np.isfinite(fit.chi2_nongrazing) and abs(fit.chi2_nongrazing - fit.chi2) < 3.0
 
 
 def test_fit_flags_a_grazing_eclipse():
@@ -36,6 +38,8 @@ def test_fit_flags_a_grazing_eclipse():
     fit = fit_transit(lc.time, detrend(lc), period, t0, _t14(period, k, b, a))
     assert fit.ok
     assert fit.k + fit.b > 1.04
+    # no non-grazing geometry (b <= 1 - k) reproduces the V: the comparison fit is far worse
+    assert np.isfinite(fit.chi2_nongrazing) and fit.chi2_nongrazing - fit.chi2 > 25.0
 
 
 def test_fit_on_a_v_eclipse_fixture():
@@ -52,7 +56,7 @@ def test_fit_is_not_ok_on_a_sparse_fold():
     fit = fit_transit(lc.time, detrend(lc), 25.0, 140.0, 0.2)
     assert not fit.ok
     assert fit.n_bins < 20
-    assert np.isnan([fit.k, fit.b, fit.a_over_r, fit.depth_ppm, fit.t14_days, fit.chi2]).all()
+    assert np.isnan([fit.k, fit.b, fit.a_over_r, fit.depth_ppm, fit.t14_days, fit.chi2, fit.chi2_nongrazing]).all()
 
 
 def test_fit_is_not_ok_when_no_bin_lies_in_transit():

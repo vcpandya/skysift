@@ -306,7 +306,8 @@ T0_R2 = 133.0       # a multiple of 0.7 d, so the 0.7 d wave of the SWEET EB fix
 R2_NEW_METRICS = ("sigma_pri", "sigma_sec", "phase_sec", "sigma_ter", "sigma_pos", "fa2", "ms2", "ms3", "fit_ok",
                   "fit_k", "fit_b", "fit_a_over_r", "fit_depth_ppm", "fit_t14_h", "fit_chi2", "sweet_factor",
                   "sweet_amplitude_ppm", "sweet_snr", "suggested_period", "occultation_albedo",
-                  "planet_radius_rearth", "secondary_difference_sigma", "occultation_exception", "v_shape_applied")
+                  "planet_radius_rearth", "secondary_difference_sigma", "occultation_exception", "v_shape_applied",
+                  "fit_delta_chi2")
 
 
 def _assert_new_metrics_strict(r):
@@ -443,7 +444,7 @@ def test_rung2_fails_a_v_shaped_eclipse():
     r = Rung2Shape().run(_signal_r2(9.0, 6 / 24, 30000), bundle(lc))
     assert r.status == TestStatus.FAIL and r.reason.startswith("V-shaped"), (r.status, r.reason)
     assert r.metrics["fit_k"] + r.metrics["fit_b"] > 1.04 and r.metrics["parity_sigma"] < 3
-    assert r.metrics["v_shape_applied"] is True
+    assert r.metrics["v_shape_applied"] is True and r.metrics["fit_delta_chi2"] > 25
     _assert_new_metrics_strict(r)
 
 
@@ -454,12 +455,29 @@ def test_rung2_skips_the_v_shape_rule_when_the_fit_is_pinned_at_its_bound(monkey
     run of ladder 3 failed a 185 ppm, 0.96 d box this way."""
     import skysift.vetting.rung2_shape as rung2
     from skysift.lc.transit_model import TransitFit
-    pinned = TransitFit(k=2.0, b=0.06, a_over_r=3.0, depth_ppm=40000.0, t14_days=1.8 / 24, chi2=50.0, n_bins=48, ok=True)
+    pinned = TransitFit(k=2.0, b=0.06, a_over_r=3.0, depth_ppm=40000.0, t14_days=1.8 / 24, chi2=50.0, n_bins=48,
+                        ok=True, chi2_nongrazing=200.0)
     monkeypatch.setattr(rung2, "fit_transit", lambda *a, **kw: pinned)
     lc = inject_transit(make_lightcurve(seed=19, noise_ppm=600), 0.96, T0_R2, 1.8 / 24, 200)
     r = Rung2Shape().run(_signal_r2(0.96, 1.8 / 24, 200), bundle(lc))
     assert r.status == TestStatus.PASS, (r.status, r.reason)
     assert r.metrics["v_shape_applied"] is False and r.metrics["fit_k"] == 2.0
+    _assert_new_metrics_strict(r)
+
+
+def test_rung2_passes_a_shallow_box_the_free_fit_calls_grazing():
+    """The second real-curve injection run of ladder 3 failed a 185 ppm, 1.8 h box at 0.9618 d as "V-shaped or deep
+    (k + b = 2.06 > 1.04)": the detector returned a 1.5 h duration, and on the shallow, cadence-smeared fold (3.7
+    cadences per transit) the free fit found a grazing geometry (k 0.53, b 1.52) whose overlap mimics the dip. The
+    same box here (1400 d, 600 ppm noise, 29.4 min cadence) gets k + b near 1.96 from the free fit, but the best
+    non-grazing fit is as good, so the fold does not show a V and the planet passes (T18 A.4.3 needs the fit to have
+    measured the shape)."""
+    lc = inject_transit(make_lightcurve(n_days=1400, cadence_min=29.4, seed=31, noise_ppm=600), 0.9618, T0_R2,
+                        1.8 / 24, 185)
+    r = Rung2Shape().run(_signal_r2(0.9618, 1.5 / 24, 185), bundle(lc))
+    assert r.status == TestStatus.PASS, (r.status, r.reason, r.metrics["fit_k"], r.metrics["fit_b"])
+    assert r.metrics["fit_k"] + r.metrics["fit_b"] > 1.04          # the free fit is grazing: the case under test
+    assert r.metrics["v_shape_applied"] is False and r.metrics["fit_delta_chi2"] < 25
     _assert_new_metrics_strict(r)
 
 
