@@ -876,3 +876,23 @@ def test_restore_harmonics_leaves_a_wave_deeper_than_the_detection_removed():
     assert [r["frequency"] for r in new["restored"]] == [f]
     assert [c["frequency"] for c in new["components"]] == [2 * f, 0.37] and new["n"] == 2
     assert pipeline.restore_harmonics(time, flux, record, [(f, 20.0)]) is None, "nothing under a 20 ppm detection"
+
+
+def test_restore_leaves_a_wave_at_three_halves_of_the_detection_frequency():
+    """A transit has no Fourier power at half-integer harmonics of its frequency, so a component removed at 1.5 f is a
+    stellar wave: put back, it alternates sign between consecutive transits and fails rung 2 as odd_even (the 0.721 d
+    binary gaia-dr3-2076894352958341376 had its fundamental at 1.387 per day restored onto a 1.057 d injected transit).
+    Only the detection's integer harmonics come back."""
+    time = np.arange(0, 400, 1 / 48)
+    flux = np.ones_like(time)
+    f = 1 / 1.057
+    record = {"n": 3, "components": [
+        {"frequency": f, "amplitude_ppm": 40.0, "snr": 10.0, "coef": [0.0, 40e-6, 0.0, 0.0, 0.0]},
+        {"frequency": 1.5 * f, "amplitude_ppm": 150.0, "snr": 10.0, "coef": [0.0, 150e-6, 0.0, 0.0, 0.0]},
+        {"frequency": 2 * f, "amplitude_ppm": 30.0, "snr": 10.0, "coef": [0.0, 30e-6, 0.0, 0.0, 0.0]},
+    ], "skipped": []}
+    out = pipeline.restore_harmonics(time, flux, record, [(f, 1000.0)])
+    assert out is not None
+    _flux, new = out
+    assert [r["frequency"] for r in new["restored"]] == [f, 2 * f]
+    assert [c["frequency"] for c in new["components"]] == [1.5 * f] and new["n"] == 1

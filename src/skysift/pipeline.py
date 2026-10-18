@@ -49,7 +49,10 @@ MAX_POOL_BREAKS = 3         # a job held by three broken pools (charged or not) 
 SEARCH_CONFIG_KEYS = ("oversample", "n_bands", "n_refine", "refine_oversample", "two_stage", "mask_iterations",
                      "alias_resolution")
 RESTORE_HARMONICS = 8       # a detection gets back removed components at m * f / n for m in 1 .. 8 ...
-RESTORE_DIVISORS = (1, 2)   # ... and n in 1, 2: its harmonics and the P/2 alias comb
+# ... and n in RESTORE_DIVISORS: its integer harmonics only. A transit has no power at half-integer harmonics, so a
+# component there is a stellar wave that, put back, alternates between transits and fails rung 2 as odd_even; the P/2
+# alias is resolved by the detector (BoxDip._resolve_alias) before the restore runs
+RESTORE_DIVISORS = (1,)
 
 
 def priority_score(t: Target) -> float:
@@ -137,10 +140,12 @@ def whitened_flux(lc: LightCurve, th: Thresholds, flux=None) -> tuple:
 def restore_harmonics(time, flux, record: dict, detections) -> tuple | None:
     """Put back the removed components that sit at a detection's harmonics: within ``GUARD_EXCLUSION`` resolution
     elements (1/baseline of the finite flux) of m * f / n for every ``(f, depth_ppm)`` in ``detections``, m in 1 ..
-    ``RESTORE_HARMONICS`` and n in ``RESTORE_DIVISORS``, and no larger than that detection's depth: a box of depth d
-    has every Fourier amplitude below d (2 d times its duty cycle, at most), so a component deeper than the detection
-    is a stellar wave that happens to sit on the comb, not a piece of the transit, and stays removed. A detection must
-    never be measured on flux that had its own harmonics removed, whatever the shape guard decided. Returns None when
+    ``RESTORE_HARMONICS`` and n in ``RESTORE_DIVISORS`` (1 only: the integer harmonics; a transit has no power at
+    half-integer harmonics, so a component at 1.5 f is a stellar wave and stays removed), and no larger than that
+    detection's depth: a box of depth d has every Fourier amplitude below d (2 d times its duty cycle, at most), so a
+    component deeper than the detection is a stellar wave that happens to sit on the comb, not a piece of the transit,
+    and stays removed. A detection must never be measured on flux that had its own harmonics removed, whatever the
+    shape guard decided. Returns None when
     there is nothing to restore, else (the flux plus their model, the record without them and with ``restored``:
     [{frequency, amplitude_ppm}, ...]), so ``detrend - prewhiten_model(record components)`` is still exactly the
     returned flux."""
