@@ -10,7 +10,7 @@ from skysift.vetting.base import DataBundle
 from skysift.vetting.rung1_detection import Rung1Detection
 from skysift.vetting.rung2_shape import Rung2Shape
 from skysift.vetting.rung3_stability import Rung3Stability
-from tests.synthetic import inject_transit, make_lightcurve
+from tests.synthetic import inject_model, inject_transit, inject_v_eclipse, make_lightcurve
 
 P, T0, DUR = 13.769, 136.3, 0.09
 TGT = Target(source="test", target_id="t", ra=0, dec=0)
@@ -294,3 +294,127 @@ def test_rung3_aperture_z_is_none_without_a_psf_flux():
     r = Rung3Stability().run(_signal_3_3(4000), b)
     assert r.status == TestStatus.PASS and r.metrics["aperture_z"] is None and r.metrics["alt_depth_ppm"] is None
     assert r.metrics["aperture_ratio"] is None
+
+
+# ---- rung 2 against the Kepler DR25 Robovetter (Thompson et al. 2018): uniqueness, SWEET, transit fit, exceptions
+
+T0_R2 = 133.0       # a multiple of 0.7 d, so the 0.7 d wave of the SWEET EB fixture is orthogonal to the box
+
+
+R2_NEW_METRICS = ("sigma_pri", "sigma_sec", "phase_sec", "sigma_ter", "sigma_pos", "fa2", "ms2", "ms3", "fit_ok",
+                  "fit_k", "fit_b", "fit_a_over_r", "fit_depth_ppm", "fit_t14_h", "fit_chi2", "sweet_factor",
+                  "sweet_amplitude_ppm", "sweet_snr", "suggested_period", "occultation_albedo",
+                  "planet_radius_rearth")
+
+
+def _assert_new_metrics_strict(r):
+    """The metrics this rung added are None or finite (strict JSON), never NaN."""
+    keys = [k for k in R2_NEW_METRICS if k in r.metrics]
+    json.dumps({k: r.metrics[k] for k in keys}, allow_nan=False)
+
+
+def _signal_r2(period, duration, depth_ppm, t0=T0_R2):
+    return Signal(target_id="t", detector="box_dip", detector_version="1", period=period, t0=t0, duration=duration,
+                  depth_ppm=depth_ppm, snr=30.0, sde=20.0, n_events=100)
+
+
+def test_rung2_fails_three_equal_dips_as_not_unique():
+    """A 4.1 d, 3 h, 1500 ppm box plus two more dips at phases 0.37 and 0.71: the fold holds a tertiary event at least
+    as significant as the primary, so the detection is not unique (MS2 compares the primary with the tertiary; a lone
+    second dip is the secondary rules' case). The two extra dips are 1800 ppm, not 1500: with three exactly equal dips
+    MS2 = FA2 - (sigma_pri - sigma_ter) sits at FA2 (2.16) minus the noise of the difference, which straddles the 2.0
+    threshold (the tertiary is the weaker of the two extra dips), so an equal-depth fixture is a coin toss."""
+    lc = make_lightcurve(seed=19, noise_ppm=600)
+    lc = inject_transit(lc, 4.1, T0_R2, 3 / 24, 1500)
+    for phase in (0.37, 0.71):
+        lc = inject_transit(lc, 4.1, T0_R2 + phase * 4.1, 3 / 24, 1800)
+    r = Rung2Shape().run(_signal_r2(4.1, 3 / 24, 1500), bundle(lc))
+    assert r.status == TestStatus.FAIL and r.reason.startswith("not unique"), (r.status, r.reason)
+    assert r.metrics["ms2"] > 2.0 and r.metrics["sigma_ter"] is not None
+    _assert_new_metrics_strict(r)
+
+
+def test_rung2_sweet_fails_a_short_period_wave_removed_by_detrending():
+    """The detrended flux before pre-whitening carries a 3000 ppm wave at the 2.3 d period that the whitened flux no
+    longer shows: SWEET fails the signal as sinusoidal (the wave is larger than the 1500 ppm dip)."""
+    lc = inject_transit(make_lightcurve(seed=19, noise_ppm=600), 2.3, T0_R2, 2 / 24, 1500)
+    b = bundle(lc)
+    b.flux_detrended = b.fnorm * (1 + 3e-3 * np.sin(2 * np.pi * lc.time / 2.3))
+    r = Rung2Shape().run(_signal_r2(2.3, 2 / 24, 1500), b)
+    assert r.status == TestStatus.FAIL and r.reason.startswith("sinusoidal (SWEET"), (r.status, r.reason)
+    assert r.metrics["sweet_amplitude_ppm"] > r.metrics["depth_ppm"] and r.metrics["sweet_snr"] > 50
+    _assert_new_metrics_strict(r)
+    # without the detrended flux SWEET is skipped and the planet passes
+    b.flux_detrended = None
+    r = Rung2Shape().run(_signal_r2(2.3, 2 / 24, 1500), b)
+    assert r.status == TestStatus.PASS and r.metrics["sweet_snr"] is None, (r.status, r.reason)
+
+
+def test_rung2_sweet_eb_fails_ellipsoidal_variation():
+    """A 6000 ppm, 3 h box at 1.4 d on a 5500 ppm wave at half the period (the ellipsoidal variation of a close
+    binary): the wave is smaller than the eclipse but above 5000 ppm, so SWEET fails it as ellipsoidal."""
+    lc = inject_transit(make_lightcurve(seed=19, noise_ppm=600), 1.4, T0_R2, 3 / 24, 6000)
+    b = bundle(lc)
+    b.flux_detrended = b.fnorm * (1 + 5.5e-3 * np.sin(2 * np.pi * lc.time / 0.7))
+    r = Rung2Shape().run(_signal_r2(1.4, 3 / 24, 6000), b)
+    assert r.status == TestStatus.FAIL and r.reason.startswith("ellipsoidal"), (r.status, r.reason)
+    assert r.metrics["sweet_factor"] == 0.5 and 5000 < r.metrics["sweet_amplitude_ppm"] < r.metrics["depth_ppm"]
+
+
+def test_rung2_doubles_the_period_of_equal_eclipses():
+    """A 3.0 d train of equal 4000 ppm, 3 h eclipses vetted at 6.0 d: the fold shows an equal secondary at phase 0.5
+    (the odd eclipses) and equal odd and even depths, so the signal is one of two equal eclipses at twice the period
+    of a real train, or a planet at 3.0 d: undetermined, with 12.0 d suggested for the binary reading."""
+    lc = inject_transit(make_lightcurve(seed=19, noise_ppm=600), 3.0, T0_R2, 3 / 24, 4000)
+    r = Rung2Shape().run(_signal_r2(6.0, 3 / 24, 4000), bundle(lc))
+    assert r.status == TestStatus.UNDETERMINED and r.reason.startswith("equal secondary"), (r.status, r.reason)
+    assert abs(r.metrics["suggested_period"] - 12.0) < 1e-6
+    _assert_new_metrics_strict(r)
+
+
+def _t14_days(period, k, b, a_over_r):
+    return period / np.pi * np.arcsin(np.sqrt((1 + k) ** 2 - b * b) / a_over_r)
+
+
+def test_rung2_keeps_a_planet_with_a_shallow_occultation():
+    """A close-in giant (k 0.3, b 0.3, a/R* 3, 2.2 d) on a 0.2 R_sun, 0.012 M_sun host with a 60 ppm occultation at
+    phase 0.5: the secondary is significant, but R_p = 6.5 R_earth and the geometric albedo it implies,
+    (d_sec / d_pri) (a / R_p)^2, is below 1, so it is the planet's own occultation, not a stellar eclipse. The brief's
+    0.02 M_sun gave an albedo of 0.96 (the detrend reads the 60 ppm secondary as 75 ppm, and the box depth of the
+    curved transit is 80000 ppm, not 90000), too near the limit to test; 0.012 M_sun shrinks a and puts it near 0.68."""
+    t14 = _t14_days(2.2, 0.3, 0.3, 3.0)
+    lc = inject_model(make_lightcurve(n_days=1500, noise_ppm=100, seed=29), 2.2, T0_R2, 0.3, 0.3, 3.0)
+    lc = inject_transit(lc, 2.2, T0_R2 + 1.1, t14, 60)
+    b = bundle(lc)
+    b.target = Target(source="test", target_id="t", ra=0, dec=0, meta={"radius": 0.2, "mass": 0.012})
+    r = Rung2Shape().run(_signal_r2(2.2, t14, 90000), b)
+    assert r.status == TestStatus.PASS and r.reason == "secondary consistent with planet occultation", (r.status, r.reason)
+    assert r.metrics["secondary_sigma"] > 3 and r.metrics["occultation_albedo"] < 1
+    assert abs(r.metrics["planet_radius_rearth"] - 6.55) < 0.5 and r.metrics["fit_ok"] is True
+    _assert_new_metrics_strict(r)
+    # the same secondary on a solar-mass host (a 4.4 times larger orbit) needs an albedo above 1: it fails as before
+    b.target = Target(source="test", target_id="t", ra=0, dec=0, meta={"radius": 0.2, "mass": 1.0})
+    r = Rung2Shape().run(_signal_r2(2.2, t14, 90000), b)
+    assert r.status == TestStatus.FAIL and r.reason.startswith("secondary_at_0.5"), (r.status, r.reason)
+
+
+def test_rung2_fails_a_v_shaped_eclipse():
+    """Equal 30000 ppm V-shaped eclipses, 6 h wide, at 9.0 d with no secondary: odd/even and the secondary pass, and
+    the transit fit puts k + b above 1.04 (the grazing geometry of an eclipsing binary)."""
+    lc = inject_v_eclipse(make_lightcurve(seed=19, noise_ppm=600), 9.0, T0_R2, 6 / 24, 30000)
+    r = Rung2Shape().run(_signal_r2(9.0, 6 / 24, 30000), bundle(lc))
+    assert r.status == TestStatus.FAIL and r.reason.startswith("V-shaped"), (r.status, r.reason)
+    assert r.metrics["fit_k"] + r.metrics["fit_b"] > 1.04 and r.metrics["parity_sigma"] < 3
+    _assert_new_metrics_strict(r)
+
+
+def test_rung2_reports_the_new_metrics_for_a_clean_planet():
+    lc = inject_transit(make_lightcurve(seed=2, noise_ppm=800), P, T0, DUR, 2000)
+    r = Rung2Shape().run(signal(2000), bundle(lc))
+    assert r.status == TestStatus.PASS and r.reason == "", (r.status, r.reason)
+    for key in ("sigma_pri", "sigma_sec", "phase_sec", "sigma_ter", "sigma_pos", "fa2", "ms2", "ms3", "fit_ok", "fit_k",
+                "fit_b", "fit_a_over_r", "fit_depth_ppm", "fit_t14_h", "fit_chi2", "sweet_factor",
+                "sweet_amplitude_ppm", "sweet_snr"):
+        assert key in r.metrics, key
+    assert r.metrics["ms2"] < 2 and r.metrics["ms3"] < 4 and r.metrics["fit_k"] + r.metrics["fit_b"] < 1.04
+    _assert_new_metrics_strict(r)

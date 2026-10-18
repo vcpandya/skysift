@@ -22,6 +22,7 @@ class DataBundle:
     target: Target
     thresholds: Thresholds
     fnorm_alt: np.ndarray | None = None
+    flux_detrended: np.ndarray | None = None    # the detrended flux before pre-whitening (rung 2's SWEET)
     store: object | None = None
     fetch: Callable = net.fetch
     cache: dict = field(default_factory=dict)   # per-field shared data (catalogue cones, etc.)

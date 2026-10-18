@@ -135,15 +135,16 @@ def whitened_flux(lc: LightCurve, th: Thresholds, flux=None) -> tuple:
     flux as it is). Returns (whitened flux, the record stored in each signal's ``extra["prewhitening"]``: the removed
     components, the refused frequencies and ``capped`` (the loop stopped at ``prewhiten_max_components``, not on its
     own), so the dashboard subtracts the same model; the detrend settings stored in
-    ``extra["detrend"]``, so the dashboard redoes the same detrend). The sweep and the calibration search the same
-    flux through ``search_with_restore``."""
+    ``extra["detrend"]``, so the dashboard redoes the same detrend; the detrended flux before pre-whitening, which
+    rung 2's SWEET fits, since the whitening removes exactly the waves SWEET looks for). The sweep and the calibration
+    search the same flux through ``search_with_restore``."""
     settings = detrend_settings()
     fn = detrend(lc, flux=flux, edge_mask_days=settings["edge_mask_days"], edge_gap_days=settings["edge_gap_days"],
                  pad_mode=settings["median_mode"])
     white = prewhiten(lc.time, fn, max_components=th.prewhiten_max_components, fap_max=th.prewhiten_fap)
     record = {"n": len(white.components), "components": [c.as_dict() for c in white.components],
               "skipped": [float(f) for f in white.skipped], "capped": bool(white.capped)}
-    return white.residual, record, settings
+    return white.residual, record, settings, fn
 
 
 def restore_harmonics(time, flux, record: dict, detections) -> tuple | None:
@@ -202,13 +203,14 @@ def _vetting_bundle(bundle: DataBundle, sig: Signal) -> DataBundle:
     signals masked, so its rungs see the same flux: every masked point NaN in ``fnorm`` and ``fnorm_alt``. On the
     unmasked flux a binary's eclipses, folded at the companion's period, built a spurious secondary and rung 2
     rejected the companion (K06356.01, 18 October 2026). The copy shares the catalogue cache; other signals get
-    ``bundle`` itself."""
+    ``bundle`` itself. The detrended flux of SWEET (``flux_detrended``) is masked the same way."""
     mask = sig.extra.get("mask")
     if not mask:
         return bundle
     t = bundle.lc.time
     alt = None if bundle.fnorm_alt is None else apply_mask(t, bundle.fnorm_alt, mask)
-    return replace(bundle, fnorm=apply_mask(t, bundle.fnorm, mask), fnorm_alt=alt)
+    detrended = None if bundle.flux_detrended is None else apply_mask(t, bundle.flux_detrended, mask)
+    return replace(bundle, fnorm=apply_mask(t, bundle.fnorm, mask), fnorm_alt=alt, flux_detrended=detrended)
 
 
 def _cpu_work(lc_pickle: bytes, target_json: str, thresholds_json: str, detector_name: str, ladder_version: str,
@@ -231,7 +233,7 @@ def _cpu_work(lc_pickle: bytes, target_json: str, thresholds_json: str, detector
     # KBonus and other adapters set target_id themselves; their value wins on purpose (setdefault), and sources
     # that leave it out get the pipeline's target id so detector output names the right star
     lc.meta.setdefault("target_id", target.target_id)
-    fn, prewhitening, detrend_record = whitened_flux(lc, th)
+    fn, prewhitening, detrend_record, fn_detrended = whitened_flux(lc, th)
     fn_alt, alt_record = whitened_flux(lc, th, flux=lc.flux_alt)[:2] if lc.flux_alt is not None else (None, None)
     det = get_detector(detector_name)
     # a detection whose own harmonics were whitened away is searched once more on flux with them put back; that
@@ -250,7 +252,8 @@ def _cpu_work(lc_pickle: bytes, target_json: str, thresholds_json: str, detector
     ladder = build_ladder(ladder_version, with_novelty=with_novelty)
     recorder = _QueryRecorder()
     fetch = importlib.import_module(fetch_module).fetch if fetch_module else net.fetch
-    bundle = DataBundle(lc=lc, fnorm=fn, fnorm_alt=fn_alt, target=target, thresholds=th, store=recorder, fetch=fetch)
+    bundle = DataBundle(lc=lc, fnorm=fn, fnorm_alt=fn_alt, target=target, thresholds=th, store=recorder, fetch=fetch,
+                        flux_detrended=fn_detrended)
     out = []
     for sig in signals:
         sig.target_id, sig.detector_version = target.target_id, version

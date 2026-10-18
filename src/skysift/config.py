@@ -22,6 +22,10 @@ class Thresholds(BaseModel):
     free_secondary_sigma: float = 5.0
     season_sigma: float = 3.0
     aperture_sigma: float = 3.0       # SAP against PSF depth, combined errors (rung 3)
+    # Kepler DR25 Robovetter model-shift limits (Thompson et al. 2018, rung 2): MS2 = FA2 - (sigma_pri - sigma_ter),
+    # MS3 = FA2 - (sigma_pri - sigma_pos). Vetting only: not part of search_version
+    ms2_max: float = 2.0
+    ms3_max: float = 4.0
     min_period_days: float = 0.5
     max_period_days: float = 200.0
     # harmonic pre-whitening before the search: up to this many significant sinusoids (0 turns it off), each kept

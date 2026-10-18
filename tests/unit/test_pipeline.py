@@ -589,6 +589,33 @@ def test_search_version_follows_the_detector_version(monkeypatch):
     assert search_version(det, th) != now and search_version(det, th).startswith("2+")
 
 
+def test_search_version_ignores_the_rung_2_thresholds():
+    """MS2 and MS3 are vetting thresholds: they change no flux the detector sees, so a run with other values is the
+    same search job (a change of verdict is the ladder version's business, not the search version's)."""
+    det, th = get_detector("box_dip"), Thresholds()
+    assert th.ms2_max == 2.0 and th.ms3_max == 4.0
+    assert search_version(det, th) == search_version(det, th.model_copy(update={"ms2_max": 9.0, "ms3_max": 9.0}))
+    assert search_version(det, th) == search_version(det, Thresholds(ms2_max=9.0, ms3_max=9.0))
+
+
+def test_a_masked_signal_sees_the_detrended_flux_masked_too():
+    """A second-pass signal is vetted with its mask applied to every flux the rungs read, the detrended flux of SWEET
+    included; a signal without a mask gets the bundle as it is."""
+    from skysift.lc.ops import apply_mask
+    from skysift.vetting.base import DataBundle
+    lc = make_lightcurve(n_days=60, seed=3, noise_ppm=500)
+    fn = np.ones_like(lc.time)
+    b = DataBundle(lc=lc, fnorm=fn, target=Target(source="fake", target_id="m", ra=0, dec=0), thresholds=Thresholds(),
+                   flux_detrended=fn.copy())
+    mask = [{"period": 7.0, "t0": 135.0, "half_primary_days": 0.2, "half_secondary_days": 0.0}]
+    sig = Signal(target_id="m", detector="box_dip", detector_version="1", period=3.3, t0=134.0, duration=0.1,
+                 depth_ppm=500, snr=10.0, sde=12.0, n_events=10, extra={"mask": mask})
+    vb = pipeline._vetting_bundle(b, sig)
+    assert np.isnan(vb.flux_detrended).any()
+    assert np.array_equal(vb.flux_detrended, apply_mask(lc.time, fn, mask), equal_nan=True)
+    assert pipeline._vetting_bundle(b, sig.model_copy(update={"extra": {}})) is b
+
+
 @pytest.mark.parametrize("name,value", [("DETREND_VERSION", 2), ("GAP_EDGE_MASK_DAYS", 0),
                                         ("GAP_EDGE_TRIGGER_DAYS", 1.0), ("MEDIAN_PAD_MODE", "nearest")])
 def test_search_version_depends_on_every_detrend_setting(monkeypatch, name, value):
@@ -809,8 +836,11 @@ def test_every_signal_stores_the_detrend_it_was_measured_with():
                 "edge_gap_days": pipeline.GAP_EDGE_TRIGGER_DAYS, "median_mode": pipeline.MEDIAN_PAD_MODE}
     assert items and all(i["signal"]["extra"]["detrend"] == expected for i in items)
     assert expected == {"version": 3, "edge_mask_days": 1.5, "edge_gap_days": 0.5, "median_mode": "mirror"}
-    _fn, prewhitening, record = pipeline.whitened_flux(lc, th)
+    _fn, prewhitening, record, detrended = pipeline.whitened_flux(lc, th)
     assert record == expected and prewhitening["n"] == len(prewhitening["components"])
+    # the fourth element is the detrended flux before pre-whitening (rung 2's SWEET reads it)
+    assert np.array_equal(detrended, pipeline.whitened_flux(lc, th.model_copy(update={"prewhiten_max_components": 0}))[0],
+                          equal_nan=True)
     # a star whose whitening stopped at the cap, not at an insignificant peak, says so in its record
     assert th.prewhiten_max_components == 100 and prewhitening["capped"] is False
     f = lc.flux * (1 - 2000e-6 * np.cos(2 * np.pi * 3.1 * lc.time)) * (1 - 1500e-6 * np.cos(2 * np.pi * 4.7 * lc.time))

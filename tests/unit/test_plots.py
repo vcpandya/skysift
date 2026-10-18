@@ -269,7 +269,7 @@ def test_a_signal_with_a_detrend_record_is_drawn_with_that_detrend():
     from skysift.pipeline import whitened_flux
     from skysift.ui.plots import whitened_fnorm
     lc = inject_transit(make_lightcurve(n_days=200, seed=22, noise_ppm=500), 7.3, 135.0, 0.1, 3000)
-    _fn, _pw, record = whitened_flux(lc, Thresholds(prewhiten_max_components=0))
+    _fn, _pw, record, _detrended = whitened_flux(lc, Thresholds(prewhiten_max_components=0))
     assert np.array_equal(whitened_fnorm(lc, {"extra": {"detrend": record}}), detrend(lc), equal_nan=True)
     other = {**record, "version": 1, "edge_mask_days": 0, "median_mode": "nearest"}     # the record wins over defaults
     assert np.array_equal(whitened_fnorm(lc, {"extra": {"detrend": other}}),
