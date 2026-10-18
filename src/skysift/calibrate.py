@@ -1,6 +1,7 @@
 """Null calibration of the detection threshold (the 1000-star pilot). For each of the highest-priority targets the
 detrended, pre-whitened flux is searched as it is, inverted and scrambled within each quarter (noise only), with the
-raw first-pass statistics (no masked pass, no alias resolution). Inverting (2 - f) turns dips into bumps and keeps
+raw first-pass statistics (no masked pass, no alias resolution) and the sweep's restore of a detection's whitened
+harmonics (``pipeline.search_with_restore``). Inverting (2 - f) turns dips into bumps and keeps
 systematics and variability; the detector clips upward outliers only, so the former dips are removed while former
 flares and upward ramps become dips: the inverted search is a "systematics as dips" null. One JSON line per target
 holds the top three SDEs of each search; ``summarise`` turns a file into the distribution ``sde_min`` is read from.
@@ -22,7 +23,14 @@ from skysift import jsonutil
 from skysift.config import Settings, Thresholds
 from skysift.detectors.box_dip import BoxDip
 from skysift.models import LightCurve, Target
-from skysift.pipeline import cpu_pool, ranked_targets, search_version, terminate_workers, whitened_flux
+from skysift.pipeline import (
+    cpu_pool,
+    ranked_targets,
+    search_version,
+    search_with_restore,
+    terminate_workers,
+    whitened_flux,
+)
 from skysift.store.db import ArtifactRow, Store
 from skysift.store.retention import Retention, RetentionPolicy
 
@@ -60,22 +68,33 @@ def scramble_within_quarters(fnorm: np.ndarray, quarter: np.ndarray, seed: int =
     return out
 
 
+def _inverted_record(record: dict) -> dict:
+    """The pre-whitening record of the inverted flux: 2 - (detrend - model) is (2 - detrend) minus the negated model,
+    so the same components with their coefficients negated, and a restore puts the waves back the right way up."""
+    return {**record, "components": [{**c, "coef": [-float(x) for x in c["coef"]]}
+                                     for c in record.get("components") or []]}
+
+
 def search_target(lc_pickle: bytes, thresholds_json: str, nulls: tuple[str, ...]) -> dict:
-    """Runs in a worker process. Detrend and pre-whiten with the sweep's own ``whitened_flux``, then search the real flux and each
-    null; returns the line without its target id and version. The pickle comes only from this package's own main
-    process (``run``), never from outside data."""
+    """Runs in a worker process. Detrend and pre-whiten with the sweep's own ``whitened_flux``, then search the real
+    flux and each null through the sweep's ``search_with_restore`` (a detection whose harmonics were whitened away is
+    searched again with them put back); returns the line without its target id and version. Each flux brings its own
+    record: the real one, its sign-flipped copy for the inverted flux, and no components for the scrambled flux (a
+    permutation of the residual holds no removed waves, as pre-whitening noise removes none). The pickle comes only
+    from this package's own main process (``run``), never from outside data."""
     start = time.perf_counter()
     lc: LightCurve = pickle.loads(lc_pickle)
     th = Thresholds.model_validate_json(thresholds_json)
-    fn = whitened_flux(lc, th)[0]
-    flux = {"real": fn}
-    if "inverted" in nulls: flux["inverted"] = 2.0 - fn
-    if "scrambled" in nulls: flux["scrambled"] = scramble_within_quarters(fn, lc.quarter)
+    fn, record = whitened_flux(lc, th)[:2]
+    flux = {"real": (fn, record)}
+    if "inverted" in nulls: flux["inverted"] = (2.0 - fn, _inverted_record(record))
+    if "scrambled" in nulls:
+        flux["scrambled"] = (scramble_within_quarters(fn, lc.quarter), {**record, "n": 0, "components": []})
     det = calibration_detector()
     row: dict = {"n_points": int(np.isfinite(fn).sum())}
-    for kind, f in flux.items():
+    for kind, (f, rec) in flux.items():
         # alias resolution and the masked pass are off, so the signals are the top_k separated peaks in SDE order
-        signals = det.search(lc, f, th).signals[:TOP_N]
+        signals = search_with_restore(det, lc, f, th, rec)[0].signals[:TOP_N]
         row[kind] = [float(s.sde) for s in signals]
         if kind == "real":
             s = signals[0] if signals else None

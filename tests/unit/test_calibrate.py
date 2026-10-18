@@ -260,3 +260,26 @@ def test_calibrate_command_passes_options(settings, monkeypatch):
 
     r = CliRunner().invoke(app, ["calibrate", "--source", "kbonus_bkg", "--nulls", "inverted,shuffled"])
     assert r.exit_code != 0 and "shuffled" in r.output
+
+
+def test_calibration_searches_a_restored_transit_as_the_sweep_does(monkeypatch):
+    """A wave at exactly the transit frequency makes pre-whitening (shape guard off) take the transit's fundamental
+    with it. The sweep puts a detection's removed harmonics back and searches again; the calibration must run that
+    same search-plus-restore, or it measures a statistic on flux the sweep never thresholds (the depth about 25
+    percent low)."""
+    from skysift import pipeline
+    from skysift.config import Thresholds
+    from skysift.models import LightCurve
+    period, t0, duration, depth = 1.5, 132.2, 3 / 24, 1500.0
+    lc = inject_transit(make_lightcurve(n_days=500, seed=7, noise_ppm=600), period, t0, duration, depth)
+    f = lc.flux * (1 - 300e-6 * np.sin(2 * np.pi * (lc.time - t0) / period))     # odd about mid-transit
+    lc = LightCurve(lc.time, f, lc.flux_err, lc.quality, lc.quarter, f.copy(), dict(lc.meta))
+    real = pipeline.prewhiten
+    monkeypatch.setattr(pipeline, "prewhiten", lambda *a, **kw: real(*a, **{**kw, "shape_guard": False}))
+    th = Thresholds(min_period_days=1, max_period_days=5, prewhiten_max_components=2)
+    assert any(abs(c["frequency"] - 1 / period) < 0.01 for c in pipeline.whitened_flux(lc, th)[1]["components"])
+    row = calibrate.search_target(pickle.dumps(lc), th.model_dump_json(), calibrate.NULLS)
+    top = row["real_top"]
+    assert abs(top["period"] - period) < 0.01, top
+    assert abs(top["depth_ppm"] - depth) < 0.15 * depth, top
+    assert set(row) == ROW_KEYS - {"target_id", "search_version"}

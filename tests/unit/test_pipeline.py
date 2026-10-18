@@ -848,6 +848,10 @@ def test_pipeline_restores_removed_harmonics_of_a_detection(settings, monkeypatc
     real = pipeline.prewhiten
     monkeypatch.setattr(pipeline, "prewhiten", lambda *a, **kw: real(*a, **{**kw, "shape_guard": False}))
     monkeypatch.setattr(pipeline, "cpu_pool", lambda _settings: _InlinePool())
+    searched = []                   # the flux of every search, in order: the last one is the search stored
+    real_search = pipeline._search
+    monkeypatch.setattr(pipeline, "_search", lambda det, lc_, fn, *a, **kw: (searched.append(np.array(fn)),
+                                                                             real_search(det, lc_, fn, *a, **kw))[1])
     src = ScriptedSource([_tgt("eaten")], {"eaten": lc}, store, blob)
     out = run(src, store, blob, s, filter={}, with_novelty=False)
     assert out["processed"] == 1 and out["errors"] == 0
@@ -863,6 +867,12 @@ def test_pipeline_restores_removed_harmonics_of_a_detection(settings, monkeypatc
     assert abs(planet.depth_ppm - depth) < 0.15 * depth, planet.depth_ppm
     assert all(x.extra["prewhitening"] == pw for x in sigs), "every signal of the target carries the searched record"
     assert planet.extra["detrend"] == pipeline.detrend_settings()
+    # the dashboard's replay of the stored record is exactly the flux the stored (second) search ran on
+    from skysift.ui import plots
+    replay = plots.whitened_fnorm(lc, {"extra": planet.extra})
+    assert len(searched) == 2 and np.array_equal(np.isfinite(replay), np.isfinite(searched[-1]))
+    good = np.isfinite(replay)
+    assert np.max(np.abs(replay[good] - searched[-1][good])) < 1e-9
 
 
 def test_restore_harmonics_leaves_a_wave_deeper_than_the_detection_removed():

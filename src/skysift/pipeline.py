@@ -127,8 +127,8 @@ def whitened_flux(lc: LightCurve, th: Thresholds, flux=None) -> tuple:
     flux as it is). Returns (whitened flux, the record stored in each signal's ``extra["prewhitening"]``: the removed
     components, the refused frequencies and ``capped`` (the loop stopped at ``prewhiten_max_components``, not on its
     own), so the dashboard subtracts the same model; the detrend settings stored in
-    ``extra["detrend"]``, so the dashboard redoes the same detrend). The sweep and the null calibration both call
-    this, so the calibrated flux is the swept flux."""
+    ``extra["detrend"]``, so the dashboard redoes the same detrend). The sweep and the calibration search the same
+    flux through ``search_with_restore``."""
     settings = detrend_settings()
     fn = detrend(lc, flux=flux, edge_mask_days=settings["edge_mask_days"], edge_gap_days=settings["edge_gap_days"],
                  pad_mode=settings["median_mode"])
@@ -170,6 +170,25 @@ def restore_harmonics(time, flux, record: dict, detections) -> tuple | None:
     return flux + prewhiten_model(time, back), new
 
 
+def search_with_restore(det, lc: LightCurve, fn, th: Thresholds, record: dict, *, keep_spectrum: bool = False,
+                        detections: list | None = None) -> tuple:
+    """Search ``fn`` (whitened flux with its pre-whitening ``record``); when a detection at ``sde >= th.sde_min``
+    had its own harmonics whitened away, put them back (``restore_harmonics``) and search once more, at most once.
+    Returns (the search result, the flux it ran on, that flux's record: after a restore it lists the restored
+    components under ``restored`` instead of ``components``), so ``detrend - prewhiten_model(record components)`` is
+    the searched flux. The sweep and the null calibration both search through this, so the calibration measures the
+    statistic the sweep thresholds. ``detections``, when given, receives the ``(frequency, depth_ppm)`` pairs whose
+    harmonics were put back (nothing when no restore happened), so the sweep restores its secondary flux from them."""
+    res = _search(det, lc, fn, th, keep_spectrum=keep_spectrum)
+    detected = [(1.0 / s.period, float(s.depth_ppm)) for s in res.signals if s.sde >= th.sde_min and s.period > 0]
+    restored = restore_harmonics(lc.time, fn, record, detected) if detected else None
+    if restored is None:
+        return res, fn, record
+    if detections is not None: detections.extend(detected)
+    fn, record = restored
+    return _search(det, lc, fn, th, keep_spectrum=keep_spectrum), fn, record
+
+
 def _cpu_work(lc_pickle: bytes, target_json: str, thresholds_json: str, detector_name: str, ladder_version: str,
               with_novelty: bool, fetch_module: str | None = None, store_periodogram: str = "all",
               spectrum_path: str | None = None) -> str:
@@ -193,17 +212,14 @@ def _cpu_work(lc_pickle: bytes, target_json: str, thresholds_json: str, detector
     fn, prewhitening, detrend_record = whitened_flux(lc, th)
     fn_alt, alt_record = whitened_flux(lc, th, flux=lc.flux_alt)[:2] if lc.flux_alt is not None else (None, None)
     det = get_detector(detector_name)
-    res = _search(det, lc, fn, th, keep_spectrum=spectrum_path is not None)
     # a detection whose own harmonics were whitened away is searched once more on flux with them put back; that
     # second search (and its record, without the restored components) is the one stored. At most once per target.
-    detected = [(1.0 / s.period, float(s.depth_ppm)) for s in res.signals if s.sde >= th.sde_min and s.period > 0]
-    restored = restore_harmonics(lc.time, fn, prewhitening, detected) if detected else None
-    if restored is not None:
-        fn, prewhitening = restored
-        if fn_alt is not None:      # the rungs compare the secondary flux with the primary: same treatment
-            alt = restore_harmonics(lc.time, fn_alt, alt_record, detected)
-            if alt is not None: fn_alt = alt[0]
-        res = _search(det, lc, fn, th, keep_spectrum=spectrum_path is not None)
+    detected: list = []
+    res, fn, prewhitening = search_with_restore(det, lc, fn, th, prewhitening, keep_spectrum=spectrum_path is not None,
+                                                detections=detected)
+    if detected and fn_alt is not None:     # the rungs compare the secondary flux with the primary: same treatment
+        alt = restore_harmonics(lc.time, fn_alt, alt_record, detected)
+        if alt is not None: fn_alt = alt[0]
     signals = res.signals
     if spectrum_path and res.spectrum is not None:
         import numpy as np
