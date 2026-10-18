@@ -149,7 +149,8 @@ present FAIL.
 
 ### 4.5 Dashboard
 The signal page already renders every rung's metrics generically; reasons are plain strings. One sentence is added
-for `suggested_period` ("the secondary matches the primary; the true period may be 2 x = ... d") and for
+for `suggested_period` ("the secondary matches the primary; the true period may be ... d, half the detected
+one") and for
 `occultation_albedo`.
 
 ## 5. `skysift inject`: completeness as a standing regression
@@ -170,7 +171,7 @@ depth ratio. Search version and ladder version are stamped on every line.
 - Marshall-style per-event transient fits; Skye at sweep level; disposition score.
 
 ## 7. What a verdict change costs
-Ladder version 3 moves four outcomes from FAIL to UNDETERMINED (seasonal depth, aperture depth, period doubling,
+Ladder version 3 moves four outcomes from FAIL to UNDETERMINED (seasonal depth, aperture depth, period halving,
 epoch mismatch): more signals reach human review, none is lost. It adds seven FAIL rules (coverage, gapped, single
 event, Chases, MS2/MS3, SWEET, V shape); each is a published rule with its published threshold, and the injection
 regression of section 5 measures what they cost in completeness before any sweep is published.

@@ -261,12 +261,14 @@ like `fnorm` when a mask is present.
    fit_a_over_r, fit_depth_ppm, fit_t14_h, fit_chi2` (None for NaN / not ok).
 6. secondary, with the exceptions evaluated when a secondary would fail (either the phase-0.5 rule or the free-phase
    rule as today):
-   (a) period doubling: `abs(ps.sigma_pri - ps.sigma_sec) < ps.fa2` and `abs(ps.phase_sec - 0.5) * s.period <= 0.25 *
-   s.duration` -> UNDETERMINED "equal secondary at phase 0.5: period may be 2 x (P d)", metric `suggested_period = 2 P`;
+   (a) period halving (amended after review, spec 4.2): the phase-0.5 secondary depth agrees with the primary within
+   FA2 x hypot(errors) (same estimator) and lies within 0.25 duration of phase 0.5 -> UNDETERMINED "equal secondary at
+   phase 0.5: true period may be P / 2 (x d)", metric `suggested_period = P / 2` (T18 A.4.1.3: detected at twice the
+   true period);
    (b) planet occultation: with `radius, _ = _stellar_param(meta, "radius")`, `mass, _ = _stellar_param(meta,
    "mass")`, `R_SUN_M = 6.957e8`, `R_EARTH_M = 6.371e6`, `G M_sun = 1.32712440018e20 m^3 s^-2`: `rp_rearth = fit.k *
-   radius * R_SUN_M / R_EARTH_M`; `a_m = (GM_sun * mass * (P * 86400)^2 / (4 pi^2))^(1/3)`; `albedo = (d_sec / d_pri) *
-   (a_m / (fit.k * radius * R_SUN_M))^2` with d_sec the failing secondary's depth (ppm, the phase-0.5 or free-phase
+   radius * R_SUN_M / R_EARTH_M`; `a_m = (GM_sun * mass * (P * 86400)^2 / (4 pi^2))^(1/3)`; `albedo = d_sec * 1e-6 *
+   (a_m / (fit.k * radius * R_SUN_M))^2` (amended after review: the fractional secondary depth, not the ratio to the primary) with d_sec the failing secondary's depth (ppm, the phase-0.5 or free-phase
    one) and d_pri = `m["depth_ppm"]`; when `fit.ok and albedo < 1 and rp_rearth < 30 and d_sec < 0.1 * d_pri and
    fit.b < 0.95` the secondary does not fail: continue with metrics `occultation_albedo`, `planet_radius_rearth` and
    reason "secondary consistent with planet occultation" on the final PASS;
@@ -284,10 +286,11 @@ like `fnorm` when a mask is present.
 - `test_rung2_sweet_eb_fails_ellipsoidal_variation`: `fnorm` a 6000 ppm, 3 h box at 1.4 d; `flux_detrended` that
   flux times (1 + 5.5e-3 sin(2 pi t / 0.7)) (the half-period wave of a contact binary): FAIL reason starts
   "ellipsoidal".
-- `test_rung2_doubles_the_period_of_equal_eclipses`: inject one 3 h, 4000 ppm box train at P_inj = 3.0 d and vet it
+- `test_rung2_halves_the_period_of_equal_eclipses`: inject one 3 h, 4000 ppm box train at P_inj = 3.0 d and vet it
   as a signal with `period = 6.0`, the same `t0` and duration (the 6.0 d fold then shows an equal "secondary" at phase
   0.5, which is the odd transit of the train; odd and even depths on the 6.0 d fold are equal, so the odd/even rule
-  passes): expected status UNDETERMINED, reason starts "equal secondary", `suggested_period == 12.0` within 1e-6.
+  passes): expected status UNDETERMINED, reason starts "equal secondary", `suggested_period == 3.0` within 1e-6
+  (amended after review: the 6.0 d detection is twice the 3.0 d truth).
 - `test_rung2_keeps_a_planet_with_a_shallow_occultation`: the albedo rule `A_g = (d_sec / d_pri) (a / R_p)^2 < 1`
   uses `a` from the meta mass and the period, so the fixture is a close-in giant planet on a very low-mass host:
   1500 d curve, noise 100 ppm, seed 29; inject with `tests.synthetic.inject_model` (Task 1) k = 0.3, b = 0.3,
