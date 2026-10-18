@@ -1,6 +1,7 @@
 import json
 
 import numpy as np
+import pytest
 
 from skysift.config import Thresholds
 from skysift.lc.ops import detrend, fold_phase, season_of
@@ -268,7 +269,7 @@ def test_rung3_flags_an_aperture_dependent_depth():
     """4000 ppm in the SAP flux but only 1000 ppm in the PSF flux: the signal does not follow the target's aperture."""
     r = Rung3Stability().run(_signal_3_3(4000), bundle(_with_alt_box(4000, 1000)))
     assert r.status == TestStatus.UNDETERMINED and r.reason.startswith("aperture-dependent"), (r.status, r.reason)
-    assert abs(r.metrics["aperture_z"]) > 3
+    assert abs(r.metrics["aperture_z"]) > 3 and r.metrics["aperture_ratio"] == pytest.approx(0.25, abs=0.02)
     json.dumps(r.metrics, allow_nan=False)
 
 
@@ -279,8 +280,17 @@ def test_rung3_passes_equal_depths_in_both_fluxes():
     json.dumps(r.metrics, allow_nan=False)
 
 
+def test_rung3_tolerates_a_mild_aperture_depth_difference():
+    """3000 ppm in the PSF flux against 4000 ppm in the SAP flux: far beyond 3 sigma here, but a ratio of 0.75 is within
+    the dilution difference of two apertures."""
+    r = Rung3Stability().run(_signal_3_3(4000), bundle(_with_alt_box(4000, 3000)))
+    assert abs(r.metrics["aperture_z"]) > 3 and r.metrics["aperture_ratio"] == pytest.approx(0.75, abs=0.02)
+    assert r.status == TestStatus.PASS, (r.status, r.reason)
+
+
 def test_rung3_aperture_z_is_none_without_a_psf_flux():
     b = bundle(_with_alt_box(4000, 4000))
     b.fnorm_alt = None
     r = Rung3Stability().run(_signal_3_3(4000), b)
     assert r.status == TestStatus.PASS and r.metrics["aperture_z"] is None and r.metrics["alt_depth_ppm"] is None
+    assert r.metrics["aperture_ratio"] is None
