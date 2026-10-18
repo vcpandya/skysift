@@ -19,7 +19,8 @@ MIN_BAND_PERIODS = 50
 MAX_DURATION_FRACTION = 0.9     # trial durations must stay below this fraction of the band's shortest period
 ALIAS_PARITY_SIGMA = 5.0        # the deepest epoch class of a sub-harmonic alias beats the others by this many combined errors
 ALIAS_PARITY_RATIO = 0.5        # and every other class (and their mean) is under this fraction of the deepest one
-MAX_SUBHARMONIC = 8             # sub-harmonics P/2 .. P/8 are tested (n = 7 caught K06356.01 ranked at 24.09/7 d)
+MAX_SUBHARMONIC = 16            # sub-harmonics P/2 .. P/16 are tested (n = 7 caught K06356.01 ranked at 24.09/7 d; 8 left
+                                # the 24.0/11 and 24.0/13 d residues of a deep V binary as alias rows that passed every rung)
 
 
 @dataclass

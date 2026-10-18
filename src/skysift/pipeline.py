@@ -49,7 +49,7 @@ from skysift.vetting.rung3_stability import Rung3Stability
 from skysift.vetting.rung4_novelty import Rung4Novelty
 
 log = logging.getLogger(__name__)
-DEFAULT_LADDER_VERSION = "1"
+DEFAULT_LADDER_VERSION = "2"   # 2: rung 4 integer-ratio and epoch rules, second-pass signals vetted on the masked flux (18 Oct 2026)
 UPSERT_BATCH = 1000
 MAX_ATTEMPTS = 3            # spec section 9: a target that errors three times is left for a human
 MAX_POOL_RESTARTS = 2       # a CPU pool that breaks a third time in one sweep ends the sweep
