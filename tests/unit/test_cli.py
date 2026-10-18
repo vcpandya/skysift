@@ -247,3 +247,47 @@ def test_first_ctrl_c_explains_itself(settings):
     h(signal.SIGINT, None)
     assert h.requested and lines == ["stop requested: finishing in-flight targets, press Ctrl+C again to stop now"]
     assert h.check() is True
+
+
+def test_inject_help_lists_its_options():
+    r = CliRunner().invoke(app, ["inject", "--help"])
+    assert r.exit_code == 0
+    for opt in ("--source", "--limit", "--per-star", "--snr", "--workers-cpu", "--out", "--min-period", "--max-period",
+                "--gmag-max", "--background-on", "--all", "--seed"):
+        assert opt in r.stdout
+
+
+def test_inject_passes_options_to_run_and_prints_its_summary(settings, monkeypatch):
+    from skysift import cli, inject
+    seen = {}
+
+    def stub(source, store, blob, settings, filter, limit, per_star, snr_targets, out, workers_cpu, seed=1, **kw):
+        seen.update(settings=settings, filter=filter, limit=limit, per_star=per_star, snr_targets=snr_targets, out=out,
+                    workers_cpu=workers_cpu, seed=seed)
+        return {"targets": 0, "written": 0}
+
+    monkeypatch.setattr(inject, "run", stub)
+    monkeypatch.setattr(cli, "_source", lambda name, store, blob: object())
+    r = CliRunner().invoke(app, ["inject", "--source", "kbonus_bkg", "--limit", "5", "--per-star", "3", "--snr",
+                                 "8,12", "--workers-cpu", "2", "--seed", "4", "--min-period", "1", "--max-period", "20"])
+    assert r.exit_code == 0, r.output
+    assert seen["limit"] == 5 and seen["per_star"] == 3 and seen["snr_targets"] == (8.0, 12.0) and seen["seed"] == 4
+    assert seen["workers_cpu"] == 2 and seen["out"] == settings.data_dir / "injections" / "kbonus_bkg.jsonl"
+    assert seen["settings"].thresholds.min_period_days == 1.0 and seen["settings"].thresholds.max_period_days == 20.0
+    assert json.loads(r.stdout) == {"targets": 0, "written": 0}
+    assert CliRunner().invoke(app, ["inject", "--source", "kbonus_bkg", "--snr", "seven"]).exit_code != 0
+
+
+def test_inject_report_prints_the_table(tmp_path):
+    hit = {"rank": 0, "ratio": 1.0, "period": 5.0, "depth_ppm": 900.0, "sde": 12.0, "snr": 9.0, "n_events": 9,
+           "outcome": "pass", "rungs": [], "alias_resolved": False, "restored": 0}
+    base = {"target_id": "a", "search_version": "1+aaaa0000", "ladder_version": "3", "period": 5.0, "t0": 1.0,
+            "duration": 0.2, "depth_ppm": 1000.0}
+    rows = [{**base, "snr_nominal": 10.0, "snr_red": 8.0, "found": True, "ranked_first": True, "hit": hit},
+            {**base, "snr_nominal": 7.0, "snr_red": 4.0, "found": False, "ranked_first": False, "hit": None}]
+    path = tmp_path / "inj.jsonl"
+    path.write_text("".join(json.dumps(x) + "\n" for x in rows), encoding="utf-8")
+    r = CliRunner().invoke(app, ["inject-report", str(path)])
+    assert r.exit_code == 0, r.output
+    assert "1+aaaa0000" in r.stdout and "nominal SNR" in r.stdout and "red-noise SNR" in r.stdout and "0-5" in r.stdout
+    assert CliRunner().invoke(app, ["inject-report", str(tmp_path / "missing.jsonl")]).exit_code != 0

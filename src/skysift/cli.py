@@ -233,6 +233,74 @@ def calibrate_report(file: str = typer.Argument(..., help="A calibrate output fi
 
 
 @app.command()
+def inject(source: str = typer.Option(...),
+           limit: int = typer.Option(30, min=1, help="Inject into the N highest-priority targets (the order of run)."),
+           per_star: int = typer.Option(4, min=1, help="Injections per target, cycling through the --snr values."),
+           snr: str = typer.Option("7,10,15,25", help="Nominal signal-to-noise of the injected transits, comma-separated."),
+           workers_cpu: int | None = None,
+           out: str | None = typer.Option(None, help="Output file (default <data_dir>/injections/<source>.jsonl)."),
+           min_period: float | None = typer.Option(None, help="Override the minimum search period (days)."),
+           max_period: float | None = typer.Option(None, help="Override the maximum search period (days)."),
+           gmag_max: float = 19.0, background_only: bool = typer.Option(True, "--background-only/--all"),
+           psffrac_min: float = 0.5, seed: int = typer.Option(1, help="Seed of the injection draws."),
+           retention: str | None = None, verbose: bool = False):
+    """Injection and recovery: inject box transits into each target's cached raw light curve, run the production search
+    and rungs 1 to 3, and append one line per injection (found, ranked first, ladder outcome) to a JSON-lines file.
+    Resumable: targets already in the file are skipped."""
+    from skysift import inject as inj
+    from skysift.sources import PARSERS
+    try:
+        snr_targets = tuple(float(x) for x in snr.split(",") if x.strip())
+    except ValueError as e:
+        raise typer.BadParameter(f"not a comma-separated list of numbers: {snr!r}", param_hint="--snr") from e
+    if not snr_targets or any(x <= 0 for x in snr_targets):
+        raise typer.BadParameter("give at least one positive value", param_hint="--snr")
+    logging.basicConfig(level=logging.INFO if verbose else logging.WARNING,
+                        format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    console = _console(stderr=True)
+    s, store, blob = _ctx(retention, workers_cpu=workers_cpu)
+    _period_window(s, min_period, max_period)
+    src = _source(source, store, blob)
+    path = Path(out) if out else inj.default_path(s.data_dir, source)
+    _plain(console, f"period window: {s.thresholds.min_period_days:g} to {s.thresholds.max_period_days:g} days; "
+                    f"writing {path}")
+    try:
+        summary = inj.run(src, store, blob, s,
+                          filter={"gmag_max": gmag_max, "background_only": background_only, "psffrac_min": psffrac_min},
+                          limit=limit, per_star=per_star, snr_targets=snr_targets, out=path, workers_cpu=s.workers_cpu,
+                          seed=seed, parse=PARSERS.get(source),
+                          progress=lambda sm: _plain(console, f"written {sm['written']} lines of {sm['targets']} targets"
+                                                              f" (skipped {sm['skipped']}, errors {sm['errors']})",
+                                                     end="\r"))
+    except inj.VersionMismatch as e:
+        raise typer.BadParameter(str(e), param_hint="--out") from e
+    except DiskBudgetExceeded as e:
+        _plain(console, f"\nstopped: {e}; the same command resumes")
+        raise typer.Exit(3) from None
+    except KeyboardInterrupt:
+        _plain(console, "\ninterrupted: every finished target is in the file; the same command resumes")
+        raise typer.Exit(130) from None
+    _plain(console, "")
+    _plain(_console(), jsonutil.dumps(summary, indent=1))
+
+
+@app.command("inject-report")
+def inject_report(file: str = typer.Argument(..., help="An inject output file."),
+                  all_versions: bool = typer.Option(False, "--all-versions",
+                                                    help="Pool lines written by different search or ladder versions.")):
+    """Completeness against nominal and red-noise signal-to-noise and against period: injections found, ranked first and
+    passing rungs 1 to 3, with the median recovered-to-injected depth ratio."""
+    from skysift import inject as inj
+    if not Path(file).is_file():
+        raise typer.BadParameter(f"{file} is not a file", param_hint="FILE")
+    try:
+        summary = inj.summarise(inj.read_rows(Path(file)), all_versions=all_versions)
+    except ValueError as e:
+        raise typer.BadParameter(str(e), param_hint="--all-versions") from e
+    _plain(_console(), inj.format_table(summary))
+
+
+@app.command()
 def status():
     """Counts, targets per state, outcomes, rung verdicts, throughput, cache usage, recent errors."""
     from skysift.ui import queries
