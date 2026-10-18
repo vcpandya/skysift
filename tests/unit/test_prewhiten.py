@@ -160,3 +160,18 @@ def test_guard_scan_survives_a_peak_at_the_first_grid_frequency():
     pw = prewhiten(t, flux, max_components=3, fap_max=1e-6)
     near = [f for f in [c.frequency for c in pw.components] + pw.skipped if abs(f - 1 / 45.0) < 0.5 / 90.0]
     assert near, (pw.components, pw.skipped)
+
+
+FOREST = [(15.0479, 1100.0), (13.4216, 900.0), (16.0676, 800.0), (11.31, 700.0), (9.73, 600.0), (17.92, 500.0)]
+
+
+def test_a_cap_reached_is_flagged():
+    """Six significant waves and room for three: the loop stops at the cap, not at a peak that is no longer
+    significant, and says so; with room for fifty it stops on its own and is not capped."""
+    lc = _with_waves(make_lightcurve(n_days=120, seed=31, noise_ppm=500), FOREST)
+    fn = detrend(lc)
+    few = prewhiten(lc.time, fn, max_components=3, fap_max=1e-6)
+    assert few.capped is True and len(few.components) == 3
+    full = prewhiten(lc.time, fn, max_components=50, fap_max=1e-6)
+    assert full.capped is False and 6 <= len(full.components) < 50
+    assert prewhiten(lc.time, fn, max_components=0).capped is False

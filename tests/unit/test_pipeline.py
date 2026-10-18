@@ -811,6 +811,13 @@ def test_every_signal_stores_the_detrend_it_was_measured_with():
     assert expected == {"version": 3, "edge_mask_days": 1.5, "edge_gap_days": 0.5, "median_mode": "mirror"}
     _fn, prewhitening, record = pipeline.whitened_flux(lc, th)
     assert record == expected and prewhitening["n"] == len(prewhitening["components"])
+    # a star whose whitening stopped at the cap, not at an insignificant peak, says so in its record
+    assert th.prewhiten_max_components == 100 and prewhitening["capped"] is False
+    f = lc.flux * (1 - 2000e-6 * np.cos(2 * np.pi * 3.1 * lc.time)) * (1 - 1500e-6 * np.cos(2 * np.pi * 4.7 * lc.time))
+    wavy = LightCurve(lc.time, f, lc.flux_err, lc.quality, lc.quarter, f.copy(), dict(lc.meta))
+    capped = pipeline.whitened_flux(wavy, th.model_copy(update={"prewhiten_max_components": 1}))[1]
+    assert capped["n"] == 1 and capped["capped"] is True
+    json.dumps(prewhitening, allow_nan=False)
     json.dumps(record, allow_nan=False)
 
 

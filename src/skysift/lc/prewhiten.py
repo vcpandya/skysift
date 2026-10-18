@@ -68,6 +68,7 @@ class PrewhitenResult:
     residual: np.ndarray            # aligned with the input flux, NaN where the input was NaN
     components: list[Component] = field(default_factory=list)
     skipped: list[float] = field(default_factory=list)      # frequencies the shape guard refused to remove
+    capped: bool = False            # the loop used all max_components passes: it stopped at the cap, not on its own
 
 
 def _design(time: np.ndarray, frequency: float) -> np.ndarray:
@@ -165,7 +166,9 @@ def prewhiten(time: np.ndarray, fnorm: np.ndarray, *, max_components: int = 50, 
 
     ``fmax`` defaults to the Nyquist frequency of the median cadence and ``fmin`` to two cycles per baseline. The
     loop stops at the first peak whose false-alarm probability exceeds ``fap_max``; a peak the shape guard refuses
-    (its fold is box-like) is recorded in ``skipped`` and the next distinct peak is tried instead."""
+    (its fold is box-like) is recorded in ``skipped`` and the next distinct peak is tried instead. ``capped`` is True
+    when the loop ran all ``max_components`` passes without stopping on its own (every pass removed a component or
+    had one refused), so significant variability may be left in the residual."""
     time = np.asarray(time, float); fnorm = np.asarray(fnorm, float)
     residual = fnorm.copy()
     good = np.isfinite(fnorm) & np.isfinite(time)
@@ -214,5 +217,7 @@ def prewhiten(time: np.ndarray, fnorm: np.ndarray, *, max_components: int = 50, 
             continue
         y = y - (design @ np.asarray(coef)) + coef[0]
         out.components.append(Component(f0, amp * 1e6, float((power[i] - med) / mad), coef))
+    else:
+        out.capped = True
     residual[good] = y
     return out

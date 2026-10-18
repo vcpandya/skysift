@@ -24,8 +24,10 @@ class Thresholds(BaseModel):
     min_period_days: float = 0.5
     max_period_days: float = 200.0
     # harmonic pre-whitening before the search: up to this many significant sinusoids (0 turns it off), each kept
-    # only while its Lomb-Scargle false-alarm probability stays below prewhiten_fap
-    prewhiten_max_components: int = 50
+    # only while its Lomb-Scargle false-alarm probability stays below prewhiten_fap. 100, not 50 (18 Oct 2026): run 8
+    # of the 30 sample stars removed 0 to 47 components, one star at 47 of 50; a star that reaches the cap is flagged
+    # ("capped" in the stored pre-whitening record)
+    prewhiten_max_components: int = 100
     prewhiten_fap: float = 1e-6
 
     @model_validator(mode="after")

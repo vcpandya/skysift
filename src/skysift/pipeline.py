@@ -125,7 +125,8 @@ def whitened_flux(lc: LightCurve, th: Thresholds, flux=None) -> tuple:
     """The flux the detector and every rung see: ``detrend`` (of ``flux``, default the primary flux), then harmonic
     pre-whitening, which removes the star's significant sinusoids (``prewhiten_max_components`` 0 leaves the detrended
     flux as it is). Returns (whitened flux, the record stored in each signal's ``extra["prewhitening"]``: the removed
-    components and the refused frequencies, so the dashboard subtracts the same model; the detrend settings stored in
+    components, the refused frequencies and ``capped`` (the loop stopped at ``prewhiten_max_components``, not on its
+    own), so the dashboard subtracts the same model; the detrend settings stored in
     ``extra["detrend"]``, so the dashboard redoes the same detrend). The sweep and the null calibration both call
     this, so the calibrated flux is the swept flux."""
     settings = detrend_settings()
@@ -133,7 +134,7 @@ def whitened_flux(lc: LightCurve, th: Thresholds, flux=None) -> tuple:
                  pad_mode=settings["median_mode"])
     white = prewhiten(lc.time, fn, max_components=th.prewhiten_max_components, fap_max=th.prewhiten_fap)
     record = {"n": len(white.components), "components": [c.as_dict() for c in white.components],
-              "skipped": [float(f) for f in white.skipped]}
+              "skipped": [float(f) for f in white.skipped], "capped": bool(white.capped)}
     return white.residual, record, settings
 
 

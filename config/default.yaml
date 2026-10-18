@@ -17,5 +17,5 @@ thresholds:
   season_sigma: 3.0
   min_period_days: 0.5
   max_period_days: 200.0
-  prewhiten_max_components: 50
+  prewhiten_max_components: 100
   prewhiten_fap: 1.0e-6
