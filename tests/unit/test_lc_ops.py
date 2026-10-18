@@ -354,31 +354,69 @@ def test_event_quality_chases_is_none_above_five_events():
     assert event_quality(short.time, detrend(short), EP, ET0, EDUR).chases is not None
 
 
-def test_phase_significance_matches_a_direct_evaluation_at_every_phase():
-    """The sliding box is evaluated from sorted sums and ranks; each phase must equal the plain definition: box of
-    circular distance below half a duration, baseline at least 1.5 durations from the box centre and from phase 0,
-    sigma = depth / (1.4826 MAD / sqrt(n_box)). A rounded flux (many tied values) and NaN points are included."""
-    lc = _box_curve(UP, UT0, UDUR, 1500, n_days=300, extra=[(UP, UT0 + 0.37 * UP, UDUR, 800)])
-    fn = np.round(detrend(lc), 4)
-    fn[::7] = np.nan
-    ps = phase_significance(lc.time, fn, UP, UT0, UDUR)
+def _direct_sigma(time, fn, period, t0, duration, phases):
+    """The plain definition, one phase at a time: box of circular distance below half a duration, baseline at least
+    1.5 durations from the box centre and from phase 0, sigma = depth / (1.4826 MAD / sqrt(n_box)); NaN with fewer
+    than 5 box points, 50 baseline points or a zero MAD."""
     good = np.isfinite(fn)
-    cyc, y = fold_phase(lc.time[good], UP, UT0) / UP, fn[good]
-    w = UDUR / UP
-    want = np.full(ps.phases.size, np.nan)
-    for k, c in enumerate(ps.phases):
+    cyc, y = fold_phase(time[good], period, t0) / period, fn[good]
+    w = duration / period
+    want = np.full(phases.size, np.nan)
+    for k, c in enumerate(phases):
         d = _circular(cyc - c, 1.0)
         inside, base = d < 0.5 * w, (np.abs(cyc) >= 1.5 * w) & (d >= 1.5 * w)
+        if inside.sum() < 5 or base.sum() < 50:
+            continue
         lvl = np.median(y[base]); scat = 1.4826 * np.median(np.abs(y[base] - lvl))
-        want[k] = (1 - y[inside].mean() / lvl) / (scat / np.sqrt(inside.sum()))
-    assert np.isfinite(want).all() and np.isfinite(ps.sigma).all()
-    assert ps.sigma == pytest.approx(want, abs=1e-8)
+        if scat > 0:
+            want[k] = (1 - y[inside].mean() / lvl) / (scat / np.sqrt(inside.sum()))
+    return want
+
+
+def _quantised(lc, period, t0, dur):
+    fn = np.round(detrend(lc), 4)               # many tied values
+    fn[::7] = np.nan
+    return lc.time, fn, period, t0, dur
+
+
+def _constant_with_dips():
+    """Flux exactly 1 except a primary and a secondary dip: every baseline is more than half exact ties (MAD 0)."""
+    lc = _box_curve(UP, UT0, UDUR, 0, n_days=300)
+    f = np.ones(lc.time.size)
+    for centre in (UT0, UT0 + 0.37 * UP):
+        f[np.abs(fold_phase(lc.time, UP, centre)) < 0.5 * UDUR] = 0.998
+    return lc.time, f, UP, UT0, UDUR
+
+
+@pytest.mark.parametrize("name", ["transit_and_second_dip", "sub_day_period_wide_box", "zero_mad_baseline"])
+def test_phase_significance_matches_a_direct_evaluation_at_every_phase(name):
+    """The sliding box is evaluated from sorted sums and ranks; every phase, NaN pattern included, must equal the
+    plain definition. The cases: a quantised curve with NaN points and two dips (ties, varying parity of the baseline
+    count); a 0.9 d period with a 0.2 d box, where the exclusion windows take most of the fold and some phases have too
+    thin a baseline; a flux of exact ties, whose baseline MAD is 0 (sigma NaN, not 1e15)."""
+    if name == "transit_and_second_dip":
+        lc = _box_curve(UP, UT0, UDUR, 1500, n_days=300, extra=[(UP, UT0 + 0.37 * UP, UDUR, 800)])
+        case = _quantised(lc, UP, UT0, UDUR)
+    elif name == "sub_day_period_wide_box":
+        lc = _box_curve(0.9, 140.3, 0.2, 3000, n_days=130)
+        case = _quantised(lc, 0.9, 140.3, 0.2)
+    else:
+        case = _constant_with_dips()
+    ps = phase_significance(*case)
+    want = _direct_sigma(*case, ps.phases)
+    np.testing.assert_allclose(ps.sigma, want, atol=1e-8, equal_nan=True)
+    if name == "zero_mad_baseline":
+        assert np.isnan(ps.sigma).all() and np.isnan(ps.ms2)
+    else:
+        assert np.isfinite(ps.sigma).sum() > 0
+    if name == "sub_day_period_wide_box":
+        assert np.isnan(ps.sigma).sum() > 0                  # the NaN pattern is compared, not vacuous
 
 
 def test_event_quality_guards_duplicated_stamps_and_brightenings():
     t = np.array([100.0, 100.0, 100.0, 101.0, 101.0, 102.0])
     eq = event_quality(t, np.ones(t.size), 1.0, 100.0, 0.1)
     assert eq.epochs.size > 0 and np.isnan(eq.coverage).all()               # cadence 0: no division by zero
-    lc = _chases_curve(extra=[(1e4, ET0 + EP, EDUR, -3000)])                # the second event brightens
+    lc = _chases_curve(extra=[(1e4, ET0 + EP, EDUR, -6000)])                # the second event: net +3000 ppm
     eq = event_quality(lc.time, detrend(lc), EP, ET0, EDUR)
-    assert eq.ses[1] < 0 and np.isnan(eq.chases[1]) and np.isfinite(eq.chases[[0, 2, 3]]).all()
+    assert eq.ses[1] < -3 and np.isnan(eq.chases[1]) and np.isfinite(eq.chases[[0, 2, 3]]).all()
