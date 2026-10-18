@@ -467,7 +467,32 @@ def test_rung2_skips_the_v_shape_rule_when_the_fit_is_pinned_at_its_bound(monkey
     _assert_new_metrics_strict(r)
 
 
-def test_rung2_passes_a_shallow_box_the_free_fit_calls_grazing():
+@pytest.mark.parametrize(("chi2_nongrazing", "status", "delta"), [
+    (60.0, TestStatus.PASS, 10.0),              # a grazing fit preferred by 10 only: below the 25 margin
+    (float("nan"), TestStatus.PASS, None),      # the non-grazing fit failed: no evidence for a V
+    (80.0, TestStatus.FAIL, 30.0),              # the control: 30 is above the margin, so the same fit fails
+])
+def test_rung2_v_shape_rule_needs_the_delta_chi2_margin(monkeypatch, chi2_nongrazing, status, delta):
+    """A grazing fit (k 0.5, b 1.3, k + b 1.8 > 1.04) that passes every other gate (ok, k unpinned, model depth equal
+    to the measured one) fails as V-shaped only when it beats the best non-grazing fit by delta chi2 25."""
+    import skysift.vetting.rung2_shape as rung2
+    from skysift.lc.transit_model import TransitFit
+    lc = inject_transit(make_lightcurve(seed=19, noise_ppm=600), 0.96, T0_R2, 1.8 / 24, 200)
+    b = bundle(lc)
+    measured = Rung2Shape().run(_signal_r2(0.96, 1.8 / 24, 200), b).metrics["depth_ppm"]
+    grazing = TransitFit(k=0.5, b=1.3, a_over_r=4.0, depth_ppm=measured, t14_days=1.8 / 24, chi2=50.0, n_bins=48,
+                         ok=True, chi2_nongrazing=chi2_nongrazing)
+    monkeypatch.setattr(rung2, "fit_transit", lambda *a, **kw: grazing)
+    r = Rung2Shape().run(_signal_r2(0.96, 1.8 / 24, 200), b)
+    assert r.status == status, (r.status, r.reason)
+    assert r.metrics["v_shape_applied"] is (status == TestStatus.FAIL)
+    assert r.metrics["fit_delta_chi2"] == delta
+    if status == TestStatus.FAIL:
+        assert r.reason.startswith("V-shaped")
+    _assert_new_metrics_strict(r)
+
+
+def test_rung2_passes_a_shallow_box_the_old_free_fit_called_grazing():
     """The real-curve injection runs of ladder 3 failed a 185 ppm, 1.8 h box at 0.9618 d as "V-shaped or deep
     (k + b = 2.06 > 1.04)": the detector returned a 1.5 h duration, and on the shallow, cadence-smeared fold (3.7
     cadences per transit) the free optimiser stopped in a grazing local minimum (k 0.53, b 1.52). The same box here

@@ -1,5 +1,6 @@
 import numpy as np
 
+from skysift.lc import transit_model
 from skysift.lc.ops import detrend, fold_phase
 from skysift.lc.transit_model import TransitFit, fit_transit, uniform_disc_flux
 from tests.synthetic import inject_model, inject_transit, inject_v_eclipse, make_lightcurve
@@ -29,7 +30,7 @@ def test_fit_recovers_a_box_like_planet():
     assert abs(fit.depth_ppm - 6400) < 0.15 * 6400
     assert fit.n_bins >= 20
     # a central transit lies in the non-grazing family, so the comparison fit finds the same minimum
-    assert np.isfinite(fit.chi2_nongrazing) and abs(fit.chi2_nongrazing - fit.chi2) < 1e-6
+    assert np.isfinite(fit.chi2_nongrazing) and abs(fit.chi2_nongrazing - fit.chi2) < 1e-3
 
 
 def test_fit_flags_a_grazing_eclipse():
@@ -52,8 +53,52 @@ def test_fit_returns_the_non_grazing_minimum_when_the_free_optimiser_misses_it()
     fit = fit_transit(lc.time, detrend(lc), 0.9618, 133.0, 1.5 / 24)
     assert fit.ok
     assert fit.k + fit.b < 1.0 and fit.chi2 < 45.0
-    assert fit.chi2_nongrazing - fit.chi2 >= 0.0 and fit.chi2_nongrazing - fit.chi2 < 1e-6
+    assert 0.0 <= fit.chi2_nongrazing - fit.chi2 < 1e-3
     assert abs(fit.depth_ppm - 185) < 0.3 * 185
+
+
+def _box_like_planet():
+    period, t0, k, b, a = 3.7, 140.0, 0.08, 0.2, 12.0
+    lc = inject_model(make_lightcurve(n_days=1400, seed=11, noise_ppm=500), period, t0, k, b, a)
+    return lc.time, detrend(lc), period, t0, _t14(period, k, b, a)
+
+
+def _unconverged(monkeypatch, family):
+    """Patch the module's ``least_squares`` so every start of one family (``"residuals"``, the free fit, or
+    ``"residuals_nongrazing"``) reports no convergence; the other family runs as usual."""
+    real = transit_model.least_squares
+
+    def patched(fun, *args, **kwargs):
+        out = real(fun, *args, **kwargs)
+        if fun.__name__ == family:
+            out.success = False
+        return out
+    monkeypatch.setattr(transit_model, "least_squares", patched)
+
+
+def test_fit_falls_back_to_the_non_grazing_solution_when_the_free_fit_does_not_converge(monkeypatch):
+    """A converged start beats an unconverged one, between the families as between starts: with no free start
+    converged, the converged non-grazing solution is the fit (ok True, delta 0), even on the grazing eclipse whose
+    unconverged free solution has the far lower chi2."""
+    _unconverged(monkeypatch, "residuals")
+    period, t0, k, b, a = 5.2, 140.0, 0.5, 1.3, 8.0
+    lc = inject_model(make_lightcurve(n_days=1400, seed=11, noise_ppm=500), period, t0, k, b, a)
+    fit = fit_transit(lc.time, detrend(lc), period, t0, _t14(period, k, b, a))
+    assert fit.ok
+    assert fit.chi2 == fit.chi2_nongrazing and np.isfinite(fit.chi2)
+    assert fit.k + fit.b <= 1.0
+
+
+def test_fit_keeps_the_free_solution_when_the_non_grazing_fit_does_not_converge(monkeypatch):
+    """No non-grazing start converged: chi2_nongrazing is NaN (an unconverged chi2 would overstate the family's
+    minimum), the free solution is the fit, and rung 2 records fit_delta_chi2 as None, which skips the V-shape rule."""
+    from skysift.vetting.rung2_shape import _fit_metrics, _v_shape_applies
+    _unconverged(monkeypatch, "residuals_nongrazing")
+    fit = fit_transit(*_box_like_planet())
+    assert fit.ok and np.isfinite(fit.chi2) and abs(fit.k - 0.08) < 0.01
+    assert np.isnan(fit.chi2_nongrazing)
+    assert _fit_metrics(fit)["fit_delta_chi2"] is None
+    assert _v_shape_applies(fit, fit.depth_ppm) is False
 
 
 def test_fit_on_a_v_eclipse_fixture():

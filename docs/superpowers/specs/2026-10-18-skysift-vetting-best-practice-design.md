@@ -60,7 +60,7 @@ Threshold values below are quoted from T18 Appendix A (sections A.3 to A.6) unle
 | Planet detected at twice its period (A.4.1.3) | PC when sigma_Pri - sigma_Sec < FA2 and the secondary is within 1/4 duration of phase 0.5: the TCE period is twice the true one | the detector's parity resolver handles the opposite case (a detection at half the period); a detection at twice the period with equal dips fails rung 2 as `secondary_at_0.5` | **Adopt** as UNDETERMINED "equal secondary, true period may be P / 2" (the signal goes to review with the halved period suggested, instead of being rejected). |
 | Planet occultation (A.4.1.3) | keep as PC when geometric albedo < 1, R_p < 30 R_earth, secondary depth < 10 percent of primary, b < 0.95 | any secondary above threshold fails | **Adopt.** A hot Jupiter with a 100 ppm occultation is rejected today. b and R_p come from the transit fit below. |
 | Odd/even (A.4.1.4) | sigma_OE = abs(d_odd - d_even) / sqrt(s_odd^2 + s_even^2) > 1.1 (median of central points) or > 11.2 / 19.8 (model-shift depths) | 3 sigma with chi-square-scaled errors | **Keep.** The statistics differ; 3 sigma on scaled errors sits between T18's two methods and no injected box failed it. |
-| V shape (A.4.3) | fail if R_p / R_star + b > 1.04 from the transit model fit | none (no transit model) | **Adopt** (only on an unpinned fit whose depth agrees with the measured one, section 4.2) with a uniform-disc transit fit on the binned fold (k, b, a / R_star). The fit also gives a depth without the box bias (the injection study measured the box depth 10 percent low). |
+| V shape (A.4.3) | fail if R_p / R_star + b > 1.04 from the transit model fit | none (no transit model) | **Adopt** (only on an unpinned fit whose depth agrees with the measured one and whose chi2 beats the best non-grazing fit by 25, section 4.2) with a uniform-disc transit fit on the binned fold (k, b, a / R_star). The fit also gives a depth without the box bias (the injection study measured the box depth 10 percent low). |
 | SWEET (A.3.2, A.4.2) | sine at P/2, P, 2P on the PDC flux; not transit-like if SNR > 50, amplitude > depth and P < 5 d; stellar if SNR > 50, amplitude < depth, amplitude > 5000 ppm and P < 10 d | shape contrast on the fold; pre-whitening | **Adopt** on the detrended flux before pre-whitening (the pre-whitened flux has the wave removed): the ellipsoidal (SWEET EB) case is new. |
 | Seasonal depth (informational flag SEASONAL_DEPTH) | informational only: a seasonal depth difference can be a contaminated planet on the target as well as a neighbour's eclipse | rung 3 FAILS on p < 0.0027 with one season beyond 3 sigma | **Change to UNDETERMINED** (review) with the same statistic. |
 | Centroid (A.5) | difference-image centroid offsets; ghost halo/core ratio > 4 | `sap_psf_ratio` recorded, no verdict | **Adopt a verdict**: when the depth in the PSF flux differs from the SAP depth beyond 3 sigma (combined errors) the signal is UNDETERMINED "aperture-dependent depth". KBonus PSF photometry is the only pixel-level handle SkySift has. |
@@ -131,26 +131,27 @@ New helpers in `lc/ops.py` and a new module `lc/transit_model.py`.
   FAIL "sinusoidal (SWEET)" if snr > 50 and amplitude > depth and P < 5 d; FAIL "ellipsoidal (SWEET EB)" if snr > 50
   and amplitude < depth and amplitude > 5000 ppm and P < 10 d. Constants `SWEET_SNR = 50`, `SWEET_PLANET_MAX_PERIOD =
   5.0`, `SWEET_EB_MIN_AMPLITUDE_PPM = 5000`, `SWEET_EB_MAX_PERIOD = 10.0`.
-- `transit_model.fit_transit(time, fnorm, period, t0, duration) -> TransitFit(k, b, a_over_r, depth_ppm, t14_days,
-  chi2, n_bins, ok, chi2_nongrazing)`: uniform-disc (no limb darkening) overlap model of two discs, fitted by
+- `transit_model.fit_transit(time, fnorm, period, t0, duration) -> TransitFit(k, b, a_over_r, depth_ppm, t14_days, chi2,
+  n_bins, ok, chi2_nongrazing)`: uniform-disc (no limb darkening) overlap model of two discs, fitted by
   `scipy.optimize.least_squares` to the binned fold within +-3 durations (bins as in `shape_contrast`), bounds k in
-  [1e-3, 2], b in [0, 1 + k], a / R_star in [1.5, 1e4]; starts k = sqrt(depth), b = 0.3 plus two grazing ones, each
-  with a / R_star from 1, 2/3 and 3/2 times the box duration (a small-k model is nearly a staircase in a / R_star, so
-  the solver stays near its start). The non-grazing family (b = u (1 - k), u in [0, 1], k in [1e-3, 0.99], same
-  bins, weights, baseline and starts) is fitted too; it is a subset of the free family, so when its chi2 is lower the
-  free optimiser missed the minimum and the non-grazing solution is returned as the fit (parameters, chi2 and `ok`).
-  `chi2_nongrazing` keeps the non-grazing minimum (NaN unless a start converged). `ok` False when the fold has fewer than 20 bins or the solver does not converge. FAIL "V-shaped or deep
-  (k + b > 1.04)" when k + b > `V_SHAPE_MAX` = 1.04 on a fit that measured the shape: T18 A.4.3 applies the rule to a
-  converged DV fit of a significant signal, so it applies only when the fit is ok, k < `V_SHAPE_K_UNPINNED` (0.95) x
-  the upper k bound (2.0, `transit_model.K_BOUNDS`), and the fitted depth lies within a factor
-  `V_SHAPE_DEPTH_RATIO_MAX` = 2.0 of the measured depth (`fit_depth_ppm / depth_ppm` in [0.5, 2.0]), and the fold
-  shows a V rather than a box or U: the fit's chi2 lies at least `V_SHAPE_DELTA_CHI2` = 25 (5 sigma) below
-  `chi2_nongrazing` (a NaN skips the rule); otherwise the rule is skipped. A 185 ppm, 1.8 h, 0.96 d injection on a
-  real curve, detected at 1.5 h, was failed with k + b = 2.06 from a grazing local minimum (k 0.53, b 1.52, a / R_star
-  1.59, chi2 35.4) while a non-grazing solution had chi2 33.8: on a shallow, cadence-smeared fold the uniform-disc
-  model is degenerate and a large k with b near 1 + k mimics a box. Metrics `fit_k`, `fit_b`, `fit_a_over_r`, `fit_depth_ppm`,
-  `fit_t14_h`, `fit_chi2`, `fit_delta_chi2` (`chi2_nongrazing - chi2`, never negative, None when NaN), `fit_ok`, and
-  `v_shape_applied` (True or False whenever the fit ran). The occultation exception keeps its own gates.
+  [1e-3, 2], b in [0, 1 + k], a / R_star in [1.5, 1e4]; starts k = sqrt(depth), b = 0.3 plus two grazing ones, each with
+  a / R_star from 1, 2/3 and 3/2 times the box duration (a small-k model is nearly a staircase in a / R_star, so the
+  solver stays near its start). The non-grazing family (b = u (1 - k), u in [0, 1], k in [1e-3, 0.99], same bins,
+  weights, baseline and starts) is fitted too; it is a subset of the free family, so when its chi2 is lower the free
+  optimiser missed the minimum and the non-grazing solution is returned as the fit (parameters, chi2 and `ok`).
+  `chi2_nongrazing` keeps the non-grazing minimum (NaN unless a start converged). `ok` False when the fold has fewer
+  than 20 bins or the solver does not converge. FAIL "V-shaped or deep (k + b > 1.04)" when k + b > `V_SHAPE_MAX` = 1.04
+  on a fit that measured the shape: T18 A.4.3 applies the rule to a converged DV fit of a significant signal, so it
+  applies only when the fit is ok, k < `V_SHAPE_K_UNPINNED` (0.95) x the upper k bound (2.0, `transit_model.K_BOUNDS`),
+  and the fitted depth lies within a factor `V_SHAPE_DEPTH_RATIO_MAX` = 2.0 of the measured depth (`fit_depth_ppm /
+  depth_ppm` in [0.5, 2.0]), and the fold shows a V rather than a box or U: the fit's chi2 lies at least
+  `V_SHAPE_DELTA_CHI2` = 25 (5 sigma) below `chi2_nongrazing` (a NaN skips the rule); otherwise the rule is skipped. A
+  185 ppm, 1.8 h, 0.96 d injection on a real curve, detected at 1.5 h, was failed with k + b = 2.06 from a grazing local
+  minimum (k 0.53, b 1.52, a / R_star 1.59, chi2 35.4) while a non-grazing solution had chi2 33.8: on a shallow,
+  cadence-smeared fold the uniform-disc model is degenerate and a large k with b near 1 + k mimics a box. Metrics
+  `fit_k`, `fit_b`, `fit_a_over_r`, `fit_depth_ppm`, `fit_t14_h`, `fit_chi2`, `fit_delta_chi2` (`chi2_nongrazing -
+  chi2`, never negative, None when NaN), `fit_ok`, and `v_shape_applied` (True or False whenever the fit ran). The
+  occultation exception keeps its own gates.
 - Secondary exceptions, evaluated before the existing `secondary_at_0.5` / `eccentric_secondary` FAILs:
   (a) period halving (T18 A.4.1.3: a TCE whose primary and secondary are indistinguishable and whose secondary sits at
   phase 0.5 may be a planet "detected at twice the true orbital period", both dips being transits): when the primary
