@@ -29,3 +29,11 @@ def inject_v_eclipse(lc: LightCurve, period, t0, width_days, depth_ppm):
     shape = np.clip(1.0 - np.abs(ph) / (0.5 * width_days), 0.0, None)
     f = lc.flux * (1 - depth_ppm * 1e-6 * shape)
     return LightCurve(lc.time, f, lc.flux_err, lc.quality, lc.quarter, lc.flux_alt, dict(lc.meta))
+
+
+def inject_model(lc: LightCurve, period, t0, k, b, a_over_r):
+    """Multiply the flux by the uniform-disc transit model (``skysift.lc.transit_model``) of a circular orbit."""
+    from skysift.lc.transit_model import uniform_disc_flux
+    ph = (lc.time - t0 + 0.5 * period) % period - 0.5 * period
+    f = lc.flux * uniform_disc_flux(ph, period, k, b, a_over_r)
+    return LightCurve(lc.time, f, lc.flux_err, lc.quality, lc.quarter, lc.flux_alt, dict(lc.meta))
