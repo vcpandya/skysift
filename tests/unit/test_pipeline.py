@@ -74,7 +74,11 @@ def test_priority_uses_quarter_availability():
 def test_build_ladder_orders_rungs_and_drops_novelty_on_request():
     costs = [r.cost for r in build_ladder().rungs]
     assert costs == sorted(costs) and build_ladder().rungs[-1].name == "rung4_novelty"
-    assert len(build_ladder().rungs) == 4 and len(build_ladder(with_novelty=False).rungs) == 3
+    assert [r.name for r in build_ladder().rungs] == ["rung1_detection", "rung1_events", "rung2_shape",
+                                                       "rung3_stability", "rung4_novelty"]
+    assert [r.name for r in build_ladder(with_novelty=False).rungs] == ["rung1_detection", "rung1_events",
+                                                                         "rung2_shape", "rung3_stability"]
+    assert pipeline.DEFAULT_LADDER_VERSION == "3"
     assert build_ladder("7").version == "7"
 
 

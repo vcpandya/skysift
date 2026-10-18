@@ -9,6 +9,8 @@ target's light curve, runs a detector, pushes every signal through a ladder of v
 that only the targets that survive need follow-up. Milestone 1 ships the transit box-dip detector and vetting ladder
 rungs 1 to 4; the eclipsing-binary and lensing branches are planned. The detector keeps its three strongest peaks and, when the strongest clears the detection threshold, masks that signal and searches the remaining points once more, so a dominant variable does not hide a second, independent signal on the same star. Before the search the star's significant sinusoids (pulsation, rotation) are removed by harmonic pre-whitening, with box-shaped eclipses and transits protected; the removed waves are listed on the signal page and subtracted from its plots.
 
+The ladder (version 3, after the published Kepler Robovetter practice, T18 Appendix A) runs cheapest rung first. Rung 1 checks the detection (SDE, SNR, event count) and then its events: coverage of each event (A.3.7.1 and A.3.8), the fraction of gapped events, single-event dominance above 90 d (A.3.5), Chases when at most five events exist (A.3.3) and Zuma, which drops events that brighten (A.3.7.5). Rung 2 tests the shape: the sinusoid contrast, SWEET at P/2, P and 2P (A.3.2, A.4.2), the model-shift uniqueness tests MS2 and MS3 (A.3.4), odd against even, the secondary, and a uniform-disc transit fit that fails V-shaped or too deep events (A.4.3). Two exceptions keep real planets: an equal secondary at phase 0.5 returns UNDETERMINED with half the detected period as `suggested_period` (the planet may have been found at twice its true period), and a faint secondary that fits a planet's occultation passes with its `occultation_albedo` (A.4.1.3). Rung 3 checks stability across seasons and between the SAP and PSF apertures; a disagreement goes to review (UNDETERMINED), not to rejection. Rung 4 matches known objects by period and epoch (A.6); a period match whose epoch differs also goes to review.
+
 ## Quick start
 
 ```bash
@@ -160,6 +162,7 @@ below holds; each is a measurement, not a feeling.
    a few dozen cached curves of the source, then `inject_rednoise.py`) states completeness against red-noise SNR; on
    18 October 2026 it was about 95 percent above red-noise SNR 9 and independent of period, with the box depth about
    10 percent low (use the stacked-fold depth of rung 2 for radii). Re-run it after any change to the search.
+   `skysift inject --source <name> --limit <N>` repeats the study as a standing regression: it injects box transits into the cached curves, runs the production search and rungs 1 to 3, and appends one line per injection to a JSON-lines file (resumable; every line carries the search and ladder versions). `skysift inject-report <file>` prints completeness against nominal and red-noise SNR and against period, with the recovered-to-injected depth ratio. Run both before publishing: a ladder or search change that lowers completeness, or a ladder version whose rungs 1 to 3 reject more injections than the previous one, is a regression to explain first.
 4. **Known objects are matched.** Rung 4 answers on one live target (a KOI host of the source) before the sweep, so a
    renamed archive column cannot turn every verdict UNDETERMINED (outage).
 5. **The review queue starts clean.** The dashboard's Candidates page shows the current search version only by

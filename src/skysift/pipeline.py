@@ -44,12 +44,19 @@ from skysift.store.db import (
 from skysift.store.retention import DiskBudgetExceeded, Retention, RetentionPolicy
 from skysift.vetting.base import DataBundle, Ladder
 from skysift.vetting.rung1_detection import Rung1Detection
+from skysift.vetting.rung1_events import Rung1Events
 from skysift.vetting.rung2_shape import Rung2Shape
 from skysift.vetting.rung3_stability import Rung3Stability
 from skysift.vetting.rung4_novelty import Rung4Novelty
 
 log = logging.getLogger(__name__)
-DEFAULT_LADDER_VERSION = "2"   # 2: rung 4 integer-ratio and epoch rules, second-pass signals vetted on the masked flux (18 Oct 2026)
+# Ladder version 3 (18 Oct 2026, vetting best practice; spec 2026-10-18-skysift-vetting-best-practice-design.md):
+#   rung 1 events (coverage, gapped events, single-event dominance, Chases, Zuma),
+#   rung 2 SWEET, MS2/MS3 uniqueness, transit fit, V shape, period-doubling and occultation exceptions,
+#   rung 3 seasonal and aperture depth disagreement routed to review,
+#   rung 4 epoch mismatch with a known object routed to review.
+# 2: rung 4 integer-ratio and epoch rules, second-pass signals vetted on the masked flux (18 Oct 2026)
+DEFAULT_LADDER_VERSION = "3"
 UPSERT_BATCH = 1000
 MAX_ATTEMPTS = 3            # spec section 9: a target that errors three times is left for a human
 MAX_POOL_RESTARTS = 2       # a CPU pool that breaks a third time in one sweep ends the sweep
@@ -103,7 +110,7 @@ def search_version(det, thresholds: Thresholds) -> str:
 
 
 def build_ladder(version: str = DEFAULT_LADDER_VERSION, with_novelty: bool = True) -> Ladder:
-    rungs = [Rung1Detection(), Rung2Shape(), Rung3Stability()]
+    rungs = [Rung1Detection(), Rung1Events(), Rung2Shape(), Rung3Stability()]
     if with_novelty: rungs.append(Rung4Novelty())
     return Ladder(rungs, version)
 

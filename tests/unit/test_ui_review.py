@@ -249,3 +249,32 @@ def test_rung4_notes_whether_the_known_object_epoch_agrees(settings, tmp_path):
                      status="fail")
         shown = _shown(client.get(f"/signals/{ids['candidate']}").text, "rung4_novelty")
         assert expected in shown, (extra, shown)
+
+
+def test_signal_page_says_the_true_period_may_be_half_the_detected_one(settings, tmp_path):
+    client, app, ids, _launcher = make_seeded_client(settings, tmp_path)
+    _set_metrics(app, ids["candidate"], "rung2_shape", {"parity_sigma": 0.2, "suggested_period": 6.88475},
+                 status="undetermined")
+    r = client.get(f"/signals/{ids['candidate']}")
+    assert ("· the secondary matches the primary; the true period may be 6.8848 d (half the detected period)"
+            in r.text)
+    r = client.get(f"/signals/{ids['undetermined']}")
+    assert "the true period may be" not in r.text
+
+
+def test_signal_page_says_the_secondary_fits_a_planet_occultation(settings, tmp_path):
+    client, app, ids, _launcher = make_seeded_client(settings, tmp_path)
+    _set_metrics(app, ids["candidate"], "rung2_shape",
+                 {"parity_sigma": 0.2, "occultation_albedo": 0.34, "occultation_exception": True})
+    r = client.get(f"/signals/{ids['candidate']}")
+    assert "· secondary consistent with a planet occultation (albedo 0.34)" in r.text
+    r = client.get(f"/signals/{ids['undetermined']}")
+    assert "planet occultation" not in r.text
+
+
+def test_signal_page_keeps_quiet_when_the_occultation_exception_did_not_apply(settings, tmp_path):
+    client, app, ids, _launcher = make_seeded_client(settings, tmp_path)
+    _set_metrics(app, ids["candidate"], "rung2_shape",
+                 {"parity_sigma": 0.2, "occultation_albedo": 3.4, "occultation_exception": False}, status="fail")
+    r = client.get(f"/signals/{ids['candidate']}")
+    assert r.status_code == 200 and "planet occultation" not in r.text
