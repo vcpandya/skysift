@@ -53,6 +53,10 @@ def _tsv_rows(data: bytes) -> tuple[list[str] | None, list[dict]]:
 
 OWN_PERIOD_TOL = 0.01          # rows of the target itself: its own kepid, the Gaia tables queried by source_id, or a
                                # row within SAME_STAR_ARCSEC of the target
+OWN_RATIO_TOL = 0.001          # own rows at every ratio other than 1 (review of 18 October 2026): fifteen 1-percent
+                               # windows over 0.5 to 200 d let a random genuine signal match a given own period about 5
+                               # percent of the time (20 to 40 percent on multi-planet hosts), while a real alias matches
+                               # to about 1e-4 (K06356.01: 3.44144 d against 24.09002 / 7 = 3.44143 d)
 NEIGHBOUR_PERIOD_TOL = 0.001   # rows matched by position only
 SAME_STAR_ARCSEC = 2.0         # a catalogue row this close is the target star itself (K06356.01 sits 0.66 arcsec from
                                # gaia-dr3-2052196018973519744, which has no KIC)
@@ -60,12 +64,15 @@ NEIGHBOUR_RATIOS = (0.5, 1.0, 2.0)
 OWN_RATIOS = tuple(sorted({1.0 / k for k in range(2, 9)} | {1.0} | {float(k) for k in range(2, 9)}))   # 1/8 .. 8
 
 
-def _period_match(p_signal: float, p_cat: float, tol=OWN_PERIOD_TOL, ratios=NEIGHBOUR_RATIOS) -> float | None:
-    """The ratio ``k`` of ``ratios`` with ``p_signal`` within ``tol`` (relative) of ``k`` times the catalogue period,
-    or None (the smallest relative mismatch wins when several fit).
+def _period_match(p_signal: float, p_cat: float, tol=OWN_PERIOD_TOL, ratios=NEIGHBOUR_RATIOS,
+                  ratio_tol=OWN_RATIO_TOL) -> float | None:
+    """The ratio ``k`` of ``ratios`` with ``p_signal`` within tolerance (relative) of ``k`` times the catalogue period,
+    or None (the smallest relative mismatch wins when several fit). The tolerance is ``tol`` at ``k`` = 1 and the
+    smaller of ``tol`` and ``ratio_tol`` at every other ratio.
 
-    The tolerance and the ratios depend on whose row it is. A row of the target itself keeps 1 percent, which absorbs
-    the period error of a short or noisy detection, and every integer ratio both ways up to 8 (OWN_RATIOS): a known
+    The tolerance and the ratios depend on whose row it is. A row of the target itself keeps 1 percent at ratio 1,
+    which absorbs the period error of a short or noisy detection of the same object, and 0.1 percent (OWN_RATIO_TOL) at
+    every other integer ratio both ways up to 8 (OWN_RATIOS), where a real alias matches to about 1e-4: a known
     object on the star explains a signal at any of its sub-harmonics or harmonics, and the detector can rank one of
     those first (K06356.01 at 24.09 d came out of the live run at 24.09/7 d). A neighbour inside the 120 arcsec cone
     (36 times the area of the old 20 arcsec one) keeps 0.5, 1 and 2 at 0.1 percent: a random catalogue period lands in
@@ -73,9 +80,9 @@ def _period_match(p_signal: float, p_cat: float, tol=OWN_PERIOD_TOL, ratios=NEIG
     new signal in a hundred as known, while the Kepler and BLS periods of a real blend agree to about 1e-4."""
     if not (p_cat and p_cat > 0):
         return None
-    fits = [(abs(p_signal - k * p_cat) / (k * p_cat), k) for k in ratios]
-    err, k = min(fits)
-    return float(k) if err < tol else None
+    fits = [(err, k) for k in ratios
+            if (err := abs(p_signal - k * p_cat) / (k * p_cat)) < (tol if k == 1.0 else min(tol, ratio_tol))]
+    return float(min(fits)[1]) if fits else None
 
 
 def _same_kic(value, kic: int | None) -> bool:
@@ -173,8 +180,8 @@ class Rung4Novelty:
             known-reason identifier on a period match (the matching row goes to ``period_matched`` with its
             separation from the target and the period ratio). Rows of the target itself (its own kepid or KIC; every
             row of a Gaia table, which is queried by source_id; any row within SAME_STAR_ARCSEC of the target) are
-            matched first, at 1 percent and at every integer ratio up to 8 both ways; neighbours at 0.1 percent and the
-            ratios 0.5, 1 and 2."""
+            matched first, at 1 percent for ratio 1 and 0.1 percent at every other integer ratio up to 8 both ways;
+            neighbours at 0.1 percent and the ratios 0.5, 1 and 2."""
             header, rows = parsed
             if header is None: raise _SchemaError(f"schema:{label}:empty response")
             if rows and pcol not in header: raise _SchemaError(f"schema:{label}:missing {pcol}")
@@ -192,7 +199,7 @@ class Rung4Novelty:
                 p = period(r) if period else _to_float(r.get(pcol))
                 if p <= 0: continue
                 sep = _sep_arcsec(r, t.ra, t.dec)
-                ratio = (_period_match(s.period, p, OWN_PERIOD_TOL, OWN_RATIOS) if own(r)
+                ratio = (_period_match(s.period, p, OWN_PERIOD_TOL, OWN_RATIOS, OWN_RATIO_TOL) if own(r)
                          else _period_match(s.period, p, NEIGHBOUR_PERIOD_TOL, NEIGHBOUR_RATIOS))
                 if ratio is not None:
                     metrics["period_matched"] = [{"catalog": label, "id": ident(r), "period": p, "sep_arcsec": sep,

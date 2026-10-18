@@ -415,3 +415,31 @@ def test_own_kepid_row_matches_at_an_integer_period_ratio(factor):
     r = Rung4Novelty().run(SIG, bundle({**EMPTY, "cumulative": row}))
     assert r.status == TestStatus.FAIL and r.reason == "known:cumulative:K99999.01"
     assert r.metrics["period_matched"][0]["ratio"] == pytest.approx(1 / factor)
+
+
+def _own_koi(period, extra_cols="", extra_vals=""):
+    """A cumulative-table row of the target itself (its own kepid) at ``period`` days."""
+    return (f"kepid,kepoi_name,koi_period,ra,dec{extra_cols}\n"
+            f"5689121,K99999.01,{period},{TGT.ra},{TGT.dec}{extra_vals}\n").encode()
+
+
+def test_own_row_at_an_integer_ratio_needs_a_tenth_of_a_percent():
+    """Review of 18 October 2026: fifteen 1-percent windows make a genuine new signal match an own catalogue period
+    far too often; a real alias matches to about 1e-4, so ratios other than 1 use OWN_RATIO_TOL (0.1 percent)."""
+    r = Rung4Novelty().run(SIG.model_copy(update={"period": 20.85}), bundle({**EMPTY, "cumulative": _own_koi(3.0)}))
+    assert r.status == TestStatus.PASS and "period_matched" not in r.metrics     # 0.71 percent off 7 x 3.0 d
+
+
+def test_own_row_at_exactly_an_integer_ratio_is_known():
+    r = Rung4Novelty().run(SIG.model_copy(update={"period": 21.0}), bundle({**EMPTY, "cumulative": _own_koi(3.0)}))
+    assert r.status == TestStatus.FAIL and r.reason == "known:cumulative:K99999.01"
+    assert r.metrics["period_matched"][0]["ratio"] == 7.0
+
+
+def test_period_match_keeps_one_percent_at_ratio_one_only():
+    from skysift.vetting.rung4_novelty import OWN_PERIOD_TOL, OWN_RATIO_TOL, OWN_RATIOS, _period_match
+    assert OWN_RATIO_TOL == 0.001
+    assert _period_match(3.0 * 1.005, 3.0, OWN_PERIOD_TOL, OWN_RATIOS) == 1.0
+    assert _period_match(21.0 * 1.005, 3.0, OWN_PERIOD_TOL, OWN_RATIOS) is None
+    assert _period_match(21.0 * 1.0005, 3.0, OWN_PERIOD_TOL, OWN_RATIOS) == 7.0
+    assert _period_match(3.4414, 24.09, OWN_PERIOD_TOL, OWN_RATIOS) == pytest.approx(1 / 7)
