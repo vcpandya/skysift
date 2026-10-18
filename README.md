@@ -144,6 +144,32 @@ with margin. The scrambled row is pure noise, so its tail is the false-alarm rat
 keeps systematics and variability; its tail shows what pre-whitening and the later rungs must still reject. On 30
 curves the scrambled maximum was 10.1, hence the interim value of 11.
 
+## Production sweep checklist
+
+A production sweep is a `skysift run` over a whole source at the production window. Before starting one, every line
+below holds; each is a measurement, not a feeling.
+
+1. **Suite green on the exact tree.** `python -m pytest tests/unit -q -p no:cacheprovider` passes on the commit the
+   sweep will run (about 30 minutes). The golden tests (`tests/golden`) pass too when the detector or the detrend
+   changed.
+2. **Calibration matches the search version.** `<data_dir>/calibration/<source>.jsonl` was written by the same search
+   version `skysift run` reports (`skysift run` warns otherwise). `calibrate-report` shows the scrambled-null maximum
+   below `thresholds.sde_min` with margin and gives the real-curve fraction at or above it; a change to the detector,
+   detrend, pre-whitening or thresholds after the calibration means a new calibration before the sweep.
+3. **Completeness is known.** The injection-recovery study (`docs/superpowers/notes/scripts/inject_recovery.py`, run on
+   a few dozen cached curves of the source, then `inject_rednoise.py`) states completeness against red-noise SNR; on
+   18 October 2026 it was about 95 percent above red-noise SNR 9 and independent of period, with the box depth about
+   10 percent low (use the stacked-fold depth of rung 2 for radii). Re-run it after any change to the search.
+4. **Known objects are matched.** Rung 4 answers on one live target (a KOI host of the source) before the sweep, so a
+   renamed archive column cannot turn every verdict UNDETERMINED (outage).
+5. **The review queue starts clean.** The dashboard's Candidates page shows the current search version only by
+   default; older signals stay reachable through "show all". Decisions are append-only, so nothing from earlier sweeps
+   is lost.
+6. **Capacity and retention.** A 4-year KBonus curve costs about 250 CPU-seconds at 0.5 to 200 d (plus one more
+   search on stars with a masked second pass or a harmonic restore); choose `--workers-cpu` and `--retention` for the
+   machine and disk at hand, and keep the Live page open: it shows run time per target, the pool state and the
+   stop control.
+
 ## Development setup
 
 ```bash
