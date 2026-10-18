@@ -188,6 +188,18 @@ class Rung4Novelty:
         b.cache[key] = data
         return data
 
+    def _known(self, metrics: dict, catalog: str, reason: str) -> TestResult:
+        """The verdict of a period match: FAIL (known), unless the matched row carries an epoch and it disagrees.
+
+        The Kepler DR25 Robovetter (Thompson et al. 2018) needs period and epoch to agree before it calls a signal a
+        known object; a period match on a different epoch (a second planet in resonance, a stale ephemeris) is for a
+        person to look at, so it is UNDETERMINED."""
+        (hit,) = metrics["period_matched"]
+        if hit["epoch_agrees"] is False:
+            return TestResult(rung=self.name, status=TestStatus.UNDETERMINED, metrics=metrics,
+                              reason=f"period matches {catalog} {hit['id']} but epoch differs ({hit['epoch_offset_h']:.1f} h)")
+        return TestResult(rung=self.name, status=TestStatus.FAIL, metrics=metrics, reason=reason)
+
     def run(self, s: Signal, b: DataBundle) -> TestResult:
         t = b.target
         cone = _box(t.ra, t.dec, self.radius_deg)                 # exact circle applied by _within on the rows
@@ -211,7 +223,7 @@ class Rung4Novelty:
             """Record counts and other-period rows (catalogue, id, period, separation in arcsec or None); return a
             known-reason identifier on a period match (the matching row goes to ``period_matched`` with its
             separation from the target, the period ratio, and ``epoch_offset_h`` and ``epoch_agrees`` from
-            ``_epoch_check``, None when the table has no epoch; information only, the verdict does not change).
+            ``_epoch_check``, None when the table has no epoch; ``run`` turns a disagreeing epoch into UNDETERMINED).
             Rows of the target itself (its own kepid or KIC; every row of a Gaia table, which is queried by
             source_id; any row within SAME_STAR_ARCSEC of the target) are matched first, at 1 percent for ratio 1 and 0.1 percent at every other integer ratio up to 8 both ways;
             neighbours at 0.1 percent and the ratios 0.5, 1 and 2."""
@@ -248,7 +260,7 @@ class Rung4Novelty:
                 parsed = _csv_rows(self._get(b, "exoarchive", EXO_TAP, {"query": query, "format": "csv"}, ("exoarchive", table, t.target_id)))
                 hit = scan(table, parsed, pcol, ident, epoch=epoch)
                 if hit is not None:
-                    return TestResult(rung=self.name, status=TestStatus.FAIL, metrics=metrics, reason=f"known:{table}:{hit}")
+                    return self._known(metrics, table, f"known:{table}:{hit}")
             svc = "vizier"
             # the table-level source: the catalogue also holds table9 (non-repeating events, no Per column), and a
             # catalogue-level query returns every table that matches
@@ -256,7 +268,7 @@ class Rung4Novelty:
                                          ("vizier", "J/AJ/151/68", t.target_id)))
             hit = scan("kepler_eb", parsed, "Per", lambda r: r.get("KIC"))
             if hit is not None:
-                return TestResult(rung=self.name, status=TestStatus.FAIL, metrics=metrics, reason=f"known:kepler_eb:{hit}")
+                return self._known(metrics, "kepler_eb", f"known:kepler_eb:{hit}")
             if t.gaia_id and not str(t.gaia_id).isdigit():
                 # source_id is interpolated into ADQL: anything but digits is never sent
                 metrics["gaia_skipped"] = "non-numeric source_id"
@@ -268,7 +280,7 @@ class Rung4Novelty:
                                                  ("gaia", table, t.gaia_id)))
                     hit = scan(f"gaia_{table}", parsed, pcol, lambda r: r.get("source_id") or t.gaia_id, period)
                     if hit is not None:
-                        return TestResult(rung=self.name, status=TestStatus.FAIL, metrics=metrics, reason=f"known:gaia_{table}:{t.gaia_id}")
+                        return self._known(metrics, f"gaia_{table}", f"known:gaia_{table}:{t.gaia_id}")
         except _SchemaError as e:
             return TestResult(rung=self.name, status=TestStatus.UNDETERMINED, metrics=metrics, reason=str(e))
         except ServiceUnavailable as e:

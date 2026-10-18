@@ -67,18 +67,34 @@ class Rung3Stability:
             return TestResult(rung=self.name, status=TestStatus.UNDETERMINED, reason="too few seasons",
                               metrics={"stacked": stacked, "n_events": n_events, "n_seasons": len(means)})
         z, chi2, dof, p = _season_agreement(means, errs)
-        ratio = np.nan
+        ratio = d_alt = e_alt = az = np.nan
         if b.fnorm_alt is not None:
             if stacked:
-                alt_depth = stacked_depth(lc.time, b.fnorm_alt, s.period, s.t0, s.duration).depth_ppm
-                if all_depth: ratio = alt_depth / all_depth
+                alt = stacked_depth(lc.time, b.fnorm_alt, s.period, s.t0, s.duration)
+                prim = stacked_depth(lc.time, fn, s.period, s.t0, s.duration)
+                d_alt, e_alt, d_prim, e_prim = alt.depth_ppm, alt.err_ppm, prim.depth_ppm, prim.err_ppm
             else:
                 alt = event_depths(lc.time, b.fnorm_alt, lc.quarter, s.period, s.t0, s.duration)
-                if alt.n and all_depth: ratio = float(alt.mean / all_depth)
+                d_alt, e_alt = (alt.mean, alt.err_scaled) if alt.n else (np.nan, np.nan)
+                d_prim, e_prim = ed.mean, ed.err_scaled
+            if all_depth and np.isfinite(d_alt): ratio = float(d_alt / all_depth)
+            # the aperture check compares the two fluxes with one estimator and the errors added in quadrature
+            err = float(np.hypot(e_alt, e_prim))
+            if np.isfinite(d_alt) and np.isfinite(d_prim) and np.isfinite(err) and err > 0:
+                az = float((d_alt - d_prim) / err)
         m = {"stacked": stacked, "season_depths": {str(k): v for k, v in means.items()},
              "season_errs": {str(k): v for k, v in errs.items()}, "season_z": {str(k): v for k, v in z.items()},
              "chi2": chi2, "dof": dof, "p_value": p, "n_events": n_events,
-             "sap_psf_ratio": float(ratio) if np.isfinite(ratio) else None}
+             "sap_psf_ratio": float(ratio) if np.isfinite(ratio) else None,
+             "alt_depth_ppm": float(d_alt) if np.isfinite(d_alt) else None,
+             "alt_depth_err_ppm": float(e_alt) if np.isfinite(e_alt) else None,
+             "aperture_z": az if np.isfinite(az) else None}
+        # A depth that changes with the season or the aperture is information for a person, not a failure: the Kepler
+        # DR25 Robovetter (Thompson et al. 2018) does not fail on it either, so the signal goes to review
         if p < 0.0027 and any(abs(v) > th.season_sigma for v in z.values()) and len(z) >= 3:
-            return TestResult(rung=self.name, status=TestStatus.FAIL, metrics=m, reason=f"season-dependent depth (p={p:.1e})")
+            return TestResult(rung=self.name, status=TestStatus.UNDETERMINED, metrics=m,
+                              reason=f"season-dependent depth (p={p:.1e})")
+        if np.isfinite(az) and abs(az) > th.aperture_sigma:
+            return TestResult(rung=self.name, status=TestStatus.UNDETERMINED, metrics=m,
+                              reason=f"aperture-dependent depth ({az:.1f} sigma)")
         return TestResult(rung=self.name, status=TestStatus.PASS, metrics=m)

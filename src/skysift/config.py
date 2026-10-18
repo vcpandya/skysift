@@ -21,6 +21,7 @@ class Thresholds(BaseModel):
     secondary_sigma: float = 3.0
     free_secondary_sigma: float = 5.0
     season_sigma: float = 3.0
+    aperture_sigma: float = 3.0       # SAP against PSF depth, combined errors (rung 3)
     min_period_days: float = 0.5
     max_period_days: float = 200.0
     # harmonic pre-whitening before the search: up to this many significant sinusoids (0 turns it off), each kept

@@ -15,6 +15,7 @@ thresholds:
   secondary_sigma: 3.0
   free_secondary_sigma: 5.0
   season_sigma: 3.0
+  aperture_sigma: 3.0
   min_period_days: 0.5
   max_period_days: 200.0
   prewhiten_max_components: 100

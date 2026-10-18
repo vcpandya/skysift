@@ -445,7 +445,7 @@ def test_period_match_keeps_one_percent_at_ratio_one_only():
     assert _period_match(3.4414, 24.09, OWN_PERIOD_TOL, OWN_RATIOS) == pytest.approx(1 / 7)
 
 
-# epoch check (18 October 2026): information only, the verdict does not change
+# epoch check (18 October 2026): a period match whose catalogue epoch disagrees is undetermined, not known
 EPOCH_COLS = ",koi_time0bk"
 
 
@@ -465,9 +465,35 @@ def test_epoch_agrees_when_the_catalogue_ephemeris_lands_on_the_signal_t0():
 
 def test_epoch_disagrees_when_the_catalogue_ephemeris_is_shifted():
     row = _own_koi(SIG.period, EPOCH_COLS, f",{SIG.t0 + 0.37 * SIG.period}")
-    hit = _epoch_hit(Rung4Novelty().run(SIG, bundle({**EMPTY, "cumulative": row})))
+    r = Rung4Novelty().run(SIG, bundle({**EMPTY, "cumulative": row}))
+    (hit,) = r.metrics["period_matched"]
     assert hit["epoch_agrees"] is False
     assert hit["epoch_offset_h"] == pytest.approx(0.37 * SIG.period * 24, rel=1e-6)
+    json.dumps(r.metrics, allow_nan=False)
+
+
+def test_period_match_with_a_shifted_epoch_is_undetermined():
+    """A KOI at the signal's period whose epoch is 0.3 periods off: a second planet in resonance or a stale ephemeris,
+    for a person to look at (the Robovetter needs period and epoch to agree before it calls a signal known)."""
+    row = _own_koi(SIG.period, EPOCH_COLS, f",{SIG.t0 + 0.3 * SIG.period}")
+    r = Rung4Novelty().run(SIG, bundle({**EMPTY, "cumulative": row}))
+    offset_h = 0.3 * SIG.period * 24
+    assert r.status == TestStatus.UNDETERMINED
+    assert r.reason == f"period matches cumulative K99999.01 but epoch differs ({offset_h:.1f} h)"
+    (hit,) = r.metrics["period_matched"]
+    assert hit["epoch_agrees"] is False and hit["id"] == "K99999.01"
+
+
+def test_period_match_with_the_signals_epoch_is_known():
+    row = _own_koi(SIG.period, EPOCH_COLS, f",{SIG.t0}")
+    r = Rung4Novelty().run(SIG, bundle({**EMPTY, "cumulative": row}))
+    assert r.status == TestStatus.FAIL and r.reason == "known:cumulative:K99999.01"
+
+
+def test_period_match_without_a_catalogue_epoch_is_known():
+    r = Rung4Novelty().run(SIG, bundle({**EMPTY, "cumulative": _own_koi(SIG.period)}))
+    assert r.status == TestStatus.FAIL and r.reason == "known:cumulative:K99999.01"
+    assert r.metrics["period_matched"][0]["epoch_agrees"] is None
 
 
 @pytest.mark.parametrize("value", ["", "nan", "abc"])

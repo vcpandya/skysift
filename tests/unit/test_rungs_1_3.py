@@ -19,6 +19,12 @@ def bundle(lc):
     return DataBundle(lc=lc, fnorm=detrend(lc), fnorm_alt=detrend(lc, flux=lc.flux_alt), target=TGT, thresholds=Thresholds())
 
 
+def in_both_fluxes(lc):
+    """``lc`` with its flux copied into ``flux_alt``: a transit injected into ``flux`` shows in the PSF flux too, as a
+    real one on the target does (``inject_transit`` leaves ``flux_alt`` untouched)."""
+    return LightCurve(lc.time, lc.flux, lc.flux_err, lc.quality, lc.quarter, lc.flux.copy(), dict(lc.meta))
+
+
 def signal(depth_ppm=2000.0):
     """Signal built straight from the injected ephemeris (the box-dip search is too slow for unit tests)."""
     return Signal(target_id="t", detector="box_dip", detector_version="1", period=P, t0=T0, duration=DUR,
@@ -77,7 +83,7 @@ def test_rung2_flags_eccentric_secondary():
     assert abs(r.metrics["free_secondary_phase"] - 0.529) < 0.02
 
 
-def test_rung3_fails_on_season_dependence():
+def test_rung3_flags_season_dependence():
     lc = make_lightcurve(seed=4, noise_ppm=800)
     season3 = (lc.quarter % 4) == 3
     f = lc.flux.copy()
@@ -87,8 +93,8 @@ def test_rung3_fails_on_season_dependence():
     lc2 = LightCurve(lc.time, f, lc.flux_err, lc.quality, lc.quarter, lc.flux_alt)
     s = signal(3000)
     r = Rung3Stability().run(s, bundle(lc2))
-    assert r.status == TestStatus.FAIL and "season" in r.reason
-    good = inject_transit(make_lightcurve(seed=4, noise_ppm=800), P, T0, DUR, 2000)
+    assert r.status == TestStatus.UNDETERMINED and "season" in r.reason
+    good = in_both_fluxes(inject_transit(make_lightcurve(seed=4, noise_ppm=800), P, T0, DUR, 2000))
     r_good = Rung3Stability().run(s, bundle(good))
     assert r_good.status == TestStatus.PASS
 
@@ -110,7 +116,7 @@ def test_rung2_nonfinite_free_search_is_undetermined():
     assert r.status == TestStatus.UNDETERMINED
 
 
-def test_rung3_single_deviant_season_fails_with_one_outlier():
+def test_rung3_single_deviant_season_flags_with_one_outlier():
     lc = inject_transit(make_lightcurve(seed=4, noise_ppm=800), P, T0, DUR, 2000)
     season3 = (lc.quarter % 4) == 3
     ph = (lc.time - T0 + 0.5 * P) % P - 0.5 * P
@@ -118,7 +124,7 @@ def test_rung3_single_deviant_season_fails_with_one_outlier():
     f[(np.abs(ph) < DUR / 2) & season3] *= 1 - 1000e-6     # 3000 ppm in season 3, 2000 ppm elsewhere
     lc2 = LightCurve(lc.time, f, lc.flux_err, lc.quality, lc.quarter, lc.flux_alt)
     r = Rung3Stability().run(signal(3000), bundle(lc2))
-    assert r.status == TestStatus.FAIL and "season" in r.reason
+    assert r.status == TestStatus.UNDETERMINED and "season" in r.reason
     z = r.metrics["season_z"]
     # The deviant season stands far above the rest. The coordinator asked for exactly one |z| > 3, but with a
     # leave-one-out reference the other seasons' reference mean contains the deviant season, so they sit at |z| ~ 3
@@ -201,7 +207,7 @@ def test_stacked_odd_even_fails_alternating_eclipses():
 
 
 def test_stacked_seasons_are_determinate_for_a_short_period_planet():
-    lc = inject_transit(make_lightcurve(n_days=1400, cadence_min=30, noise_ppm=500, seed=35), 0.6, 132.0, 1 / 24, 600)
+    lc = in_both_fluxes(inject_transit(make_lightcurve(n_days=1400, cadence_min=30, noise_ppm=500, seed=35), 0.6, 132.0, 1 / 24, 600))
     s = Signal(target_id="t", detector="box_dip", detector_version="1", period=0.6, t0=132.0, duration=1 / 24,
                depth_ppm=600, snr=25.0, sde=30.0, n_events=2300)
     r = Rung3Stability().run(s, bundle(lc))
@@ -209,7 +215,7 @@ def test_stacked_seasons_are_determinate_for_a_short_period_planet():
     json.dumps(r.metrics, allow_nan=False)
 
 
-def test_stacked_seasons_catch_a_half_depth_season():
+def test_stacked_seasons_flag_a_half_depth_season():
     """Season 2 carries a 300 ppm transit against 600 ppm elsewhere; the quarter offsets are left in place."""
     lc = make_lightcurve(n_days=1400, cadence_min=30, noise_ppm=500, seed=37)
     dip = np.abs(fold_phase(lc.time, 0.6, 132.0)) < 0.5 / 24
@@ -220,7 +226,7 @@ def test_stacked_seasons_catch_a_half_depth_season():
     s = Signal(target_id="t", detector="box_dip", detector_version="1", period=0.6, t0=132.0, duration=1 / 24,
                depth_ppm=600, snr=25.0, sde=30.0, n_events=2300)
     r = Rung3Stability().run(s, bundle(lc))
-    assert r.status == TestStatus.FAIL and r.metrics["stacked"] is True
+    assert r.status == TestStatus.UNDETERMINED and "season" in r.reason and r.metrics["stacked"] is True
     assert abs(r.metrics["season_depths"]["2"] - 300) < 80 and abs(r.metrics["season_z"]["2"]) > 4
 
 
@@ -243,3 +249,38 @@ def test_per_event_seasons_stay_undetermined_when_fewer_than_three_seasons_are_m
     assert r.status == TestStatus.UNDETERMINED and r.reason == "too few seasons"
     assert r.metrics["stacked"] is False and r.metrics["n_events"] >= 4 and r.metrics["n_seasons"] == 2
     json.dumps(r.metrics, allow_nan=False)
+
+
+def _with_alt_box(depth_ppm, alt_depth_ppm, seed=23):
+    """A light curve with a 3.3 d, 3 h box of ``depth_ppm`` in ``flux`` and ``alt_depth_ppm`` in ``flux_alt``."""
+    lc = make_lightcurve(seed=seed)
+    primary = inject_transit(lc, 3.3, 135.0, 3 / 24, depth_ppm)
+    alt = inject_transit(lc, 3.3, 135.0, 3 / 24, alt_depth_ppm).flux
+    return LightCurve(primary.time, primary.flux, primary.flux_err, primary.quality, primary.quarter, alt, dict(primary.meta))
+
+
+def _signal_3_3(depth_ppm):
+    return Signal(target_id="t", detector="box_dip", detector_version="1", period=3.3, t0=135.0, duration=3 / 24,
+                  depth_ppm=depth_ppm, snr=20.0, sde=15.0, n_events=420)
+
+
+def test_rung3_flags_an_aperture_dependent_depth():
+    """4000 ppm in the SAP flux but only 1000 ppm in the PSF flux: the signal does not follow the target's aperture."""
+    r = Rung3Stability().run(_signal_3_3(4000), bundle(_with_alt_box(4000, 1000)))
+    assert r.status == TestStatus.UNDETERMINED and r.reason.startswith("aperture-dependent"), (r.status, r.reason)
+    assert abs(r.metrics["aperture_z"]) > 3
+    json.dumps(r.metrics, allow_nan=False)
+
+
+def test_rung3_passes_equal_depths_in_both_fluxes():
+    r = Rung3Stability().run(_signal_3_3(4000), bundle(_with_alt_box(4000, 4000)))
+    assert r.status == TestStatus.PASS, (r.status, r.reason)
+    assert abs(r.metrics["aperture_z"]) < 3 and r.metrics["alt_depth_err_ppm"] > 0
+    json.dumps(r.metrics, allow_nan=False)
+
+
+def test_rung3_aperture_z_is_none_without_a_psf_flux():
+    b = bundle(_with_alt_box(4000, 4000))
+    b.fnorm_alt = None
+    r = Rung3Stability().run(_signal_3_3(4000), b)
+    assert r.status == TestStatus.PASS and r.metrics["aperture_z"] is None and r.metrics["alt_depth_ppm"] is None
