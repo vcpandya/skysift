@@ -1,6 +1,17 @@
 import numpy as np
+from scipy.special import erfcinv
 
-from skysift.lc.ops import detrend, event_depths, fold_phase, secondary_search, stacked_depth
+from skysift.lc.ops import (
+    SHAPE_BINS_PER_DURATION,
+    detrend,
+    event_depths,
+    event_quality,
+    fold_phase,
+    phase_significance,
+    secondary_search,
+    stacked_depth,
+    sweet,
+)
 from skysift.models import LightCurve
 from tests.synthetic import inject_transit, make_lightcurve
 
@@ -204,3 +215,120 @@ def test_apply_mask_sets_nan_exactly_inside_the_windows():
     assert np.array_equal(out[~inside], f[~inside])
     assert not np.isnan(f).any()                                               # the input is left alone
     assert apply_mask(t, f, []) is f and apply_mask(t, f, None) is f
+
+
+# --- Robovetter-style fold helpers: model-shift uniqueness, SWEET, per-event quality (Thompson et al. 2018, App. A) ---
+
+UP, UT0, UDUR = 4.1, 140.3, 0.125               # a 3 h transit every 4.1 d
+EP, ET0, EDUR = 30.0, 145.0, 0.25               # a 6 h transit every 30 d
+
+
+def _box_curve(period, t0, dur, depth, n_days=1400, seed=13, extra=()):
+    """Noise-only curve (600 ppm, seed 13) with a box transit and any ``extra`` (period, t0, dur, depth) boxes."""
+    lc = inject_transit(make_lightcurve(n_days=n_days, noise_ppm=600, seed=seed), period, t0, dur, depth)
+    for p, t, d, dp in extra:
+        lc = inject_transit(lc, p, t, d, dp)
+    return lc
+
+
+def test_phase_significance_of_a_clean_transit_is_unique():
+    lc = _box_curve(UP, UT0, UDUR, 1500)
+    ps = phase_significance(lc.time, detrend(lc), UP, UT0, UDUR)
+    step = UDUR / UP / SHAPE_BINS_PER_DURATION
+    assert ps.sigma_pri > 10 and ps.ms2 < 2.0 and ps.ms3 < 4.0
+    assert abs(ps.phases[np.nanargmax(ps.sigma)]) < step
+    assert ps.phases.size == ps.sigma.size and ps.phases.min() >= -0.5 and ps.phases.max() < 0.5
+    assert abs(np.diff(ps.phases) - step).max() < 1e-9 and abs(ps.fa2 - np.sqrt(2) * erfcinv(UDUR / UP)) < 1e-12
+
+
+def test_phase_significance_flags_two_equal_dips():
+    lc = _box_curve(UP, UT0, UDUR, 1500, extra=[(UP, UT0 + 0.37 * UP, UDUR, 1500)])
+    ps = phase_significance(lc.time, detrend(lc), UP, UT0, UDUR)
+    assert abs(ps.phase_sec - 0.37) < 0.01 and 0.9 < ps.sigma_sec / ps.sigma_pri < 1.1
+
+
+def test_phase_significance_flags_a_primary_that_is_not_the_deepest():
+    lc = _box_curve(UP, UT0, UDUR, 1500, extra=[(UP, UT0 + 0.37 * UP, UDUR, 3000), (UP, UT0 + 0.71 * UP, UDUR, 3000)])
+    ps = phase_significance(lc.time, detrend(lc), UP, UT0, UDUR)
+    assert ps.ms2 > 2.0 and ps.sigma_ter > ps.sigma_pri
+
+
+def test_phase_significance_flags_a_brightening():
+    lc = _box_curve(UP, UT0, UDUR, 1500)
+    bright = np.abs(fold_phase(lc.time, UP, UT0 + 0.3 * UP)) < 0.5 * UDUR
+    f = lc.flux.copy(); f[bright] *= 1 + 3.0e-3
+    lc = LightCurve(lc.time, f, lc.flux_err, lc.quality, lc.quarter, f.copy(), {})
+    ps = phase_significance(lc.time, detrend(lc), UP, UT0, UDUR)
+    assert ps.ms3 > 4.0 and ps.sigma_pos > ps.sigma_pri
+
+
+def _quiet(n_days=1400):
+    return make_lightcurve(n_days=n_days, noise_ppm=600, seed=13, quarters=False)
+
+
+def test_sweet_finds_the_wave_at_the_period():
+    lc = _quiet()
+    flux = lc.flux * (1 + 2e-3 * np.sin(2 * np.pi * lc.time / 2.3))
+    r = sweet(lc.time, flux, 2.3, 500)
+    assert r.factor == 1.0 and abs(r.amplitude_ppm - 2000) < 200 and r.snr > 50
+
+
+def test_sweet_finds_the_half_period_wave():
+    lc = _quiet()
+    flux = lc.flux * (1 + 2e-3 * np.sin(2 * np.pi * lc.time / 1.15))
+    r = sweet(lc.time, flux, 2.3, 500)
+    assert r.factor == 0.5 and r.snr > 50
+
+
+def test_sweet_is_quiet_on_a_transit():
+    lc = inject_transit(_quiet(), 2.3, 140.0, 0.08, 2000)
+    r = sweet(lc.time, lc.flux, 2.3, 500)
+    assert r.snr < 50
+
+
+def test_event_quality_coverage_and_ses():
+    lc = _box_curve(EP, ET0, EDUR, 3000)
+    fn = detrend(lc)
+    eq = event_quality(lc.time, fn, EP, ET0, EDUR)
+    assert eq.chases is None and eq.epochs.size == eq.coverage.size == eq.ses.size > 40
+    t_event = ET0 + eq.epochs * EP
+    # an event inside or touching a quarter gap (1.5 d gap plus 1.5 d of masked ramp after it) is short of points
+    in_gap = ((t_event - 131.5 + EDUR) % 93.0 < 3.0 + 2 * EDUR) | ((t_event - 131.5 - EDUR) % 93.0 < 3.0)
+    ok = ~in_gap
+    assert ok.sum() > 30 and np.all((eq.coverage[ok] > 0.9) & (eq.coverage[ok] < 1.1))
+    assert in_gap[(eq.coverage <= 0.9) | (eq.coverage >= 1.1)].all()      # measured: no epoch of this curve falls in a gap
+    assert np.all(eq.ses[ok & np.isfinite(eq.ses)] > 3) and np.isfinite(eq.ses[ok]).all()
+    k = int(np.where(ok)[0][5])
+    cut = fn.copy()
+    cut[(lc.time > t_event[k]) & (lc.time < t_event[k] + EDUR)] = np.nan
+    eq2 = event_quality(lc.time, cut, EP, ET0, EDUR)
+    j = int(np.where(eq2.epochs == eq.epochs[k])[0][0])
+    assert eq2.coverage[j] < 0.75 and eq2.coverage[j] < eq.coverage[k]
+
+
+def _chases_curve(extra=()):
+    return _box_curve(EP, ET0, EDUR, 3000, n_days=130, extra=extra)
+
+
+def test_event_quality_chases_is_near_one_for_clean_events():
+    lc = _chases_curve()
+    eq = event_quality(lc.time, detrend(lc), EP, ET0, EDUR)
+    assert eq.epochs.size == 4 and eq.chases is not None
+    c = eq.chases[np.isfinite(eq.chases)]
+    assert c.size == 4 and np.all(c > 0.8) and np.all(c <= 1.0)
+
+
+def test_event_quality_chases_drops_to_zero_next_to_a_comparable_dip():
+    lc = _chases_curve(extra=[(1e4, ET0 + 2 * EP + 1.2, EDUR, 3000)])      # once, 1.2 d after the third event
+    eq = event_quality(lc.time, detrend(lc), EP, ET0, EDUR)
+    hit = int(np.where(eq.epochs == 2)[0][0])
+    others = np.arange(eq.epochs.size) != hit
+    assert eq.chases[hit] < 0.5 and np.all(eq.chases[others] > 0.8), eq.chases
+
+
+def test_event_quality_chases_is_none_above_five_events():
+    lc = _box_curve(EP, ET0, EDUR, 3000)
+    eq = event_quality(lc.time, detrend(lc), EP, ET0, EDUR)
+    assert eq.epochs.size > 5 and eq.chases is None
+    short = _box_curve(EP, ET0, EDUR, 3000, n_days=130)
+    assert event_quality(short.time, detrend(short), EP, ET0, EDUR).chases is not None

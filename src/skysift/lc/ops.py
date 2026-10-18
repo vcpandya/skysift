@@ -298,6 +298,195 @@ def shape_contrast(time, fnorm, period, t0, duration_days) -> tuple[float, float
     return box_chi2, sine_chi2, int(ok.sum())
 
 
+EVENT_COVERAGE_MIN = 0.75       # an event is covered when it holds at least this fraction of the points expected
+CHASES_MAX_EVENTS = 5           # Chases is computed only for signals with at most this many events
+CHASES_FRACTION = 0.8           # a slid box counts as a competing dip above this fraction of the event's own SES
+CHASES_MIN = 0.01               # C_i below this marks the event bad (applied by the rung)
+SWEET_FACTORS = (0.5, 1.0, 2.0)
+PHASE_MIN_BOX, PHASE_MIN_BASELINE = 5, 50
+
+
+@dataclass
+class PhaseSignificance:
+    phases: np.ndarray          # cycle fraction in [-0.5, 0.5)
+    sigma: np.ndarray           # depth significance of the box centred at each phase (positive = dip)
+    sigma_pri: float
+    sigma_sec: float
+    phase_sec: float
+    sigma_ter: float
+    sigma_pos: float
+    fa2: float
+    ms2: float
+    ms3: float
+
+
+def _nanmax_or_nan(x: np.ndarray) -> float:
+    return float(np.nanmax(x)) if x.size and np.isfinite(x).any() else float("nan")
+
+
+def phase_significance(time, fnorm, period, t0, duration_days) -> PhaseSignificance:
+    """Model-shift statistics (Thompson et al. 2018, Appendix A): the box of the detected duration slid around the
+    fold in steps of ``duration / SHAPE_BINS_PER_DURATION``, the depth significance at each step against the median
+    and robust scatter (1.4826 times the median absolute deviation) of the points at least ``PRIMARY_MASK_DURATIONS``
+    durations from the box centre and from the primary (phase 0), so neither the box nor the primary sits in the
+    baseline. A step with fewer than 5 points in the box or 50 in the baseline is NaN.
+
+    ``sigma_pri`` is the step at phase 0; ``sigma_sec`` the deepest step at least 1.5 durations from it (at
+    ``phase_sec``); ``sigma_ter`` the deepest at least 1.5 durations from both; ``sigma_pos`` the strongest
+    brightening (most negative sigma, as a positive number) away from the primary. ``fa2 = sqrt(2) erfcinv(duration
+    / period)`` is the significance a single trial of the fold exceeds by chance; ``ms2 = fa2 - (sigma_pri -
+    sigma_ter)`` and ``ms3 = fa2 - (sigma_pri - sigma_pos)`` fail the signal when large (the rung applies the
+    thresholds). The primary is not compared with the secondary: two equal dips leave ``ms2`` and ``ms3`` low, and the
+    secondary rules of the rung handle them."""
+    from scipy.special import erfcinv
+    time, fnorm = np.asarray(time, float), np.asarray(fnorm, float)
+    good = np.isfinite(time) & np.isfinite(fnorm)
+    cycles = fold_phase(time[good], period, t0) / period                    # [-0.5, 0.5)
+    fn = fnorm[good]
+    width = duration_days / period
+    step = width / SHAPE_BINS_PER_DURATION
+    n_half = int(np.floor(0.5 / step))
+    phases = step * np.arange(-n_half, n_half + 1)
+    phases = phases[(phases >= -0.5) & (phases < 0.5)]
+    away_pri = np.abs(cycles) >= PRIMARY_MASK_DURATIONS * width
+    sigma = np.full(phases.size, np.nan)
+    for k, c in enumerate(phases):
+        d = _circular(cycles - c, 1.0)
+        inside = d < 0.5 * width
+        base = away_pri & (d >= PRIMARY_MASK_DURATIONS * width)
+        n_in = int(inside.sum())
+        if n_in < PHASE_MIN_BOX or base.sum() < PHASE_MIN_BASELINE:
+            continue
+        level = np.median(fn[base])
+        scat = 1.4826 * np.median(np.abs(fn[base] - level))
+        if scat > 0:
+            sigma[k] = (1 - np.mean(fn[inside]) / level) / (scat / np.sqrt(n_in))
+    sigma_pri = float(sigma[np.argmin(np.abs(phases))]) if phases.size else float("nan")
+    off = np.abs(phases) >= PRIMARY_MASK_DURATIONS * width
+    sec = np.where(off, sigma, np.nan)
+    if np.isfinite(sec).any():
+        k = int(np.nanargmax(sec)); sigma_sec, phase_sec = float(sec[k]), float(phases[k])
+        ter = np.where(off & (_circular(phases - phase_sec, 1.0) >= PRIMARY_MASK_DURATIONS * width), sigma, np.nan)
+        sigma_ter = _nanmax_or_nan(ter)
+    else:
+        sigma_sec = phase_sec = sigma_ter = float("nan")
+    sigma_pos = _nanmax_or_nan(np.where(off, -sigma, np.nan))
+    fa2 = float(np.sqrt(2.0) * erfcinv(width))
+    return PhaseSignificance(phases, sigma, sigma_pri, sigma_sec, phase_sec, sigma_ter, sigma_pos, fa2,
+                             fa2 - (sigma_pri - sigma_ter), fa2 - (sigma_pri - sigma_pos))
+
+
+@dataclass
+class SweetResult:
+    factor: float               # the period multiple (0.5, 1 or 2) of the strongest sine
+    amplitude_ppm: float
+    snr: float                  # amplitude over its least-squares error
+
+
+def sweet(time, flux, period, depth_ppm) -> SweetResult:
+    """Sine-wave evaluation of the signal (SWEET, Thompson et al. 2018, Appendix A): a linear fit of an offset, a
+    cosine and a sine at ``f x period`` for ``f`` in ``SWEET_FACTORS`` to the finite points, keeping the multiple with
+    the largest amplitude signal to noise. The error is the least-squares propagation of the amplitude from the
+    residual variance and ``inv(X^T X)``. ``depth_ppm`` is the caller's to compare with the amplitude: the rule sits
+    in the rung, and no field of the result carries it. Fewer than 4 finite points return a NaN amplitude and snr."""
+    time, flux = np.asarray(time, float), np.asarray(flux, float)
+    good = np.isfinite(time) & np.isfinite(flux)
+    if good.sum() < 4:
+        return SweetResult(1.0, float("nan"), float("nan"))
+    t, y = time[good] - time[good].min(), flux[good]
+    best = SweetResult(1.0, float("nan"), float("-inf"))
+    for f in SWEET_FACTORS:
+        w = 2 * np.pi * t / (f * period)
+        x = np.column_stack([np.ones(t.size), np.cos(w), np.sin(w)])
+        coef, *_ = np.linalg.lstsq(x, y, rcond=None)
+        resid = y - x @ coef
+        try:
+            cov = np.linalg.inv(x.T @ x) * float(resid @ resid) / (t.size - 3)
+        except np.linalg.LinAlgError:
+            continue
+        a, b = float(coef[1]), float(coef[2])
+        amp = float(np.hypot(a, b))
+        if amp <= 0:
+            continue
+        var = (a * a * cov[1, 1] + b * b * cov[2, 2] + 2 * a * b * cov[1, 2]) / amp ** 2
+        if not np.isfinite(var) or var <= 0:
+            var = (a * a * cov[1, 1] + b * b * cov[2, 2]) / amp ** 2
+        snr = amp / float(np.sqrt(var)) if var > 0 else float("nan")
+        if np.isfinite(snr) and snr > best.snr:
+            best = SweetResult(float(f), amp * 1e6, snr)
+    return best if np.isfinite(best.snr) else SweetResult(1.0, float("nan"), float("nan"))
+
+
+@dataclass
+class EventQuality:
+    epochs: np.ndarray          # every epoch with at least one point within one duration of mid-transit
+    coverage: np.ndarray        # points within +-1 duration / expected (2 duration / median cadence), per epoch
+    ses: np.ndarray             # depth / error per epoch from _box_depth; NaN when the box holds fewer than 3 points
+    chases: np.ndarray | None   # C_i per epoch when len(epochs) <= CHASES_MAX_EVENTS, else None
+
+
+def _chases_one(t, y, t_event, ses, period, duration_days) -> float:
+    """C_i of one event: ``min(dt, P/10) / (P/10)``, ``dt`` the distance from mid-transit to the nearest centre of a
+    box of the transit duration, slid over the points of ``t, y`` within P/10, whose significance exceeds
+    ``CHASES_FRACTION x ses``. Centres within 1.5 durations of mid-transit are ignored, and so is any centre whose box
+    holds fewer than 3 points or whose baseline holds fewer than 10."""
+    reach = period / 10.0
+    near = np.abs(t - t_event) <= reach
+    tw, yw = t[near], y[near]
+    dt = reach
+    for c in tw[np.abs(tw - t_event) >= PRIMARY_MASK_DURATIONS * duration_days]:
+        d = np.abs(tw - c)
+        inside, base = d < 0.5 * duration_days, d >= PRIMARY_MASK_DURATIONS * duration_days
+        if inside.sum() < 3 or base.sum() < 10:
+            continue
+        level = np.median(yw[base])
+        scat = 1.4826 * np.median(np.abs(yw[base] - level))
+        if scat <= 0:
+            continue
+        sig = (level - np.mean(yw[inside])) / (scat / np.sqrt(inside.sum()))
+        if abs(sig) > CHASES_FRACTION * ses:
+            dt = min(dt, abs(c - t_event))
+    return float(min(dt, reach) / reach)
+
+
+def event_quality(time, fnorm, period, t0, duration_days) -> EventQuality:
+    """Per-event coverage, single-event statistic and Chases (Thompson et al. 2018, Appendix A) on the finite points.
+
+    The events are the epochs ``round((t - t0) / period)`` with a point within one duration of mid-transit.
+    ``coverage`` counts the points within one duration of mid-transit over the 2 x duration / median cadence expected.
+    ``ses`` is the depth over the error of ``_box_depth`` on the epoch's points, as ``event_depths`` takes it, NaN when
+    the box holds fewer than 3 points or the baseline fewer than 20. ``chases`` is computed only when the number of
+    events is at most ``CHASES_MAX_EVENTS`` (otherwise None), and is NaN for an event without a finite ses: a box of the
+    duration slid across +-P/10 of mid-transit must not find a dip as significant as 0.8 x the event's own ses closer
+    than P/10 (``_chases_one``); 1 means none nearer than the window, 0 a competing dip on top of the event."""
+    time, fnorm = np.asarray(time, float), np.asarray(fnorm, float)
+    good = np.isfinite(time) & np.isfinite(fnorm)
+    time, fn = time[good], fnorm[good]
+    if time.size < 2:
+        return EventQuality(np.array([], int), np.array([]), np.array([]), np.array([]))
+    cadence = float(np.median(np.diff(np.sort(time))))
+    ph = fold_phase(time, period, t0)
+    ep = np.round((time - t0) / period).astype(int)
+    near = np.abs(ph) < duration_days
+    epochs = np.unique(ep[near])
+    expected = 2.0 * duration_days / cadence
+    half = duration_days / 2.0
+    coverage = np.array([np.count_nonzero(near & (ep == e)) / expected for e in epochs])
+    ses = np.full(epochs.size, np.nan)
+    for i, e in enumerate(epochs):
+        s = ep == e
+        r = _box_depth(ph[s], fn[s], half)
+        if r is not None and r[1] > 0:
+            ses[i] = r[0] / r[1]
+    chases = None
+    if epochs.size <= CHASES_MAX_EVENTS:
+        chases = np.full(epochs.size, np.nan)
+        for i, e in enumerate(epochs):
+            if np.isfinite(ses[i]):
+                chases[i] = _chases_one(time, fn, t0 + e * period, ses[i], period, duration_days)
+    return EventQuality(epochs, coverage, ses, chases)
+
+
 def circular_duration_days(period_days: float, mass_msun: float = 0.5, radius_rsun: float = 0.5) -> float:
     """Central-transit duration for a circular orbit: T = P/pi * asin(R*/a), a from Kepler's third law."""
     a_au = (mass_msun * (period_days / 365.25) ** 2) ** (1 / 3)
