@@ -577,7 +577,7 @@ def event_quality(time, fnorm, period, t0, duration_days, *, observed=None) -> E
     if t_obs.size < 2:
         return EventQuality(np.array([], int), np.array([]), np.array([]), np.array([]), float("nan"))
     cadence = float(np.median(np.diff(t_obs)))
-    duty = _duty_cycle(t_obs, cadence)
+    duty = min(1.0, _duty_cycle(t_obs, cadence))     # duplicated time stamps must not push the duty cycle above 1
     ph = fold_phase(time, period, t0)
     ep = np.round((time - t0) / period).astype(int)
     epochs = np.arange(int(np.ceil((t_obs[0] - t0) / period)), int(np.floor((t_obs[-1] - t0) / period)) + 1)
