@@ -148,3 +148,15 @@ def test_guard_scan_ignores_boxes_narrower_than_a_cadence():
     assert _box_like(t, y, f0, coef, resolution) is False
     pw = prewhiten(lc.time, fn, max_components=5, fap_max=1e-6)
     assert pw.skipped == [] and any(abs(c.frequency - f0) < 2 * resolution for c in pw.components), pw.skipped
+
+
+def test_guard_scan_survives_a_peak_at_the_first_grid_frequency():
+    """Astropy's grid starts at exactly 2 / baseline, and a wave of half the baseline peaks there; the guard scan
+    reaches down 2 resolution elements, so its lowest trial frequency was exactly 0 and ``1.0 / 0.0`` raised
+    ZeroDivisionError, which errored the target and charged it an attempt. Trials at or below half a resolution
+    element are skipped: the wave is removed or refused, either way the loop returns."""
+    t = np.linspace(0.0, 90.0, 90 * 48 + 1)                 # 30 min cadence, baseline exactly 90 d
+    flux = 1 + 0.01 * np.sin(2 * np.pi * t / 45.0)          # period half the baseline: the first grid frequency
+    pw = prewhiten(t, flux, max_components=3, fap_max=1e-6)
+    near = [f for f in [c.frequency for c in pw.components] + pw.skipped if abs(f - 1 / 45.0) < 0.5 / 90.0]
+    assert near, (pw.components, pw.skipped)

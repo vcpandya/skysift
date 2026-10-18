@@ -35,7 +35,8 @@ AMP_FLOOR_FRACTION = 0.06           # stop once a wave's amplitude is below this
 GUARD_HARMONICS = 8                 # harmonics and sub-harmonics of a refused frequency are refused too
 GUARD_EXCLUSION = 4.0               # in resolution elements (1/baseline): covers the leakage sidelobes of a refused peak
 # the scan of the shape guard: short box widths are also tried at f0 + k * GUARD_SCAN_STEP * resolution for k in
-# -GUARD_SCAN_STEPS .. GUARD_SCAN_STEPS (plus or minus 2 resolution elements), the box on the fold's deepest bin
+# -GUARD_SCAN_STEPS .. GUARD_SCAN_STEPS (plus or minus 2 resolution elements), the box on the fold's deepest bin;
+# trials at or below half a resolution element are skipped
 GUARD_SCAN_MAX_FRACTION = 0.12
 GUARD_SCAN_STEP = 0.1
 GUARD_SCAN_STEPS = 20
@@ -138,7 +139,10 @@ def _box_like(t: np.ndarray, y: np.ndarray, f0: float, coef: list[float], resolu
         return False
     sigma = 1.4826 * float(np.median(np.abs(y - np.median(y)))) or 1e-12
     for k in range(-GUARD_SCAN_STEPS, GUARD_SCAN_STEPS + 1):
-        period = 1.0 / (f0 + k * GUARD_SCAN_STEP * resolution)
+        trial = f0 + k * GUARD_SCAN_STEP * resolution
+        if trial <= 0.5 * resolution:       # a peak at the first grid frequency (2 / baseline) reaches 0 at k = -20:
+            continue                        # nothing periodic is defined below half a resolution element
+        period = 1.0 / trial
         t0 = _deepest_t0(t, y, period)
         offset = np.abs(fold_phase(t, period, t0))
         for frac in short:
