@@ -324,6 +324,81 @@ def _nanmax_or_nan(x: np.ndarray) -> float:
     return float(np.nanmax(x)) if x.size and np.isfinite(x).any() else float("nan")
 
 
+def _slid_box_sigma(cycles: np.ndarray, fn: np.ndarray, phases: np.ndarray, width: float) -> np.ndarray:
+    """Depth significance of the box of ``width`` cycles centred at each of ``phases`` on the fold ``cycles`` (in
+    [-0.5, 0.5)), against the median and 1.4826 x MAD of the points at least ``PRIMARY_MASK_DURATIONS`` widths from
+    the box centre and from phase 0; NaN where the box holds fewer than ``PHASE_MIN_BOX`` points, the baseline fewer
+    than ``PHASE_MIN_BASELINE``, or the baseline scatter is zero.
+
+    Exact, without a pass over the whole fold per phase. The fold is sorted once; box counts and sums are differences
+    of cumulative sums at ``searchsorted`` positions. The baseline of a phase is the away-from-primary set minus a
+    contiguous window of it, so its median is the global rank-shifted by the removed points (their global ranks,
+    sorted, give the shift), and its MAD is found by bisecting the half-width that holds half of the baseline, the
+    removed points counted by their ranks. Total work is about twelve times the number of points, whatever the number
+    of phases."""
+    out = np.full(phases.size, np.nan)
+    order = np.argsort(cycles, kind="stable")
+    xs, ys = cycles[order], fn[order]
+    if xs.size == 0:
+        return out
+    half, guard = 0.5 * width, PRIMARY_MASK_DURATIONS * width
+    ref = float(np.median(ys))
+    xt = np.concatenate([xs - 1.0, xs, xs + 1.0])
+    csum = np.concatenate([[0.0], np.cumsum(np.tile(ys - ref, 3))])
+    lo = np.searchsorted(xt, phases - half, side="right")
+    hi = np.searchsorted(xt, phases + half, side="left")
+    n_in = hi - lo
+    away = np.abs(xs) >= guard
+    a_x, a_y = xs[away], ys[away]
+    n_a = a_x.size
+    if n_a < PHASE_MIN_BASELINE:
+        return out
+    at = np.concatenate([a_x - 1.0, a_x, a_x + 1.0])
+    e_lo = np.searchsorted(at, phases - guard, side="right")
+    e_hi = np.searchsorted(at, phases + guard, side="left")
+    removed = e_hi - e_lo                                           # baseline points inside the exclusion window
+    n_base = n_a - removed
+    ok = np.flatnonzero((n_in >= PHASE_MIN_BOX) & (n_base >= PHASE_MIN_BASELINE))
+    if ok.size == 0:
+        return out
+    g_order = np.argsort(a_y, kind="stable")
+    g = a_y[g_order]
+    rank = np.empty(n_a, np.int64); rank[g_order] = np.arange(n_a)
+    m = removed[ok]
+    start = np.concatenate([[0], np.cumsum(m)[:-1]])
+    kk = np.repeat(np.arange(ok.size), m)
+    within = np.arange(kk.size) - start[kk]
+    keys = kk * n_a + rank[(e_lo[ok][kk] + within) % n_a]
+    keys.sort()                                                     # removed ranks, ascending within each phase
+    shift_key = kk * (n_a + 1) + (keys - kk * n_a - within)         # removed rank minus its position: kept before it
+    r_lo, r_hi = (n_base[ok] - 1) // 2, n_base[ok] // 2
+    ids = np.arange(ok.size)
+    j_lo = np.searchsorted(shift_key, ids * (n_a + 1) + r_lo, side="right") - start
+    j_hi = np.searchsorted(shift_key, ids * (n_a + 1) + r_hi, side="right") - start
+    level = 0.5 * (g[r_lo + j_lo] + g[r_hi + j_hi])
+
+    def count_within(h):
+        a, b = np.searchsorted(g, level - h, side="left"), np.searchsorted(g, level + h, side="right")
+        gone = np.searchsorted(keys, ids * n_a + b, side="left") - np.searchsorted(keys, ids * n_a + a, side="left")
+        return (b - a) - gone
+
+    dev = []
+    for need in (r_lo + 1, r_hi + 1):
+        low, high = np.zeros(ok.size), np.maximum(g[-1] - level, level - g[0])
+        for _ in range(64):
+            mid = 0.5 * (low + high)
+            enough = count_within(mid) >= need
+            high, low = np.where(enough, mid, high), np.where(enough, low, mid)
+        dev.append(high)
+    scat = 1.4826 * 0.5 * (dev[0] + dev[1])
+    n = n_in[ok]
+    mean = (csum[hi[ok]] - csum[lo[ok]]) / n + ref
+    with np.errstate(divide="ignore", invalid="ignore"):
+        sig = (1 - mean / level) / (scat / np.sqrt(n))
+    out[ok] = np.where(scat > 0, sig, np.nan)
+    return out
+
+
 def phase_significance(time, fnorm, period, t0, duration_days) -> PhaseSignificance:
     """Model-shift statistics (Thompson et al. 2018, Appendix A): the box of the detected duration slid around the
     fold in steps of ``duration / SHAPE_BINS_PER_DURATION``, the depth significance at each step against the median
@@ -348,19 +423,7 @@ def phase_significance(time, fnorm, period, t0, duration_days) -> PhaseSignifica
     n_half = int(np.floor(0.5 / step))
     phases = step * np.arange(-n_half, n_half + 1)
     phases = phases[(phases >= -0.5) & (phases < 0.5)]
-    away_pri = np.abs(cycles) >= PRIMARY_MASK_DURATIONS * width
-    sigma = np.full(phases.size, np.nan)
-    for k, c in enumerate(phases):
-        d = _circular(cycles - c, 1.0)
-        inside = d < 0.5 * width
-        base = away_pri & (d >= PRIMARY_MASK_DURATIONS * width)
-        n_in = int(inside.sum())
-        if n_in < PHASE_MIN_BOX or base.sum() < PHASE_MIN_BASELINE:
-            continue
-        level = np.median(fn[base])
-        scat = 1.4826 * np.median(np.abs(fn[base] - level))
-        if scat > 0:
-            sigma[k] = (1 - np.mean(fn[inside]) / level) / (scat / np.sqrt(n_in))
+    sigma = _slid_box_sigma(cycles, fn, phases, width)
     sigma_pri = float(sigma[np.argmin(np.abs(phases))]) if phases.size else float("nan")
     off = np.abs(phases) >= PRIMARY_MASK_DURATIONS * width
     sec = np.where(off, sigma, np.nan)
@@ -388,7 +451,8 @@ def sweet(time, flux, period, depth_ppm) -> SweetResult:
     cosine and a sine at ``f x period`` for ``f`` in ``SWEET_FACTORS`` to the finite points, keeping the multiple with
     the largest amplitude signal to noise. The error is the least-squares propagation of the amplitude from the
     residual variance and ``inv(X^T X)``. ``depth_ppm`` is the caller's to compare with the amplitude: the rule sits
-    in the rung, and no field of the result carries it. Fewer than 4 finite points return a NaN amplitude and snr."""
+    in the rung, and no field of the result carries it. ``time`` and ``period`` are in days and ``flux`` is normalised to
+    1, so ``amplitude_ppm`` is the relative amplitude times 1e6. Fewer than 4 finite points return a NaN amplitude and snr."""
     time, flux = np.asarray(time, float), np.asarray(flux, float)
     good = np.isfinite(time) & np.isfinite(flux)
     if good.sum() < 4:
@@ -457,7 +521,7 @@ def event_quality(time, fnorm, period, t0, duration_days) -> EventQuality:
     ``coverage`` counts the points within one duration of mid-transit over the 2 x duration / median cadence expected.
     ``ses`` is the depth over the error of ``_box_depth`` on the epoch's points, as ``event_depths`` takes it, NaN when
     the box holds fewer than 3 points or the baseline fewer than 20. ``chases`` is computed only when the number of
-    events is at most ``CHASES_MAX_EVENTS`` (otherwise None), and is NaN for an event without a finite ses: a box of the
+    events is at most ``CHASES_MAX_EVENTS`` (otherwise None), and is NaN for an event without a positive finite ses: a box of the
     duration slid across +-P/10 of mid-transit must not find a dip as significant as 0.8 x the event's own ses closer
     than P/10 (``_chases_one``); 1 means none nearer than the window, 0 a competing dip on top of the event."""
     time, fnorm = np.asarray(time, float), np.asarray(fnorm, float)
@@ -470,7 +534,7 @@ def event_quality(time, fnorm, period, t0, duration_days) -> EventQuality:
     ep = np.round((time - t0) / period).astype(int)
     near = np.abs(ph) < duration_days
     epochs = np.arange(int(np.ceil((time.min() - t0) / period)), int(np.floor((time.max() - t0) / period)) + 1)
-    expected = 2.0 * duration_days / cadence
+    expected = 2.0 * duration_days / cadence if cadence > 0 else np.nan     # duplicated stamps: coverage undefined
     half = duration_days / 2.0
     coverage = np.array([np.count_nonzero(near & (ep == e)) / expected for e in epochs])
     ses = np.full(epochs.size, np.nan)
@@ -483,7 +547,7 @@ def event_quality(time, fnorm, period, t0, duration_days) -> EventQuality:
     if epochs.size <= CHASES_MAX_EVENTS:
         chases = np.full(epochs.size, np.nan)
         for i, e in enumerate(epochs):
-            if np.isfinite(ses[i]):
+            if np.isfinite(ses[i]) and ses[i] > 0:         # a brightening has no dip to compete with
                 chases[i] = _chases_one(time, fn, t0 + e * period, ses[i], period, duration_days)
     return EventQuality(epochs, coverage, ses, chases)
 

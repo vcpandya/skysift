@@ -1,8 +1,11 @@
 import numpy as np
+import pytest
 from scipy.special import erfcinv
 
 from skysift.lc.ops import (
+    EVENT_COVERAGE_MIN,
     SHAPE_BINS_PER_DURATION,
+    _circular,
     detrend,
     event_depths,
     event_quality,
@@ -241,7 +244,7 @@ def test_phase_significance_of_a_clean_transit_is_unique():
     assert abs(np.diff(ps.phases) - step).max() < 1e-9 and abs(ps.fa2 - np.sqrt(2) * erfcinv(UDUR / UP)) < 1e-12
 
 
-def test_phase_significance_flags_two_equal_dips():
+def test_phase_significance_locates_an_equal_second_dip():
     lc = _box_curve(UP, UT0, UDUR, 1500, extra=[(UP, UT0 + 0.37 * UP, UDUR, 1500)])
     ps = phase_significance(lc.time, detrend(lc), UP, UT0, UDUR)
     assert abs(ps.phase_sec - 0.37) < 0.01 and 0.9 < ps.sigma_sec / ps.sigma_pri < 1.1
@@ -251,6 +254,7 @@ def test_phase_significance_flags_a_primary_that_is_not_the_deepest():
     lc = _box_curve(UP, UT0, UDUR, 1500, extra=[(UP, UT0 + 0.37 * UP, UDUR, 3000), (UP, UT0 + 0.71 * UP, UDUR, 3000)])
     ps = phase_significance(lc.time, detrend(lc), UP, UT0, UDUR)
     assert ps.ms2 > 2.0 and ps.sigma_ter > ps.sigma_pri
+    assert ps.ms2 == pytest.approx(ps.fa2 - (ps.sigma_pri - ps.sigma_ter))
 
 
 def test_phase_significance_flags_a_brightening():
@@ -260,6 +264,7 @@ def test_phase_significance_flags_a_brightening():
     lc = LightCurve(lc.time, f, lc.flux_err, lc.quality, lc.quarter, f.copy(), {})
     ps = phase_significance(lc.time, detrend(lc), UP, UT0, UDUR)
     assert ps.ms3 > 4.0 and ps.sigma_pos > ps.sigma_pri
+    assert ps.ms3 == pytest.approx(ps.fa2 - (ps.sigma_pri - ps.sigma_pos))
 
 
 def _quiet(n_days=1400):
@@ -281,6 +286,8 @@ def test_sweet_finds_the_half_period_wave():
 
 
 def test_sweet_is_quiet_on_a_transit():
+    # the 0.08 d width is tuned to the threshold: the first harmonic of a 2000 ppm box has about 145 ppm (snr 38 on
+    # this noise); at 0.125 d it is 223 ppm (snr 55), and only the rung's amplitude-versus-depth rules spare a planet
     lc = inject_transit(_quiet(), 2.3, 140.0, 0.08, 2000)
     r = sweet(lc.time, lc.flux, 2.3, 500)
     assert r.snr < 50
@@ -303,7 +310,7 @@ def test_event_quality_coverage_and_ses():
     cut[(lc.time > t_event[k]) & (lc.time < t_event[k] + EDUR)] = np.nan
     eq2 = event_quality(lc.time, cut, EP, ET0, EDUR)
     j = int(np.where(eq2.epochs == eq.epochs[k])[0][0])
-    assert eq2.coverage[j] < 0.75 and eq2.coverage[j] < eq.coverage[k]
+    assert eq2.coverage[j] < EVENT_COVERAGE_MIN and eq2.coverage[j] < eq.coverage[k]
 
 
 def test_event_quality_counts_an_epoch_without_points():
@@ -345,3 +352,33 @@ def test_event_quality_chases_is_none_above_five_events():
     assert eq.epochs.size > 5 and eq.chases is None
     short = _box_curve(EP, ET0, EDUR, 3000, n_days=130)
     assert event_quality(short.time, detrend(short), EP, ET0, EDUR).chases is not None
+
+
+def test_phase_significance_matches_a_direct_evaluation_at_every_phase():
+    """The sliding box is evaluated from sorted sums and ranks; each phase must equal the plain definition: box of
+    circular distance below half a duration, baseline at least 1.5 durations from the box centre and from phase 0,
+    sigma = depth / (1.4826 MAD / sqrt(n_box)). A rounded flux (many tied values) and NaN points are included."""
+    lc = _box_curve(UP, UT0, UDUR, 1500, n_days=300, extra=[(UP, UT0 + 0.37 * UP, UDUR, 800)])
+    fn = np.round(detrend(lc), 4)
+    fn[::7] = np.nan
+    ps = phase_significance(lc.time, fn, UP, UT0, UDUR)
+    good = np.isfinite(fn)
+    cyc, y = fold_phase(lc.time[good], UP, UT0) / UP, fn[good]
+    w = UDUR / UP
+    want = np.full(ps.phases.size, np.nan)
+    for k, c in enumerate(ps.phases):
+        d = _circular(cyc - c, 1.0)
+        inside, base = d < 0.5 * w, (np.abs(cyc) >= 1.5 * w) & (d >= 1.5 * w)
+        lvl = np.median(y[base]); scat = 1.4826 * np.median(np.abs(y[base] - lvl))
+        want[k] = (1 - y[inside].mean() / lvl) / (scat / np.sqrt(inside.sum()))
+    assert np.isfinite(want).all() and np.isfinite(ps.sigma).all()
+    assert ps.sigma == pytest.approx(want, abs=1e-8)
+
+
+def test_event_quality_guards_duplicated_stamps_and_brightenings():
+    t = np.array([100.0, 100.0, 100.0, 101.0, 101.0, 102.0])
+    eq = event_quality(t, np.ones(t.size), 1.0, 100.0, 0.1)
+    assert eq.epochs.size > 0 and np.isnan(eq.coverage).all()               # cadence 0: no division by zero
+    lc = _chases_curve(extra=[(1e4, ET0 + EP, EDUR, -3000)])                # the second event brightens
+    eq = event_quality(lc.time, detrend(lc), EP, ET0, EDUR)
+    assert eq.ses[1] < 0 and np.isnan(eq.chases[1]) and np.isfinite(eq.chases[[0, 2, 3]]).all()
