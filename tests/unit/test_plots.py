@@ -274,3 +274,19 @@ def test_a_signal_with_a_detrend_record_is_drawn_with_that_detrend():
     other = {**record, "version": 1, "edge_mask_days": 0, "median_mode": "nearest"}     # the record wins over defaults
     assert np.array_equal(whitened_fnorm(lc, {"extra": {"detrend": other}}),
                           detrend(lc, edge_mask_days=0, pad_mode="nearest"), equal_nan=True)
+
+
+def test_a_second_pass_signal_is_drawn_on_the_masked_flux():
+    """The second pass searched the curve with the first-pass signals masked; the fold and the river plot of its signal
+    must show that flux, so the masked points are absent (NaN) from ``whitened_fnorm``."""
+    from skysift.ui.plots import whitened_fnorm
+    lc = inject_transit(make_lightcurve(n_days=200, seed=22, noise_ppm=500), 7.3, 135.0, 0.1, 3000)
+    record = {"version": 3, "edge_mask_days": 1.5, "edge_gap_days": 0.5, "median_mode": "mirror"}
+    mask = [{"period": 7.3, "t0": 135.0, "half_primary_days": 0.15, "half_secondary_days": 0.1}]
+    drawn = whitened_fnorm(lc, {"extra": {"detrend": record, "mask": mask}})
+    plain = whitened_fnorm(lc, {"extra": {"detrend": record}})
+    ph = (lc.time - 135.0 + 0.5 * 7.3) % 7.3 - 0.5 * 7.3
+    sec = (lc.time - 135.0) % 7.3 - 0.5 * 7.3
+    inside = (np.abs(ph) < 0.15) | (np.abs(sec) < 0.1)
+    assert inside.sum() > 0 and np.isnan(drawn[inside]).all()
+    assert np.array_equal(drawn[~inside], plain[~inside], equal_nan=True)

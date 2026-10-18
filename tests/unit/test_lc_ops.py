@@ -185,3 +185,22 @@ def test_detrend_keeps_a_transit_at_a_segment_edge():
         fn = detrend(LightCurve(t, ff, lc.flux_err, lc.quality, lc.quarter))
         depth = (1 - np.nanmean(fn[transit])) * 1e6
         assert np.isfinite(fn[transit]).all() and depth > 0.8 * 3000, (t0, depth)
+
+
+def test_apply_mask_sets_nan_exactly_inside_the_windows():
+    from skysift.lc.ops import apply_mask
+    t = np.arange(100.0, 200.0, 0.01)
+    f = 1.0 + 1e-4 * np.sin(t)
+    mask = [{"period": 10.0, "t0": 103.0037, "half_primary_days": 0.3051, "half_secondary_days": 0.2053},
+            {"period": 7.0, "t0": 101.0029, "half_primary_days": 0.1047, "half_secondary_days": 0.0551}]
+    out = apply_mask(t, f, mask)
+    inside = np.zeros(t.size, bool)
+    for m in mask:
+        for k in range(-20, 20):
+            inside |= np.abs(t - (m["t0"] + k * m["period"])) < m["half_primary_days"]
+            inside |= np.abs(t - (m["t0"] + (k + 0.5) * m["period"])) < m["half_secondary_days"]
+    assert inside.sum() > 0 and np.array_equal(np.isnan(out), inside)       # several epochs, both events, both signals
+    assert np.isnan(out[np.abs(t - 108.0) < 0.19]).all()                       # a secondary of the 10 d signal
+    assert np.array_equal(out[~inside], f[~inside])
+    assert not np.isnan(f).any()                                               # the input is left alone
+    assert apply_mask(t, f, []) is f and apply_mask(t, f, None) is f

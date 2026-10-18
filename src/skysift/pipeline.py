@@ -13,15 +13,23 @@ from collections import deque
 from collections.abc import Callable
 from concurrent.futures import FIRST_COMPLETED, Future, ProcessPoolExecutor, ThreadPoolExecutor, wait
 from concurrent.futures.process import BrokenProcessPool
+from dataclasses import replace
 from itertools import islice
 
 from skysift import jsonutil, net
 from skysift.config import Settings, Thresholds, stop_request_path
 from skysift.detectors.base import get_detector
 from skysift.detectors.periodogram import PeriodogramSummary
-from skysift.lc.ops import DETREND_VERSION, GAP_EDGE_MASK_DAYS, GAP_EDGE_TRIGGER_DAYS, MEDIAN_PAD_MODE, detrend
+from skysift.lc.ops import (
+    DETREND_VERSION,
+    GAP_EDGE_MASK_DAYS,
+    GAP_EDGE_TRIGGER_DAYS,
+    MEDIAN_PAD_MODE,
+    apply_mask,
+    detrend,
+)
 from skysift.lc.prewhiten import GUARD_EXCLUSION, PREWHITEN_VERSION, prewhiten, prewhiten_model
-from skysift.models import LightCurve, Target
+from skysift.models import LightCurve, Signal, Target
 from skysift.net import ServiceUnavailable
 from skysift.store.blob import Blob
 from skysift.store.db import (
@@ -189,6 +197,20 @@ def search_with_restore(det, lc: LightCurve, fn, th: Thresholds, record: dict, *
     return _search(det, lc, fn, th, keep_spectrum=keep_spectrum), fn, record
 
 
+def _vetting_bundle(bundle: DataBundle, sig: Signal) -> DataBundle:
+    """The bundle a signal is vetted on. A second-pass signal (``extra["mask"]``) was found with the first-pass
+    signals masked, so its rungs see the same flux: every masked point NaN in ``fnorm`` and ``fnorm_alt``. On the
+    unmasked flux a binary's eclipses, folded at the companion's period, built a spurious secondary and rung 2
+    rejected the companion (K06356.01, 18 October 2026). The copy shares the catalogue cache; other signals get
+    ``bundle`` itself."""
+    mask = sig.extra.get("mask")
+    if not mask:
+        return bundle
+    t = bundle.lc.time
+    alt = None if bundle.fnorm_alt is None else apply_mask(t, bundle.fnorm_alt, mask)
+    return replace(bundle, fnorm=apply_mask(t, bundle.fnorm, mask), fnorm_alt=alt)
+
+
 def _cpu_work(lc_pickle: bytes, target_json: str, thresholds_json: str, detector_name: str, ladder_version: str,
               with_novelty: bool, fetch_module: str | None = None, store_periodogram: str = "all",
               spectrum_path: str | None = None) -> str:
@@ -236,7 +258,8 @@ def _cpu_work(lc_pickle: bytes, target_json: str, thresholds_json: str, detector
         sig.extra["prewhitening"] = prewhitening
         sig.extra["detrend"] = detrend_record
         timings = []
-        outcome, results = ladder.run(sig, bundle, on_result=lambda r, dt, ts=timings: ts.append(dt))
+        outcome, results = ladder.run(sig, _vetting_bundle(bundle, sig),
+                                      on_result=lambda r, dt, ts=timings: ts.append(dt))
         out.append({"signal": sig.model_dump(), "outcome": outcome,
                     "tests": [r.model_dump() for r in results], "timings": timings})
     # a peak "survived rung 1" when its first test did not fail; the detector always returns its top peaks, so

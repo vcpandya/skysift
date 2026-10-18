@@ -28,7 +28,7 @@ from skysift.store import db
 from skysift.store.blob import LocalBlob
 from skysift.store.db import Store, make_job_key
 from skysift.store.retention import DiskBudgetExceeded
-from tests.synthetic import inject_transit, make_lightcurve
+from tests.synthetic import inject_transit, inject_v_eclipse, make_lightcurve
 
 
 class FakeSource:
@@ -819,6 +819,35 @@ def test_every_signal_stores_the_detrend_it_was_measured_with():
     assert capped["n"] == 1 and capped["capped"] is True
     json.dumps(prewhitening, allow_nan=False)
     json.dumps(record, allow_nan=False)
+
+
+
+def test_second_pass_signal_is_vetted_on_the_masked_flux():
+    """The masked second pass finds a companion only because the binary's eclipses are masked; vetted on the unmasked
+    flux, the eclipses folded at the companion's period built a spurious secondary and rung 2 rejected it
+    (K06356.01, 18 October 2026: ``secondary_at_0.5 5.3 sigma`` on a 2.108 d, 271 ppm injection). The rungs must see
+    the flux the detector saw. The curve is the V binary of the detector tests (24.0 d, 11 h, 40000 ppm) with a 2.1 d,
+    2.2 h, 500 ppm box, searched without pre-whitening as the detector tests are: with it, the whitened eclipse leaves
+    24.0/n residues that take the second pass (0.5217 d) and the companion is not returned at all (measured 18 October
+    2026). Without the mask its rung 2 was ``fail eccentric_secondary``; with it, rung 2 and the ladder pass."""
+    lc = inject_v_eclipse(make_lightcurve(n_days=1400, seed=71, noise_ppm=700), 24.0, 140.0, 11 / 24, 40000)
+    lc = inject_transit(lc, 2.1, 132.3, 2.2 / 24, 500)
+    target = Target(source="fake", target_id="v1", ra=0, dec=0, gmag=16.5)
+    th = Thresholds(min_period_days=0.5, max_period_days=30.0, prewhiten_max_components=0)
+    out = _cpu_work(pickle.dumps(lc), target.model_dump_json(), th.model_dump_json(), "box_dip", "1", False,
+                    fetch_module="tests.unit.fake_fetch", store_periodogram="off")
+    items = json.loads(out)["signals"]
+    found = [(round(i["signal"]["period"], 4), i["signal"]["extra"].get("pass", 1), i["outcome"],
+              [(r["rung"], r["status"], r["reason"]) for r in i["tests"]]) for i in items]
+    comp = [i for i in items if abs(i["signal"]["period"] - 2.1) / 2.1 < 0.01 and i["signal"]["extra"].get("pass") == 2]
+    assert comp, found
+    rung2 = [r for r in comp[0]["tests"] if r["rung"] == "rung2_shape"]
+    assert rung2, found                                       # rung 1 passed, so rung 2 ran
+    status, reason = rung2[0]["status"], rung2[0]["reason"] or ""
+    assert not (status == "fail" and reason.startswith(("secondary_at_0.5", "eccentric_secondary"))), (status, reason)
+    mask = comp[0]["signal"]["extra"].get("mask")
+    assert mask and all(set(m) == {"period", "t0", "half_primary_days", "half_secondary_days"} for m in mask), mask
+    assert any(abs(m["period"] - 24.0) / 24.0 < 0.01 for m in mask), mask
 
 
 class _InlinePool:

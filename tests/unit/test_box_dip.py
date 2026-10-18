@@ -10,7 +10,7 @@ from skysift.config import Thresholds
 from skysift.detectors.box_dip import BoxDip
 from skysift.lc.ops import detrend, stacked_depth
 from skysift.models import LightCurve, Signal
-from tests.synthetic import inject_transit, make_lightcurve
+from tests.synthetic import inject_transit, inject_v_eclipse, make_lightcurve
 
 NARROW = Thresholds(min_period_days=5.0, max_period_days=40.0)
 
@@ -352,14 +352,6 @@ def test_a_binary_with_a_deep_secondary_is_not_folded_away():
     assert abs(odd.depth_ppm - even.depth_ppm) > Thresholds().parity_sigma * np.hypot(odd.err_ppm, even.err_ppm)
 
 
-def inject_v_eclipse(lc: LightCurve, period, t0, width_days, depth_ppm):
-    """A triangular (V-shaped) eclipse: ``depth_ppm`` at mid-eclipse falling linearly to zero at +-width_days/2."""
-    ph = (lc.time - t0 + 0.5 * period) % period - 0.5 * period
-    shape = np.clip(1.0 - np.abs(ph) / (0.5 * width_days), 0.0, None)
-    f = lc.flux * (1 - depth_ppm * 1e-6 * shape)
-    return LightCurve(lc.time, f, lc.flux_err, lc.quality, lc.quarter, lc.flux_alt, dict(lc.meta))
-
-
 V_P, V_T0, V_WIDTH = 24.0, 140.0, 11 / 24
 COMP_P, COMP_T0, COMP_DUR = 2.1, 132.3, 2.2 / 24
 
@@ -488,3 +480,18 @@ def test_near_resonant_planet_is_returned_as_an_alias_row():
     found = [(round(s.period, 4), round(s.sde, 1), s.extra.get("pass", 1), s.extra["alias_of"]) for s in sig]
     assert abs(sig[0].period - 0.61) / 0.61 < 0.002, found
     assert any(abs(s.period - 1.2322) / 1.2322 < 0.002 for s in sig), found
+
+
+def test_noise_peaks_come_back_without_alias_rows():
+    """An alias row exists so the rungs can judge a near-resonant planet next to a real detection; the alias of a peak
+    below ``sde_min`` carries no information. On pure noise (the curve of the pipeline's periodogram test) the search
+    returned three independent peaks plus three alias rows of them, and the stored summary six peaks instead of three
+    (18 October 2026)."""
+    lc = make_lightcurve(n_days=500, seed=11, noise_ppm=600)
+    th = Thresholds(min_period_days=5, max_period_days=40)
+    det = BoxDip()
+    res = det.search(lc, detrend(lc), th)
+    found = [(round(s.period, 4), round(s.sde, 1), s.extra.get("pass", 1), s.extra["alias_of"]) for s in res.signals]
+    assert all(s.sde < th.sde_min for s in res.signals), found                    # the premise: noise only
+    assert len(res.signals) == det.top_k and all(s.extra["alias_of"] is None for s in res.signals), found
+    assert len(res.periodogram.peaks) == det.top_k

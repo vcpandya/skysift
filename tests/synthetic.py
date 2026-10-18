@@ -21,3 +21,11 @@ def inject_transit(lc: LightCurve, period, t0, duration_days, depth_ppm):
     ph = (lc.time - t0 + 0.5 * period) % period - 0.5 * period
     f = lc.flux.copy(); f[np.abs(ph) < 0.5 * duration_days] *= 1 - depth_ppm * 1e-6
     return LightCurve(lc.time, f, lc.flux_err, lc.quality, lc.quarter, lc.flux_alt, dict(lc.meta))
+
+
+def inject_v_eclipse(lc: LightCurve, period, t0, width_days, depth_ppm):
+    """A triangular (V-shaped) eclipse: ``depth_ppm`` at mid-eclipse falling linearly to zero at +-width_days/2."""
+    ph = (lc.time - t0 + 0.5 * period) % period - 0.5 * period
+    shape = np.clip(1.0 - np.abs(ph) / (0.5 * width_days), 0.0, None)
+    f = lc.flux * (1 - depth_ppm * 1e-6 * shape)
+    return LightCurve(lc.time, f, lc.flux_err, lc.quality, lc.quarter, lc.flux_alt, dict(lc.meta))

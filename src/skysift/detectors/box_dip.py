@@ -418,7 +418,9 @@ class BoxDip:
         its own; a secondary without a measurable run takes the primary's half-width. No half-width exceeds
         MASK_EXTENT_MAX_HALF (0.15) of the signal's period, so a strong residual sinusoid cannot mask most of the
         curve. ``extra["masked_period"]`` lists the masked periods and ``extra["mask_half_days"]`` the (primary,
-        secondary) half-widths of each."""
+        secondary) half-widths of each; ``extra["mask"]`` holds one ``{"period", "t0", "half_primary_days",
+        "half_secondary_days"}`` per masked signal, so the pipeline and the dashboard rebuild the mask
+        (``skysift.lc.ops.apply_mask``) and vet and draw the signal on the flux this pass searched."""
         masked = [s for s in first if s.extra.get("alias_of") is None and s.sde >= th.sde_min] or first[:1]
         keep = np.ones(t.size, bool)
         halves = []
@@ -449,7 +451,9 @@ class BoxDip:
                 continue
             sig = self._signal(lc, t2, y2, spec, cands[ci], sdes[ci], baseline, n_refined)
             sig.extra.update({"pass": 2, "masked_period": [float(m.period) for m in masked],
-                              "masked_points": int((~keep).sum()), "mask_half_days": halves})
+                              "masked_points": int((~keep).sum()), "mask_half_days": halves,
+                              "mask": [{"period": float(m.period), "t0": float(m.t0), "half_primary_days": hp,
+                                        "half_secondary_days": hs} for m, (hp, hs) in zip(masked, halves)]})
             return [sig]
         return []
 
@@ -466,11 +470,13 @@ class BoxDip:
         (``_duplicates``) is dropped. One within ALIAS_COARSE_STEPS coarse frequency steps of an independent signal
         times p/q (p and q up to MASK_ALIAS_ORDER, ``_alias_of``) or at an exact harmonic of one (``_harmonic_of``)
         becomes an alias row with ``extra["alias_of"]`` set to that signal's index, so the rungs vet it (rung 2 rejects
-        a true alias, a near-resonant planet can pass); the others take the independent slots. A peak whose resolution
-        lands on n times an independent period with about n times its depth is independent, since the kept signal is
-        then its P/n fold. Alias rows follow the independent signals in SDE order. The walk stops once both lists are
-        full or the peaks run out, and no later peak is resolved; each independent signal counts the peaks it absorbed
-        but which were not returned (duplicates, aliases past the cap) in ``extra["aliases_skipped"]``."""
+        a true alias, a near-resonant planet can pass), but only when that signal's SDE is at or above ``sde_min``;
+        the alias of a sub-threshold signal is not returned. The others take the independent slots. A peak whose
+        resolution lands on n times an independent period with about n times its depth is independent, since the kept
+        signal is then its P/n fold. Alias rows follow the independent signals in SDE order. The walk stops once both
+        lists are full (the alias list counts as full when no independent signal reaches ``sde_min``) or the peaks run
+        out, and no later peak is resolved; each independent signal counts the peaks it absorbed but which were not
+        returned (duplicates, aliases past the cap or of a sub-threshold signal) in ``extra["aliases_skipped"]``."""
         th = thresholds
         m = np.isfinite(fnorm) & np.isfinite(lc.time)
         if m.sum() < MIN_POINTS:
@@ -507,10 +513,13 @@ class BoxDip:
         # (``_reveals_subharmonic``) shows that the kept signal is itself a sub-harmonic the resolver could not fold
         # back (too few events), and is independent (0.7/2 d resolved to 0.7 d next to an unresolved 0.7/3 d on a
         # 15 d curve)
+        # an alias row is kept only for an independent signal at or above sde_min: it is there so the rungs can judge a
+        # near-resonant planet next to a real detection, and the alias of a noise peak carries no information (three
+        # rows of three noise peaks doubled the stored peaks of a pure-noise curve)
         out: list[Signal] = []
         rows: list[Signal] = []
         for j, raw_sig in enumerate(raw):
-            if len(out) >= self.top_k and len(rows) >= self.top_k:
+            if len(out) >= self.top_k and (len(rows) >= self.top_k or all(s.sde < th.sde_min for s in out)):
                 break
             sig = self._resolve_alias(t, y, raw_sig, pmax, spec, others=raw[:j] + raw[j + 1:])
             dup = _duplicates(sig.period, out + rows, spec)
@@ -526,7 +535,7 @@ class BoxDip:
             if a is None:
                 if len(out) < self.top_k:
                     out.append(sig)
-            elif len(rows) < self.top_k:
+            elif len(rows) < self.top_k and out[a].sde >= th.sde_min:
                 sig.extra["alias_of"] = a
                 rows.append(sig)
             else:

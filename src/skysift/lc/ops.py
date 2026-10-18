@@ -70,6 +70,24 @@ def fold_phase(time: np.ndarray, period: float, t0: float) -> np.ndarray:
     return (time - t0 + 0.5 * period) % period - 0.5 * period
 
 
+def apply_mask(time: np.ndarray, flux: np.ndarray, mask: list[dict] | None) -> np.ndarray:
+    """``flux`` with NaN at every point the masked second pass of BoxDip dropped: within ``half_primary_days`` of
+    ``t0 + k period`` or within ``half_secondary_days`` of ``t0 + (k + 0.5) period``, for each entry of ``mask`` (the
+    signal's ``extra["mask"]``). The windows are those of the detector (``box_dip._in_window``, strict inequality).
+    An empty or missing mask returns ``flux`` itself; otherwise a new array, the input untouched."""
+    if not mask:
+        return flux
+    time = np.asarray(time)
+    hit = np.zeros(time.size, bool)
+    for m in mask:
+        period, t0 = float(m["period"]), float(m["t0"])
+        hit |= np.abs(fold_phase(time, period, t0)) < float(m["half_primary_days"])
+        hit |= np.abs(fold_phase(time, period, t0 + 0.5 * period)) < float(m["half_secondary_days"])
+    out = np.array(flux, dtype=float)
+    out[hit] = np.nan
+    return out
+
+
 def n_window_epochs(time, fnorm, period, t0, duration_days) -> int:
     """Number of distinct events (epoch ``round((t - t0) / period)``) with a finite point within half a duration of
     mid-transit."""

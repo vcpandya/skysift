@@ -12,7 +12,7 @@ from sqlalchemy import select
 
 from skysift.detectors.periodogram import PeriodogramSummary
 from skysift.lc.kbonus import parse_kbonus_fits
-from skysift.lc.ops import GAP_EDGE_TRIGGER_DAYS, detrend, fold_phase
+from skysift.lc.ops import GAP_EDGE_TRIGGER_DAYS, apply_mask, detrend, fold_phase
 from skysift.lc.prewhiten import prewhiten_model
 from skysift.models import LightCurve, Target
 from skysift.net import ServiceUnavailable
@@ -156,7 +156,9 @@ def whitened_fnorm(lc: LightCurve, signal: dict) -> np.ndarray:
     """The detrended flux minus the pre-whitening model stored with the signal, so the plots show exactly what the
     detector and the rungs saw. The detrend replays the settings stored in ``extra["detrend"]``; a signal without
     them was stored before the record existed and was measured on the version-1 detrend (``LEGACY_DETREND``: no
-    gap-edge mask, nearest padding). A signal without a stored model gets the detrend alone."""
+    gap-edge mask, nearest padding). A signal without a stored model gets the detrend alone. A second-pass signal
+    (``extra["mask"]``) was found and vetted with the first-pass signals masked, so the masked points are NaN here and
+    absent from its fold and river plot."""
     extra = signal.get("extra") or {}
     d = extra.get("detrend") or LEGACY_DETREND
     fnorm = detrend(lc, edge_mask_days=float(d["edge_mask_days"]), edge_gap_days=float(d["edge_gap_days"]),
@@ -164,7 +166,7 @@ def whitened_fnorm(lc: LightCurve, signal: dict) -> np.ndarray:
     comps = (extra.get("prewhitening") or {}).get("components") or []
     if comps:
         fnorm = fnorm - prewhiten_model(lc.time, comps)
-    return fnorm
+    return apply_mask(lc.time, fnorm, extra.get("mask"))
 
 
 def build_plots(lc: LightCurve, fnorm: np.ndarray, signal: dict, tests: list[dict],
