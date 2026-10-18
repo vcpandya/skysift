@@ -213,7 +213,8 @@ class Rung2Shape:
         planet's occultation depth is A_g (R_p / a)^2 of the stellar flux, so the geometric albedo it implies is
         A_g = d_sec (a / R_p)^2 with d_sec fractional; R_p = k R_star and a from Kepler's third law, with the meta
         radius and mass or rung 1's 0.5 fallback. The exception needs an ok fit, A_g < 1, R_p < 30 R_earth,
-        d_sec < 0.1 d_pri and b < 0.95. ``occultation_albedo`` and ``planet_radius_rearth`` go into ``m`` either way."""
+        d_sec < 0.1 d_pri and b < 0.95. ``occultation_albedo``, ``planet_radius_rearth`` and ``occultation_exception`` (the
+        verdict) go into ``m`` either way."""
         meta = b.target.meta or {}
         radius, _ = _stellar_param(meta, "radius")
         mass, _ = _stellar_param(meta, "mass")
@@ -221,6 +222,10 @@ class Rung2Shape:
         a_m = (GM_SUN * mass * (s.period * 86400.0) ** 2 / (4.0 * np.pi ** 2)) ** (1.0 / 3.0)
         albedo = d_sec_ppm * 1e-6 * (a_m / rp_m) ** 2 if rp_m > 0 else float("nan")
         rp_rearth = rp_m / R_EARTH_M
-        m.update({"occultation_albedo": _num(albedo), "planet_radius_rearth": _num(rp_rearth)})
-        return bool(fit.ok and albedo < OCC_MAX_ALBEDO and rp_rearth < OCC_MAX_RADIUS_REARTH
-                    and d_sec_ppm < OCC_MAX_DEPTH_RATIO * m["depth_ppm"] and fit.b < OCC_MAX_B)
+        waived = bool(fit.ok and albedo < OCC_MAX_ALBEDO and rp_rearth < OCC_MAX_RADIUS_REARTH
+                      and d_sec_ppm < OCC_MAX_DEPTH_RATIO * m["depth_ppm"] and fit.b < OCC_MAX_B)
+        # occultation_exception: True when the secondary was waived, False when evaluated and refused (the dashboard
+        # keys on it; the albedo and radius are kept either way for the reviewer)
+        m.update({"occultation_albedo": _num(albedo), "planet_radius_rearth": _num(rp_rearth),
+                  "occultation_exception": waived})
+        return waived

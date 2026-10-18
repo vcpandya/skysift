@@ -306,7 +306,7 @@ T0_R2 = 133.0       # a multiple of 0.7 d, so the 0.7 d wave of the SWEET EB fix
 R2_NEW_METRICS = ("sigma_pri", "sigma_sec", "phase_sec", "sigma_ter", "sigma_pos", "fa2", "ms2", "ms3", "fit_ok",
                   "fit_k", "fit_b", "fit_a_over_r", "fit_depth_ppm", "fit_t14_h", "fit_chi2", "sweet_factor",
                   "sweet_amplitude_ppm", "sweet_snr", "suggested_period", "occultation_albedo",
-                  "planet_radius_rearth", "secondary_difference_sigma")
+                  "planet_radius_rearth", "secondary_difference_sigma", "occultation_exception")
 
 
 def _assert_new_metrics_strict(r):
@@ -401,6 +401,7 @@ def test_rung2_keeps_a_planet_with_a_shallow_occultation():
     assert r.status == TestStatus.PASS and r.reason == "secondary consistent with planet occultation", (r.status, r.reason)
     assert r.metrics["secondary_sigma"] > 3 and 0.2 < r.metrics["occultation_albedo"] < 0.6
     assert abs(r.metrics["planet_radius_rearth"] - 6.55) < 0.5 and r.metrics["fit_ok"] is True
+    assert r.metrics["occultation_exception"] is True
     _assert_new_metrics_strict(r)
 
 
@@ -416,6 +417,7 @@ def test_rung2_fails_an_occultation_too_bright_for_a_planet():
     r = Rung2Shape().run(_signal_r2(2.2, t14, 10000), b)
     assert r.status == TestStatus.FAIL and r.reason.startswith("secondary_at_0.5"), (r.status, r.reason)
     assert r.metrics["occultation_albedo"] > 1 and r.metrics["planet_radius_rearth"] < 30
+    assert r.metrics["occultation_exception"] is False
     _assert_new_metrics_strict(r)
 
 
@@ -430,6 +432,7 @@ def test_rung2_fails_a_stellar_secondary():
     r = Rung2Shape().run(_signal_r2(2.2, 3 / 24, 500000), b)
     assert r.status == TestStatus.FAIL and r.reason.startswith("secondary_at_0.5"), (r.status, r.reason)
     assert r.metrics["planet_radius_rearth"] > 30 and r.metrics["fit_b"] > 0.95
+    assert r.metrics["occultation_exception"] is False
     _assert_new_metrics_strict(r)
 
 
