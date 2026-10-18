@@ -306,7 +306,7 @@ T0_R2 = 133.0       # a multiple of 0.7 d, so the 0.7 d wave of the SWEET EB fix
 R2_NEW_METRICS = ("sigma_pri", "sigma_sec", "phase_sec", "sigma_ter", "sigma_pos", "fa2", "ms2", "ms3", "fit_ok",
                   "fit_k", "fit_b", "fit_a_over_r", "fit_depth_ppm", "fit_t14_h", "fit_chi2", "sweet_factor",
                   "sweet_amplitude_ppm", "sweet_snr", "suggested_period", "occultation_albedo",
-                  "planet_radius_rearth")
+                  "planet_radius_rearth", "secondary_difference_sigma")
 
 
 def _assert_new_metrics_strict(r):
@@ -361,16 +361,18 @@ def test_rung2_sweet_eb_fails_ellipsoidal_variation():
     r = Rung2Shape().run(_signal_r2(1.4, 3 / 24, 6000), b)
     assert r.status == TestStatus.FAIL and r.reason.startswith("ellipsoidal"), (r.status, r.reason)
     assert r.metrics["sweet_factor"] == 0.5 and 5000 < r.metrics["sweet_amplitude_ppm"] < r.metrics["depth_ppm"]
+    _assert_new_metrics_strict(r)
 
 
-def test_rung2_doubles_the_period_of_equal_eclipses():
-    """A 3.0 d train of equal 4000 ppm, 3 h eclipses vetted at 6.0 d: the fold shows an equal secondary at phase 0.5
-    (the odd eclipses) and equal odd and even depths, so the signal is one of two equal eclipses at twice the period
-    of a real train, or a planet at 3.0 d: undetermined, with 12.0 d suggested for the binary reading."""
+def test_rung2_halves_the_period_of_equal_eclipses():
+    """A 3.0 d train of equal 4000 ppm, 3 h transits vetted at 6.0 d: the fold shows an equal secondary at phase 0.5
+    (the odd transits) and equal odd and even depths, so the signal may be a planet detected at twice its true period
+    (T18 A.4.1.3), both dips being its transits: undetermined, with P / 2 = 3.0 d suggested."""
     lc = inject_transit(make_lightcurve(seed=19, noise_ppm=600), 3.0, T0_R2, 3 / 24, 4000)
     r = Rung2Shape().run(_signal_r2(6.0, 3 / 24, 4000), bundle(lc))
-    assert r.status == TestStatus.UNDETERMINED and r.reason.startswith("equal secondary"), (r.status, r.reason)
-    assert abs(r.metrics["suggested_period"] - 12.0) < 1e-6
+    assert r.status == TestStatus.UNDETERMINED, (r.status, r.reason)
+    assert r.reason == "equal secondary at phase 0.5: true period may be P / 2 (3 d)", r.reason
+    assert abs(r.metrics["suggested_period"] - 3.0) < 1e-6 and r.metrics["secondary_difference_sigma"] < r.metrics["fa2"]
     _assert_new_metrics_strict(r)
 
 
@@ -378,26 +380,57 @@ def _t14_days(period, k, b, a_over_r):
     return period / np.pi * np.arcsin(np.sqrt((1 + k) ** 2 - b * b) / a_over_r)
 
 
+def _host(mass, radius):
+    return Target(source="test", target_id="t", ra=0, dec=0, meta={"radius": radius, "mass": mass})
+
+
+A_OVER_R_SUN_2P2 = 7.118    # a / R_star of a 2.2 d orbit around a 1 M_sun, 1 R_sun star (Kepler's third law)
+
+
 def test_rung2_keeps_a_planet_with_a_shallow_occultation():
-    """A close-in giant (k 0.3, b 0.3, a/R* 3, 2.2 d) on a 0.2 R_sun, 0.012 M_sun host with a 60 ppm occultation at
+    """A close-in giant (k 0.3, b 0.3, a/R* 3, 2.2 d) on a 0.2 M_sun, 0.2 R_sun host with a 60 ppm occultation at
     phase 0.5: the secondary is significant, but R_p = 6.5 R_earth and the geometric albedo it implies,
-    (d_sec / d_pri) (a / R_p)^2, is below 1, so it is the planet's own occultation, not a stellar eclipse. The brief's
-    0.02 M_sun gave an albedo of 0.96 (the detrend reads the 60 ppm secondary as 75 ppm, and the box depth of the
-    curved transit is 80000 ppm, not 90000), too near the limit to test; 0.012 M_sun shrinks a and puts it near 0.68."""
+    A_g = d_sec (a / R_p)^2 with d_sec fractional, is about 0.36 (the detrend reads the secondary as 75 ppm), so it is
+    the planet's own occultation, not a stellar eclipse."""
     t14 = _t14_days(2.2, 0.3, 0.3, 3.0)
     lc = inject_model(make_lightcurve(n_days=1500, noise_ppm=100, seed=29), 2.2, T0_R2, 0.3, 0.3, 3.0)
     lc = inject_transit(lc, 2.2, T0_R2 + 1.1, t14, 60)
     b = bundle(lc)
-    b.target = Target(source="test", target_id="t", ra=0, dec=0, meta={"radius": 0.2, "mass": 0.012})
+    b.target = _host(0.2, 0.2)
     r = Rung2Shape().run(_signal_r2(2.2, t14, 90000), b)
     assert r.status == TestStatus.PASS and r.reason == "secondary consistent with planet occultation", (r.status, r.reason)
-    assert r.metrics["secondary_sigma"] > 3 and r.metrics["occultation_albedo"] < 1
+    assert r.metrics["secondary_sigma"] > 3 and 0.2 < r.metrics["occultation_albedo"] < 0.6
     assert abs(r.metrics["planet_radius_rearth"] - 6.55) < 0.5 and r.metrics["fit_ok"] is True
     _assert_new_metrics_strict(r)
-    # the same secondary on a solar-mass host (a 4.4 times larger orbit) needs an albedo above 1: it fails as before
-    b.target = Target(source="test", target_id="t", ra=0, dec=0, meta={"radius": 0.2, "mass": 1.0})
-    r = Rung2Shape().run(_signal_r2(2.2, t14, 90000), b)
+
+
+def test_rung2_fails_an_occultation_too_bright_for_a_planet():
+    """A 1 percent transit (k 0.1, b 0.3) at 2.2 d on a 1 M_sun, 1 R_sun star with a 300 ppm secondary: R_p = 11
+    R_earth, the secondary is well under 10 percent of the transit and b is small, but reflected light would need a
+    geometric albedo of about 1.6, so the secondary is not the planet's occultation and the signal fails."""
+    t14 = _t14_days(2.2, 0.1, 0.3, A_OVER_R_SUN_2P2)
+    lc = inject_model(make_lightcurve(n_days=1500, noise_ppm=100, seed=29), 2.2, T0_R2, 0.1, 0.3, A_OVER_R_SUN_2P2)
+    lc = inject_transit(lc, 2.2, T0_R2 + 1.1, t14, 300)
+    b = bundle(lc)
+    b.target = _host(1.0, 1.0)
+    r = Rung2Shape().run(_signal_r2(2.2, t14, 10000), b)
     assert r.status == TestStatus.FAIL and r.reason.startswith("secondary_at_0.5"), (r.status, r.reason)
+    assert r.metrics["occultation_albedo"] > 1 and r.metrics["planet_radius_rearth"] < 30
+    _assert_new_metrics_strict(r)
+
+
+def test_rung2_fails_a_stellar_secondary():
+    """An eclipsing binary with 50 percent primary and 5 percent secondary eclipses (3 h boxes, 2.2 d) on a 1 R_sun
+    star: the fit's companion is far larger than 30 R_earth and grazing (k + b at the bound), so the occultation
+    exception does not apply, whatever albedo the fractional secondary depth implies (about 0.6 here)."""
+    lc = inject_transit(make_lightcurve(seed=19, noise_ppm=600), 2.2, T0_R2, 3 / 24, 500000)
+    lc = inject_transit(lc, 2.2, T0_R2 + 1.1, 3 / 24, 50000)
+    b = bundle(lc)
+    b.target = _host(1.0, 1.0)
+    r = Rung2Shape().run(_signal_r2(2.2, 3 / 24, 500000), b)
+    assert r.status == TestStatus.FAIL and r.reason.startswith("secondary_at_0.5"), (r.status, r.reason)
+    assert r.metrics["planet_radius_rearth"] > 30 and r.metrics["fit_b"] > 0.95
+    _assert_new_metrics_strict(r)
 
 
 def test_rung2_fails_a_v_shaped_eclipse():
