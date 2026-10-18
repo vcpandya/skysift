@@ -85,6 +85,33 @@ def _period_match(p_signal: float, p_cat: float, tol=OWN_PERIOD_TOL, ratios=NEIG
     return float(min(fits)[1]) if fits else None
 
 
+BJD_MINUS_BKJD = 2454833.0     # Kepler BJD offset: BKJD = BJD - 2454833.0 (the TOI table gives pl_tranmid in BJD)
+
+
+def _epoch(value, offset: float = 0.0) -> float | None:
+    """A catalogue epoch in BKJD (``value`` minus ``offset``), or None for a missing, empty or non-finite value."""
+    try: v = float(value) - offset
+    except (TypeError, ValueError): return None
+    return v if math.isfinite(v) else None
+
+
+def _epoch_check(t0_sig: float, p_sig: float, duration_d: float, t0_cat: float | None,
+                 p_cat: float) -> tuple[float | None, bool | None]:
+    """(epoch_offset_h, epoch_agrees) of a period-matched catalogue row; both None without a catalogue epoch.
+
+    The signal's t0 is compared with the catalogue ephemeris modulo the shorter of the two periods: for a ratio
+    ``p_sig / p_cat`` of 1 or more the signal's transits are a subset of the catalogue's, below 1 the catalogue's are a
+    subset of the signal's, so a genuine match (the same object or its alias) has t0 on the shorter-period grid. A
+    second real planet in an exact n:1 resonance with the known one matches on period alone but not on epoch. The
+    tolerance is twice the signal's duration with a 1 h floor (30 min cadence)."""
+    m = min(p_sig, p_cat)
+    if t0_cat is None or not (math.isfinite(t0_sig) and math.isfinite(m) and m > 0):
+        return None, None
+    offset = ((t0_sig - t0_cat + 0.5 * m) % m) - 0.5 * m
+    offset_h = abs(offset) * 24.0
+    return offset_h, offset_h <= max(2.0 * duration_d * 24.0, 1.0)
+
+
 def _same_kic(value, kic: int | None) -> bool:
     """True when a catalogue KIC or kepid field names ``kic`` (VizieR may pad it with spaces or zeros)."""
     if not kic: return False
@@ -168,19 +195,25 @@ class Rung4Novelty:
         koi_id = lambda r: r.get("kepoi_name")
         tce_id = lambda r: f"{r.get('kepid')}.{r.get('tce_plnt_num')}"
         toi_id = lambda r: r.get("toi")
+        koi_t0 = lambda r: _epoch(r.get("koi_time0bk"))                    # BKJD
+        tce_t0 = lambda r: _epoch(r.get("tce_time0bk"))                    # BKJD
+        toi_t0 = lambda r: _epoch(r.get("pl_tranmid"), BJD_MINUS_BKJD)     # BJD
         checks = [
-            ("cumulative", f"select kepid,kepoi_name,koi_period,ra,dec from cumulative where {where_cum}", "koi_period", koi_id),
-            ("q1_q17_dr25_tce", f"select kepid,tce_plnt_num,tce_period,ra,dec from q1_q17_dr25_tce where {where_cum}", "tce_period", tce_id),
-            ("toi", f"select tid,toi,pl_orbper,ra,dec from toi where {cone}", "pl_orbper", toi_id),
+            ("cumulative", f"select kepid,kepoi_name,koi_period,koi_time0bk,ra,dec from cumulative where {where_cum}",
+             "koi_period", koi_id, koi_t0),
+            ("q1_q17_dr25_tce", f"select kepid,tce_plnt_num,tce_period,tce_time0bk,ra,dec from q1_q17_dr25_tce where {where_cum}",
+             "tce_period", tce_id, tce_t0),
+            ("toi", f"select tid,toi,pl_orbper,pl_tranmid,ra,dec from toi where {cone}", "pl_orbper", toi_id, toi_t0),
         ]
         found, metrics = [], {}
 
-        def scan(label, parsed, pcol, ident, period=None):
+        def scan(label, parsed, pcol, ident, period=None, epoch=None):
             """Record counts and other-period rows (catalogue, id, period, separation in arcsec or None); return a
             known-reason identifier on a period match (the matching row goes to ``period_matched`` with its
-            separation from the target and the period ratio). Rows of the target itself (its own kepid or KIC; every
-            row of a Gaia table, which is queried by source_id; any row within SAME_STAR_ARCSEC of the target) are
-            matched first, at 1 percent for ratio 1 and 0.1 percent at every other integer ratio up to 8 both ways;
+            separation from the target, the period ratio, and ``epoch_offset_h`` and ``epoch_agrees`` from
+            ``_epoch_check``, None when the table has no epoch; information only, the verdict does not change).
+            Rows of the target itself (its own kepid or KIC; every row of a Gaia table, which is queried by
+            source_id; any row within SAME_STAR_ARCSEC of the target) are matched first, at 1 percent for ratio 1 and 0.1 percent at every other integer ratio up to 8 both ways;
             neighbours at 0.1 percent and the ratios 0.5, 1 and 2."""
             header, rows = parsed
             if header is None: raise _SchemaError(f"schema:{label}:empty response")
@@ -202,17 +235,18 @@ class Rung4Novelty:
                 ratio = (_period_match(s.period, p, OWN_PERIOD_TOL, OWN_RATIOS, OWN_RATIO_TOL) if own(r)
                          else _period_match(s.period, p, NEIGHBOUR_PERIOD_TOL, NEIGHBOUR_RATIOS))
                 if ratio is not None:
+                    offset_h, agrees = _epoch_check(s.t0, s.period, s.duration, epoch(r) if epoch else None, p)
                     metrics["period_matched"] = [{"catalog": label, "id": ident(r), "period": p, "sep_arcsec": sep,
-                                                  "ratio": ratio}]
+                                                  "ratio": ratio, "epoch_offset_h": offset_h, "epoch_agrees": agrees}]
                     return ident(r)
                 found.append((label, ident(r), p, sep))
             return None
 
         svc = "exoarchive"
         try:
-            for table, query, pcol, ident in checks:
+            for table, query, pcol, ident, epoch in checks:
                 parsed = _csv_rows(self._get(b, "exoarchive", EXO_TAP, {"query": query, "format": "csv"}, ("exoarchive", table, t.target_id)))
-                hit = scan(table, parsed, pcol, ident)
+                hit = scan(table, parsed, pcol, ident, epoch=epoch)
                 if hit is not None:
                     return TestResult(rung=self.name, status=TestStatus.FAIL, metrics=metrics, reason=f"known:{table}:{hit}")
             svc = "vizier"

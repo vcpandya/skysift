@@ -303,7 +303,7 @@ def test_row_without_coordinates_has_no_separation():
     resp = dict(EMPTY); resp["cumulative"] = b"kepid,kepoi_name,koi_period\n5689121,K99999.01,13.77\n"
     r = Rung4Novelty().run(SIG, bundle(resp))
     assert r.metrics["period_matched"] == [{"catalog": "cumulative", "id": "K99999.01", "period": 13.77, "sep_arcsec": None,
-                                            "ratio": 1.0}]
+                                            "ratio": 1.0, "epoch_offset_h": None, "epoch_agrees": None}]
 
 
 def test_own_kepid_row_counts_even_when_its_coordinates_are_outside_the_circle():
@@ -443,3 +443,68 @@ def test_period_match_keeps_one_percent_at_ratio_one_only():
     assert _period_match(21.0 * 1.005, 3.0, OWN_PERIOD_TOL, OWN_RATIOS) is None
     assert _period_match(21.0 * 1.0005, 3.0, OWN_PERIOD_TOL, OWN_RATIOS) == 7.0
     assert _period_match(3.4414, 24.09, OWN_PERIOD_TOL, OWN_RATIOS) == pytest.approx(1 / 7)
+
+
+# epoch check (18 October 2026): information only, the verdict does not change
+EPOCH_COLS = ",koi_time0bk"
+
+
+def _epoch_hit(r):
+    assert r.status == TestStatus.FAIL and r.reason == "known:cumulative:K99999.01"
+    (hit,) = r.metrics["period_matched"]
+    json.dumps(r.metrics, allow_nan=False)
+    return hit
+
+
+def test_epoch_agrees_when_the_catalogue_ephemeris_lands_on_the_signal_t0():
+    row = _own_koi(SIG.period, EPOCH_COLS, f",{SIG.t0 + 17 * SIG.period}")
+    hit = _epoch_hit(Rung4Novelty().run(SIG, bundle({**EMPTY, "cumulative": row})))
+    assert hit["epoch_agrees"] is True and hit["epoch_offset_h"] < 0.1
+    assert {"catalog", "id", "period", "sep_arcsec", "ratio"} <= hit.keys()
+
+
+def test_epoch_disagrees_when_the_catalogue_ephemeris_is_shifted():
+    row = _own_koi(SIG.period, EPOCH_COLS, f",{SIG.t0 + 0.37 * SIG.period}")
+    hit = _epoch_hit(Rung4Novelty().run(SIG, bundle({**EMPTY, "cumulative": row})))
+    assert hit["epoch_agrees"] is False
+    assert hit["epoch_offset_h"] == pytest.approx(0.37 * SIG.period * 24, rel=1e-6)
+
+
+@pytest.mark.parametrize("value", ["", "nan", "abc"])
+def test_epoch_keys_are_none_without_a_catalogue_epoch(value):
+    row = _own_koi(SIG.period, EPOCH_COLS, f",{value}")
+    hit = _epoch_hit(Rung4Novelty().run(SIG, bundle({**EMPTY, "cumulative": row})))
+    assert hit["epoch_offset_h"] is None and hit["epoch_agrees"] is None
+
+
+@pytest.mark.parametrize("factor", [7.0, 1 / 7])
+def test_epoch_agrees_at_an_integer_period_ratio(factor):
+    """Signal at p_cat / 7 (or 7 p_cat) with its t0 on one of the catalogue's eclipses: the comparison runs modulo the
+    shorter period, on whose grid a genuine match always lies."""
+    p_cat = SIG.period * factor
+    row = _own_koi(p_cat, EPOCH_COLS, f",{SIG.t0 - 3 * p_cat}")
+    hit = _epoch_hit(Rung4Novelty().run(SIG, bundle({**EMPTY, "cumulative": row})))
+    assert hit["ratio"] == pytest.approx(1 / factor)
+    assert hit["epoch_agrees"] is True and hit["epoch_offset_h"] < 0.1
+
+
+def test_toi_epoch_in_bjd_is_converted_to_bkjd():
+    row = (f"tid,toi,pl_orbper,pl_tranmid,ra,dec\n1,1234.01,{SIG.period},{SIG.t0 + 2454833.0 + 5 * SIG.period},"
+           f"{TGT.ra},{TGT.dec}\n").encode()
+    r = Rung4Novelty().run(SIG, bundle({**EMPTY, "toi": row}))
+    assert r.status == TestStatus.FAIL and r.reason == "known:toi:1234.01"
+    (hit,) = r.metrics["period_matched"]
+    assert hit["epoch_agrees"] is True and hit["epoch_offset_h"] < 0.1
+
+
+def test_gaia_match_has_no_epoch():
+    resp = dict(EMPTY); resp["nss_two_body_orbit"] = b"source_id,period\n2103792461826460288,13.77\n"
+    (hit,) = Rung4Novelty().run(SIG, bundle(resp)).metrics["period_matched"]
+    assert hit["epoch_offset_h"] is None and hit["epoch_agrees"] is None
+
+
+def test_archive_queries_fetch_the_epoch_columns():
+    calls = []
+    Rung4Novelty().run(SIG, bundle(EMPTY, calls=calls))
+    cum, tce, toi = [p["query"] for s, p in calls if s == "exoarchive"]
+    assert "koi_time0bk" in cum and "tce_time0bk" in tce and "pl_tranmid" in toi
