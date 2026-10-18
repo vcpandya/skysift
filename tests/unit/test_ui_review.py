@@ -4,6 +4,7 @@ import pytest
 from sqlalchemy import text
 
 from tests.unit.test_ui_pages import make_seeded_client
+from tests.unit.ui_seed import add_older_version
 
 
 def test_queue_page_defaults_and_filters(settings, tmp_path):
@@ -186,3 +187,34 @@ def test_signal_header_says_when_the_period_was_multiplied(settings, tmp_path):
     assert "period multiplied by 7 from 3.44143 d" in client.get(f"/signals/{ids['candidate']}").text
     assert "period multiplied by 2 from 6.88475 d" in client.get(f"/signals/{ids['rejected']}").text
     assert "period multiplied" not in client.get(f"/signals/{ids['undetermined']}").text
+
+
+def test_queue_shows_the_current_search_version_by_default(settings, tmp_path):
+    client, app, ids, _launcher = make_seeded_client(settings, tmp_path)
+    old = add_older_version(app.state.store)                         # same target, earlier sweep, period 6.88475 d
+    r = client.get("/candidates")
+    assert r.status_code == 200 and "13.7695" in r.text and "6.8848" not in r.text
+    assert f'data-href="/signals/{old}' not in r.text
+    assert "Current search version only (1 older hidden)" in r.text
+    assert 'href="/candidates?status=candidate_stage1&sort=sde&dir=desc&versions=all">show all</a>' in r.text
+    assert f'data-href="/signals/{ids["candidate"]}?status=candidate_stage1&sort=sde&dir=desc&versions=current"' in r.text
+    r = client.get("/candidates?versions=all")
+    assert "13.7695" in r.text and "6.8848" in r.text and "All search versions" in r.text
+    assert 'href="/candidates?status=candidate_stage1&sort=sde&dir=desc&versions=current">current only</a>' in r.text
+    assert "older hidden" not in r.text
+    assert f'data-href="/signals/{old}?status=candidate_stage1&sort=sde&dir=desc&versions=all"' in r.text
+    assert 'href="/candidates?status=all&sort=sde&dir=desc&versions=all"' in r.text           # status links carry it
+    assert client.get("/candidates?versions=some").status_code == 400
+
+
+def test_signal_neighbours_stay_inside_the_search_version(settings, tmp_path):
+    client, app, ids, _launcher = make_seeded_client(settings, tmp_path)
+    old = add_older_version(app.state.store)                         # higher SDE: it precedes the candidate in 'all'
+    r = client.get(f"/signals/{ids['candidate']}")
+    assert f'href="/signals/{old}?' not in r.text and 'id="link-prev"' not in r.text
+    assert 'href="/candidates?status=candidate_stage1&sort=sde&dir=desc&versions=current"' in r.text   # back to queue
+    r = client.get(f"/signals/{ids['candidate']}?versions=all")
+    amp = "&amp;"                                                    # the prev/next URLs are escaped expressions
+    assert (f'id="link-prev" href="/signals/{old}?status=candidate_stage1{amp}sort=sde{amp}dir=desc{amp}versions=all"'
+            in r.text)
+    assert client.get(f"/signals/{ids['candidate']}?versions=some").status_code == 400

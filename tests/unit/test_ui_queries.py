@@ -4,7 +4,7 @@ from skysift.store.blob import LocalBlob
 from skysift.store.db import RunRow, Store
 from skysift.store.retention import Retention, RetentionPolicy
 from skysift.ui import queries
-from tests.unit.ui_seed import seed
+from tests.unit.ui_seed import VERSION, add_older_version, seed
 
 
 def _env(tmp_path, settings):
@@ -85,3 +85,31 @@ def test_mean_seconds_matches_python_mean_and_handles_no_runs(tmp_path, settings
     assert n == 2 and abs(total - 40.0) < 1e-3
     out = queries.summary(store, retention, settings)
     assert out["mean_seconds_per_run"] == 20.0 and out["targets_per_hour"] == round(2 / (40.0 / 3600), 1)
+
+
+def test_current_search_version_is_the_latest_done_run(tmp_path, settings):
+    store = Store(settings.database_url); store.init_schema()
+    assert queries.current_search_version(store) is None
+    seed(store)
+    old = add_older_version(store)                             # written last, but its run started a day earlier
+    assert old is not None and queries.current_search_version(store) == VERSION
+    rid = store.start_run("job-new", "kic-005689121", "box_dip", "9+running", "1")   # newer but not done
+    assert queries.current_search_version(store) == VERSION
+    store.finish_run(rid, "error", "boom")
+    assert queries.current_search_version(store) == VERSION
+
+
+def test_queue_and_neighbours_keep_to_one_search_version(tmp_path, settings):
+    store, _blob, ids = _env(tmp_path, settings)
+    old = add_older_version(store)
+    assert {r["id"] for r in queries.review_queue(store)} == {ids["candidate"], old}         # no version: everything
+    assert [r["id"] for r in queries.review_queue(store, version=VERSION)] == [ids["candidate"]]
+    assert queries.hidden_by_version(store, "candidate_stage1", VERSION) == 1
+    assert queries.hidden_by_version(store, "all", VERSION) == 1
+    assert queries.hidden_by_version(store, "rejected", VERSION) == 0
+    assert queries.hidden_by_version(store, "candidate_stage1", None) == 0
+    # the old signal has the higher SDE, so in the unfiltered queue it sits just before the current one
+    assert queries.neighbours(store, ids["candidate"], "candidate_stage1", "sde", True) == (old, None)
+    assert queries.neighbours(store, ids["candidate"], "candidate_stage1", "sde", True, version=VERSION) == (None, None)
+    assert old not in queries.neighbours(store, ids["undetermined"], "all", "sde", True, version=VERSION)
+    assert queries.neighbours(store, old, "candidate_stage1", "sde", True, version=VERSION) == (None, None)

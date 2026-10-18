@@ -90,7 +90,28 @@ def _last_test_subquery():
             .join(last_id, TestRow.id == last_id.c.tid)).subquery()
 
 
-def _queue_select(status: str, sort: str, desc: bool, ids_only: bool = False):
+def current_search_version(store: Store) -> str | None:
+    """The detector version of the most recently started finished run: the search code the queue should show by
+    default (None before the first run)."""
+    with store.session() as s:
+        return s.scalar(select(RunRow.detector_version).where(RunRow.status == "done")
+                        .order_by(RunRow.started.desc(), RunRow.id.desc()).limit(1))
+
+
+def _statuses(status: str) -> tuple[str, ...]:
+    return QUEUE_STATUSES.get(status, QUEUE_STATUSES["candidate_stage1"])
+
+
+def hidden_by_version(store: Store, status: str, version: str | None) -> int:
+    """How many signals of this queue status a filter on ``version`` hides (0 when there is no filter)."""
+    if version is None:
+        return 0
+    with store.session() as s:
+        return s.scalar(select(func.count()).select_from(SignalRow).join(RunRow, RunRow.id == SignalRow.run_id)
+                        .where(SignalRow.final_status.in_(_statuses(status)), RunRow.detector_version != version))
+
+
+def _queue_select(status: str, sort: str, desc: bool, ids_only: bool = False, version: str | None = None):
     last = _last_test_subquery()
     col = SORT_COLUMNS.get(sort, SignalRow.sde)
     cols = ([SignalRow.id] if ids_only else
@@ -100,7 +121,9 @@ def _queue_select(status: str, sort: str, desc: bool, ids_only: bool = False):
          .join(TargetRow, TargetRow.target_id == SignalRow.target_id)
          .outerjoin(CandidateRow, CandidateRow.signal_id == SignalRow.id)
          .outerjoin(last, last.c.signal_id == SignalRow.id)
-         .where(SignalRow.final_status.in_(QUEUE_STATUSES.get(status, QUEUE_STATUSES["candidate_stage1"]))))
+         .where(SignalRow.final_status.in_(_statuses(status))))
+    if version is not None:
+        q = q.join(RunRow, RunRow.id == SignalRow.run_id).where(RunRow.detector_version == version)
     return q.order_by(col.desc() if desc else col.asc(), SignalRow.id.desc())
 
 
@@ -113,14 +136,17 @@ def _queue_row(sig: SignalRow, t: TargetRow, decision, rung, verdict, reason=Non
 
 
 def review_queue(store: Store, status: str = "candidate_stage1", sort: str = "sde", desc: bool = True,
-                 limit: int = 500) -> list[dict]:
+                 limit: int = 500, version: str | None = None) -> list[dict]:
+    """The queue rows; with ``version``, only signals found by runs of that detector version."""
     with store.session() as s:
-        return [_queue_row(*row) for row in s.execute(_queue_select(status, sort, desc).limit(limit)).all()]
+        return [_queue_row(*row) for row in
+                s.execute(_queue_select(status, sort, desc, version=version).limit(limit)).all()]
 
 
-def neighbours(store: Store, signal_id: int, status: str, sort: str, desc: bool) -> tuple[int | None, int | None]:
+def neighbours(store: Store, signal_id: int, status: str, sort: str, desc: bool,
+               version: str | None = None) -> tuple[int | None, int | None]:
     with store.session() as s:
-        ids = list(s.scalars(_queue_select(status, sort, desc, ids_only=True)))
+        ids = list(s.scalars(_queue_select(status, sort, desc, ids_only=True, version=version)))
     if signal_id not in ids:
         return None, None
     i = ids.index(signal_id)

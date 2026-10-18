@@ -68,3 +68,24 @@ def seed(store: Store, blob=None) -> dict:
         for row in s.query(SignalRow):
             ids[key_of[row.target_id]] = row.id
     return {**ids, "targets": [t.target_id for t in targets], "run_ids": runs}
+
+
+OLD_VERSION = "0+0ld0ld00"
+
+
+def add_older_version(store: Store, target_id: str = "kic-005689121", period: float = 6.88475) -> int:
+    """A stage-1 candidate for ``target_id`` from an earlier sweep under ``OLD_VERSION`` (its run started a day before
+    the seeded runs, though its rows are written after them). Returns the signal id."""
+    from datetime import timedelta
+
+    from skysift.store.db import RunRow
+    rid = store.start_run(make_job_key(target_id, "box_dip", OLD_VERSION, "1"), target_id, "box_dip", OLD_VERSION, "1")
+    sig = _signal(target_id, period, 30.0).model_copy(update={"detector_version": OLD_VERSION})
+    tests = _tests("pass")
+    item = {"signal": sig.model_dump(), "outcome": "pass", "tests": [r.model_dump() for r in tests],
+            "timings": [0.01] * len(tests)}
+    store.record_results(rid, target_id, [item], [], pin_evidence=False)
+    with store.session() as s:
+        run = s.get(RunRow, rid)
+        run.started = min(r.started for r in s.query(RunRow).filter(RunRow.id != rid)) - timedelta(days=1)
+        return s.query(SignalRow.id).filter(SignalRow.run_id == rid).scalar()

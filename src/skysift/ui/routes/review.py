@@ -69,21 +69,33 @@ def _ladder_rows(tests: list[dict]) -> list[dict]:
     return rows
 
 
+VERSIONS = ("current", "all")
+
+
 class _BadView(ValueError):
     pass
 
 
 def _view(request: Request) -> dict:
-    """The queue view carried in the query string (filter, sort column, direction), checked against the allow-lists."""
+    """The queue view carried in the query string (filter, sort column, direction, which search versions), checked
+    against the allow-lists."""
     q = request.query_params
-    view = {"status": q.get("status", "candidate_stage1"), "sort": q.get("sort", "sde"), "dir": q.get("dir", "desc")}
+    view = {"status": q.get("status", "candidate_stage1"), "sort": q.get("sort", "sde"), "dir": q.get("dir", "desc"),
+            "versions": q.get("versions", "current")}
     if view["status"] not in queries.QUEUE_STATUSES:
         raise _BadView(f"unknown status {view['status']!r}; one of {', '.join(queries.QUEUE_STATUSES)}")
     if view["sort"] not in queries.SORT_COLUMNS:
         raise _BadView(f"unknown sort column {view['sort']!r}; one of {', '.join(queries.SORT_COLUMNS)}")
     if view["dir"] not in ("asc", "desc"):
         raise _BadView(f"unknown direction {view['dir']!r}; asc or desc")
+    if view["versions"] not in VERSIONS:
+        raise _BadView(f"unknown versions {view['versions']!r}; {' or '.join(VERSIONS)}")
     return view
+
+
+def _version(store, view: dict) -> str | None:
+    """The detector version the view keeps to: the current search version, or None (no filter) for 'all'."""
+    return queries.current_search_version(store) if view["versions"] == "current" else None
 
 
 def _bad_request(request: Request, e: Exception) -> HTMLResponse:
@@ -97,9 +109,11 @@ def candidates_page(request: Request):
         view = _view(request)
     except _BadView as e:
         return _bad_request(request, e)
-    rows = queries.review_queue(st.store, status=view["status"], sort=view["sort"], desc=view["dir"] != "asc")
+    version = _version(st.store, view)
+    rows = queries.review_queue(st.store, status=view["status"], sort=view["sort"], desc=view["dir"] != "asc",
+                                version=version)
     return render(request, "candidates.html", rows=rows, view=view, statuses=list(queries.QUEUE_STATUSES),
-                  columns=COLUMNS)
+                  columns=COLUMNS, hidden=queries.hidden_by_version(st.store, view["status"], version))
 
 
 @router.get("/signals/{signal_id}", response_class=HTMLResponse)
@@ -112,7 +126,8 @@ def signal_page(request: Request, signal_id: int):
     d = queries.signal_detail(st.store, signal_id)
     if d is None:
         return render(request, "error.html", status_code=404, error=f"no signal {signal_id}", log_hint="")
-    prev_id, next_id = queries.neighbours(st.store, signal_id, view["status"], view["sort"], view["dir"] != "asc")
+    prev_id, next_id = queries.neighbours(st.store, signal_id, view["status"], view["sort"], view["dir"] != "asc",
+                                          version=_version(st.store, view))
     qs = "?" + urlencode(view)
     return render(request, "signal.html", d=d, ladder=_ladder_rows(d["tests"]), links=_links(d["target"]),
                   prev_url=f"/signals/{prev_id}{qs}" if prev_id else None,
