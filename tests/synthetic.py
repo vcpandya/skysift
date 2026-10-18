@@ -26,6 +26,30 @@ def keep_quarters(lc: LightCurve, quarters) -> LightCurve:
                       dict(lc.meta))
 
 
+def drop_random_cadences(lc: LightCurve, fraction: float, seed: int = 0) -> LightCurve:
+    """``lc`` with each cadence removed independently with probability ``fraction``: a star whose quality mask keeps
+    ``1 - fraction`` of its cadences, scattered through the data rather than in whole event windows."""
+    keep = np.random.default_rng(seed).random(lc.time.size) >= fraction
+    alt = None if lc.flux_alt is None else lc.flux_alt[keep]
+    return LightCurve(lc.time[keep], lc.flux[keep], lc.flux_err[keep], lc.quality[keep], lc.quarter[keep], alt,
+                      dict(lc.meta))
+
+
+# a 5.4 d, 3.2 h, 2000 ppm planet on a 1400 d curve with 35 percent of its cadences removed at random
+DC_P, DC_T0, DC_DUR, DC_DROP = 5.4, 134.9, 3.2 / 24, 0.35
+
+
+def duty_cycle_planet(seed=13, noise_ppm=600):
+    lc = inject_transit(make_lightcurve(noise_ppm=noise_ppm, seed=seed), DC_P, DC_T0, DC_DUR, 2000)
+    return drop_random_cadences(lc, DC_DROP, seed)
+
+
+def in_quarter_gap(t_event, duration_days):
+    """True for a mid-transit whose +-1 duration window touches a quarter gap of ``make_lightcurve`` (1.5 d without
+    data, then the 1.5 d gap-edge mask of ``detrend``)."""
+    return (np.asarray(t_event) - 131.5 + duration_days) % 93.0 < 3.0 + 2 * duration_days
+
+
 FQ_P, FQ_T0, FQ_DUR, FQ_QUARTERS = 12.0, 137.5, 4 / 24, (1, 5, 9, 13)
 
 

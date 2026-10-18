@@ -493,10 +493,28 @@ def sweet(time, flux, period, depth_ppm) -> SweetResult:
 
 @dataclass
 class EventQuality:
+    """Per-event quality of a signal (``event_quality``). Coverage is SkySift's adaptation of Rubble (T18 A.3.7.1):
+    T18 compares an event's cadences with the regular 29.42 min cadence, because the Kepler pipeline's flags leave
+    about 92 percent of the cadences; SkySift's quality mask (quality == 0) leaves 64 to 93 percent per star, so an
+    event is compared with the star's own duty cycle ``duty``."""
     epochs: np.ndarray          # every expected epoch (mid-transit within EXPECTED_EPOCH_MAX_GAP_DAYS of an observed time)
-    coverage: np.ndarray        # observed cadences within +-1 duration / expected (2 duration / median cadence); NaN at cadence 0
+    coverage: np.ndarray        # observed cadences within +-1 duration / (2 duration / median cadence x duty); NaN at cadence 0
     ses: np.ndarray             # depth / error per epoch from _box_depth; NaN with fewer than 3 box points or no data
     chases: np.ndarray | None   # C_i per epoch when len(epochs) <= CHASES_MAX_EVENTS, else None
+    duty: float                 # observed / regular cadences inside the observed spans (_duty_cycle); NaN at cadence 0
+
+
+def _duty_cycle(t_obs: np.ndarray, cadence: float) -> float:
+    """The star's duty cycle: the number of observed cadences over the number of regular cadences inside the observed
+    spans. The spans are ``t_obs`` (sorted) split at steps longer than ``EXPECTED_EPOCH_MAX_GAP_DAYS``, the gaps across
+    which no transit is expected; a span holds ``round(length / cadence) + 1`` regular cadences. The quarter and
+    monthly gaps shorter than that stay inside the spans and count against the duty cycle, as they count against the
+    events that fall in them. NaN when ``cadence`` is not positive."""
+    if not cadence > 0 or t_obs.size == 0:
+        return float("nan")
+    spans = _segments(t_obs, EXPECTED_EPOCH_MAX_GAP_DAYS)
+    regular = sum(round((t_obs[s[-1]] - t_obs[s[0]]) / cadence) + 1 for s in spans)
+    return float(t_obs.size / regular)
 
 
 def _chases_one(t, y, t_event, ses, period, duration_days) -> float:
@@ -536,9 +554,16 @@ def event_quality(time, fnorm, period, t0, duration_days, *, observed=None) -> E
     inter-quarter or monthly gap (with the gap-edge mask about 3 d) is still expected and counts as uncovered; a transit
     in a quarter the target was never observed in is not expected. An expected epoch with no point near mid-transit has
     coverage 0.0 and a NaN ses.
-    ``coverage`` counts the observed cadences within one duration of mid-transit over the 2 x duration / median
-    observed cadence expected; it is NaN for every epoch when the median cadence is 0 (more than half the time stamps
-    duplicated), which the rung treats as not covered.
+    ``coverage`` counts the observed cadences within one duration of mid-transit over the number expected,
+    ``(2 x duration / median observed cadence) x duty``, with ``duty`` the star's duty cycle (``_duty_cycle``: observed
+    over regular cadences inside the observed spans, the spans split at steps longer than
+    ``EXPECTED_EPOCH_MAX_GAP_DAYS``). This is SkySift's adaptation of Rubble (T18 A.3.7.1): T18 compares with the
+    regular 29.42 min cadence because the Kepler pipeline's flags leave about 92 percent of the cadences, while
+    SkySift's quality mask leaves 64 to 93 percent per star, so on a 64 percent star every event would read about 0.6
+    against the regular cadence and the whole signal would fail as gapped. Against the duty cycle a typical event
+    reads about 1; there is no cap, and a window better covered than the star's average exceeds 1. An event emptied by
+    a gap still reads 0. ``coverage`` is NaN for every epoch (and ``duty`` NaN) when the median cadence is 0 (more than
+    half the time stamps duplicated), which the rung treats as not covered.
     ``ses`` is the depth over the error of ``_box_depth`` on the epoch's points, as ``event_depths`` takes it, NaN when
     the box holds fewer than 3 points or the baseline fewer than 20. ``chases`` is computed only when the number of
     events is at most ``CHASES_MAX_EVENTS`` (otherwise None), and is NaN for an event without a positive finite ses: a box of the
@@ -550,8 +575,9 @@ def event_quality(time, fnorm, period, t0, duration_days, *, observed=None) -> E
     good = np.isfinite(time) & np.isfinite(fnorm)
     time, fn = time[good], fnorm[good]
     if t_obs.size < 2:
-        return EventQuality(np.array([], int), np.array([]), np.array([]), np.array([]))
+        return EventQuality(np.array([], int), np.array([]), np.array([]), np.array([]), float("nan"))
     cadence = float(np.median(np.diff(t_obs)))
+    duty = _duty_cycle(t_obs, cadence)
     ph = fold_phase(time, period, t0)
     ep = np.round((time - t0) / period).astype(int)
     epochs = np.arange(int(np.ceil((t_obs[0] - t0) / period)), int(np.floor((t_obs[-1] - t0) / period)) + 1)
@@ -559,7 +585,8 @@ def event_quality(time, fnorm, period, t0, duration_days, *, observed=None) -> E
     k = np.clip(np.searchsorted(t_obs, mids), 1, t_obs.size - 1)          # the observed times either side of each
     gap = np.minimum(np.abs(t_obs[k] - mids), np.abs(mids - t_obs[k - 1]))
     epochs = epochs[gap <= EXPECTED_EPOCH_MAX_GAP_DAYS]
-    expected = 2.0 * duration_days / cadence if cadence > 0 else np.nan     # duplicated stamps: coverage undefined
+    # cadences expected in an event's +-1 duration window on this star (duplicated stamps: coverage undefined)
+    expected = 2.0 * duration_days / cadence * duty if cadence > 0 else np.nan
     half = duration_days / 2.0
     ep_obs = np.round((t_obs - t0) / period).astype(int)
     near_obs = np.abs(fold_phase(t_obs, period, t0)) < duration_days
@@ -576,7 +603,7 @@ def event_quality(time, fnorm, period, t0, duration_days, *, observed=None) -> E
         for i, e in enumerate(epochs):
             if np.isfinite(ses[i]) and ses[i] > 0:         # a brightening has no dip to compete with
                 chases[i] = _chases_one(time, fn, t0 + e * period, ses[i], period, duration_days)
-    return EventQuality(epochs, coverage, ses, chases)
+    return EventQuality(epochs, coverage, ses, chases, duty)
 
 
 def circular_duration_days(period_days: float, mass_msun: float = 0.5, radius_rsun: float = 0.5) -> float:

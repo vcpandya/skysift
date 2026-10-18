@@ -306,7 +306,7 @@ T0_R2 = 133.0       # a multiple of 0.7 d, so the 0.7 d wave of the SWEET EB fix
 R2_NEW_METRICS = ("sigma_pri", "sigma_sec", "phase_sec", "sigma_ter", "sigma_pos", "fa2", "ms2", "ms3", "fit_ok",
                   "fit_k", "fit_b", "fit_a_over_r", "fit_depth_ppm", "fit_t14_h", "fit_chi2", "sweet_factor",
                   "sweet_amplitude_ppm", "sweet_snr", "suggested_period", "occultation_albedo",
-                  "planet_radius_rearth", "secondary_difference_sigma", "occultation_exception")
+                  "planet_radius_rearth", "secondary_difference_sigma", "occultation_exception", "v_shape_applied")
 
 
 def _assert_new_metrics_strict(r):
@@ -443,6 +443,23 @@ def test_rung2_fails_a_v_shaped_eclipse():
     r = Rung2Shape().run(_signal_r2(9.0, 6 / 24, 30000), bundle(lc))
     assert r.status == TestStatus.FAIL and r.reason.startswith("V-shaped"), (r.status, r.reason)
     assert r.metrics["fit_k"] + r.metrics["fit_b"] > 1.04 and r.metrics["parity_sigma"] < 3
+    assert r.metrics["v_shape_applied"] is True
+    _assert_new_metrics_strict(r)
+
+
+def test_rung2_skips_the_v_shape_rule_when_the_fit_is_pinned_at_its_bound(monkeypatch):
+    """A shallow 200 ppm, 1.8 h box at 0.96 d whose transit fit ran to the k bound (2.0, with a 40000 ppm model depth
+    against the 200 ppm measured): k + b = 2.06 says nothing about the shape, so the V-shape rule (T18 A.4.3, which
+    reads a converged fit of a significant signal) is not applied and the planet passes. The first real-curve injection
+    run of ladder 3 failed a 185 ppm, 0.96 d box this way."""
+    import skysift.vetting.rung2_shape as rung2
+    from skysift.lc.transit_model import TransitFit
+    pinned = TransitFit(k=2.0, b=0.06, a_over_r=3.0, depth_ppm=40000.0, t14_days=1.8 / 24, chi2=50.0, n_bins=48, ok=True)
+    monkeypatch.setattr(rung2, "fit_transit", lambda *a, **kw: pinned)
+    lc = inject_transit(make_lightcurve(seed=19, noise_ppm=600), 0.96, T0_R2, 1.8 / 24, 200)
+    r = Rung2Shape().run(_signal_r2(0.96, 1.8 / 24, 200), bundle(lc))
+    assert r.status == TestStatus.PASS, (r.status, r.reason)
+    assert r.metrics["v_shape_applied"] is False and r.metrics["fit_k"] == 2.0
     _assert_new_metrics_strict(r)
 
 

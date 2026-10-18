@@ -7,7 +7,19 @@ from skysift.lc.ops import apply_mask, detrend
 from skysift.models import LightCurve, Signal, Target, TestStatus
 from skysift.vetting.base import DataBundle
 from skysift.vetting.rung1_events import METRIC_LIST_MAX, Rung1Events
-from tests.synthetic import FQ_DUR, FQ_P, FQ_T0, four_quarter_planet, inject_transit, make_lightcurve
+from tests.synthetic import (
+    DC_DROP,
+    DC_DUR,
+    DC_P,
+    DC_T0,
+    FQ_DUR,
+    FQ_P,
+    FQ_T0,
+    duty_cycle_planet,
+    four_quarter_planet,
+    inject_transit,
+    make_lightcurve,
+)
 
 TGT = Target(source="test", target_id="t", ra=0, dec=0)
 NOISE = 600
@@ -133,14 +145,30 @@ def test_passes_a_planet_observed_in_four_quarters():
 
 def test_a_detector_mask_is_not_missing_data():
     """A second-pass signal is vetted with the first-pass eclipses NaN; ``fnorm_unmasked`` tells the rung which
-    cadences were observed, so a mask of 40 percent of the points does not fail the signal as gapped."""
+    cadences were observed, so a mask of 40 percent of the points is not read as missing data. Without it the mask
+    lowers the duty cycle to about 0.6 and empties the events it covers (measured: duty 0.602, 111 of 189 covered,
+    which since the duty-cycle coverage no longer fails the gapped-events rule); with it the duty cycle is 1.0 and
+    183 of 189 events are covered."""
     period, t0, dur = 2.1, 132.3, 2.2 / 24
     lc = inject_transit(make_lightcurve(n_days=400, seed=17, noise_ppm=NOISE), period, t0, dur, 1500)
     b = bundle(lc)
     mask = [{"period": 0.72, "t0": 131.9, "half_primary_days": 0.144, "half_secondary_days": 0.0}]
     masked = replace(b, fnorm=apply_mask(lc.time, b.fnorm, mask))
     r = Rung1Events().run(signal(period, t0, dur, 1500.0), masked)
-    assert r.status == TestStatus.FAIL and r.reason.startswith("gapped events"), r.reason   # the mask read as gaps
+    assert r.metrics["duty_cycle"] < 0.7, r.metrics["duty_cycle"]                       # the mask read as missing data
+    assert r.metrics["n_covered"] < 0.7 * r.metrics["n_events_with_data"], r.metrics["n_covered"]
     r = Rung1Events().run(signal(period, t0, dur, 1500.0), replace(masked, fnorm_unmasked=b.fnorm))
     assert r.status == TestStatus.PASS, r.reason
-    assert r.metrics["n_covered"] >= 0.9 * r.metrics["n_events_with_data"]
+    assert r.metrics["duty_cycle"] > 0.95 and r.metrics["n_covered"] >= 0.9 * r.metrics["n_events_with_data"]
+
+
+def test_passes_a_planet_on_a_star_with_a_low_duty_cycle():
+    """35 percent of the cadences removed at random (a star whose quality mask keeps 65 percent, as many real KBonus
+    curves do): coverage is measured against the star's own duty cycle, so the events are covered and the planet
+    passes. The gapped-events tests above still fail: they empty whole event windows, which no duty cycle excuses."""
+    lc = duty_cycle_planet()
+    r = Rung1Events().run(signal(DC_P, DC_T0, DC_DUR, 2000.0), bundle(lc))
+    assert r.status == TestStatus.PASS, (r.reason, r.metrics["n_covered"], r.metrics["n_events_with_data"])
+    assert not (r.reason or "").startswith("gapped events")
+    assert abs(r.metrics["duty_cycle"] - (1 - DC_DROP)) < 0.05, r.metrics["duty_cycle"]
+    assert r.metrics["n_covered"] > 0.8 * r.metrics["n_events_with_data"]

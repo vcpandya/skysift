@@ -17,7 +17,21 @@ from skysift.lc.ops import (
     sweet,
 )
 from skysift.models import LightCurve
-from tests.synthetic import FQ_DUR, FQ_P, FQ_QUARTERS, FQ_T0, four_quarter_planet, inject_transit, make_lightcurve
+from tests.synthetic import (
+    DC_DROP,
+    DC_DUR,
+    DC_P,
+    DC_T0,
+    FQ_DUR,
+    FQ_P,
+    FQ_QUARTERS,
+    FQ_T0,
+    duty_cycle_planet,
+    four_quarter_planet,
+    in_quarter_gap,
+    inject_transit,
+    make_lightcurve,
+)
 
 P, T0, DUR, DEPTH = 13.769, 136.3, 0.09, 2000.0
 
@@ -312,6 +326,24 @@ def test_event_quality_coverage_and_ses():
     eq2 = event_quality(lc.time, cut, EP, ET0, EDUR)
     j = int(np.where(eq2.epochs == eq.epochs[k])[0][0])
     assert eq2.coverage[j] < EVENT_COVERAGE_MIN and eq2.coverage[j] < eq.coverage[k]
+
+
+def test_event_quality_measures_coverage_against_the_duty_cycle():
+    """A star whose quality mask keeps 65 percent of its cadences, scattered at random: every event holds about 65
+    percent of the regular cadences, which is the star's normal, not a gap. Coverage is measured against the star's own
+    duty cycle (observed / regular cadences inside the observed spans), so it sits near 1. A window of 6.4 h holds 13
+    cadences, so a single event's count is binomial (13, 0.65): about 7 percent of the events fall outside 0.7 to 1.3
+    by chance, and the test asks that most, not all, lie inside."""
+    lc = duty_cycle_planet()
+    eq = event_quality(lc.time, detrend(lc), DC_P, DC_T0, DC_DUR)
+    assert abs(eq.duty - (1 - DC_DROP)) < 0.05, eq.duty
+    clear = ~in_quarter_gap(DC_T0 + eq.epochs * DC_P, DC_DUR)
+    c = eq.coverage[clear]
+    assert clear.sum() > 200 and 0.9 < np.median(c) < 1.1, np.median(c)
+    assert np.mean((c >= 0.7) & (c <= 1.3)) > 0.85, np.sort(c)
+    assert np.mean(c >= EVENT_COVERAGE_MIN) > 0.8                    # the rung's gapped-events rule needs > 0.5
+    full = make_lightcurve(noise_ppm=600, seed=13)                     # nothing dropped: the duty cycle is about 1
+    assert event_quality(full.time, detrend(full), DC_P, DC_T0, DC_DUR).duty > 0.95
 
 
 def test_event_quality_counts_an_epoch_without_points():

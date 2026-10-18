@@ -40,7 +40,12 @@ class Rung1Events:
 
     Each rule and its source:
     - coverage ("Rubble", A.3.7.1): an event is covered when it holds at least ``EVENT_COVERAGE_MIN`` (0.75) of the
-      points expected within one duration of mid-transit;
+      points expected within one duration of mid-transit. SkySift's adaptation: T18 expects the regular 29.42 min
+      cadence, because the Kepler pipeline's flags leave about 92 percent of the cadences; SkySift's quality mask
+      leaves 64 to 93 percent per star, so the expectation is scaled by the star's own duty cycle (observed over
+      regular cadences inside the observed spans, ``lc.ops.event_quality``), recorded as ``duty_cycle``. Without it
+      every event of a 64 percent star reads about 0.6 and the signal fails as gapped; an event emptied by a gap
+      still reads 0;
     - gapped fraction (A.3.8): FAIL when no more than ``GAPPED_FRACTION_MAX`` of the events are covered;
     - Zuma (A.3.7.5): an event whose own SES is below ``ZUMA_SES_MIN`` is an excess of flux and is not counted good;
     - single-event dominance (A.3.5): on signals longer than ``SES_DOMINANCE_MIN_PERIOD``, FAIL when the largest SES
@@ -89,6 +94,7 @@ class Rung1Events:
             good = covered
         n_good = int(good.sum())
         m = {"n_events_with_data": n, "n_covered": int(covered.sum()), "n_good": n_good,
+             "duty_cycle": round(q.duty, 3) if np.isfinite(q.duty) else None,
              "ses_rules_applied": applied, "ses_max_over_mes": None if np.isnan(ratio) else round(ratio, 3),
              "chases_median": chases_median}
         if n <= METRIC_LIST_MAX:

@@ -20,7 +20,7 @@ from skysift.lc.ops import (
     stacked_depth,
     sweet,
 )
-from skysift.lc.transit_model import TransitFit, fit_transit
+from skysift.lc.transit_model import K_BOUNDS, TransitFit, fit_transit
 from skysift.models import Signal, TestResult, TestStatus
 from skysift.vetting.base import DataBundle
 from skysift.vetting.rung1_detection import _stellar_param
@@ -33,6 +33,13 @@ SWEET_PLANET_MAX_PERIOD = 5.0
 SWEET_EB_MIN_AMPLITUDE_PPM = 5000.0
 SWEET_EB_MAX_PERIOD = 10.0
 V_SHAPE_MAX = 1.04              # T18 A.4.3: radius ratio plus impact parameter of the transit fit above it is grazing
+# T18 A.4.3 reads k + b from a converged DV fit of a significant signal. A fit that ran to its k bound, or whose model
+# depth is far from the measured depth, has not measured the shape, so the V-shape rule is applied only when the fit
+# is ok, k < V_SHAPE_K_UNPINNED x the upper k bound, and fit depth / measured depth lies in
+# [1 / V_SHAPE_DEPTH_RATIO_MAX, V_SHAPE_DEPTH_RATIO_MAX] (a 185 ppm injection was failed with k pinned at 2.0)
+V_SHAPE_K_UNPINNED = 0.95
+V_SHAPE_DEPTH_RATIO_MAX = 2.0
+K_MAX = K_BOUNDS[1]
 R_SUN_M = 6.957e8
 R_EARTH_M = 6.371e6
 GM_SUN = 1.32712440018e20       # m^3 s^-2
@@ -56,6 +63,18 @@ def _fit_metrics(fit: TransitFit) -> dict:
     values = {"fit_k": fit.k, "fit_b": fit.b, "fit_a_over_r": fit.a_over_r, "fit_depth_ppm": fit.depth_ppm,
               "fit_t14_h": fit.t14_days * 24.0, "fit_chi2": fit.chi2}
     return {"fit_ok": ok, **{name: _num(v) if ok else None for name, v in values.items()}}
+
+
+def _v_shape_applies(fit: TransitFit, depth_ppm) -> bool:
+    """Whether the fit can carry the V-shape rule: ok, k not pinned near its upper bound (below
+    ``V_SHAPE_K_UNPINNED x K_MAX``), and a model depth within a factor ``V_SHAPE_DEPTH_RATIO_MAX`` of the measured
+    depth ``depth_ppm`` (a missing, non-finite or non-positive measured depth does not apply the rule)."""
+    if not (fit.ok and math.isfinite(fit.k) and fit.k < V_SHAPE_K_UNPINNED * K_MAX):
+        return False
+    if depth_ppm is None or not math.isfinite(depth_ppm) or depth_ppm <= 0 or not math.isfinite(fit.depth_ppm):
+        return False
+    ratio = fit.depth_ppm / depth_ppm
+    return 1.0 / V_SHAPE_DEPTH_RATIO_MAX <= ratio <= V_SHAPE_DEPTH_RATIO_MAX
 
 
 class Rung2Shape:
@@ -124,6 +143,8 @@ class Rung2Shape:
         # the transit fit, once: it feeds the V-shape rule and the planet-occultation exception
         fit = fit_transit(lc.time, fn, s.period, s.t0, s.duration)
         m.update(_fit_metrics(fit))
+        v_shape_applied = _v_shape_applies(fit, m["depth_ppm"])
+        m["v_shape_applied"] = v_shape_applied
 
         # secondary eclipse, with the two T18 A.4.1.3 exceptions. Period halving is judged on the phase-0.5 path only:
         # it compares the phase-0.5 depth with the primary on the same estimator (per-event or stacked boxes); a
@@ -149,7 +170,7 @@ class Rung2Shape:
                 return self._result(TestStatus.FAIL, m, reason)
             occultation = True
 
-        if fit.ok and fit.k + fit.b > V_SHAPE_MAX:      # T18 A.4.3
+        if v_shape_applied and fit.k + fit.b > V_SHAPE_MAX:      # T18 A.4.3, on a fit that measured the shape
             return self._result(TestStatus.FAIL, m, f"V-shaped or deep (k + b = {fit.k + fit.b:.2f} > {V_SHAPE_MAX})")
         return self._result(TestStatus.PASS, m, "secondary consistent with planet occultation" if occultation else "")
 

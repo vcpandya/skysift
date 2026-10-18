@@ -82,8 +82,16 @@ lies within the span of the observed cadences and within 3 d (`EXPECTED_EPOCH_MA
 (`lc.ops.event_quality`). Kepler's inter-quarter and monthly gaps plus the 1.5 d gap-edge mask span about 3 d, so a
 transit inside such a gap is still expected and counts as uncovered, while a transit in a quarter the target was never
 observed in is not expected (a KBonus star seen in four quarters over four years is not failed for the other twelve).
-- coverage = observed cadences within +-1 duration of mid-transit / (2 x duration / median observed cadence); good
-  if >= 0.75 (`EVENT_COVERAGE_MIN`). A second-pass signal is vetted on flux with the detector's mask set to NaN
+- coverage = observed cadences within +-1 duration of mid-transit / ((2 x duration / median observed cadence) x
+  duty); good if >= 0.75 (`EVENT_COVERAGE_MIN`). `duty` is the star's duty cycle: the number of observed cadences
+  over the number of regular cadences inside the observed spans (the observed times split at steps longer than
+  `EXPECTED_EPOCH_MAX_GAP_DAYS` = 3.0 d; a span holds round(length / cadence) + 1 regular cadences), returned as
+  `EventQuality.duty` and recorded as the metric `duty_cycle`. Coverage is the plain ratio, not capped: a window
+  better covered than the star's average exceeds 1. This is SkySift's adaptation of Rubble (T18 A.3.7.1): T18
+  compares with the regular 29.42 min cadence because the Kepler pipeline's flags leave about 92 percent of the
+  cadences, while SkySift's quality mask (quality == 0) leaves 64 to 93 percent per star (12 real curves measured),
+  so against the regular cadence every event of a 64 percent star reads about 0.6 and the whole signal fails as
+  gapped. An event emptied by a gap still reads 0. A second-pass signal is vetted on flux with the detector's mask set to NaN
   (`pipeline._vetting_bundle`); a masked cadence was observed, so the bundle carries the unmasked flux
   (`DataBundle.fnorm_unmasked`) and its finite points are the observed cadences for coverage and the epoch
   expectation. SES and Chases read only the finite (masked) flux.
@@ -97,7 +105,7 @@ observed in is not expected (a KBonus star seen in four quarters over four years
 Verdict: n_good = events that are covered and not bad; FAIL "gapped events" if the covered fraction <= 0.5; FAIL
 "n_good < min_events"; FAIL "single event dominates" if P > 90 d (`SES_DOMINANCE_MIN_PERIOD`) and SES_max /
 sqrt(sum SES_i^2) > 0.8 (`SES_DOMINANCE_MAX`); FAIL "chases" if Chases applied and the median C_i < 0.8
-(`CHASES_MEDIAN_MIN`). Metrics: `n_events_with_data` (the expected events), `n_covered`, `n_good`, `coverage` (list),
+(`CHASES_MEDIAN_MIN`). Metrics: `n_events_with_data` (the expected events), `n_covered`, `n_good`, `duty_cycle`, `coverage` (list),
 `ses` (list), `ses_max_over_mes`, `chases` (list or None), `chases_median`, `ses_rules_applied`. The per-epoch lists
 are stored only up to `METRIC_LIST_MAX` = 60 expected events; above that `coverage`, `ses` and `chases` are None and
 `coverage_summary` (`n`, `min`, `median`, `below_min`) and `ses_summary` (`n_finite`, `min`, `median`, `max`) stand
@@ -128,8 +136,13 @@ New helpers in `lc/ops.py` and a new module `lc/transit_model.py`.
   `scipy.optimize.least_squares` to the binned fold within +-3 durations (bins as in `shape_contrast`), bounds k in
   [1e-3, 2], b in [0, 1 + k], a / R_star in [1.5, 1e4]; start k = sqrt(depth), b = 0.3, a / R_star from the box
   duration. `ok` False when the fold has fewer than 20 bins or the solver does not converge. FAIL "V-shaped or deep
-  (k + b > 1.04)" when ok and k + b > `V_SHAPE_MAX` = 1.04. Metrics `fit_k`, `fit_b`, `fit_a_over_r`,
-  `fit_depth_ppm`, `fit_t14_h`, `fit_chi2`, `fit_ok`.
+  (k + b > 1.04)" when k + b > `V_SHAPE_MAX` = 1.04 on a fit that measured the shape: T18 A.4.3 applies the rule to a
+  converged DV fit of a significant signal, so it applies only when the fit is ok, k < `V_SHAPE_K_UNPINNED` (0.95) x
+  the upper k bound (2.0, `transit_model.K_BOUNDS`), and the fitted depth lies within a factor
+  `V_SHAPE_DEPTH_RATIO_MAX` = 2.0 of the measured depth (`fit_depth_ppm / depth_ppm` in [0.5, 2.0]); otherwise the
+  rule is skipped. A 185 ppm, 0.96 d injection on a real curve was failed with k + b = 2.06, the fit pinned at the k
+  bound. Metrics `fit_k`, `fit_b`, `fit_a_over_r`, `fit_depth_ppm`, `fit_t14_h`, `fit_chi2`, `fit_ok`, and
+  `v_shape_applied` (True or False whenever the fit ran). The occultation exception keeps its own gates.
 - Secondary exceptions, evaluated before the existing `secondary_at_0.5` / `eccentric_secondary` FAILs:
   (a) period halving (T18 A.4.1.3: a TCE whose primary and secondary are indistinguishable and whose secondary sits at
   phase 0.5 may be a planet "detected at twice the true orbital period", both dips being transits): when the primary
@@ -182,9 +195,20 @@ depth ratio. Search version and ladder version are stamped on every line.
   transit duration searched. Changes `DETREND_VERSION`.
 - A V-shaped trial in the pre-whitening guard (the 4 percent V eclipse partly removed, recorded on 18 October).
 - Marshall-style per-event transient fits; Skye at sweep level; disposition score.
+- Quality mask: SkySift keeps only quality == 0 cadences, 64 to 93 percent per star on the 30 sample curves
+  (ManualExclude 8.6 percent of all cadences, CollateralCosmic 6.7, RollingBand 7.7, ZeroCrossing 2.6). A
+  lightkurve-default-style mask (drop AttitudeTweak, SafeMode, CoarsePoint, EarthPoint, Desat, ManualExclude,
+  DetectorAnomaly, NoData; keep collateral cosmic rays, rolling-band flags and zero crossings) would return about 7
+  percent of all cadences (about a third of what is dropped). It changes `DETREND_VERSION` input and therefore the
+  search version: after the pilot, with a re-calibration.
 
 ## 7. What a verdict change costs
 Ladder version 3 moves four outcomes from FAIL to UNDETERMINED (seasonal depth, aperture depth, period halving,
 epoch mismatch): more signals reach human review, none is lost. It adds seven FAIL rules (coverage, gapped, single
 event, Chases, MS2/MS3, SWEET, V shape); each is a published rule with its published threshold, and the injection
-regression of section 5 measures what they cost in completeness before any sweep is published.
+regression of section 5 measures what they cost in completeness before any sweep is published. The first ladder-3
+injection run (18 October 2026, `skysift inject --limit 10` on cached KBonus curves, 28 injections, 19 found) showed
+9 of the 19 recovered planets failed as "gapped events" on the un-normalised coverage (35 to 45 percent of epochs
+covered, the stars' quality masks keeping well under T18's 92 percent of cadences), which is why the duty-cycle form
+of section 4.1 was adopted, and one failed as V-shaped on a fit pinned at its k bound, which is why the V-shape rule
+of section 4.2 needs an unpinned fit.
