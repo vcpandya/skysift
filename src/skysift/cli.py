@@ -269,9 +269,9 @@ def inject(source: str = typer.Option(...),
                           filter={"gmag_max": gmag_max, "background_only": background_only, "psffrac_min": psffrac_min},
                           limit=limit, per_star=per_star, snr_targets=snr_targets, out=path, workers_cpu=s.workers_cpu,
                           seed=seed, parse=PARSERS.get(source),
-                          progress=lambda sm: _plain(console, f"written {sm['written']} lines of {sm['targets']} targets"
-                                                              f" (skipped {sm['skipped']}, errors {sm['errors']})",
-                                                     end="\r"))
+                          progress=lambda sm: _plain(
+                              console, f"{sm['written']} injections from {sm['stars']} of {sm['targets']} targets"
+                                       f" (skipped {sm['skipped']}, errors {sm['errors']})", end="\r"))
     except inj.VersionMismatch as e:
         raise typer.BadParameter(str(e), param_hint="--out") from e
     except DiskBudgetExceeded as e:

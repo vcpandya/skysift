@@ -79,8 +79,11 @@ def plan_injections(lc: LightCurve, th: Thresholds, rng: np.random.Generator, pe
     25 d cut to the search window and to ``baseline / min_events`` (at least that many transits fit), and stays 2
     percent clear of each own period and its 2x, 1/2, 3x and 1/3 multiples (50 draws, then the last one is kept). The
     depth gives the nominal SNR ``depth * sqrt(n_in) / sigma``: sigma is the robust scatter of the detrended flux and
-    n_in the good points inside the transits; the depth is capped at 5000 ppm (so a quiet star's nominal SNR is
-    then lower than asked). Raises ValueError when no period fits."""
+    n_in the good points inside the transits. The depth is capped at 5000 ppm: ``depth_capped`` says the cap bound and
+    ``snr_achieved`` is the SNR the injected depth gives (equal to ``snr_nominal`` when it did not). sigma comes from
+    ``detrend(lc)`` with its defaults (as the study did), not from the production ``detrend_settings()`` that
+    ``whitened_flux`` uses for the search and for ``snr_red``, so the nominal and red-noise SNRs sit on slightly
+    different detrends. Raises ValueError when no period fits."""
     fn = detrend(lc)
     good = np.isfinite(fn)
     if good.sum() < 10: raise ValueError("too few good points to plan injections")
@@ -102,9 +105,11 @@ def plan_injections(lc: LightCurve, th: Thresholds, rng: np.random.Generator, pe
                 break
         dur = duration_days(p)
         n_in = good.sum() * dur / p
-        depth = min(DEPTH_CAP_PPM, snr * sigma * 1e6 / np.sqrt(n_in))
+        wanted = snr * sigma * 1e6 / np.sqrt(n_in)
+        depth = min(DEPTH_CAP_PPM, wanted)
         out.append({"period": p, "t0": t_start + float(rng.uniform(0, p)), "duration": dur, "depth_ppm": float(depth),
-                    "snr_nominal": snr})
+                    "snr_nominal": snr, "depth_capped": bool(wanted > DEPTH_CAP_PPM),
+                    "snr_achieved": float(depth * np.sqrt(n_in) / (sigma * 1e6))})
     return out
 
 
@@ -174,9 +179,11 @@ def inject_star(lc_pickle: bytes, target_json: str, thresholds_json: str, ladder
     rows = []
     for inj in plan_injections(lc, th, rng, per_star, snr_targets, own):
         injected = inject_box(lc, inj["period"], inj["t0"], inj["duration"], inj["depth_ppm"])
-        out = json.loads(_cpu_work(pickle.dumps(injected), target_json, thresholds_json, "box_dip", ladder_version, False))
+        out = json.loads(_cpu_work(pickle.dumps(injected), target_json, thresholds_json, "box_dip", ladder_version, False,
+                                   None, "off"))     # rung 4 off, no fetch module, no periodogram kept (thrown away here)
         rows.append({"period": inj["period"], "t0": inj["t0"], "duration": inj["duration"], "depth_ppm": inj["depth_ppm"],
-                     "snr_nominal": inj["snr_nominal"],
+                     "snr_nominal": inj["snr_nominal"], "depth_capped": inj["depth_capped"],
+                     "snr_achieved": inj["snr_achieved"],
                      "snr_red": red_noise_snr(lc.time, fn, inj["period"], inj["duration"], inj["depth_ppm"]),
                      **score(inj, out["signals"])})
     return rows
@@ -205,7 +212,8 @@ def run(source, store, blob, settings: Settings, filter: dict, limit: int | None
     targets = ranked_targets(source, store, filter, limit)
     todo = iter([t for t in targets if t.target_id not in done])
     summary = {"search_version": version, "ladder_version": ladder_version, "targets": len(targets),
-               "skipped": sum(t.target_id in done for t in targets), "written": 0, "errors": 0, "from_cache": 0}
+               "skipped": sum(t.target_id in done for t in targets), "written": 0, "stars": 0, "errors": 0,
+               "from_cache": 0}
     retention = Retention(RetentionPolicy.parse(settings.retention), store, blob)
     th_json = th.model_dump_json()
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -241,6 +249,7 @@ def run(source, store, blob, settings: Settings, filter: dict, limit: int | None
                                              "ladder_version": ladder_version, **r}) + "\n" for r in star_rows))
             fh.flush()
             summary["written"] += len(star_rows)
+            summary["stars"] += 1
             if progress: progress(summary)
 
         try:
@@ -268,6 +277,7 @@ def _group(rows: list[dict], label: str) -> dict:
     return {"label": label, "n": len(rows), "found": len(found),
             "ranked_first": sum(bool(r.get("ranked_first")) for r in found),
             "passed": sum(r["hit"].get("outcome") == "pass" for r in found),
+            "capped": sum(bool(r.get("depth_capped")) for r in rows),
             "median_depth_ratio": float(np.median(ratios)) if ratios else None}
 
 
@@ -302,15 +312,17 @@ def format_table(summary: dict) -> str:
     """The summary as plain-text tables: nominal SNR, red-noise SNR and period, one line per group."""
     def pct(k, n): return "-" if not n else f"{k / n:.0%}"
     def ratio(v): return "-" if v is None else f"{v:.2f}"
-    head = f"{{:<14}}{'n':>5}{'found':>7}{'found %':>9}{'1st':>6}{'pass':>6}{'pass %':>8}{'depth':>8}"
+    head = f"{{:<14}}{'n':>5}{'capped':>8}{'found':>7}{'found %':>9}{'1st':>6}{'pass':>6}{'pass %':>8}{'depth':>8}"
     lines = [(f"search version {', '.join(summary['search_versions'])}, ladder {', '.join(summary['ladder_versions'])}; "
               f"{summary['rows']} injections; found = the injected period or its 2, 1/2, 3, 1/3 multiple returned; "
-              "1st = ranked first; pass = outcome pass (rungs 1 to 3); depth = median recovered / injected")]
+              "1st = ranked first; pass = outcome pass (rungs 1 to 3); depth = median recovered / injected; "
+              "capped = depth held at 5000 ppm, so the nominal SNR was not reached (snr_achieved in the file); "
+              "the red-noise table is the one to read completeness from")]
     for title, key in (("nominal SNR", "by_nominal"), ("red-noise SNR", "by_red"), ("period (d)", "by_period")):
         lines += ["", head.format(title)]
         for g in summary[key]:
             if not g["n"]: continue
-            lines.append(f"{g['label']:<14}{g['n']:>5}{g['found']:>7}{pct(g['found'], g['n']):>9}{g['ranked_first']:>6}"
+            lines.append(f"{g['label']:<14}{g['n']:>5}{g['capped']:>8}{g['found']:>7}{pct(g['found'], g['n']):>9}{g['ranked_first']:>6}"
                          f"{g['passed']:>6}{pct(g['passed'], g['n']):>8}{ratio(g['median_depth_ratio']):>8}")
     o = summary["overall"]
     lines += ["", (f"all: {o['n']} injections, {o['found']} found ({pct(o['found'], o['n'])}), {o['ranked_first']} ranked "
