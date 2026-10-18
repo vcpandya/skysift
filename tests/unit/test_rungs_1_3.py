@@ -274,6 +274,8 @@ def test_rung3_flags_an_aperture_dependent_depth():
 
 
 def test_rung3_passes_equal_depths_in_both_fluxes():
+    """The noise is identical in both fluxes (``make_lightcurve`` copies it), so z is exactly 0: this shows the gate stays
+    quiet, not that the noise scaling of z is sane."""
     r = Rung3Stability().run(_signal_3_3(4000), bundle(_with_alt_box(4000, 4000)))
     assert r.status == TestStatus.PASS, (r.status, r.reason)
     assert abs(r.metrics["aperture_z"]) < 3 and r.metrics["alt_depth_err_ppm"] > 0
