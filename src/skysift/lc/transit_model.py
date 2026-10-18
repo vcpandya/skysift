@@ -7,10 +7,12 @@ needs the same fit. The occulted fraction is Mandel and Agol (2002), equation 1,
 source, so the depth of a central transit is exactly ``k**2``.
 
 Two families are fitted. The free fit spans every geometry the bounds allow, grazing (``b > 1 - k``) and deep
-(``k >= 1``) included, and supplies the reported parameters. The non-grazing fit keeps the disc wholly inside the star
-(``b <= 1 - k``, ``k < 1``), a box- or U-shaped transit, and supplies only its chi-square: a grazing verdict needs the
-free fit to beat it clearly, because on a shallow, cadence-smeared fold the uniform-disc model is degenerate and a
-large ``k`` with ``b`` near ``1 + k`` (and ``a_over_r`` near ``b``) mimics a box as well as a central transit does."""
+(``k >= 1``) included. The non-grazing fit keeps the disc wholly inside the star (``b <= 1 - k``, ``k < 1``), a box- or
+U-shaped transit. The non-grazing family is a subset of the free one, so a lower non-grazing chi-square means the free
+optimiser stopped in a local minimum (on a shallow, cadence-smeared fold the uniform-disc model is degenerate: a large
+``k`` with ``b`` near ``1 + k`` and ``a_over_r`` near ``b`` mimics a box), and the better of the two solutions is
+returned as the fit. The non-grazing minimum is kept as ``chi2_nongrazing``, so ``chi2_nongrazing - chi2 >= 0``
+measures how much a grazing or deep geometry is preferred: a grazing verdict needs it to be large."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -30,11 +32,11 @@ C_BOUNDS = (0.9, 1.1)
 # the non-grazing family: b = u x (1 - k), u in [0, 1], so b <= 1 - k always holds
 K_BOUNDS_NONGRAZING = (1e-3, 0.99)
 U_BOUNDS = (0.0, 1.0)
-# The non-grazing fit also starts at the a_over_r of transits 2/3 and 3/2 times the signal's duration (the detector's
-# duration grid steps by up to 1.5). For a small k the binned model is nearly a staircase in a_over_r (ingress is far
-# shorter than a sub-bin), the solver does not move a_over_r far from its start, and a start set by a grid duration
-# that misses the true one leaves the family's minimum unfound and the grazing preference overstated
-NONGRAZING_DURATION_FACTORS = (1.0, 2.0 / 3.0, 1.5)
+# Both fits start at the a_over_r of transits 1, 2/3 and 3/2 times the signal's duration (the detector's duration
+# grid steps by up to 1.5). For a small k the binned model is nearly a staircase in a_over_r (ingress is far shorter
+# than a sub-bin), the solver does not move a_over_r far from its start, and a start set by a grid duration that
+# misses the true one leaves the minimum unfound
+START_DURATION_FACTORS = (1.0, 2.0 / 3.0, 1.5)
 BIN_SUBSAMPLES = 9
 # twice the shape-contrast resolution: at 4 per duration only ~4 bins fall in transit, as many as the free parameters,
 # and the grazing, central and V solutions tie in chi2
@@ -43,6 +45,8 @@ FIT_BINS_PER_DURATION = 2 * SHAPE_BINS_PER_DURATION
 
 @dataclass
 class TransitFit:
+    # k, b, a_over_r, depth_ppm, t14_days, chi2 and ok describe the better (lower chi2) of the free and the
+    # non-grazing solutions
     k: float            # R_p / R_star
     b: float            # impact parameter
     a_over_r: float     # semi-major axis over stellar radius
@@ -52,7 +56,8 @@ class TransitFit:
     n_bins: int         # fold bins with at least 5 points within +-3 durations (counted also when ok is False)
     ok: bool            # False: under 20 usable bins, none in transit, or the solver did not converge
     # chi2 of the best non-grazing fit (b <= 1 - k, k < 1) on the same bins and weights; NaN when that fit fails (no
-    # start converged) or the free fit had no fold to fit. chi2_nongrazing - chi2 is the preference for grazing or deep
+    # start converged) or the free fit had no fold to fit. chi2_nongrazing - chi2 (>= 0 whenever finite) is the
+    # preference for a grazing or deep geometry
     chi2_nongrazing: float
 
 
@@ -122,14 +127,17 @@ def fit_transit(time, fnorm, period, t0, duration_days) -> TransitFit:
     +-3 durations of mid-transit. ``time``, ``period``, ``t0`` and ``duration_days`` are in days; ``fnorm`` is the
     normalised flux. Bins are ``1 / FIT_BINS_PER_DURATION`` of a duration wide (8 per duration), each weighted by the
     standard error of its own points (never below half the robust point scatter over sqrt(count), as
-    ``shape_contrast``); a bin needs 5 points. The solver is started from a central and two grazing geometries and the
-    converged start with the lowest chi-square is returned (a converged start beats an unconverged one).
+    ``shape_contrast``); a bin needs 5 points. The solver is started from a central and two grazing geometries, each
+    with ``a_over_r`` set from 1, 2/3 and 3/2 times ``duration_days`` (``START_DURATION_FACTORS``), and the converged
+    start with the lowest chi-square is kept (a converged start beats an unconverged one).
 
     The non-grazing family is fitted on the same bins, weights and baseline parameter, parameterised as
-    ``b = u (1 - k)`` with ``u`` in [0, 1] and ``k`` in [1e-3, 0.99], from the same three starts (``k`` clipped to its
-    bound, ``u = b / (1 - k)`` clipped to 1), each also with ``a_over_r`` set from 2/3 and 3/2 of ``duration_days``
-    (``NONGRAZING_DURATION_FACTORS``). Its chi-square is ``chi2_nongrazing``, NaN unless a start converged: an
-    unconverged chi-square overstates the family's minimum and so the preference for grazing.
+    ``b = u (1 - k)`` with ``u`` in [0, 1] and ``k`` in [1e-3, 0.99], from the same nine starts (``k`` clipped to its
+    bound, ``u = b / (1 - k)`` clipped to 1). Its chi-square is ``chi2_nongrazing``, NaN unless a start converged: an
+    unconverged chi-square overstates the family's minimum and so the preference for grazing. The returned parameters,
+    ``chi2`` and ``ok`` are the non-grazing solution's when it converged and either has the lower chi-square or the
+    free fit did not converge (the same rule as between starts); the free solution's otherwise. ``chi2_nongrazing -
+    chi2`` is then never negative.
 
     Returns ``ok=False`` with NaN parameters (``n_bins`` as counted) when fewer than 20 bins are usable, when no usable
     bin lies within ``duration_days / 2`` of mid-transit (the fold holds no transit to fit, so k + b would be
@@ -182,13 +190,12 @@ def fit_transit(time, fnorm, period, t0, duration_days) -> TransitFit:
     # The grazing and the central solutions are separate basins that a local solver does not cross, so start in
     # each and keep the lower chi-square: central (b 0.3), then grazing starts that the box depth cannot reach.
     starts, starts_ng = [], []
-    for factor in NONGRAZING_DURATION_FACTORS:
+    for factor in START_DURATION_FACTORS:
         for k0, b0 in ((k_box, 0.3), (max(k_box, 0.3), 0.9), (max(2 * k_box, 0.5), 1.2)):
             a0 = period * np.sqrt(max((1.0 + k0) ** 2 - b0 * b0, 0.05)) / (np.pi * factor * duration_days)
             a0 = float(np.clip(a0, *A_BOUNDS))
             x_scale = [0.05, 0.3, max(a0, 2.0), 0.01]
-            if factor == 1.0:
-                starts.append(([k0, b0, a0, 1.0], x_scale))
+            starts.append(([k0, b0, a0, 1.0], x_scale))
             k_ng = float(np.clip(k0, *K_BOUNDS_NONGRAZING))
             starts_ng.append(([k_ng, min(b0 / (1.0 - k_ng), U_BOUNDS[1]), a0, 1.0], x_scale))
     res = _best_of(residuals, starts, lower, upper)
@@ -197,7 +204,12 @@ def fit_transit(time, fnorm, period, t0, duration_days) -> TransitFit:
     ng = _best_of(residuals_nongrazing, starts_ng, [K_BOUNDS_NONGRAZING[0], U_BOUNDS[0], A_BOUNDS[0], C_BOUNDS[0]],
                   [K_BOUNDS_NONGRAZING[1], U_BOUNDS[1], A_BOUNDS[1], C_BOUNDS[1]])
     chi2_ng = float(np.sum(ng.fun ** 2)) if ng is not None and ng.success else float("nan")
-    k, b, a, _ = (float(v) for v in res.x)
-    depth = float((1.0 - uniform_disc_flux(np.array([0.0]), period, k, b, a)[0]) * 1e6)
     chi2 = float(np.sum(res.fun ** 2))
-    return TransitFit(k, b, a, depth, _t14(period, k, b, a), chi2, n_bins, bool(res.success), chi2_ng)
+    k, b, a, _ = (float(v) for v in res.x)
+    ok = bool(res.success)
+    # the non-grazing family lies inside the free one: a better non-grazing solution is the free fit's true minimum
+    if np.isfinite(chi2_ng) and (not ok or chi2_ng < chi2):
+        k, u, a, _ = (float(v) for v in ng.x)
+        b, chi2, ok = u * (1.0 - k), chi2_ng, True
+    depth = float((1.0 - uniform_disc_flux(np.array([0.0]), period, k, b, a)[0]) * 1e6)
+    return TransitFit(k, b, a, depth, _t14(period, k, b, a), chi2, n_bins, ok, chi2_ng)

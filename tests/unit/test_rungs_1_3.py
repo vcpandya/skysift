@@ -449,10 +449,12 @@ def test_rung2_fails_a_v_shaped_eclipse():
 
 
 def test_rung2_skips_the_v_shape_rule_when_the_fit_is_pinned_at_its_bound(monkeypatch):
-    """A shallow 200 ppm, 1.8 h box at 0.96 d whose transit fit ran to the k bound (2.0, with a 40000 ppm model depth
-    against the 200 ppm measured): k + b = 2.06 says nothing about the shape, so the V-shape rule (T18 A.4.3, which
-    reads a converged fit of a significant signal) is not applied and the planet passes. The first real-curve injection
-    run of ladder 3 failed a 185 ppm, 0.96 d box this way."""
+    """The pinned-fit guard: a shallow 200 ppm, 1.8 h box at 0.96 d given a transit fit that ran to the k bound (2.0,
+    with a 40000 ppm model depth against the 200 ppm measured) says nothing about the shape, so the V-shape rule (T18
+    A.4.3, which reads a converged fit of a significant signal) is not applied and the planet passes, whatever the
+    non-grazing comparison says. The guard was written for the 185 ppm, 0.96 d box the first real-curve injection run of
+    ladder 3 failed with k + b = 2.06, read then as a pinned fit; reproduced on 19 October 2026 that case was a grazing
+    local minimum (k 0.53, b 1.52), now resolved by the non-grazing comparison (see the test below)."""
     import skysift.vetting.rung2_shape as rung2
     from skysift.lc.transit_model import TransitFit
     pinned = TransitFit(k=2.0, b=0.06, a_over_r=3.0, depth_ppm=40000.0, t14_days=1.8 / 24, chi2=50.0, n_bins=48,
@@ -466,18 +468,17 @@ def test_rung2_skips_the_v_shape_rule_when_the_fit_is_pinned_at_its_bound(monkey
 
 
 def test_rung2_passes_a_shallow_box_the_free_fit_calls_grazing():
-    """The second real-curve injection run of ladder 3 failed a 185 ppm, 1.8 h box at 0.9618 d as "V-shaped or deep
+    """The real-curve injection runs of ladder 3 failed a 185 ppm, 1.8 h box at 0.9618 d as "V-shaped or deep
     (k + b = 2.06 > 1.04)": the detector returned a 1.5 h duration, and on the shallow, cadence-smeared fold (3.7
-    cadences per transit) the free fit found a grazing geometry (k 0.53, b 1.52) whose overlap mimics the dip. The
-    same box here (1400 d, 600 ppm noise, 29.4 min cadence) gets k + b near 1.96 from the free fit, but the best
-    non-grazing fit is as good, so the fold does not show a V and the planet passes (T18 A.4.3 needs the fit to have
-    measured the shape)."""
+    cadences per transit) the free optimiser stopped in a grazing local minimum (k 0.53, b 1.52). The same box here
+    (1400 d, 600 ppm noise, 29.4 min cadence) used to get k + b = 1.96; the non-grazing fit finds a lower chi2, the
+    transit fit returns it, so no V is preferred and the planet passes."""
     lc = inject_transit(make_lightcurve(n_days=1400, cadence_min=29.4, seed=31, noise_ppm=600), 0.9618, T0_R2,
                         1.8 / 24, 185)
     r = Rung2Shape().run(_signal_r2(0.9618, 1.5 / 24, 185), bundle(lc))
     assert r.status == TestStatus.PASS, (r.status, r.reason, r.metrics["fit_k"], r.metrics["fit_b"])
-    assert r.metrics["fit_k"] + r.metrics["fit_b"] > 1.04          # the free fit is grazing: the case under test
-    assert r.metrics["v_shape_applied"] is False and r.metrics["fit_delta_chi2"] < 25
+    assert r.metrics["fit_k"] + r.metrics["fit_b"] < 1.04
+    assert r.metrics["v_shape_applied"] is False and 0 <= r.metrics["fit_delta_chi2"] < 25
     _assert_new_metrics_strict(r)
 
 

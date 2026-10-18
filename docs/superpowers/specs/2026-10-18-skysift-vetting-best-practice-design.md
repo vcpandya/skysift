@@ -134,20 +134,22 @@ New helpers in `lc/ops.py` and a new module `lc/transit_model.py`.
 - `transit_model.fit_transit(time, fnorm, period, t0, duration) -> TransitFit(k, b, a_over_r, depth_ppm, t14_days,
   chi2, n_bins, ok, chi2_nongrazing)`: uniform-disc (no limb darkening) overlap model of two discs, fitted by
   `scipy.optimize.least_squares` to the binned fold within +-3 durations (bins as in `shape_contrast`), bounds k in
-  [1e-3, 2], b in [0, 1 + k], a / R_star in [1.5, 1e4]; start k = sqrt(depth), b = 0.3, a / R_star from the box
-  duration. `ok` False when the fold has fewer than 20 bins or the solver does not converge. FAIL "V-shaped or deep
+  [1e-3, 2], b in [0, 1 + k], a / R_star in [1.5, 1e4]; starts k = sqrt(depth), b = 0.3 plus two grazing ones, each
+  with a / R_star from 1, 2/3 and 3/2 times the box duration (a small-k model is nearly a staircase in a / R_star, so
+  the solver stays near its start). The non-grazing family (b = u (1 - k), u in [0, 1], k in [1e-3, 0.99], same
+  bins, weights, baseline and starts) is fitted too; it is a subset of the free family, so when its chi2 is lower the
+  free optimiser missed the minimum and the non-grazing solution is returned as the fit (parameters, chi2 and `ok`).
+  `chi2_nongrazing` keeps the non-grazing minimum (NaN unless a start converged). `ok` False when the fold has fewer than 20 bins or the solver does not converge. FAIL "V-shaped or deep
   (k + b > 1.04)" when k + b > `V_SHAPE_MAX` = 1.04 on a fit that measured the shape: T18 A.4.3 applies the rule to a
   converged DV fit of a significant signal, so it applies only when the fit is ok, k < `V_SHAPE_K_UNPINNED` (0.95) x
   the upper k bound (2.0, `transit_model.K_BOUNDS`), and the fitted depth lies within a factor
   `V_SHAPE_DEPTH_RATIO_MAX` = 2.0 of the measured depth (`fit_depth_ppm / depth_ppm` in [0.5, 2.0]), and the fold
-  shows a V rather than a box or U: the free fit's chi2 lies at least `V_SHAPE_DELTA_CHI2` = 25 (5 sigma) below that
-  of the best non-grazing fit (`chi2_nongrazing`: same bins, weights and baseline, b = u (1 - k) with u in [0, 1] and k
-  in [1e-3, 0.99], the free fit's starts plus a / R_star set from 2/3 and 3/2 of the duration; NaN unless a start
-  converged, which skips the rule); otherwise the rule is skipped. A 185 ppm, 1.8 h, 0.96 d injection on a real
-  curve, detected at 1.5 h, was failed with k + b = 2.06 (k 0.53, b 1.52, a / R_star 1.59, chi2 35.4) while the best
-  non-grazing fit was as good (delta chi2 -1.6): on a shallow, cadence-smeared fold the uniform-disc model is
-  degenerate and a large k with b near 1 + k mimics a box. Metrics `fit_k`, `fit_b`, `fit_a_over_r`, `fit_depth_ppm`,
-  `fit_t14_h`, `fit_chi2`, `fit_delta_chi2` (`chi2_nongrazing - chi2`, None when NaN), `fit_ok`, and
+  shows a V rather than a box or U: the fit's chi2 lies at least `V_SHAPE_DELTA_CHI2` = 25 (5 sigma) below
+  `chi2_nongrazing` (a NaN skips the rule); otherwise the rule is skipped. A 185 ppm, 1.8 h, 0.96 d injection on a
+  real curve, detected at 1.5 h, was failed with k + b = 2.06 from a grazing local minimum (k 0.53, b 1.52, a / R_star
+  1.59, chi2 35.4) while a non-grazing solution had chi2 33.8: on a shallow, cadence-smeared fold the uniform-disc
+  model is degenerate and a large k with b near 1 + k mimics a box. Metrics `fit_k`, `fit_b`, `fit_a_over_r`, `fit_depth_ppm`,
+  `fit_t14_h`, `fit_chi2`, `fit_delta_chi2` (`chi2_nongrazing - chi2`, never negative, None when NaN), `fit_ok`, and
   `v_shape_applied` (True or False whenever the fit ran). The occultation exception keeps its own gates.
 - Secondary exceptions, evaluated before the existing `secondary_at_0.5` / `eccentric_secondary` FAILs:
   (a) period halving (T18 A.4.1.3: a TCE whose primary and secondary are indistinguishable and whose secondary sits at
@@ -216,5 +218,6 @@ regression of section 5 measures what they cost in completeness before any sweep
 injection run (18 October 2026, `skysift inject --limit 10` on cached KBonus curves, 28 injections, 19 found) showed
 9 of the 19 recovered planets failed as "gapped events" on the un-normalised coverage (35 to 45 percent of epochs
 covered, the stars' quality masks keeping well under T18's 92 percent of cadences), which is why the duty-cycle form
-of section 4.1 was adopted, and one failed as V-shaped on a fit pinned at its k bound, which is why the V-shape rule
-of section 4.2 needs an unpinned fit.
+of section 4.1 was adopted, and one failed as V-shaped (k + b = 2.06). That failure was first read as a fit pinned at
+its k bound, and section 4.2 keeps the unpinned-fit gate as a guard against one; reproduced on 19 October 2026 it was
+a grazing local minimum of the free fit (k 0.53, b 1.52), now resolved by the non-grazing comparison of section 4.2.

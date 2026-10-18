@@ -36,14 +36,15 @@ V_SHAPE_MAX = 1.04              # T18 A.4.3: radius ratio plus impact parameter 
 # T18 A.4.3 reads k + b from a converged DV fit of a significant signal. A fit that ran to its k bound, or whose model
 # depth is far from the measured depth, has not measured the shape, so the V-shape rule is applied only when the fit
 # is ok, k < V_SHAPE_K_UNPINNED x the upper k bound, and fit depth / measured depth lies in
-# [1 / V_SHAPE_DEPTH_RATIO_MAX, V_SHAPE_DEPTH_RATIO_MAX] (written for a 185 ppm injection read as pinned at k 2.0;
-# reproduced on 19 October 2026 it was an unpinned grazing fit, which V_SHAPE_DELTA_CHI2 below handles)
+# [1 / V_SHAPE_DEPTH_RATIO_MAX, V_SHAPE_DEPTH_RATIO_MAX]: a guard against a pinned or off-depth fit (the 185 ppm
+# injection it was written for, k + b = 2.06, turned out on 19 October 2026 to be a grazing local minimum, k 0.53 and
+# b 1.52, which the non-grazing comparison below resolves)
 V_SHAPE_K_UNPINNED = 0.95
 V_SHAPE_DEPTH_RATIO_MAX = 2.0
-# The rule also needs evidence that the fold is V-shaped rather than a box or U: the free fit's chi2 must sit at least
-# this far below the best non-grazing fit's (b <= 1 - k) on the weighted binned fold, a 5 sigma preference for the
-# grazing or deep geometry. On a shallow, cadence-smeared fold the uniform-disc model is degenerate and a large k with
-# b near 1 + k mimics a box (a 185 ppm, 1.8 h injection at 0.96 d was failed with k 0.53, b 1.52)
+# The rule also needs evidence that the fold is V-shaped rather than a box or U: the fit's chi2 must sit at least this
+# far below the best non-grazing fit's (b <= 1 - k) on the weighted binned fold, a 5 sigma preference for the grazing
+# or deep geometry. On a shallow, cadence-smeared fold the uniform-disc model is degenerate and a large k with b near
+# 1 + k mimics a box (a 185 ppm, 1.8 h injection at 0.96 d was failed with k 0.53, b 1.52)
 V_SHAPE_DELTA_CHI2 = 25.0
 K_MAX = K_BOUNDS[1]
 R_SUN_M = 6.957e8
@@ -65,7 +66,8 @@ def _num(x) -> float | None:
 
 def _fit_metrics(fit: TransitFit) -> dict:
     """The transit-fit metrics: ``fit_ok`` always, the fitted values only when the fit is ok (None otherwise).
-    ``fit_delta_chi2`` is the non-grazing fit's chi2 minus the free fit's (None when the non-grazing fit failed)."""
+    ``fit_delta_chi2`` is the non-grazing fit's chi2 minus the fit's, never negative (None when the non-grazing fit
+    failed)."""
     ok = bool(fit.ok)
     values = {"fit_k": fit.k, "fit_b": fit.b, "fit_a_over_r": fit.a_over_r, "fit_depth_ppm": fit.depth_ppm,
               "fit_t14_h": fit.t14_days * 24.0, "fit_chi2": fit.chi2,
@@ -76,7 +78,7 @@ def _fit_metrics(fit: TransitFit) -> dict:
 def _v_shape_applies(fit: TransitFit, depth_ppm) -> bool:
     """Whether the fit can carry the V-shape rule: ok, k not pinned near its upper bound (below
     ``V_SHAPE_K_UNPINNED x K_MAX``), a model depth within a factor ``V_SHAPE_DEPTH_RATIO_MAX`` of the measured
-    depth ``depth_ppm`` (a missing, non-finite or non-positive measured depth does not apply the rule), and a free fit
+    depth ``depth_ppm`` (a missing, non-finite or non-positive measured depth does not apply the rule), and a fit
     at least ``V_SHAPE_DELTA_CHI2`` below the best non-grazing fit (a failed non-grazing fit does not apply the rule)."""
     if not (fit.ok and math.isfinite(fit.k) and fit.k < V_SHAPE_K_UNPINNED * K_MAX):
         return False

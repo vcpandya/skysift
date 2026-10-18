@@ -2,7 +2,7 @@ import numpy as np
 
 from skysift.lc.ops import detrend, fold_phase
 from skysift.lc.transit_model import TransitFit, fit_transit, uniform_disc_flux
-from tests.synthetic import inject_model, inject_v_eclipse, make_lightcurve
+from tests.synthetic import inject_model, inject_transit, inject_v_eclipse, make_lightcurve
 
 
 def _t14(period, k, b, a_over_r):
@@ -29,7 +29,7 @@ def test_fit_recovers_a_box_like_planet():
     assert abs(fit.depth_ppm - 6400) < 0.15 * 6400
     assert fit.n_bins >= 20
     # a central transit lies in the non-grazing family, so the comparison fit finds the same minimum
-    assert np.isfinite(fit.chi2_nongrazing) and abs(fit.chi2_nongrazing - fit.chi2) < 3.0
+    assert np.isfinite(fit.chi2_nongrazing) and abs(fit.chi2_nongrazing - fit.chi2) < 1e-6
 
 
 def test_fit_flags_a_grazing_eclipse():
@@ -42,12 +42,27 @@ def test_fit_flags_a_grazing_eclipse():
     assert np.isfinite(fit.chi2_nongrazing) and fit.chi2_nongrazing - fit.chi2 > 25.0
 
 
+def test_fit_returns_the_non_grazing_minimum_when_the_free_optimiser_misses_it():
+    """A shallow 185 ppm, 1.8 h box at 0.9618 d fitted with the detector's 1.5 h grid duration: the free optimiser
+    used to stop in a grazing local minimum (k 0.48, b 1.48, chi2 59.9) while the non-grazing family, a subset of
+    the free one, holds a lower chi2 (41.3). The fit returns that lower solution, so k + b describes the real minimum and
+    chi2_nongrazing - chi2 is 0."""
+    lc = inject_transit(make_lightcurve(n_days=1400, cadence_min=29.4, seed=31, noise_ppm=600), 0.9618, 133.0,
+                        1.8 / 24, 185)
+    fit = fit_transit(lc.time, detrend(lc), 0.9618, 133.0, 1.5 / 24)
+    assert fit.ok
+    assert fit.k + fit.b < 1.0 and fit.chi2 < 45.0
+    assert fit.chi2_nongrazing - fit.chi2 >= 0.0 and fit.chi2_nongrazing - fit.chi2 < 1e-6
+    assert abs(fit.depth_ppm - 185) < 0.3 * 185
+
+
 def test_fit_on_a_v_eclipse_fixture():
     period, t0, width = 24.0, 140.0, 11 / 24
     lc = inject_v_eclipse(make_lightcurve(n_days=1400, seed=11, noise_ppm=500), period, t0, width, 40000)
     fit = fit_transit(lc.time, detrend(lc), period, t0, width)
     assert fit.ok
     assert fit.k + fit.b > 1.04
+    assert fit.chi2_nongrazing - fit.chi2 > 25.0
 
 
 def test_fit_is_not_ok_on_a_sparse_fold():
