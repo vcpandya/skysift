@@ -39,6 +39,7 @@ def inject_v_eclipse(lc: LightCurve, period, t0, width_days, depth_ppm):
 
 def inject_model(lc: LightCurve, period, t0, k, b, a_over_r):
     """Multiply the flux by the uniform-disc transit model (``skysift.lc.transit_model``) of a circular orbit."""
+    # imported here so that loading this helper module does not import the src model
     from skysift.lc.transit_model import uniform_disc_flux
     ph = (lc.time - t0 + 0.5 * period) % period - 0.5 * period
     return _with_dip(lc, uniform_disc_flux(ph, period, k, b, a_over_r))

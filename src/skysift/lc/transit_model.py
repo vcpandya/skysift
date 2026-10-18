@@ -22,7 +22,9 @@ B_BOUNDS = (0.0, 3.0)
 A_BOUNDS = (1.5, 1e4)
 C_BOUNDS = (0.9, 1.1)
 BIN_SUBSAMPLES = 9
-FIT_BINS_PER_DURATION = 2 * SHAPE_BINS_PER_DURATION    # the 4 of the shape contrast leave a V and a flat bottom degenerate
+# twice the shape-contrast resolution: at 4 per duration only ~4 bins fall in transit, as many as the free parameters,
+# and the grazing, central and V solutions tie in chi2
+FIT_BINS_PER_DURATION = 2 * SHAPE_BINS_PER_DURATION
 
 
 @dataclass
@@ -32,9 +34,9 @@ class TransitFit:
     a_over_r: float     # semi-major axis over stellar radius
     depth_ppm: float    # model depth at mid-transit (k^2 x 1e6 when b + k <= 1; the overlap fraction otherwise)
     t14_days: float     # first-to-fourth contact duration of the fitted model
-    chi2: float
-    n_bins: int
-    ok: bool            # False when the fold has fewer than 20 usable bins or the solver did not converge
+    chi2: float         # sum of squared weighted bin residuals (floored bin errors); not divided by degrees of freedom
+    n_bins: int         # fold bins with at least 5 points within +-3 durations (counted also when ok is False)
+    ok: bool            # False: under 20 usable bins, none in transit, or the solver did not converge
 
 
 def _occulted_fraction(z: np.ndarray, k: float) -> np.ndarray:
@@ -56,7 +58,9 @@ def _occulted_fraction(z: np.ndarray, k: float) -> np.ndarray:
 
 def uniform_disc_flux(dt_days: np.ndarray, period: float, k: float, b: float, a_over_r: float) -> np.ndarray:
     """Relative flux of a uniform star transited by a dark disc of radius ``k`` on a circular orbit, at time offsets
-    ``dt_days`` from mid-transit. Flux is 1 everywhere when ``b >= 1 + k`` (the disc never touches the star)."""
+    ``dt_days`` from mid-transit (days, as ``period``). Flux is 1 everywhere when ``b >= 1 + k`` (the disc never
+    touches the star), and 1 where ``|2 pi dt / period| > pi / 2``: the planet is then behind the star, and only the
+    near-side half of the orbit can transit."""
     dt = np.atleast_1d(np.asarray(dt_days, dtype=float))
     if b >= 1.0 + k:
         return np.ones_like(dt)
@@ -84,8 +88,16 @@ def _failed(n_bins: int) -> TransitFit:
 
 def fit_transit(time, fnorm, period, t0, duration_days) -> TransitFit:
     """Weighted least-squares fit of the uniform-disc model (plus a free baseline level) to the binned fold within
-    +-3 durations of mid-transit. Bins are a quarter of a duration wide, each weighted by the standard error of its own
-    points (never below half the robust point scatter over sqrt(count), as ``shape_contrast``)."""
+    +-3 durations of mid-transit. ``time``, ``period``, ``t0`` and ``duration_days`` are in days; ``fnorm`` is the
+    normalised flux. Bins are ``1 / FIT_BINS_PER_DURATION`` of a duration wide (8 per duration), each weighted by the
+    standard error of its own points (never below half the robust point scatter over sqrt(count), as
+    ``shape_contrast``); a bin needs 5 points. The solver is started from a central and two grazing geometries and the
+    converged start with the lowest chi-square is returned (a converged start beats an unconverged one).
+
+    Returns ``ok=False`` with NaN parameters (``n_bins`` as counted) when fewer than 20 bins are usable, when no usable
+    bin lies within ``duration_days / 2`` of mid-transit (the fold holds no transit to fit, so k + b would be
+    meaningless), or when no start produces a result; ``ok=False`` with finite parameters means the solver did not
+    converge."""
     time = np.asarray(time, dtype=float)
     fnorm = np.asarray(fnorm, dtype=float)
     good = np.isfinite(time) & np.isfinite(fnorm)
@@ -101,16 +113,14 @@ def fit_transit(time, fnorm, period, t0, duration_days) -> TransitFit:
     counts = np.bincount(idx, minlength=n_total)
     sums = np.bincount(idx, weights=y, minlength=n_total)
     sq = np.bincount(idx, weights=y * y, minlength=n_total)
-    dts = np.bincount(idx, weights=dt, minlength=n_total)
     usable = counts >= FIT_MIN_PER_BIN
     n_bins = int(usable.sum())
     if n_bins < FIT_MIN_BINS:
         return _failed(n_bins)
     mean = sums[usable] / counts[usable]
     var = np.maximum(sq[usable] / counts[usable] - mean ** 2, 0.0)
-    bin_dt = dts[usable] / counts[usable]
-    # the model is averaged over each bin's width (the bins are a quarter of a duration wide, too coarse to sample at
-    # one point near the contacts); the points are dense in phase, so a uniform sub-grid stands for them
+    # the model is averaged over each bin's width (a bin is an eighth of a duration wide, too coarse to sample at one
+    # point near the contacts); the points are dense in phase, so a uniform sub-grid stands for them
     centre = -FIT_WINDOW_DURATIONS * duration_days + (np.arange(n_total)[usable] + 0.5) * width
     sub = centre[:, None] + ((np.arange(BIN_SUBSAMPLES) + 0.5) / BIN_SUBSAMPLES - 0.5) * width
     floor = 1.4826 * float(np.median(np.abs(y_all - np.median(y_all)))) or 1e-12
@@ -121,8 +131,10 @@ def fit_transit(time, fnorm, period, t0, duration_days) -> TransitFit:
         k, b, a, c = p
         return (mean - c * uniform_disc_flux(sub.ravel(), period, k, b, a).reshape(sub.shape).mean(axis=1)) * wts
 
-    inside = np.abs(bin_dt) < 0.5 * duration_days
-    box_depth = float(np.mean(1.0 - mean[inside])) if inside.any() else 0.0
+    inside = np.abs(centre) < 0.5 * duration_days
+    if not inside.any():
+        return _failed(n_bins)
+    box_depth = float(np.mean(1.0 - mean[inside]))
     lower = [K_BOUNDS[0], B_BOUNDS[0], A_BOUNDS[0], C_BOUNDS[0]]
     upper = [K_BOUNDS[1], B_BOUNDS[1], A_BOUNDS[1], C_BOUNDS[1]]
     k_box = float(np.clip(np.sqrt(max(box_depth, 1e-6)), *K_BOUNDS))
@@ -135,7 +147,7 @@ def fit_transit(time, fnorm, period, t0, duration_days) -> TransitFit:
         try:
             trial = least_squares(residuals, start, bounds=(lower, upper),
                                   x_scale=[0.05, 0.3, max(start[2], 2.0), 0.01])
-        except (ValueError, FloatingPointError):
+        except ValueError:      # non-finite residuals at the start (a NaN period or error): this start is unusable
             continue
         if best is None or (trial.success, -trial.cost) > (best.success, -best.cost):
             best = trial
@@ -145,4 +157,4 @@ def fit_transit(time, fnorm, period, t0, duration_days) -> TransitFit:
     k, b, a, _ = (float(v) for v in res.x)
     depth = float((1.0 - uniform_disc_flux(np.array([0.0]), period, k, b, a)[0]) * 1e6)
     chi2 = float(np.sum(res.fun ** 2))
-    return TransitFit(k, b, a, depth, _t14(period, k, b, a), chi2, n_bins, bool(res.success and n_bins >= FIT_MIN_BINS))
+    return TransitFit(k, b, a, depth, _t14(period, k, b, a), chi2, n_bins, bool(res.success))

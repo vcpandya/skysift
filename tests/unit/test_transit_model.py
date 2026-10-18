@@ -1,11 +1,12 @@
 import numpy as np
 
-from skysift.lc.ops import detrend
+from skysift.lc.ops import detrend, fold_phase
 from skysift.lc.transit_model import TransitFit, fit_transit, uniform_disc_flux
 from tests.synthetic import inject_model, inject_v_eclipse, make_lightcurve
 
 
 def _t14(period, k, b, a_over_r):
+    # deliberately independent of skysift.lc.transit_model._t14, so it checks the formula
     return period / np.pi * np.arcsin(np.sqrt((1 + k) ** 2 - b ** 2) / a_over_r)
 
 
@@ -41,8 +42,7 @@ def test_fit_on_a_v_eclipse_fixture():
     period, t0, width = 24.0, 140.0, 11 / 24
     lc = inject_v_eclipse(make_lightcurve(n_days=1400, seed=11, noise_ppm=500), period, t0, width, 40000)
     fit = fit_transit(lc.time, detrend(lc), period, t0, width)
-    print(f"V eclipse fit: k={fit.k:.4f} b={fit.b:.4f} a/R={fit.a_over_r:.3f} depth={fit.depth_ppm:.0f} "
-          f"t14={fit.t14_days:.4f} chi2={fit.chi2:.1f} n_bins={fit.n_bins} ok={fit.ok}")
+    assert fit.ok
     assert fit.k + fit.b > 1.04
 
 
@@ -50,4 +50,18 @@ def test_fit_is_not_ok_on_a_sparse_fold():
     lc = make_lightcurve(n_days=60, seed=11, noise_ppm=500, quarters=False, gaps=False)
     lc = inject_model(lc, 25.0, 140.0, 0.08, 0.2, 30.0)
     fit = fit_transit(lc.time, detrend(lc), 25.0, 140.0, 0.2)
-    assert (not fit.ok) or fit.n_bins < 20
+    assert not fit.ok
+    assert fit.n_bins < 20
+    assert np.isnan([fit.k, fit.b, fit.a_over_r, fit.depth_ppm, fit.t14_days, fit.chi2]).all()
+
+
+def test_fit_is_not_ok_when_no_bin_lies_in_transit():
+    period, t0, k, b, a = 3.7, 140.0, 0.08, 0.2, 12.0
+    lc = inject_model(make_lightcurve(n_days=1400, seed=11, noise_ppm=500), period, t0, k, b, a)
+    duration = _t14(period, k, b, a)
+    fnorm = detrend(lc)
+    fnorm[np.abs(fold_phase(lc.time, period, t0)) < 0.5 * duration] = np.nan      # the transit falls in a data gap
+    fit = fit_transit(lc.time, fnorm, period, t0, duration)
+    assert fit.n_bins >= 20                      # enough out-of-transit bins, so only the in-transit rule can fail it
+    assert not fit.ok
+    assert np.isnan([fit.k, fit.b, fit.a_over_r, fit.depth_ppm, fit.t14_days, fit.chi2]).all()
