@@ -57,7 +57,7 @@ Threshold values below are quoted from T18 Appendix A (sections A.3 to A.6) unle
 | Tracker (A.3.7.6) | fail when the fit ephemeris slips > 0.5 duration from the search ephemeris | not applicable (one ephemeris) | none |
 | Model-shift uniqueness (A.3.4) | FA2 = sqrt(2) erfcinv(T_dur / P); MS2 = FA2 - (sigma_Pri - sigma_Ter); MS3 = FA2 - (sigma_Pri - sigma_Pos); fail if MS2 > 2.0 or MS3 > 4.0 (DV detrending) | none: a fold with two or three dips of equal depth passes rung 2 if none sits at phase 0.5 | **Adopt** MS2 and MS3 at the DV thresholds (the looser pair, chosen to protect completeness; human review follows). MS1 (sigma_Pri / F_red against FA1 with N_TCE) is the catalogue-level significance that `sde_min` already calibrates; not adopted. |
 | Secondary by model-shift (A.4.1.2) | MS4 = sigma_Sec / F_red - FA1 > 1 and MS5 = (sigma_Sec - sigma_Ter) - FA2 > 0 and MS6 = (sigma_Sec - sigma_Pos) - FA2 > 0 | phase-0.5 box at 3 sigma; free-phase search at 5 sigma | **Keep SkySift's rules** (exercised on real binaries on 18 October) and **add the two T18 exceptions** below. |
-| Planet at twice the period (A.4.1.3) | PC when sigma_Pri - sigma_Sec < FA2 and the secondary is within 1/4 duration of phase 0.5 | the detector's parity resolver doubles the period when odd and even differ; when it does not, rung 2 fails the signal as `secondary_at_0.5` | **Adopt** as UNDETERMINED "equal secondary, period may be twice" (the signal goes to review with the doubled period suggested, instead of being rejected). |
+| Planet detected at twice its period (A.4.1.3) | PC when sigma_Pri - sigma_Sec < FA2 and the secondary is within 1/4 duration of phase 0.5: the TCE period is twice the true one | the detector's parity resolver handles the opposite case (a detection at half the period); a detection at twice the period with equal dips fails rung 2 as `secondary_at_0.5` | **Adopt** as UNDETERMINED "equal secondary, true period may be P / 2" (the signal goes to review with the halved period suggested, instead of being rejected). |
 | Planet occultation (A.4.1.3) | keep as PC when geometric albedo < 1, R_p < 30 R_earth, secondary depth < 10 percent of primary, b < 0.95 | any secondary above threshold fails | **Adopt.** A hot Jupiter with a 100 ppm occultation is rejected today. b and R_p come from the transit fit below. |
 | Odd/even (A.4.1.4) | sigma_OE = abs(d_odd - d_even) / sqrt(s_odd^2 + s_even^2) > 1.1 (median of central points) or > 11.2 / 19.8 (model-shift depths) | 3 sigma with chi-square-scaled errors | **Keep.** The statistics differ; 3 sigma on scaled errors sits between T18's two methods and no injected box failed it. |
 | V shape (A.4.3) | fail if R_p / R_star + b > 1.04 from the transit model fit | none (no transit model) | **Adopt** with a uniform-disc transit fit on the binned fold (k, b, a / R_star). The fit also gives a depth without the box bias (the injection study measured the box depth 10 percent low). |
@@ -121,10 +121,16 @@ New helpers in `lc/ops.py` and a new module `lc/transit_model.py`.
   (k + b > 1.04)" when ok and k + b > `V_SHAPE_MAX` = 1.04. Metrics `fit_k`, `fit_b`, `fit_a_over_r`,
   `fit_depth_ppm`, `fit_t14_h`, `fit_chi2`, `fit_ok`.
 - Secondary exceptions, evaluated before the existing `secondary_at_0.5` / `eccentric_secondary` FAILs:
-  (a) period doubling: when abs(sigma_Pri - sigma_Sec) < FA2 and the secondary phase is within 0.25 duration of 0.5,
-  UNDETERMINED "equal secondary at phase 0.5: period may be 2 x", metric `suggested_period = 2 P`;
+  (a) period halving (T18 A.4.1.3: a TCE whose primary and secondary are indistinguishable and whose secondary sits at
+  phase 0.5 may be a planet "detected at twice the true orbital period", both dips being transits): when the primary
+  and secondary depths agree within FA2 times their combined error (depths, not significances: the primary's fold
+  baseline includes the secondary's points, which biases its significance by a few percent at high SNR) and the
+  secondary phase is within 0.25 duration of 0.5, UNDETERMINED "equal secondary at phase 0.5: true period may be
+  P / 2", metric `suggested_period = P / 2`;
   (b) planet occultation: R_p = k x R_star (meta radius or the 0.5 R_sun fallback of rung 1); a = (G M P^2 / 4 pi^2)^(1/3)
-  with the meta mass or 0.5 M_sun; geometric albedo A_g = (d_sec / d_pri) x (a / R_p)^2; when the fit is ok, A_g < 1,
+  with the meta mass or 0.5 M_sun; geometric albedo A_g = d_sec x (a / R_p)^2 with d_sec the fractional secondary
+  depth (a reflecting planet's occultation depth is A_g (R_p / a)^2 of the stellar flux; HAT-P-7 b gives about 0.2);
+  when the fit is ok, A_g < 1,
   R_p < 30 R_earth, d_sec < 0.1 d_pri and b < 0.95, the secondary does not fail the signal: PASS continues with
   metrics `occultation_albedo`, `planet_radius_rearth`, reason "secondary consistent with planet occultation".
 Order inside rung 2: sinusoidal (shape contrast) -> SWEET -> uniqueness MS2/MS3 -> odd/even -> secondary (with the
