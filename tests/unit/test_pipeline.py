@@ -152,8 +152,8 @@ def test_run_end_to_end_with_fake_source_and_resume(settings, monkeypatch):
     assert out["signals"] == c["signals"] and sum(out["outcomes"].values()) == c["signals"]
     det = get_detector("box_dip"); ver = search_version(det, s.thresholds)
     assert ver.startswith(det.version + "+") and len(ver) == len(det.version) + 9
-    planet_key = make_job_key("planet", "box_dip", ver, "1")
-    assert store.job_done(planet_key) and store.job_done(make_job_key("noise", "box_dip", ver, "1"))
+    planet_key = make_job_key("planet", "box_dip", ver, pipeline.DEFAULT_LADDER_VERSION)
+    assert store.job_done(planet_key) and store.job_done(make_job_key("noise", "box_dip", ver, pipeline.DEFAULT_LADDER_VERSION))
     with store.session() as ss:
         assert {r.state for r in ss.query(db.TargetRow)} == {"done"}
         planet_sigs = ss.query(db.SignalRow).filter_by(target_id="planet").all()
@@ -176,7 +176,7 @@ def test_run_end_to_end_with_fake_source_and_resume(settings, monkeypatch):
     for tid, (pinned, deleted_at, path) in summaries.items():
         assert pinned == (tid in alive) and deleted_at is None and Path(path).exists()
     # an interrupted rerun leaves a 'running' row; the earlier done run still checkpoints the target
-    store.start_run(planet_key, "planet", "box_dip", ver, "1")
+    store.start_run(planet_key, "planet", "box_dip", ver, pipeline.DEFAULT_LADDER_VERSION)
     assert store.job_done(planet_key)
     # resume: second run skips both
     out2 = run(src, store, blob, s, filter={}, max_targets=2)
