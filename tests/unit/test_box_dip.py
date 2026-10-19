@@ -551,3 +551,4 @@ def test_sparse_curve_gets_sane_long_period_sdes():
     assert all(s.sde < th.sde_min for s in res.signals), [(s.period, s.sde) for s in res.signals]
     long, short = sde[period > 90].max(), sde[period <= 90].max()
     assert long <= short + 1.0, f"long-period bands stand out: {long:.2f} against {short:.2f} below 90 d"
+    assert long < 7.5, f"long-period noise SDE {long:.2f} (6.3 with the distinct-power sigma, 8.4 under version 4)"

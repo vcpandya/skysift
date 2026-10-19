@@ -281,10 +281,9 @@ class BoxDip:
     name = "box_dip"
     version = "5"           # 5: band SDE sigma from distinct powers, fallback to the median band sigma (19 October 2026)
                             # 4: tied bands fell back to the global values (19 October, superseded the same day)
-                            # 3: extent-sized mask of every detected signal and alias rows in the first-pass list (18 October)
+                            # 3: extent-sized mask of every detected signal, alias filter to order 8, first pass refilled
+                            # to top_k independent signals (18 October 2026)
                             # 2: sub-harmonic resolution up to P/8 on every first-pass signal (18 October 2026)
-                            # 3: extent-sized mask, alias filter to order 8, first pass refilled to top_k independent
-                            # signals (18 October 2026)
     cost_class = "cpu_medium"
 
     def __init__(self, top_k: int = 3, oversample: float = 1.5, n_bands: int = 24, refine_oversample: float = 6.0,
