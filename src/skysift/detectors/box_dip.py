@@ -16,11 +16,33 @@ from skysift.models import LightCurve, Signal
 MIN_POINTS = 500
 DURATIONS_H = np.array([1, 1.5, 2, 3, 4, 6, 9, 12])
 MIN_BAND_PERIODS = 50
+MIN_BAND_SIGMA_FRACTION = 0.25  # a band whose MAD-sigma is under this fraction of the global one uses the global values
 MAX_DURATION_FRACTION = 0.9     # trial durations must stay below this fraction of the band's shortest period
 ALIAS_PARITY_SIGMA = 5.0        # the deepest epoch class of a sub-harmonic alias beats the others by this many combined errors
 ALIAS_PARITY_RATIO = 0.5        # and every other class (and their mean) is under this fraction of the deepest one
 MAX_SUBHARMONIC = 16            # sub-harmonics P/2 .. P/16 are tested (n = 7 caught K06356.01 ranked at 24.09/7 d; 8 left
                                 # the 24.0/11 and 24.0/13 d residues of a deep V binary as alias rows that passed every rung)
+
+
+def _band_norms(power: np.ndarray, band_powers: list[np.ndarray], n_bands: int) -> tuple[np.ndarray, np.ndarray]:
+    """Per-band SDE normalisation: the noise level of the BLS spectrum changes with period, so each band gets its own
+    median and MAD-sigma. A band falls back to the global median and sigma when it has fewer than MIN_BAND_PERIODS
+    trial periods or when its MAD-sigma is below MIN_BAND_SIGMA_FRACTION of the global one: on a sparse curve the long
+    period bands tie, as the best box of most trial periods lands on the same one or two events and the power repeats
+    exactly, and a MAD of 0 or 1e-14 would turn a 2 sigma bump into an SDE of 1e13 (pilot of 19 October 2026: a 2001
+    point curve over 1054 d had MAD-sigmas of 0, 4e-14 and 0.08 in its three longest bands against a global 1.3).
+    A spectrum whose global MAD is 0 as well uses its standard deviation, and a constant spectrum gets sigma = inf,
+    so every SDE is 0 and nothing is detected."""
+    gmed = float(np.median(power)); gstd = 1.4826 * float(np.median(np.abs(power - gmed)))
+    if gstd == 0:
+        gstd = float(np.std(power)) or np.inf
+    band_med, band_std = np.full(n_bands, gmed), np.full(n_bands, gstd)
+    for b, pw in enumerate(band_powers):
+        if pw.size < MIN_BAND_PERIODS: continue
+        med = float(np.median(pw)); std = 1.4826 * float(np.median(np.abs(pw - med)))
+        if std < MIN_BAND_SIGMA_FRACTION * gstd: continue      # tied band: its own sigma would be meaningless
+        band_med[b], band_std[b] = med, std
+    return band_med, band_std
 
 
 @dataclass
@@ -231,7 +253,8 @@ def _separated(order: np.ndarray, periods: np.ndarray, k: int) -> list[int]:
 
 class BoxDip:
     name = "box_dip"
-    version = "3"           # 2: sub-harmonic resolution up to P/8 on every first-pass signal (18 October 2026)
+    version = "4"           # 4: tied long-period bands fall back to the global SDE normalisation (19 October 2026)
+                            # 3: ...; 2: sub-harmonic resolution up to P/8 on every first-pass signal (18 October 2026)
                             # 3: extent-sized mask, alias filter to order 8, first pass refilled to top_k independent
                             # signals (18 October 2026)
     cost_class = "cpu_medium"
@@ -275,17 +298,9 @@ class BoxDip:
             parts["band"].append(np.full(periods.size, b))
         spec = {key: np.concatenate(parts[key]) for key in keys}
         spec["band"] = spec["band"].astype(int)                  # empty skipped bands concatenate as float
-        # SDE normalisation per band: the noise level of the BLS spectrum rises with period, so each band gets its own
-        # median and MAD-sigma; bands with fewer than MIN_BAND_PERIODS trial periods fall back to the global values.
-        power = spec["power"]
-        gmed = float(np.median(power)); gstd = 1.4826 * float(np.median(np.abs(power - gmed))) or 1e-12
-        band_med, band_std = np.full(self.n_bands, gmed), np.full(self.n_bands, gstd)
-        for b, pw in enumerate(parts["power"]):
-            if pw.size >= MIN_BAND_PERIODS:
-                band_med[b] = np.median(pw)
-                band_std[b] = 1.4826 * float(np.median(np.abs(pw - band_med[b]))) or 1e-12
+        band_med, band_std = _band_norms(spec["power"], parts["power"], self.n_bands)
         spec.update(band_durs=band_durs, band_med=band_med, band_std=band_std,
-                    sde=(power - band_med[spec["band"]]) / band_std[spec["band"]])
+                    sde=(spec["power"] - band_med[spec["band"]]) / band_std[spec["band"]])
         return spec
 
     def _refine(self, model: BoxLeastSquares, spec: dict, i: int) -> tuple:

@@ -7,10 +7,10 @@ import numpy as np
 import pytest
 
 from skysift.config import Thresholds
-from skysift.detectors.box_dip import BoxDip
+from skysift.detectors.box_dip import MIN_BAND_PERIODS, BoxDip, _band_norms
 from skysift.lc.ops import detrend, stacked_depth
 from skysift.models import LightCurve, Signal
-from tests.synthetic import inject_transit, inject_v_eclipse, make_lightcurve
+from tests.synthetic import drop_random_cadences, inject_transit, inject_v_eclipse, keep_quarters, make_lightcurve
 
 NARROW = Thresholds(min_period_days=5.0, max_period_days=40.0)
 
@@ -495,3 +495,46 @@ def test_noise_peaks_come_back_without_alias_rows():
     assert all(s.sde < th.sde_min for s in res.signals), found                    # the premise: noise only
     assert len(res.signals) == det.top_k and all(s.extra["alias_of"] is None for s in res.signals), found
     assert len(res.periodogram.peaks) == det.top_k
+
+
+def test_band_norms_fall_back_to_the_global_values_on_tied_bands():
+    """A band whose power repeats on more than half its trial periods has a MAD of 0 (or 1e-14 from rounding); its own
+    sigma would turn any bump into an SDE of 1e13. Such a band, and a band with too few trial periods, use the global
+    median and sigma; a healthy band keeps its own."""
+    rng = np.random.default_rng(3)
+    healthy = 5.0 + rng.normal(0, 1.0, 400)
+    tied = np.full(400, 8.0); tied[:150] = 8.0 + rng.uniform(0, 2, 150)      # 250 of 400 identical: MAD 0
+    rounding = np.full(400, 8.0); rounding[:150] += rng.uniform(0, 2, 150); rounding[150:] += rng.normal(0, 1e-14, 250)
+    small = 5.0 + rng.normal(0, 1.0, MIN_BAND_PERIODS - 1)
+    bands = [healthy, tied, rounding, small]
+    power = np.concatenate(bands)
+    med, std = _band_norms(power, bands, 4)
+    gmed = float(np.median(power)); gstd = 1.4826 * float(np.median(np.abs(power - gmed)))
+    assert abs(med[0] - np.median(healthy)) < 1e-12 and 0.8 < std[0] < 1.2
+    for b in (1, 2, 3):
+        assert med[b] == gmed and std[b] == gstd, (b, med[b], std[b])
+    sde = (power - med[np.repeat(np.arange(4), [len(x) for x in bands])]) / std[np.repeat(np.arange(4), [len(x) for x in bands])]
+    assert np.all(np.isfinite(sde)) and sde.max() < 10
+
+
+def test_band_norms_never_divide_by_zero():
+    flat = np.full(300, 2.0)
+    med, std = _band_norms(flat, [flat], 1)
+    assert med[0] == 2.0 and std[0] == np.inf and np.all((flat - med[0]) / std[0] == 0)
+    two = np.full(300, 2.0); two[:10] = 3.0                                  # global MAD 0, standard deviation not
+    med, std = _band_norms(two, [two], 1)
+    assert np.isfinite(std[0]) and std[0] > 0.1
+
+
+def test_sparse_curve_gets_sane_long_period_sdes():
+    """A star observed in three quarters spread over 1400 d with 85 percent of its cadences removed (pilot case: 2001
+    points over 1054 d): most long trial periods put their best box on the same one or two events, the power ties and
+    the per-band MAD is 0, which made SDEs of 1e13 at 120 to 200 d (19 October 2026). Every SDE is finite and no
+    noise peak comes anywhere near a detection. One search of a 1300-point curve over the full window."""
+    lc = drop_random_cadences(keep_quarters(make_lightcurve(seed=21, noise_ppm=800), [2, 9, 15]), 0.85, seed=4)
+    assert 1500 < lc.time.size < 2500, lc.time.size
+    res = BoxDip(mask_iterations=0, alias_resolution=0).search(lc, detrend(lc), Thresholds(), keep_spectrum=True)
+    sde = res.spectrum["sde"]
+    assert np.all(np.isfinite(sde)), "non-finite SDE in the spectrum"
+    assert sde.max() < 15, f"noise SDE {sde.max():.1f} at {res.spectrum['period'][np.argmax(sde)]:.1f} d"
+    assert all(s.sde < 15 for s in res.signals), [(s.period, s.sde) for s in res.signals]
