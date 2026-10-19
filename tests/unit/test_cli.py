@@ -55,6 +55,26 @@ def test_run_passes_limit_as_max_targets_and_period_overrides(settings, monkeypa
     assert "period window: 5 to 40 days" in r.stderr
 
 
+def test_run_targets_file_becomes_the_target_ids_filter(settings, monkeypatch, tmp_path):
+    from skysift import cli, pipeline
+
+    seen = {}
+
+    def stub(source, store, blob, settings, filter, **kw):
+        seen.update(filter=filter, **kw)
+        return {"processed": 0, "skipped": 0, "errors": 0, "signals": 0}
+
+    monkeypatch.setattr(pipeline, "run", stub)
+    monkeypatch.setattr(cli, "_source", lambda name, store, blob: object())
+    f = tmp_path / "list.txt"
+    f.write_text("# brightest first\nkic-005689121\n\ngaia-dr3-2051294213285341056  \nkic-005689121\n", encoding="utf-8")
+    r = CliRunner().invoke(app, ["run", "--source", "kbonus_bkg", "--targets", str(f)])
+    assert r.exit_code == 0, r.output
+    assert seen["filter"]["target_ids"] == ["kic-005689121", "gaia-dr3-2051294213285341056"]   # comments, blanks, duplicates dropped
+    r = CliRunner().invoke(app, ["run", "--source", "kbonus_bkg", "--targets", str(tmp_path / "missing.txt")])
+    assert r.exit_code != 0
+
+
 def test_run_warns_when_sde_min_is_not_calibrated_for_its_search_version(settings, monkeypatch):
     """The warning compares the calibration file with the version calibrate would write for this sweep's window
     (calibrate searches with the masked pass and alias resolution off, so its version is never the sweep's own)."""

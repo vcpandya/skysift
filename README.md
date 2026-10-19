@@ -39,6 +39,8 @@ python -m skysift vet --source kbonus_bkg --target-id <ID>
 
 The KBonus registry (`--source kbonus_bkg`) holds the stars Kepler never searched: the Gaia sources without a KIC id and the KIC-numbered stars that were extracted from a neighbour's pixels rather than their own (catalogue `kic` differing from `tpforg`), 118,648 targets after the brightness and PSF-fraction cuts. `--all` adds the 166,215 stars Kepler itself targeted. KIC 5689121, the 13.77 d candidate of the quick start, is one of the 84,487 KIC bystanders.
 
+`--targets FILE` sweeps a named list instead of the priority order: one target id per line (`#` comments allowed), in the file's order, with the registry filters still applied; the summary counts ids the source did not yield as `unknown_targets`. The first real sweep used `docs/superpowers/notes/2026-10-19-cool-dwarfs.txt`, built by `docs/superpowers/notes/scripts/select_cool_dwarfs.py` (see the note of the same date).
+
 A sweep resumes where it stopped. Each target's job key holds the detector version plus a hash of the period window
 and search grid, so a run with a different `--min-period` or `--max-period` searches the same targets again. A target
 whose job fails three times is not retried; `run` counts it as `gave_up` and `status` reports it under

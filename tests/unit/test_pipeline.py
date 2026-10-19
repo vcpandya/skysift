@@ -18,6 +18,7 @@ from skysift.pipeline import (
     MAX_ATTEMPTS,
     MAX_POOL_RESTARTS,
     _cpu_work,
+    _select_targets,
     _write_results,
     build_ladder,
     priority_score,
@@ -296,6 +297,25 @@ def test_max_targets_takes_highest_priority_after_full_enumeration(settings, mon
     assert out0["processed"] == 0 and _runs(store) == {} and store.counts()["targets"] == 5
     out = run(src, store, blob, s, filter={}, max_targets=2, with_novelty=False)
     assert out["processed"] == 2 and set(_runs(store)) == {"p5", "p4"}
+
+
+def test_target_ids_filter_sweeps_the_named_stars_in_list_order(settings, monkeypatch):
+    """A sweep over a hand-picked list (`--targets FILE`): only the listed ids are searched, in the list's order
+    rather than by priority, ids the source does not know are reported, and max_targets still caps the list."""
+    s, store, blob = _env(monkeypatch, settings)
+    targets = [_tgt("p5"), _tgt("p1", gmag=14, psffrac=0.3, crowdsap=0.3), _tgt("p4", crowdsap=0.3), _tgt("p3", psffrac=0.3, crowdsap=0.3)]
+    lc = make_lightcurve(n_days=60, seed=4)
+    src = ScriptedSource(targets, {t.target_id: lc for t in targets}, store, blob)
+    order = []
+    out = run(src, store, blob, s, filter={"target_ids": ["p1", "p3", "nope", "p5"]}, with_novelty=False,
+              progress=lambda sm: order.append(sm["processed"]))
+    assert out["processed"] == 3 and out["unknown_targets"] == 1 and set(_runs(store)) == {"p1", "p3", "p5"}
+    assert store.counts()["targets"] == 4                                   # the whole source is still recorded
+    det = get_detector("box_dip"); ver, lad = search_version(det, s.thresholds), pipeline.DEFAULT_LADDER_VERSION
+    todo, _skipped, _gave_up, unknown = _select_targets(src, store, {"target_ids": ["p3", "p1", "zz"]}, det, ver, lad, None)
+    assert [t.target_id for t, _k in todo] == [] and unknown == 1           # both done now; zz is not in the source
+    todo, _s, _g, unknown = _select_targets(src, store, {"target_ids": ["p4", "p1", "p5"]}, det, ver, lad, 1)
+    assert [t.target_id for t, _k in todo] == ["p4"] and unknown == 0       # list order, not priority, then the cap
 
 
 def test_fetch_failure_marks_error_releases_file_and_continues(settings, monkeypatch):

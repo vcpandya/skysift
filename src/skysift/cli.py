@@ -118,10 +118,23 @@ class InterruptOnce:
         return self.requested or self.stop_file.exists()
 
 
+def _read_target_list(path: Path) -> list[str]:
+    """Target ids from a text file, one per line; blank lines and # comments skipped, duplicates dropped, order kept."""
+    if not path.is_file():
+        raise typer.BadParameter(f"{path} is not a file", param_hint="--targets")
+    seen: dict[str, None] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        tid = line.split("#", 1)[0].strip()
+        if tid: seen.setdefault(tid, None)
+    return list(seen)
+
+
 @app.command()
 def run(source: str = typer.Option(...), gmag_max: float = 19.0,
         background_only: bool = typer.Option(True, "--background-only/--all", help="Skip stars Kepler itself targeted (catalogue kic equal to tpforg); --all includes them."), psffrac_min: float = 0.5,
         limit: int | None = typer.Option(None, help="Process the N highest-priority targets not yet done."),
+        targets: str | None = typer.Option(None, "--targets", help="Sweep only the target ids listed in this file "
+                                           "(one per line, # comments), in the file's order; the registry filters still apply."),
         detector: str = "box_dip", workers_io: int | None = None,
         workers_cpu: int | None = None, retention: str | None = None,
         min_period: float | None = typer.Option(None, help="Override the minimum search period (days)."),
@@ -141,6 +154,10 @@ def run(source: str = typer.Option(...), gmag_max: float = 19.0,
         s.store_periodogram = periodogram
     from skysift import pipeline
     src = _source(source, store, blob)
+    flt: dict = {"gmag_max": gmag_max, "background_only": background_only, "psffrac_min": psffrac_min}
+    if targets is not None:
+        flt["target_ids"] = _read_target_list(Path(targets))
+        _plain(console, f"targets: {len(flt['target_ids'])} ids from {targets}")
     _plain(console, f"period window: {s.thresholds.min_period_days:g} to {s.thresholds.max_period_days:g} days")
     if warning := _calibration_warning(s, source): _plain(console, warning)
     interrupt = InterruptOnce(lambda text: _plain(console, f"\n{text}"), stop_request_path(s.data_dir))
@@ -149,9 +166,7 @@ def run(source: str = typer.Option(...), gmag_max: float = 19.0,
     except ValueError:                                  # not the main thread (embedding): Ctrl+C keeps its default
         previous = None
     try:
-        summary = pipeline.run(src, store, blob, s, filter={"gmag_max": gmag_max, "background_only": background_only,
-                                                           "psffrac_min": psffrac_min},
-                               detector_name=detector, max_targets=limit,
+        summary = pipeline.run(src, store, blob, s, filter=flt, detector_name=detector, max_targets=limit,
                                progress=lambda sm: _plain(
                                    console, f"processed {sm['processed']} signals {sm['signals']} outcomes {sm['outcomes']}",
                                    end="\r"),

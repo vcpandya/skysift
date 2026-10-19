@@ -339,13 +339,24 @@ def _select_targets(source, store: Store, filter: dict, det, version: str, ladde
     otherwise take its neighbours' work down every sweep), and return (the top ``max_targets`` remaining targets by
     priority, highest first; skipped count; gave-up count)."""
     todo, skipped, gave_up = [], 0, 0
+    wanted = filter.get("target_ids")           # a named list (`--targets FILE`): only these, in the list's order
+    rank = None if wanted is None else {tid: i for i, tid in enumerate(wanted)}
+    found = 0
     for t in _enumerate_targets(source, store, filter):
+        if rank is not None:
+            if t.target_id not in rank: continue
+            found += 1
         key = make_job_key(t.target_id, det.name, version, ladder_version)
         if store.job_done(key): skipped += 1
         elif store.attempts(key) >= MAX_ATTEMPTS or store.pool_breaks(key) >= MAX_POOL_BREAKS: gave_up += 1
         else: todo.append((t, key))
-    todo.sort(key=lambda x: priority_score(x[0]), reverse=True)     # stable: ties keep source order
-    return (todo if max_targets is None else todo[:max_targets]), skipped, gave_up
+    if rank is None:
+        todo.sort(key=lambda x: priority_score(x[0]), reverse=True)     # stable: ties keep source order
+        unknown = 0
+    else:
+        todo.sort(key=lambda x: rank[x[0].target_id])
+        unknown = len(rank) - found                                     # listed ids the source never yielded
+    return (todo if max_targets is None else todo[:max_targets]), skipped, gave_up, unknown
 
 
 def _fetch(source, t: Target) -> bytes:
@@ -398,9 +409,11 @@ def run(source, store: Store, blob: Blob, settings: Settings, filter: dict, dete
     ladder_version = DEFAULT_LADDER_VERSION
     th_json = settings.thresholds.model_dump_json()
     version = search_version(det, settings.thresholds)
-    todo, skipped, gave_up = _select_targets(source, store, filter, det, version, ladder_version, max_targets)
+    todo, skipped, gave_up, unknown = _select_targets(source, store, filter, det, version, ladder_version, max_targets)
     summary = {"processed": 0, "skipped": skipped, "gave_up": gave_up, "errors": 0, "signals": 0, "pool_restarts": 0,
                "outcomes": {"pass": 0, "fail": 0, "undetermined": 0}}
+    if filter.get("target_ids") is not None:
+        summary["unknown_targets"] = unknown                            # listed ids the source did not yield
     start = time.time()
     max_fetch, max_cpu = 2 * settings.workers_io, 2 * settings.workers_cpu
     pending = iter(todo)
