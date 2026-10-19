@@ -120,7 +120,7 @@ class InterruptOnce:
 
 @app.command()
 def run(source: str = typer.Option(...), gmag_max: float = 19.0,
-        background_only: bool = typer.Option(True, "--background-only/--all"), psffrac_min: float = 0.5,
+        background_only: bool = typer.Option(True, "--background-only/--all", help="Skip stars Kepler itself targeted (catalogue kic equal to tpforg); --all includes them."), psffrac_min: float = 0.5,
         limit: int | None = typer.Option(None, help="Process the N highest-priority targets not yet done."),
         detector: str = "box_dip", workers_io: int | None = None,
         workers_cpu: int | None = None, retention: str | None = None,
@@ -177,7 +177,7 @@ def calibrate(source: str = typer.Option(...),
               min_period: float | None = typer.Option(None, help="Override the minimum search period (days); "
                                                                  "calibrate at the window you sweep with."),
               max_period: float | None = typer.Option(None, help="Override the maximum search period (days)."),
-              gmag_max: float = 19.0, background_only: bool = typer.Option(True, "--background-only/--all"),
+              gmag_max: float = 19.0, background_only: bool = typer.Option(True, "--background-only/--all", help="Skip stars Kepler itself targeted (catalogue kic equal to tpforg); --all includes them."),
               psffrac_min: float = 0.5, retention: str | None = None, verbose: bool = False):
     """Null calibration of sde_min: search each target's real, inverted and quarter-scrambled flux and append the top
     SDEs to a JSON-lines file. Resumable: targets already in the file are skipped."""
@@ -241,7 +241,7 @@ def inject(source: str = typer.Option(...),
            out: str | None = typer.Option(None, help="Output file (default <data_dir>/injections/<source>.jsonl)."),
            min_period: float | None = typer.Option(None, help="Override the minimum search period (days)."),
            max_period: float | None = typer.Option(None, help="Override the maximum search period (days)."),
-           gmag_max: float = 19.0, background_only: bool = typer.Option(True, "--background-only/--all"),
+           gmag_max: float = 19.0, background_only: bool = typer.Option(True, "--background-only/--all", help="Skip stars Kepler itself targeted (catalogue kic equal to tpforg); --all includes them."),
            psffrac_min: float = 0.5, seed: int = typer.Option(1, help="Seed of the injection draws."),
            retention: str | None = None, verbose: bool = False):
     """Injection and recovery: inject box transits into each target's cached raw light curve, run the production search

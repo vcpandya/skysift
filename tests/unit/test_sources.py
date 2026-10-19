@@ -37,12 +37,14 @@ def test_lc_url_for_kic_and_gaia():
         "https://archive.stsci.edu/hlsps/kbonus-bkg/lcs/2049/2049134501869730432/hlsp_kbonus-bkg_kepler_kepler_gaia-dr3-2049134501869730432_kepler_v1.0_lc.fits"
 
 
-def _catalog_table(kic, gmag=(15.0, 18.5, 17.0), psffrac=(0.9, 0.9, 0.3)):
+def _catalog_table(kic, gmag=(15.0, 18.5, 17.0), psffrac=(0.9, 0.9, 0.3), tpforg=(123, 1, 7)):
+    """Three rows: KIC 123 (a Kepler target when its tpforg is 123), a no-KIC star, and a third row whose KIC, when
+    given, is 7 (a target when tpforg is 7, a bystander otherwise)."""
     return Table({"gaia_designation": np.array(["Gaia DR3 1", "Gaia DR3 2", "Gaia DR3 3"], dtype="U32"),
                  "ra": [1.0, 2.0, 3.0], "dec": [1.0, 2.0, 3.0],
                  "phot_g_mean_mag": gmag, "psffrac": psffrac, "kic": kic,
                  "fname": np.array(["kic-000000123", "gaia-dr3-2", "gaia-dr3-3"], dtype="S28"),   # real column names (v1.0 catalogue)
-                 "tpforg": [1, 1, 1], "crowdsap": [0.9, 0.8, 0.7],
+                 "tpforg": list(tpforg), "crowdsap": [0.9, 0.8, 0.7],
                  "sap_avail": np.array(["111111111111111111", "011011001000100011", "100000000000000000"], dtype="S18")})
 
 
@@ -66,11 +68,29 @@ def test_list_targets_kic_targets_limit_and_fields(tmp_path):
     assert [t.target_id for t in ts] == ["kic-000000123", "gaia-dr3-2", "gaia-dr3-3"]
     assert ts[0].kic == 123 and ts[0].gaia_id == "1" and ts[1].kic is None
     assert ts[1].gmag == 18.5 and ts[1].meta == {"file_name": "hlsp_kbonus-bkg_kepler_kepler_gaia-dr3-2_kepler_v1.0_lc.fits",
-                                                 "tpf_org": 1, "crowdsap": 0.8, "psffrac": 0.9, "n_quarters": 8}
+                                                 "tpf_org": 1, "crowdsap": 0.8, "psffrac": 0.9, "n_quarters": 8,
+                                                 "kepler_target": False}
+    assert ts[0].meta["kepler_target"] is True and ts[0].meta["tpf_org"] == 123
     assert [t.meta["n_quarters"] for t in ts] == [18, 8, 1]
     assert lc_url(ts[0]) == f"{BASE}/lcs/0000/000000123/hlsp_kbonus-bkg_kepler_kepler_kic-000000123_kepler_v1.0_lc.fits"
     assert [t.target_id for t in src.list_targets({"gmag_max": 19.0, "background_only": False, "psffrac_min": 0.0, "limit": 2})] \
         == ["kic-000000123", "gaia-dr3-2"]
+
+
+def test_list_targets_keeps_kic_bystanders_that_were_never_kepler_targets(tmp_path):
+    """A KIC id alone does not mean Kepler searched the star: the KIC lists 13 million stars and Kepler targeted about
+    200,000. A row whose kic equals tpforg was extracted from its own target-pixel file (a Kepler target); a row with
+    another star's tpforg is a bystander in that star's pixels (KIC 5689121 sits in the pixels of KIC 5689116) and is
+    searched like a no-KIC star. 84,487 such bystanders pass the registry cuts (19 October 2026)."""
+    p = tmp_path / "cat.fits"; _write_catalog(p, [123, -1, 7], tpforg=(5689116, 1, 7))
+    src = KBonusBkg(blob=None, store=None, catalog_path=p)
+    ts = list(src.list_targets({"gmag_max": 19.0, "background_only": True, "psffrac_min": 0.0}))
+    assert [t.target_id for t in ts] == ["kic-000000123", "gaia-dr3-2"]          # KIC 7 is its own target: skipped
+    assert ts[0].kic == 123 and ts[0].meta["kepler_target"] is False and ts[0].meta["tpf_org"] == 5689116
+    assert lc_url(ts[0]).endswith("/0000/000000123/hlsp_kbonus-bkg_kepler_kepler_kic-000000123_kepler_v1.0_lc.fits")
+    every = list(src.list_targets({"gmag_max": 19.0, "background_only": False, "psffrac_min": 0.0}))
+    assert [t.target_id for t in every] == ["kic-000000123", "gaia-dr3-2", "kic-000000007"]
+    assert [t.meta["kepler_target"] for t in every] == [False, False, True]
 
 
 def test_list_targets_masked_kic_counts_as_no_kic(tmp_path):

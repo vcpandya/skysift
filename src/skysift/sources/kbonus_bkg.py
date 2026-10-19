@@ -68,6 +68,11 @@ class KBonusBkg:
     def list_targets(self, filter: dict) -> Iterator[Target]:
         tab = self.catalog()
         gmag_max = filter.get("gmag_max", 19.0); psffrac_min = filter.get("psffrac_min", 0.5)
+        # ``background_only`` skips the stars Kepler itself targeted and searched: a row whose ``kic`` equals ``tpforg``
+        # was extracted from its own target-pixel file. A KIC id alone is not that: the KIC lists 13 million stars and
+        # Kepler targeted about 200,000, so a KIC-numbered star extracted from a neighbour's pixels (KIC 5689121 in the
+        # pixels of KIC 5689116) was never searched and is kept like a no-KIC star. Counts of 19 October 2026 after the
+        # G <= 19 and psffrac >= 0.5 cuts: 34,161 no-KIC stars, 84,487 KIC bystanders, 166,215 Kepler targets.
         background_only = filter.get("background_only", True); limit = filter.get("limit")
         # Columns become numpy arrays once; astropy row iteration is far too slow for 606,900 rows.
         gmag = _floats(tab["phot_g_mean_mag"]); psffrac = _floats(tab["psffrac"])
@@ -79,21 +84,23 @@ class KBonusBkg:
         gaia_col = _strings(tab["gaia_designation"]); fname_col = _strings(tab["fname"])
         tpf_org = np.asarray(tab["tpforg"]); crowdsap = np.asarray(tab["crowdsap"], dtype=float)
         # ``sap_avail`` is an 18-character bit string, one per Kepler quarter (Q0 to Q17); its count of ones is the
-        # number of quarters with a light curve. 5,472 of the 34,161 background targets have only Q0 (9.7 days,
-        # 469 points), which is below the detector's MIN_POINTS and cannot be searched.
+        # number of quarters with a light curve. 5,472 of the 34,161 no-KIC stars have only Q0 (9.7 days, 469 points),
+        # which is below the detector's MIN_POINTS and cannot be searched; 57,002 of the 84,487 KIC bystanders have
+        # four or more quarters.
         n_quarters = np.array([str(v).count("1") for v in _strings(tab["sap_avail"])], dtype=int)
         if limit is not None and limit <= 0: return
         n = 0
         for i in np.flatnonzero(keep):
             kic = _kic_of(kic_col[i])
-            if background_only and kic: continue
+            kepler_target = kic is not None and kic == int(tpf_org[i])
+            if background_only and kepler_target: continue
             gaia = gaia_col[i].replace("Gaia DR3 ", "").strip()
             tid = f"kic-{kic:09d}" if kic else f"gaia-dr3-{gaia}"
             yield Target(source=self.name, target_id=tid, ra=float(ra[i]), dec=float(dec[i]), gaia_id=gaia, kic=kic,
                          gmag=float(gmag[i]),
                          meta={"file_name": FILE_TEMPLATE.format(fname=str(fname_col[i]).strip()), "tpf_org": int(tpf_org[i]),
                                "crowdsap": float(crowdsap[i]), "n_quarters": int(n_quarters[i]),
-                               "psffrac": float(psffrac[i])})
+                               "psffrac": float(psffrac[i]), "kepler_target": kepler_target})
             n += 1
             if limit is not None and n >= limit: return
 
