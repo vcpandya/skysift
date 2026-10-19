@@ -583,12 +583,12 @@ def test_job_key_depends_on_the_search_window(settings, monkeypatch):
 
 
 def test_search_version_follows_the_detector_version(monkeypatch):
-    """The tied-band SDE fallback of 19 October 2026 changed what BoxDip returns on sparse curves, so its version is 4
-    and every stored run of an earlier version is a different job and is searched again."""
+    """The distinct-power band sigma of 19 October 2026 changed what BoxDip returns on sparse curves, so its version is
+    5 and every stored run of an earlier version is a different job and is searched again."""
     from skysift.detectors.box_dip import BoxDip
     det, th = BoxDip(), Thresholds()
     now = search_version(det, th)
-    assert BoxDip.version == "4" and now.startswith("4+")
+    assert BoxDip.version == "5" and now.startswith("5+")
     monkeypatch.setattr(BoxDip, "version", "2")
     assert search_version(det, th) != now and search_version(det, th).startswith("2+")
 

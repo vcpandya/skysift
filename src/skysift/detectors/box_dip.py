@@ -16,7 +16,7 @@ from skysift.models import LightCurve, Signal
 MIN_POINTS = 500
 DURATIONS_H = np.array([1, 1.5, 2, 3, 4, 6, 9, 12])
 MIN_BAND_PERIODS = 50
-MIN_BAND_SIGMA_FRACTION = 0.25  # a band whose MAD-sigma is under this fraction of the global one uses the global values
+MIN_BAND_SIGMA_FRACTION = 0.25  # a band whose sigma is under this fraction of the median band sigma takes that median sigma
 MAX_DURATION_FRACTION = 0.9     # trial durations must stay below this fraction of the band's shortest period
 ALIAS_PARITY_SIGMA = 5.0        # the deepest epoch class of a sub-harmonic alias beats the others by this many combined errors
 ALIAS_PARITY_RATIO = 0.5        # and every other class (and their mean) is under this fraction of the deepest one
@@ -24,24 +24,50 @@ MAX_SUBHARMONIC = 16            # sub-harmonics P/2 .. P/16 are tested (n = 7 ca
                                 # the 24.0/11 and 24.0/13 d residues of a deep V binary as alias rows that passed every rung)
 
 
+def _distinct_sigma(pw: np.ndarray) -> float:
+    """MAD-sigma of the distinct powers of a band (values equal to 1e-9 of the band's largest power are one value):
+    a tied band's repeated power is one box outcome counted many times, so its distinct values are its effective
+    trials. NaN when fewer than MIN_BAND_PERIODS distinct values remain."""
+    scale = float(np.max(np.abs(pw))) or 1.0
+    distinct = np.unique(np.round(pw / scale, 9)) * scale
+    if distinct.size < MIN_BAND_PERIODS:
+        return np.nan
+    return 1.4826 * float(np.median(np.abs(distinct - np.median(distinct))))
+
+
 def _band_norms(power: np.ndarray, band_powers: list[np.ndarray], n_bands: int) -> tuple[np.ndarray, np.ndarray]:
     """Per-band SDE normalisation: the noise level of the BLS spectrum changes with period, so each band gets its own
-    median and MAD-sigma. A band falls back to the global median and sigma when it has fewer than MIN_BAND_PERIODS
-    trial periods or when its MAD-sigma is below MIN_BAND_SIGMA_FRACTION of the global one: on a sparse curve the long
-    period bands tie, as the best box of most trial periods lands on the same one or two events and the power repeats
-    exactly, and a MAD of 0 or 1e-14 would turn a 2 sigma bump into an SDE of 1e13 (pilot of 19 October 2026: a 2001
-    point curve over 1054 d had MAD-sigmas of 0, 4e-14 and 0.08 in its three longest bands against a global 1.3).
-    A spectrum whose global MAD is 0 as well uses its standard deviation, and a constant spectrum gets sigma = inf,
-    so every SDE is 0 and nothing is detected."""
-    gmed = float(np.median(power)); gstd = 1.4826 * float(np.median(np.abs(power - gmed)))
-    if gstd == 0:
-        gstd = float(np.std(power)) or np.inf
-    band_med, band_std = np.full(n_bands, gmed), np.full(n_bands, gstd)
+    median and sigma. The sigma is the MAD-sigma of the band's DISTINCT powers (``_distinct_sigma``): on a sparse curve
+    the long period bands tie, as the best box of most trial periods lands on the same one or two events and the power
+    repeats exactly, and the MAD of the raw powers shrinks with the tie fraction (to 0 or 1e-14 past half), which
+    turned 2 sigma bumps into SDEs of 1e13 in the pilot of 19 October 2026 (a 2001 point curve over 1054 d had raw
+    MAD-sigmas of 0, 4e-14 and 0.08 in its three longest bands) and inflated SDEs 1.5 times in bands with 12 percent
+    ties. The reference noise level is the median of the band sigmas (the global MAD of the concatenated spectrum also
+    measures how far the band medians drift apart, 6.6 to 57 on a star with a deep binary, and would make healthy
+    bands fall back): a band with fewer than MIN_BAND_PERIODS distinct powers, or a sigma below MIN_BAND_SIGMA_FRACTION
+    of the reference, keeps its own median (the tied level is the right baseline) and takes the reference sigma; a band
+    with fewer than MIN_BAND_PERIODS trial periods takes the global median too. With no band sigma at all the reference
+    is the MAD-sigma of the distinct powers of the whole spectrum, then its standard deviation, then inf (a constant
+    spectrum: every SDE 0, nothing detected). An empty spectrum gets median 0 and sigma inf."""
+    band_med, band_std = np.zeros(n_bands), np.full(n_bands, np.inf)
+    if power.size == 0:
+        return band_med, band_std
+    band_med[:] = float(np.median(power))
+    own = np.full(n_bands, np.nan)
     for b, pw in enumerate(band_powers):
         if pw.size < MIN_BAND_PERIODS: continue
-        med = float(np.median(pw)); std = 1.4826 * float(np.median(np.abs(pw - med)))
-        if std < MIN_BAND_SIGMA_FRACTION * gstd: continue      # tied band: its own sigma would be meaningless
-        band_med[b], band_std[b] = med, std
+        band_med[b] = float(np.median(pw))
+        own[b] = _distinct_sigma(pw)
+    finite = own[np.isfinite(own)]
+    if finite.size:
+        reference = float(np.median(finite))
+    else:
+        reference = _distinct_sigma(power)
+        if not np.isfinite(reference) or reference == 0:
+            reference = float(np.std(power)) or np.inf
+    for b in range(n_bands):
+        keep = np.isfinite(own[b]) and own[b] >= MIN_BAND_SIGMA_FRACTION * reference
+        band_std[b] = own[b] if keep else reference
     return band_med, band_std
 
 
@@ -253,8 +279,10 @@ def _separated(order: np.ndarray, periods: np.ndarray, k: int) -> list[int]:
 
 class BoxDip:
     name = "box_dip"
-    version = "4"           # 4: tied long-period bands fall back to the global SDE normalisation (19 October 2026)
-                            # 3: ...; 2: sub-harmonic resolution up to P/8 on every first-pass signal (18 October 2026)
+    version = "5"           # 5: band SDE sigma from distinct powers, fallback to the median band sigma (19 October 2026)
+                            # 4: tied bands fell back to the global values (19 October, superseded the same day)
+                            # 3: extent-sized mask of every detected signal and alias rows in the first-pass list (18 October)
+                            # 2: sub-harmonic resolution up to P/8 on every first-pass signal (18 October 2026)
                             # 3: extent-sized mask, alias filter to order 8, first pass refilled to top_k independent
                             # signals (18 October 2026)
     cost_class = "cpu_medium"
