@@ -150,6 +150,7 @@ class Localisation:
         seasons = [{
             "season": int(s.season), "quarters": [int(q) for q in s.quarters], "n_events": int(s.n_events),
             "centroid_colrow": [_f(x) for x in s.centroid_colrow], "centroid_sigma_pix": _f(s.centroid_sigma_pix),
+            "centroid_sigma_axis_pix": _f(s.centroid_sigma_axis_pix),
             "dist_target_pix": _f(s.dist_target_pix), "dist_neighbour_pix": _f(s.dist_neighbour_pix),
             "nearer": s.nearer, "separation_sigma": _f(s.separation_sigma),
             "depth_target_ppm": [_f(x) for x in s.depth_target_ppm],

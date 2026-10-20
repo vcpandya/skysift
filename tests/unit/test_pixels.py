@@ -316,10 +316,12 @@ def test_metrics_carry_the_dashboard_keys_and_strict_json():
             "centroid_sigma_pix_mean", "seasons"} <= set(m)
     keys = {"season", "quarters", "n_events", "centroid_colrow", "centroid_sigma_pix", "dist_target_pix",
             "dist_neighbour_pix", "nearer", "separation_sigma", "depth_target_ppm", "depth_neighbour_ppm", "max_snr",
-            "two_source", "pos_target", "pos_neighbour", "voting", "non_voting_reason"}
+            "two_source", "pos_target", "pos_neighbour", "voting", "non_voting_reason", "centroid_sigma_axis_pix"}
     assert all(set(s) == keys for s in m["seasons"]) and len(m["seasons"]) == 4
     assert isinstance(m["seasons"][0]["centroid_colrow"][0], float) and isinstance(m["n_events_used"], int)
     assert m["centroid_sigma_pix_mean"] == np.mean([s["centroid_sigma_pix"] for s in m["seasons"]])
+    assert all(isinstance(s["centroid_sigma_axis_pix"], float) and s["centroid_sigma_axis_pix"] > 0
+               for s in m["seasons"])
     assert all(s["pos_target"] == list(POS_TARGET) and s["voting"] is True and s["non_voting_reason"] is None
                for s in m["seasons"])
 
