@@ -37,13 +37,13 @@
   --fg-2: #4a5368;
   --muted: #7b8499;
   /* The spec's light ion #0e8ca8, solar #b86a00, pass #009E73, fail #D55E00 and undetermined #E69F00 reach only
-     2.1 to 4.1:1 on this page. Each is darkened in HSL lightness alone, hue and saturation kept, to the first shade
-     that reads at 4.5:1 on both --surface and --bg. Running #0072B2 already does. */
-  --ion: #0c7c95;
-  --solar: #a76000;
-  --pass: #00815e;
-  --fail: #bb5300;
-  --undet: #976900;
+     2.0 to 4.1:1 on this page. Each is darkened in HSL lightness alone, hue and saturation kept, to the first shade
+     that reads at 4.5:1 on --surface, --bg and --raised. Running #0072B2 already does. */
+  --ion: #0c7890;
+  --solar: #a25d00;
+  --pass: #007e5c;
+  --fail: #b65000;
+  --undet: #936600;
   --running: #0072B2;
   --star: #0b1020;
   --sky-opacity: .04;

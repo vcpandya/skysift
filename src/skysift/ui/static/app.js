@@ -11,9 +11,15 @@
     if (!form || !e.submitter) return;
     e.preventDefault();
     const body = new URLSearchParams(new FormData(form, e.submitter));
+    let res;
     try {
-      await fetch("/prefs", { method: "POST", body, headers: { "X-SkySift-Token": token }, redirect: "manual" });
+      res = await fetch("/prefs", { method: "POST", body, headers: { "X-SkySift-Token": token }, redirect: "manual" });
     } catch (err) { toast(`Could not save the preference: ${err}`, "fail"); return; }
+    // a saved preference answers 303, which redirect "manual" reports as an opaque redirect
+    if (!(res.type === "opaqueredirect" || res.ok)) {
+      toast(`The preference was not saved (${res.status}). Reload the page and try again.`, "fail");
+      return;
+    }
     if (e.submitter.name === "theme") {
       root.dataset.theme = e.submitter.value;
       form.querySelectorAll("button[name=theme]").forEach((b) => b.setAttribute("aria-pressed", String(b === e.submitter)));
@@ -28,7 +34,8 @@
   const dialog = document.getElementById("dialog");
   let opener = null;
   const focusables = () => [...dialog.querySelectorAll(
-    'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])')];
+    'a[href], button, input, select, textarea, [tabindex]:not([tabindex="-1"])')]
+    .filter((el) => !el.disabled && !el.closest("[hidden]") && el.offsetParent !== null);
   const openDialog = () => {
     if (!dialog.open) dialog.showModal();
     const first = focusables().find((el) => !el.matches("[data-dialog-close]")) || focusables()[0];
@@ -61,8 +68,12 @@
     e.preventDefault();
     e.stopPropagation();
     opener = trigger;
+    const slot = document.getElementById("dialog-slot");
+    slot.replaceChildren();
+    const failed = () => { opener = null; toast("Could not load the details. Try again.", "fail"); };
+    // htmx resolves the promise on a 404 or 500 too, without swapping: open only when something arrived
     window.htmx.ajax("GET", trigger.dataset.dialogSrc, { target: "#dialog-slot", swap: "innerHTML" })
-      .then(openDialog, () => toast("Could not load the details. Try again.", "fail"));
+      .then(() => (slot.childElementCount ? openDialog() : failed()), failed);
   });
 
   // ---- Count-ups: [data-count] numbers rise from zero over 600 ms on first paint, then stay quiet.

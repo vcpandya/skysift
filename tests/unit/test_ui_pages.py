@@ -551,7 +551,8 @@ def assets_static():
 
 def test_prefs_refuses_paths_that_leave_the_origin_and_unknown_values(settings):
     client, app = make_client(settings)
-    for target in ("//evil.example/", "/\\evil.example", "/\t/evil.example", "javascript:alert(1)", "candidates"):
+    for target in ("//evil.example/", "/\\evil.example", "/\t/evil.example", "javascript:alert(1)", "candidates",
+                   "//[bad"):
         r = client.post("/prefs", data={"mode": "expert", "next": target, "_token": app.state.token},
                         follow_redirects=False)
         assert r.status_code == 303 and r.headers["location"] == "/", target

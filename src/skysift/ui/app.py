@@ -74,11 +74,14 @@ def _here(request: Request) -> str:
 def _same_origin_path(target: str) -> str:
     """`target` when it is a path on this dashboard, else "/". Browsers read a backslash as a slash and drop tabs and
     newlines inside a URL, so a backslash, a control character or white space could lead off the origin: refused."""
-    parts = urlsplit(target)
-    if (parts.scheme or parts.netloc or not target.startswith("/") or target.startswith("//") or "\\" in target
+    if (not target.startswith("/") or target.startswith("//") or "\\" in target
             or any(c.isspace() or ord(c) < 32 for c in target)):
         return "/"
-    return target
+    try:
+        parts = urlsplit(target)
+    except ValueError:                   # urlsplit raises on a malformed host such as "//[bad"; never answer 500
+        return "/"
+    return "/" if parts.scheme or parts.netloc else target
 
 
 def render(request: Request, name: str, status_code: int = 200, **ctx) -> HTMLResponse:

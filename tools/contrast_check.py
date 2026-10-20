@@ -19,9 +19,10 @@ STATUS = ("pass", "fail", "undet", "running")
 # --surface, which is white in the light theme and deep sky in the dark one (white on the dark theme's bright ion
 # would read at 1.8:1).
 PAIRS: list[tuple[str, str, float]] = [
-    ("fg", "bg", TEXT), ("fg", "surface", TEXT), ("fg-2", "surface", TEXT), ("muted", "surface", LARGE),
-    ("ion", "surface", TEXT), ("solar", "surface", TEXT),
+    ("fg", "bg", TEXT), ("fg", "surface", TEXT), ("fg-2", "surface", TEXT), ("fg-2", "bg", TEXT),
+    ("muted", "surface", LARGE), ("ion", "surface", TEXT), ("ion", "bg", TEXT), ("solar", "surface", TEXT),
     *[(s, bg, TEXT) for s in STATUS for bg in ("surface", "bg")],
+    *[(c, "raised", TEXT) for c in ("pass", "fail", "undet", "ion", "solar")],      # hover rows, toasts, chip counts
     ("surface", "ion", TEXT), ("surface", "fail", TEXT),
 ]
 BLOCKS = {"light": r"^:root\s*\{(.*?)\}", "dark": r'^:root\[data-theme="dark"\]\s*\{(.*?)\}'}
