@@ -1,10 +1,12 @@
 import hashlib
 import importlib.resources
+import sys
 from dataclasses import replace
 
 import numpy as np
 import pytest
 
+from skysift import stars
 from skysift.models import Target
 from skysift.stars import derive, lookup, mamajek_table, query_gaia, query_neighbours, zero_point
 from skysift.store.db import Store
@@ -67,7 +69,8 @@ def test_query_gaia_parses_the_three_tables_and_logs_each(store):
     row = query_gaia(target_6146676(), fetch=fake_fetch(), store=store)
     assert row.parallax == pytest.approx(3.268646) and row.ks == pytest.approx(13.03)
     assert row.r_med_geo == pytest.approx(301.9)
-    assert row.pseudocolour is None and row.params_solved == 31 and row.zero_point == pytest.approx(-0.0317, abs=0.001)
+    assert row.pseudocolour is None and row.params_solved == 31
+    assert row.zero_point == zero_point(16.236654, 1.3330975, None, 60.5697568, 31)
     assert store.counts()["queries"] == 3
 
 
@@ -93,6 +96,7 @@ def test_neighbours_without_a_gaia_id_drop_the_clause_and_the_target_itself(stor
 
 
 def test_zero_point_matches_the_published_value_for_kic_6146676():
+    pytest.importorskip("zero_point.zpt")
     assert zero_point(16.236654, 1.3330975, None, 60.5697568, 31) == pytest.approx(-0.0317, abs=0.001)
 
 
@@ -107,6 +111,24 @@ def test_zero_point_matches_the_installed_package():
         assert zero_point(g, nu, pc, lat, aps) == pytest.approx(float(ref), abs=1e-9)
 
 
+@pytest.fixture
+def no_zero_point_package(monkeypatch):
+    monkeypatch.setitem(sys.modules, "zero_point", None)       # a None entry makes the import raise ImportError
+    monkeypatch.setitem(sys.modules, "zero_point.zpt", None)
+    stars._zpt_module.cache_clear()
+    yield
+    stars._zpt_module.cache_clear()
+
+
+def test_zero_point_falls_back_to_the_global_offset_without_the_package(no_zero_point_package):
+    assert zero_point(16.236654, 1.3330975, None, 60.5697568, 31) == -0.017
+    star, _ = derive(gaia_row_6146676(), 40.29109, 0.048, 2165e-6, np.random.default_rng(1))
+    assert star.route == "mann" and star.distance_pc.median == pytest.approx(1000 / (3.268646 + 0.017), abs=0.5)
+    fallback = ("Gaia parallax zero point: the global offset of -0.017 mas was used because the "
+                "gaiadr3-zeropoint package is not installed")
+    assert star.caveats == (fallback,)
+
+
 def test_zero_point_rejects_a_two_parameter_solution():
     with pytest.raises(ValueError):
         zero_point(16.0, None, None, 10.0, 3)
@@ -119,9 +141,11 @@ def test_derive_reproduces_the_hand_built_dossier_within_its_errors():
     assert star.distance_pc.median == pytest.approx(303, abs=4)
     assert planet.rp_rearth.median == pytest.approx(2.61, abs=0.15)
     assert planet.a_au.median == pytest.approx(0.182, abs=0.004)
-    assert planet.teq_k.median == pytest.approx(267, abs=12) and planet.in_habitable_zone is True
+    assert planet.teq_k.median == pytest.approx(267, abs=12)
+    assert planet.insolation_earth.median == pytest.approx(1.2, abs=0.1)
     # between the optimistic (recent Venus) and conservative (runaway greenhouse) inner edges, as the hand-built
-    # page says
+    # page says: outside the conservative zone, inside the optimistic one
+    assert planet.in_habitable_zone is False and planet.in_optimistic_habitable_zone is True
     assert planet.hz_optimistic_inner_au < planet.a_au.median < planet.hz_inner_au < planet.hz_outer_au
     assert star.alt_radius_e02.median > star.radius.median and "0.2" in star.reddening_note
     assert star.gaia_cross_check["teff_gspphot"] == pytest.approx(3855.0) and star.gaia_cross_check["note"]
@@ -170,5 +194,5 @@ def test_lookup_runs_the_four_queries_and_derives(store):
 def test_data_files_ship_with_the_package():
     assert mamajek_table().shape[1] == 6
     data = importlib.resources.files("skysift.data")
-    for name in ("gaia_zpt/z5_200720.txt", "gaia_zpt/z6_200720.txt", "gaia_zpt/LICENSE", "mamajek_dwarf_table.txt"):
-        assert data.joinpath(name).is_file()
+    assert data.joinpath("mamajek_dwarf_table.txt").is_file()
+    assert not data.joinpath("gaia_zpt").is_dir()     # LGPL: the zero point is imported, never vendored

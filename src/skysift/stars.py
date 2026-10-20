@@ -4,16 +4,18 @@
 Four ADQL queries to the Gaia archive, each through the caller's ``fetch`` and so logged like every other request:
 the ``gaia_source`` row, the Bailer-Jones et al. 2021 distance, the 2MASS ``Ks`` cross-match and a 20 arcsec cone for
 the neighbours that could make the dip. ``derive`` is pure: the parallax corrected by the Lindegren et al. 2021 zero
-point (ported below from the ``gaiadr3-zeropoint`` package, its coefficient tables vendored in ``skysift/data``), the
+point (from the installed ``gaiadr3-zeropoint`` package, the optional ``dossier`` extra; LGPL, so imported and never
+vendored; without it the global offset of -0.017 mas with a caveat), the
 Mamajek dwarf table at the observed BP-RP for Teff and spectral type, and below 4,000 K the Mann et al. 2015 radius
 and Mann et al. 2019 mass from the absolute Ks; errors from a ``N_DRAWS`` Monte Carlo reported as the 16th, 50th and
 84th percentiles. Gaia's own GSP-Phot and FLAME values are kept as a cross-check, never as the headline."""
 from __future__ import annotations
 
 import functools
-import io
+import importlib
 import math
 import re
+import warnings
 from dataclasses import dataclass
 from importlib import resources
 
@@ -33,6 +35,7 @@ MAMAJEK_COLOUR_RANGE = (-0.2, 5.0)
 
 COLOUR_SIGMA = 0.10              # mag: the BP-RP draw width, E(BP-RP) at or below 0.1 assumed
 ZERO_POINT_SYSTEMATIC = 0.015    # mas, added in quadrature to the parallax error
+ZERO_POINT_GLOBAL = -0.017       # mas, the Lindegren et al. 2021 global median offset (quasars)
 KS_ERR_DEFAULT = 0.03            # mag, when 2MASS gives no error
 A_KS_MAX = 0.07                  # mag: Ks extinction drawn uniformly in 0 to this
 MANN_R_SCATTER = 0.0289          # Mann et al. 2015, fractional
@@ -56,6 +59,8 @@ G_SI, MSUN, RSUN, AU, REARTH = 6.674e-11, 1.98892e30, 6.957e8, 1.495978707e11, 6
 
 NO_STAR = "no Gaia parallax or colour: the star cannot be characterised from photometry"
 KS_MISSING = "Ks missing: Mamajek radius with doubled scatter"
+ZERO_POINT_FALLBACK = ("Gaia parallax zero point: the global offset of -0.017 mas was used because the "
+                       "gaiadr3-zeropoint package is not installed")
 
 Q_SOURCE = ("SELECT source_id, ra, dec, parallax, parallax_error, phot_g_mean_mag, bp_rp, ruwe, "
             "nu_eff_used_in_astrometry, pseudocolour, ecl_lat, astrometric_params_solved, teff_gspphot, radius_flame, "
@@ -133,9 +138,10 @@ class PlanetParams:
     transit_probability: Value | None
     hz_inner_au: float | None    # Kopparapu et al. 2013 runaway greenhouse (conservative inner edge)
     hz_outer_au: float | None    # Kopparapu et al. 2013 maximum greenhouse (conservative outer edge)
-    in_habitable_zone: bool | None   # inside the optimistic zone, recent Venus to early Mars
+    in_habitable_zone: bool | None   # inside the conservative zone, runaway to maximum greenhouse
     hz_optimistic_inner_au: float | None = None    # recent Venus
     hz_optimistic_outer_au: float | None = None    # early Mars
+    in_optimistic_habitable_zone: bool | None = None   # inside the optimistic zone, recent Venus to early Mars
 
 
 # ---------------------------------------------------------------------------------------------------- parsing helpers
@@ -169,38 +175,48 @@ def _adql(query: str, *, fetch, store, target: Target) -> list[dict]:
 
 # ---------------------------------------------------------------------------------------------------- Gaia zero point
 
-@functools.lru_cache(maxsize=2)
-def _zpt_table(name: str):
-    """j and k indices, the G nodes and the coefficients of one Lindegren et al. 2021 table (as ``zpt._read_table``)."""
-    text = resources.files("skysift.data").joinpath(f"gaia_zpt/{name}").read_text(encoding="utf-8")
-    table = np.genfromtxt(io.StringIO(text), delimiter=",")
-    return table[0, 1:].astype(int), table[1, 1:].astype(int), table[2:, 0], table[2:, 1:]
+@functools.lru_cache(maxsize=1)
+def _zpt_module():
+    """``zero_point.zpt`` from the installed gaiadr3-zeropoint package with its tables loaded (once), or None."""
+    try:
+        zpt = importlib.import_module("zero_point.zpt")
+    except ImportError:
+        return None
+    zpt.load_tables()
+    return zpt
+
+
+def zero_point_available() -> bool:
+    """Whether the gaiadr3-zeropoint package is installed (else ``zero_point`` gives the global offset)."""
+    return _zpt_module() is not None
 
 
 def zero_point(gmag, nu_eff, pseudocolour, ecl_lat, params_solved) -> float:
-    """The Lindegren et al. 2021 parallax zero point in mas, ``parallax_corrected = parallax - zero_point``; a port of
-    ``zero_point.zpt.get_zpt`` (gaiadr3-zeropoint 0.1.0, tables of 20 July 2020) for one source. Five-parameter
-    solutions (31) use ``nu_eff``, six-parameter ones (95) ``pseudocolour``; outside G 6 to 21 and the colour ranges the
-    package clamps with a warning, and so does this, silently. Raises ``ValueError`` for any other solution type or a
-    missing input the solution needs."""
+    """The Lindegren et al. 2021 parallax zero point in mas, ``parallax_corrected = parallax - zero_point``, from the
+    installed package's ``get_zpt``. Five-parameter solutions (31) use ``nu_eff``, six-parameter ones (95)
+    ``pseudocolour``; outside G 6 to 21 and the colour ranges the package clamps (its warning is silenced). Without the
+    package: ``ZERO_POINT_GLOBAL``. Raises ``ValueError`` for any other solution type or a missing input the solution
+    needs."""
     if params_solved == 31:
-        colour, (j, k, g, q) = nu_eff, _zpt_table("z5_200720.txt")
+        colour = nu_eff
     elif params_solved == 95:
-        colour, (j, k, g, q) = pseudocolour, _zpt_table("z6_200720.txt")
+        colour = pseudocolour
     else:
         raise ValueError(f"astrometric_params_solved {params_solved}: the zero point needs a 5p (31) or 6p (95) "
                          "solution")
     if colour is None or gmag is None or ecl_lat is None:
         raise ValueError("the zero point needs G, ecl_lat and the colour of the astrometric solution")
-    colour, gmag, sin_beta = float(colour), float(gmag), math.sin(math.radians(float(ecl_lat)))
-    c = [1.0, max(-0.24, min(0.24, colour - 1.48)), min(0.24, max(0.0, 1.48 - colour)) ** 3,
-         min(0.0, colour - 1.24), max(0.0, colour - 1.72)]
-    b = [1.0, sin_beta, sin_beta ** 2 - 1.0 / 3]
-    n = len(g)
-    ig = int(max(0, min(n - 2, int(np.digitize(gmag, g, right=False)) - 1)))
-    h = max(0.0, min(1.0, (gmag - g[ig]) / (g[ig + 1] - g[ig])))
-    zpt = sum(((1 - h) * q[ig, i] + h * q[ig + 1, i]) * c[j[i]] * b[k[i]] for i in range(q.shape[1]))
-    return round(float(zpt) * 0.001, 6)  # micro-arcsec to mas, rounded as the package does
+    zpt = _zpt_module()
+    if zpt is None:
+        return ZERO_POINT_GLOBAL
+    nan = float("nan")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        # arrays, not scalars: the package's scalar path calls np.can_cast on Python floats, which numpy 2 rejects
+        value = zpt.get_zpt(np.array([float(gmag)]), np.array([nan if nu_eff is None else float(nu_eff)]),
+                            np.array([nan if pseudocolour is None else float(pseudocolour)]),
+                            np.array([float(ecl_lat)]), np.array([int(params_solved)]))[0]
+    return float(value)
 
 
 # ---------------------------------------------------------------------------------------------------- Mamajek table
@@ -367,6 +383,8 @@ def derive(gaia: GaiaRow | None, period: float, fit_k: float | None, depth: floa
     if zp is None:
         caveats.append("no Lindegren et al. 2021 zero point for this astrometric solution: the parallax is uncorrected")
         zp = 0.0
+    elif not zero_point_available():
+        caveats.append(ZERO_POINT_FALLBACK)
     plx, eplx = gaia.parallax - zp, math.hypot(gaia.parallax_error, ZERO_POINT_SYSTEMATIC)
     if plx <= 0:
         return _unknown(gaia, (f"corrected parallax {plx:.3f} mas is not positive",))
@@ -462,15 +480,17 @@ def _planet(teff_s, radius_s, mass_s, period: float, fit_k: float | None, depth:
     teff_med, lum_med = float(np.nanmedian(teff_s)), float(np.nanmedian(lum_s))
     if KOPPARAPU_TEFF[0] <= teff_med <= KOPPARAPU_TEFF[1]:
         hz = {name: _hz_distance(teff_med, lum_med, c) for name, c in KOPPARAPU.items()}
-        in_hz = hz["recent_venus"] <= a.median <= hz["early_mars"]
+        in_hz = hz["runaway_greenhouse"] <= a.median <= hz["maximum_greenhouse"]
+        in_opt = hz["recent_venus"] <= a.median <= hz["early_mars"]
     else:
-        hz, in_hz = {}, None
+        hz, in_hz, in_opt = {}, None, None
     return PlanetParams(
         rp_rearth=rp, a_au=a, a_over_r=_value(a_r, 1, "a / R* from the same draws"), teq_k=teq,
         insolation_earth=_value(lum_s / a_au ** 2, 2, f"L* / a^2, L* = R*^2 (Teff / {TSUN:.0f} K)^4, Earth = 1"),
         transit_probability=_value(1 / a_r, 4, "R* / a, circular orbit"),
         hz_inner_au=hz.get("runaway_greenhouse"), hz_outer_au=hz.get("maximum_greenhouse"), in_habitable_zone=in_hz,
-        hz_optimistic_inner_au=hz.get("recent_venus"), hz_optimistic_outer_au=hz.get("early_mars"))
+        hz_optimistic_inner_au=hz.get("recent_venus"), hz_optimistic_outer_au=hz.get("early_mars"),
+        in_optimistic_habitable_zone=in_opt)
 
 
 def lookup(target: Target, period: float, fit_k: float | None, depth: float, *, fetch, store,
