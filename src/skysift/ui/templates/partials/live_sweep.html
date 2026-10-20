@@ -1,8 +1,9 @@
-{# The flight deck: the progress ring, what the sweep is doing and the two ways to stop it; idle, the share of listed
-   stars searched and the past sweeps. A poll (polled) also refreshes the state line above, out of band. #}
+{# The flight deck: the progress ring, what the sweep is doing and the two ways to stop it; a sweep started outside
+   the dashboard, its count alone; idle, the share of listed stars searched and the past sweeps. The hidden copy of
+   the state line is what app.js writes into #state-line after a poll, only when the words changed. #}
 {% from "partials/ring.html" import ring %}
 {% from "partials/pill.html" import pill %}
-{% if polled %}<p id="state-line" hx-swap-oob="innerHTML">{% include "partials/live_state.html" %}</p>{% endif %}
+<span hidden data-live-for="state-line">{% include "partials/live_state.html" %}</span>
 {% if active %}
 <div class="deck card" data-active="1" hx-get="/partials/live/sweep" hx-vals='{"was": 1}' hx-trigger="every 5s" hx-target="#sweep" hx-swap="innerHTML">
   {% if progress.total %}
@@ -13,7 +14,7 @@
   <div class="deck-body">
     <p class="deck-status">{{ pill("running", "stopping" if stopping else "finishing" if finishing else "running") }} <span>{{ req.source or "a source" }}</span></p>
     <p class="muted">The sweep started <time datetime="{{ active.started }}">{{ active.started | ago }}</time>{% if pid is none %} and is starting up{% endif %}.</p>
-    {% if finishing %}<p class="muted">Stop asked <time datetime="{{ finishing }}">{{ finishing | ago }}</time>. Up to {{ in_flight_max }} in-flight stars are finishing. No new star starts, and each takes up to a few minutes.</p>{% endif %}
+    {% if finishing %}<p class="muted">Stop asked <time datetime="{{ finishing }}">{{ finishing | ago }}</time>. Up to {{ in_flight_max }} stars in flight are finishing. No new star starts, and each takes up to a few minutes.</p>{% endif %}
     {% if mode == "expert" %}<p class="muted deck-facts">pid {{ pid if pid is not none else 'starting' }}{% if elapsed is not none %} · elapsed {{ elapsed | fmt(0) }} s{% endif %} · limit {{ req.limit }} · window {{ req.min_period or 'default' }} to {{ req.max_period or 'default' }} d · retention {{ req.retention }}</p>{% endif %}
     {% if not stopping %}
     <form class="stop-controls" method="post" action="/sweeps/stop">
@@ -23,7 +24,7 @@
         <span class="stop-consequence">Stop finishes the stars in flight, then ends the sweep. Nothing is lost.</span></div>
       {% endif %}
       <div class="stop-choice"><button class="danger" name="mode" value="now" onclick="return confirm('Stop the running sweep now? Interrupted targets are redone next time.')">Stop now</button>
-        <span class="stop-consequence">Stop now drops them. They are redone next time.</span></div>
+        <span class="stop-consequence">Stop now drops the stars in flight. They are redone next time.</span></div>
     </form>
     {% endif %}
   </div>
@@ -32,6 +33,14 @@
 <h2>Log</h2>
 <pre class="log">{{ tail | join('\n') }}</pre>
 {% endif %}
+{% elif external %}
+<div class="deck card" data-active="1" hx-get="/partials/live/sweep" hx-vals='{"was": 1}' hx-trigger="every 5s" hx-target="#sweep" hx-swap="innerHTML">
+  <p class="deck-count"><span class="hero-number">{{ external.done_last_hour | fmt }}</span> {{ "star" if external.done_last_hour == 1 else "stars" }} done in the last hour</p>
+  <div class="deck-body">
+    <p class="deck-status">{{ pill("running", "running") }} <span>outside the dashboard</span></p>
+    <p class="muted">It was started on the command line, so its list and its end are not known here. Stop it where it was started.</p>
+  </div>
+</div>
 {% else %}
 <div class="deck card">
   {{ ring("live-ring", searched_pct, (searched | fmt) ~ " of " ~ (listed | fmt) ~ " listed stars searched", "Stars searched: " ~ searched_pct ~ " percent of the " ~ listed ~ " listed", quiet=polled) }}

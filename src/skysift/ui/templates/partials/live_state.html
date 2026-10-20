@@ -5,6 +5,8 @@
   {%- elif progress.total -%}Scanning star {{ [progress.done + 1, progress.total] | min | fmt }} of {{ progress.total | fmt }}{% if eta_s is not none %}, {{ eta_s | left }}{% endif %}.
   {%- else -%}Scanning. {{ progress.done | fmt }} {{ "star" if progress.done == 1 else "stars" }} done so far.
   {%- endif -%}
+{%- elif external -%}
+  {% include "partials/external_words.html" %}
 {%- elif last -%}
   Idle. The last sweep finished {{ last.finished | ago }} and found {{ last.candidates | fmt }} {{ "candidate" if last.candidates == 1 else "candidates" }}.
 {%- else -%}

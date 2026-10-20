@@ -150,8 +150,14 @@ def test_tonight_hero_numbers_tiles_and_recheck_strip(seeded_settings):
     html = client.get("/").text
     # 7 stars scanned and 3 candidates waiting (stage 1, legacy, stage 2); the approved one has had its look
     assert 'scanned <span data-count="7">7</span> stars' in html
-    assert 'found <span data-count="3">3</span> candidates waiting for a look' in html
-    assert 'aria-live="polite"' in html and "hx-trigger" not in html.split('class="feed')[0].split("<main")[1]
+    assert '<span data-count="3">3</span> candidates are waiting for a look.</h1>' in html     # the backlog, apart
+    assert "hx-trigger" not in html.split('class="feed')[0].split("<main")[1]
+    # only a hidden status speaks, with the final words; the visible hero, whose numbers count up, is no live region
+    before_hero = html.split('<section id="hero"')[0].split("<main")[1]
+    assert before_hero.count("aria-live") == 1 and '<p id="tonight-status" class="sr-only" aria-live="polite">' in before_hero
+    assert " SkySift scanned 7 stars. 3 candidates are waiting for a look.</p>" in before_hero
+    assert 'data-live-for="tonight-status"' in html and "signals (dips worth checking)" in html
+    assert "rejected so far" in html
     assert '<a class="chip" href="/candidates?status=undetermined">retry the catalogue' in html
     feed = html.split('class="feed')[1]
     assert feed.index("kic-006146676") < feed.index("gaia-dr3-2101234567890123459") < feed.index("kic-005689121")
@@ -196,15 +202,41 @@ def test_live_state_line_and_ticker_in_words(settings, tmp_path):
     assert ticker.count("<li") == 7 and "kic-005689121" in ticker
     for word in ("candidate", "undetermined", "rejected"):
         assert f">{word}</span>" in ticker, word
+    assert 'title="no checks ran yet">not vetted</span>' in ticker and ticker.count('Z">') == 7     # naive UTC, marked
     try:
         client.post("/sweeps", data={"source": "kbonus_bkg", "limit": "20", "_token": app.state.token},
                     follow_redirects=False)
         sweep = client.get("/partials/live/sweep").text
-        assert "Scanning star 1 of 20" in sweep and 'hx-swap-oob="innerHTML"' in sweep
-        assert "finishes the stars in flight" in sweep and "drops them. They are redone next time" in sweep
+        assert "Scanning star 1 of 20" in sweep and 'data-live-for="state-line"' in sweep
+        assert "finishes the stars in flight" in sweep and "drops the stars in flight. They are redone next time" in sweep
         assert 'class="ring' in sweep
     finally:
         launcher.stop()
+
+
+def test_a_sweep_started_outside_the_dashboard_is_shown_as_running(settings, tmp_path):
+    from skysift.store.db import make_job_key
+    client, app, _ids, _launcher = make_seeded_app(settings, tmp_path)
+    assert "outside the dashboard" not in client.get("/live").text             # the seed's runs are minutes old
+    store = app.state.store
+    store.start_run(make_job_key("kic-005689121", "box_dip", "9+cli", "1"), "kic-005689121", "box_dip", "9+cli", "1")
+    live = client.get("/live").text
+    line = live.split('id="state-line"')[1].split("</p>")[0]
+    assert "A sweep started outside the dashboard is writing results: 7 stars done in the last hour." in line
+    deck = live.split('id="sweep"')[1].split('id="cards"')[0]
+    assert 'class="ring' not in deck and 'data-active="1"' in deck and "<button" not in deck
+    sweep = client.get("/partials/live/sweep?was=1")
+    assert 'hx-trigger="every 5s"' in sweep.text and "HX-Trigger" not in sweep.headers
+    hero = client.get("/partials/tonight/hero").text
+    assert 'hx-trigger="every 10s"' in hero and "outside the dashboard is writing results" in hero
+
+
+def test_quiet_live_regions_rewrite_only_changed_words(settings):
+    client, _app = make_client(settings)
+    js = client.get("/static/app.js").text
+    handler = js[js.index('"htmx:afterSettle"'):]
+    assert "[data-live-for]" in handler and "!== words" in handler
+    assert ".sr-only {" in client.get("/static/app.css").text
 
 
 def test_sources_page_lists_registry_and_progress(settings, tmp_path):
@@ -556,7 +588,7 @@ def test_stop_defaults_to_graceful_and_live_shows_the_finishing_state(settings, 
         assert active is not None and active["stop_requested_at"] and launcher.stop_file.exists()
         assert app.state.stop_requested is None                                 # not the hard "stopping" state
         r = client.get("/partials/live/sweep")
-        assert "finishing" in r.text and active["stop_requested_at"] in r.text and "in-flight" in r.text
+        assert "finishing" in r.text and active["stop_requested_at"] in r.text and "in flight" in r.text
         assert 'value="now"' in r.text and 'value="graceful"' not in r.text     # only the hard stop is left to offer
         assert 'hx-trigger="every 5s"' in r.text                                # keep polling until it exits
         r = client.post("/sweeps/stop", data={"mode": "now", "_token": app.state.token}, follow_redirects=False)

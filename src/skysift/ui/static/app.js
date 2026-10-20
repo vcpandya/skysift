@@ -188,6 +188,16 @@
     if (el) el.click();
   });
 
+  // ---- Live regions that stay quiet: a poll brings a hidden [data-live-for="id"] copy of the words, and the live region
+  // with that id is rewritten only when they changed, so the same sentence is never announced twice.
+  document.body.addEventListener("htmx:afterSettle", () => {
+    document.querySelectorAll("[data-live-for]").forEach((src) => {
+      const region = document.getElementById(src.dataset.liveFor);
+      const words = src.textContent.trim();
+      if (region && region.textContent.trim() !== words) region.textContent = words;
+    });
+  });
+
   // htmx does not swap 4xx responses by default; the start-sweep form answers 400/409 with the form and its error
   document.body.addEventListener("htmx:beforeSwap", (e) => {
     if (e.detail.xhr.status === 400 || e.detail.xhr.status === 409) { e.detail.shouldSwap = true; e.detail.isError = false; }

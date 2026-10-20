@@ -325,6 +325,28 @@ def tonight(store: Store, version: str | None, since: datetime | None = None) ->
     return out
 
 
+EXTERNAL_FRESH = timedelta(minutes=3)      # a done run this recent means a sweep is still writing results
+RUNNING_STALE = timedelta(hours=1)         # a run marked running for longer than this was interrupted, not live
+
+
+def external_sweep(store: Store, after: datetime | None = None) -> dict | None:
+    """A sweep the dashboard did not start (``skysift run`` on the command line), seen in the store: a run marked
+    running that started in the last hour, or a done run that finished in the last three minutes. ``after`` (when the
+    dashboard's own last sweep ended) discounts that sweep's rows. Its stars done in the last hour, or None."""
+    now = datetime.now(UTC).replace(tzinfo=None)
+    floor = _naive_utc(after) if after is not None else None
+    since_running, since_fresh = now - RUNNING_STALE, now - EXTERNAL_FRESH
+    with store.session() as s:
+        running = s.scalar(select(func.count()).select_from(RunRow).where(
+            RunRow.status == "running", RunRow.started >= max(since_running, floor or since_running)))
+        fresh = s.scalar(select(func.max(RunRow.finished)).where(RunRow.status == "done"))
+        if not running and (fresh is None or fresh < max(since_fresh, floor or since_fresh)):
+            return None
+        done = s.scalar(select(func.count(func.distinct(RunRow.target_id)))
+                        .where(RunRow.status == "done", RunRow.finished >= now - timedelta(hours=1)))
+    return {"running": running, "done_last_hour": done}
+
+
 def searched(store: Store) -> tuple[int, int]:
     """(targets searched, targets listed) over every source, for the idle ring."""
     with store.session() as s:

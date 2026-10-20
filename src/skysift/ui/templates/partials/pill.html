@@ -1,9 +1,9 @@
 {# A verdict or status word. tone: pass, fail, undetermined, running or muted; the word always carries the meaning and
    the colour and icon only repeat it. With src the pill is a button that opens that partial in the dialog. #}
-{% macro pill(tone, word, src=None) -%}
+{% macro pill(tone, word, src=None, title=None) -%}
 {%- if src -%}
 <button type="button" class="pill pill-{{ tone }}" data-dialog-src="{{ src }}" aria-haspopup="dialog">{{ word }}</button>
 {%- else -%}
-<span class="pill pill-{{ tone }}">{{ word }}</span>
+<span class="pill pill-{{ tone }}"{% if title %} title="{{ title }}"{% endif %}>{{ word }}</span>
 {%- endif -%}
 {%- endmacro %}

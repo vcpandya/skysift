@@ -1,7 +1,8 @@
 """A small realistic database for dashboard tests: seven KBonus-like targets, one done run each. The first three: one
 candidate with four passing rungs, one undetermined signal (rung 4 outage), one failed signal, raw artifacts for two
 of them and three logged queries. Then a legacy candidate (pre-M3 metrics), a stage-2 candidate with a passing pixel
-rung, an approved stage-1 candidate and a pending signal with no test rows (no artifacts, no queries)."""
+rung, an approved stage-1 candidate and a pending signal with no test rows (no artifacts, no queries). Every run is
+moved five minutes into the past, so the seed reads as a finished sweep, not one still writing results."""
 from skysift.models import Signal, Target, TestResult, TestStatus
 from skysift.store.db import SignalRow, Store, make_job_key
 
@@ -70,11 +71,26 @@ def seed(store: Store, blob=None) -> dict:
         for row in s.query(SignalRow):
             ids[key_of[row.target_id]] = row.id
     ids.update(_seed_more(store))
+    _backdate(store, SEED_AGE_MINUTES)
     return {**ids, "targets": [t.target_id for t in targets], "run_ids": runs,
             "approved_target": APPROVED_TARGET}
 
 
 APPROVED_TARGET = "gaia-dr3-2101234567890123461"
+SEED_AGE_MINUTES = 5
+
+
+def _backdate(store: Store, minutes: int) -> None:
+    """Move every seeded run ``minutes`` into the past: a store whose last run finished moments ago reads as a sweep
+    still writing results (``queries.external_sweep``), and the seed stands for a finished one."""
+    from datetime import timedelta
+
+    from skysift.store.db import RunRow
+    with store.session() as s:
+        for run in s.query(RunRow):
+            run.started -= timedelta(minutes=minutes)
+            if run.finished is not None:
+                run.finished -= timedelta(minutes=minutes)
 
 
 def _legacy_tests() -> list[TestResult]:

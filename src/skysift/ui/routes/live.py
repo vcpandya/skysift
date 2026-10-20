@@ -66,13 +66,16 @@ def _sweep_ctx(request: Request, mean=...) -> dict:
     st = request.app.state
     launcher = st.launcher
     idle = {"active": None, "stopping": False, "finishing": None, "in_flight_max": None, "pid": None, "req": {},
-            "tail": [], "history": [], "elapsed": None, "eta_s": None, "progress": None}
+            "tail": [], "history": [], "elapsed": None, "eta_s": None, "progress": None, "external": None}
     if launcher is None:
-        return idle
+        return {**idle, "external": queries.external_sweep(st.store)}
     active = launcher.active()
     history = [{**h, "req": _as_dict(h.get("request"))} for h in launcher.history()[:10]]
     if not active:
-        return {**idle, "history": history}
+        # no dashboard sweep: one started on the command line shows only in the store; the dashboard's own last
+        # sweep (ended at history[0].finished) is not mistaken for it
+        ended = _started_at(history[0].get("finished")) if history else None
+        return {**idle, "history": history, "external": queries.external_sweep(st.store, after=ended)}
     pid = active.get("pid")
     req = _as_dict(active.get("request"))
     stopping = pid is not None and getattr(st, "stop_requested", None) == (pid, active.get("stamp"))
@@ -101,13 +104,18 @@ def _cards_ctx(request: Request, summary: dict) -> dict:
             "funnel_rows": queries.funnel(summary["rung_counts"])}
 
 
+def _polling(ctx: dict) -> bool:
+    """A sweep is writing results: the dashboard's own, or one started outside it."""
+    return ctx["active"] is not None or ctx["external"] is not None
+
+
 @router.get("/live", response_class=HTMLResponse)
 def live_page(request: Request):
     summary = _summary(request)
     ctx = _sweep_ctx(request, mean=summary["mean_seconds_per_run"])
     st = request.app.state
     if ctx["active"] is None: st.stop_requested = None
-    st.sweep_was_active = ctx["active"] is not None
+    st.sweep_was_active = _polling(ctx)
     idle = _idle_ctx(st.store) if ctx["active"] is None else {}
     return render(request, "live.html", **_cards_ctx(request, summary), **ctx, **idle, polled=False)
 
@@ -120,12 +128,12 @@ def live_cards(request: Request):
 @router.get("/partials/live/sweep", response_class=HTMLResponse)
 def live_sweep(request: Request):
     """The deck while it polls. The state line lives outside the swapped block, so that its aria-live region stays
-    the same node; the response updates it out of band (``polled``)."""
+    the same node; app.js copies the new words into it only when they changed (``data-live-for``)."""
     ctx = _sweep_ctx(request)
     idle = _idle_ctx(request.app.state.store) if ctx["active"] is None else {}
     resp = render(request, "partials/live_sweep.html", **ctx, **idle, polled=True)
     st = request.app.state
-    now_active = ctx["active"] is not None
+    now_active = _polling(ctx)
     # sweep-finished refreshes the cards once. Each client says whether it last saw the sweep running (?was=1), so
     # every open tab gets the signal; the process-wide flag is only the fallback for a client that sends no `was`.
     was = request.query_params.get("was")
@@ -135,7 +143,7 @@ def live_sweep(request: Request):
         finished = getattr(st, "sweep_was_active", False) and not now_active
     if finished:
         resp.headers["HX-Trigger"] = "sweep-finished"
-    if not now_active:
+    if ctx["active"] is None:
         st.stop_requested = None
     st.sweep_was_active = now_active
     return resp

@@ -406,7 +406,8 @@ def _count_of(n: int, unit: str) -> str:
 
 
 def duration_words(seconds: float | None) -> str:
-    """A span of time as Live and Tonight say it: "under a minute", "40 minutes", "2 hours 5 minutes", "3 days"."""
+    """A span of time as Live and Tonight say it: "under a minute", "40 minutes", "1 hour 15 minutes", then whole hours
+    ("2 hours", up to "47 hours") and whole days ("3 days")."""
     if seconds is None or not math.isfinite(seconds) or seconds < 60:
         return "under a minute"
     minutes = round(seconds / 60)

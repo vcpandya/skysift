@@ -3,7 +3,7 @@
 {% if runs %}
 <ol class="ticker" aria-label="The last stars finished, newest first">
 {% for r in runs %}
-  <li class="ticker-row">{{ pill(r.tone, r.outcome) }} <code class="ticker-id">{{ r.target_id }}</code> <time class="ticker-time" datetime="{{ r.finished.isoformat() }}">{{ r.finished | ago }}</time></li>
+  <li class="ticker-row">{{ pill(r.tone, r.outcome, title="no checks ran yet" if r.outcome == "not vetted" else None) }} <code class="ticker-id">{{ r.target_id }}</code> <time class="ticker-time" datetime="{{ r.finished.isoformat() }}{% if r.finished.tzinfo is none %}Z{% endif %}">{{ r.finished | ago }}</time></li>
 {% endfor %}
 </ol>
 {% else %}

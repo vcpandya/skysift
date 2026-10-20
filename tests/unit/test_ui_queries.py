@@ -205,7 +205,10 @@ def test_tonight_counts_the_latest_sweep(tmp_path, settings):
     store, _blob, ids = _env(tmp_path, settings)
     t = queries.tonight(store, VERSION)
     assert (t["scanned"], t["signals"], t["candidates_waiting"], t["rejected"]) == (7, 7, 3, 1)
-    assert t["undetermined"] == {"retry the catalogue": 1} and t["today"] and t["label"] == "Tonight"
+    with store.session() as s:                    # "today" follows the latest run's UTC day (the seed is minutes old)
+        day = s.query(RunRow).order_by(RunRow.started.desc()).first().started.date()
+    assert t["undetermined"] == {"retry the catalogue": 1} and t["today"] == (day == datetime.now(UTC).date())
+    assert t["label"] == "Tonight" if t["today"] else t["label"].startswith("Last run (")
     last = t["last_sweep"]
     assert last["n_targets"] == 7 and last["candidates"] == 4 and last["seconds"] >= 0
     assert last["started"] <= last["finished"]
@@ -249,3 +252,18 @@ def test_recent_runs_outcome_words(tmp_path, settings):
     assert words["gaia-dr3-2101234567890123457"] == ("undetermined", "undetermined")
     assert words["gaia-dr3-2101234567890123458"] == ("rejected", "fail")
     assert runs[0]["finished"] >= runs[-1]["finished"] and len(queries.recent_runs(store, limit=3)) == 3
+
+
+def test_external_sweep_is_seen_in_the_store(tmp_path, settings):
+    from skysift.store.db import make_job_key
+    store, _blob, _ids = _env(tmp_path, settings)
+    assert queries.external_sweep(store) is None                          # the seed finished minutes ago
+    rid = store.start_run(make_job_key("kic-005689121", "box_dip", "9+cli", "1"), "kic-005689121", "box_dip", "9+cli", "1")
+    assert queries.external_sweep(store) == {"running": 1, "done_last_hour": 7}
+    later = datetime.now(UTC) + timedelta(seconds=5)
+    assert queries.external_sweep(store, after=later) is None             # the dashboard's own sweep ended after it
+    with store.session() as s:
+        s.get(RunRow, rid).started -= timedelta(hours=2)                  # interrupted long ago: not live
+    assert queries.external_sweep(store) is None
+    store.finish_run(rid, "done")                                         # a result just written
+    assert queries.external_sweep(store)["running"] == 0

@@ -4,18 +4,19 @@
 {% from "partials/empty.html" import empty %}
 {% from "partials/card.html" import card %}
 {% from "partials/funnel.html" import funnel %}
+{% from "partials/tonight_words.html" import headline %}
 {% block title %}SkySift · Tonight{% endblock %}
 {% block content %}
-<div class="hero-live" aria-live="polite">
+{% set polling = sweep.active is not none or sweep.external is not none %}
+<p id="tonight-status" class="sr-only" aria-live="polite">{{ headline(t, polling) }}</p>
 {% include "partials/tonight_hero.html" %}
-</div>
-{% if t.last_sweep is not none or sweep.active is not none %}
+{% if t.last_sweep is not none or polling %}
 {% set rechecks = t.undetermined.values() | sum %}
 {% set groups %}{% for word, n in t.undetermined.items() %}{{ n }} {{ word }}{% if not loop.last %}, {% endif %}{% endfor %}{% endset %}
 <div class="tiles tonight-tiles">
   {{ stat("candidates waiting", t.candidates_waiting, "Cleared every light-curve check. Nobody has looked yet.") }}
   {{ stat("being rechecked", rechecks, groups if rechecks else "No check is waiting on more data.") }}
-  {{ stat("rejected", t.rejected, "Failed a check. The reason is kept.") }}
+  {{ stat("rejected so far", t.rejected, "Failed a check. The reason is kept.") }}
 </div>
 <section aria-labelledby="feed-title">
   <div class="section-head">

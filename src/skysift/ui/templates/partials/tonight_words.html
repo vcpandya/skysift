@@ -1,0 +1,8 @@
+{# Tonight's two sentences as plain text, for the screen-reader status that only speaks when they change. The visible
+   hero says the same with its numbers in count-up spans. #}
+{% macro headline(t, polling) -%}
+{%- if t.last_sweep is none and not polling -%}No sweep yet.
+{%- else -%}
+{{ "Tonight" if t.today else "In its last run" }} SkySift scanned {{ t.scanned | fmt }} {{ "star" if t.scanned == 1 else "stars" }}. {{ t.candidates_waiting | fmt }} {{ "candidate is" if t.candidates_waiting == 1 else "candidates are" }} waiting for a look.
+{%- endif -%}
+{%- endmacro %}
