@@ -579,5 +579,11 @@ def test_the_queue_script_opens_the_split_view_only_on_wide_screens(settings):
     client, _app = make_client(settings)
     js = client.get("/static/app.js").text
     assert "(min-width: 1280px)" in js and "history.replaceState" in js and 'htmx.trigger(' in js
+    # the selection and the URL follow only a detail that arrived; a failed load says so and changes nothing
+    after = js[js.index('"htmx:afterRequest"'):]
+    assert "e.detail.successful" in after and "Could not load the details" in after
+    assert after.index("e.detail.successful") < after.index("history.replaceState")
+    opener = js[js.index("const openRow"):js.index('"htmx:afterRequest"')]
+    assert "replaceState" not in opener and "select(row)" not in opener
     css = client.get("/static/app.css").text
     assert ".card.candidate" in css and ".sparkline" in css and "tr.row-link.is-selected" in css

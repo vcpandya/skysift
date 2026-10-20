@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import tempfile
 from pathlib import Path
 
 from fastapi import APIRouter, Request
@@ -10,7 +11,7 @@ from fastapi.responses import JSONResponse, Response
 from skysift import jsonutil
 from skysift.detectors.periodogram import PeriodogramSummary
 from skysift.net import ServiceUnavailable
-from skysift.store.db import ArtifactRow
+from skysift.store.db import ArtifactRow, SignalRow
 from skysift.ui import queries, sparkline
 from skysift.ui.plots import IntegrityError, LightCurveLoader, build_plots, whitened_fnorm
 
@@ -77,20 +78,37 @@ def sparkline_svg(request: Request, signal_id: int):
     """The card's folded-transit picture, cached on disk per signal. Without a readable raw file on disk the answer is
     a placeholder that is never cached, so the real picture appears once the curve is."""
     st = request.app.state
+    with st.store.session() as s:                            # a leftover file never answers for an unknown signal
+        known = s.get(SignalRow, signal_id) is not None
+    if not known:
+        return JSONResponse({"error": "not found", "detail": f"no signal {signal_id}"}, status_code=404)
     path = Path(st.settings.data_dir) / "ui" / "sparklines" / f"{signal_id}.svg"
     if path.is_file():
         return Response(path.read_bytes(), media_type=SVG, headers={"Cache-Control": SPARKLINE_MAX_AGE})
     d = queries.signal_detail(st.store, signal_id)
-    if d is None:
-        return JSONResponse({"error": "not found", "detail": f"no signal {signal_id}"}, status_code=404)
     try:
         lc = LightCurveLoader(st.store, st.blob, source_factory=_not_cached).load(d["target"], pin=False)
     except (ServiceUnavailable, IntegrityError) as e:
         log.info("sparkline %s: placeholder (%s)", signal_id, e)
         return Response(sparkline.placeholder_svg(), media_type=SVG, headers={"Cache-Control": "no-store"})
     svg = sparkline.render_svg(sparkline.fold_points(lc, d["signal"], d["tests"]), d["signal"]["depth_ppm"])
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
-    tmp.write_text(svg, encoding="utf-8")
-    os.replace(tmp, path)                                    # a concurrent reader sees the old file or the new one
+    _cache(path, svg)
     return Response(svg, media_type=SVG, headers={"Cache-Control": SPARKLINE_MAX_AGE})
+
+
+def _cache(path: Path, text: str) -> None:
+    """Write ``text`` to ``path`` through a uniquely named temp file beside it (requests run on a thread pool, so two
+    first requests for one signal may race), then rename: a reader sees no file or a whole one. The temp file never
+    outlives a failure, and losing the rename to a concurrent writer of the same picture is not an error."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, suffix=".tmp", delete=False) as f:
+            tmp = Path(f.name)
+            f.write(text)
+        os.replace(tmp, path)
+    except BaseException as e:
+        if tmp is not None:
+            tmp.unlink(missing_ok=True)
+        if not (isinstance(e, OSError) and path.is_file()):
+            raise

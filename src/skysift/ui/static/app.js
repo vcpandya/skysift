@@ -147,12 +147,19 @@
   };
   const openRow = (row) => {
     if (!(detail && wide.matches)) { window.location = row.dataset.href; return; }
-    select(row);
-    window.htmx.trigger(row, "split");
-    const url = new URL(window.location.href);
-    url.searchParams.set("signal", row.dataset.id);
-    history.replaceState(null, "", url);
+    window.htmx.trigger(row, "split");      // the selection and the URL follow only a detail that arrived (below)
   };
+  if (queue) {
+    queue.addEventListener("htmx:afterRequest", (e) => {
+      const row = e.detail.elt && e.detail.elt.closest && e.detail.elt.closest("tr.row-link[data-id]");
+      if (!row || e.detail.target !== detail) return;
+      if (!e.detail.successful) { toast("Could not load the details. Try again.", "fail"); return; }
+      select(row);
+      const url = new URL(window.location.href);
+      url.searchParams.set("signal", row.dataset.id);
+      history.replaceState(null, "", url);
+    });
+  }
   const step = (by) => {
     const rows = queueRows();
     if (!rows.length) return;

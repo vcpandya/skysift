@@ -615,3 +615,53 @@ def test_queue_rows_link_to_the_signal_page_and_load_the_detail(seeded):
     assert f'hx-get="/partials/signals/{ids["candidate"]}/detail"' in row and 'hx-target="#detail"' in row
     page = client.get(f"/signals/{ids['candidate']}?{qs}").text                     # the search survives the page
     assert f'href="/candidates?{qs}"' in page
+
+
+def test_a_leftover_sparkline_file_never_answers_for_an_unknown_signal(seeded, settings):
+    client, _ids = seeded
+    stray = settings.data_dir / "ui" / "sparklines" / "999999.svg"
+    stray.parent.mkdir(parents=True, exist_ok=True)
+    stray.write_text("<svg/>", encoding="utf-8")
+    assert client.get("/api/signals/999999/sparkline.svg").status_code == 404
+
+
+def test_sparkline_cache_writes_race_safely_and_leave_no_temp_files(tmp_path, monkeypatch):
+    import threading
+
+    from skysift.ui.routes import api
+    path = tmp_path / "ui" / "sparklines" / "7.svg"
+    errors = []
+
+    def write(i):
+        try:
+            for _ in range(20):
+                api._cache(path, f"<svg>{i}</svg>")
+        except Exception as e:          # noqa: BLE001 - any failure is the finding
+            errors.append(e)
+    threads = [threading.Thread(target=write, args=(i,)) for i in range(4)]
+    for t in threads: t.start()
+    for t in threads: t.join()
+    assert errors == [] and path.read_text(encoding="utf-8").startswith("<svg>")
+    assert [f.name for f in path.parent.iterdir()] == ["7.svg"]
+    other = path.with_name("8.svg")
+
+    def refuse(src, dst):
+        raise OSError("disk full")
+    monkeypatch.setattr(api.os, "replace", refuse)
+    with pytest.raises(OSError, match="disk full"):
+        api._cache(other, "<svg/>")
+    assert [f.name for f in path.parent.iterdir()] == ["7.svg"]
+
+
+def test_a_non_finite_fit_model_falls_back_to_the_box(monkeypatch):
+    import numpy as np
+
+    from skysift.ui import sparkline
+    from tests.synthetic import inject_transit, make_lightcurve
+    lc = inject_transit(make_lightcurve(n_days=400, seed=3, noise_ppm=500), 13.7695, 136.3, 0.096, 1800)
+    sig = {"period": 13.7695, "t0": 136.3, "duration": 0.096, "depth_ppm": 1800.0, "extra": {}}
+    tests = [{"rung": "rung2_shape", "metrics": {"fit_k": 0.042, "fit_b": 0.3}}]
+    assert sparkline.fold_points(lc, sig, tests)["model_kind"] == "fit"
+    monkeypatch.setattr(sparkline, "uniform_disc_flux", lambda dt, *a: np.full(np.size(dt), np.nan))
+    pts = sparkline.fold_points(lc, sig, tests)
+    assert pts["model_kind"] == "box" and "nan" not in sparkline.render_svg(pts, 1800.0).lower()

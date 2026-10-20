@@ -36,8 +36,9 @@ def _shape_metrics(tests: list[dict]) -> dict:
 
 
 def _fit_model(hours: np.ndarray, period: float, duration: float, m: dict) -> np.ndarray | None:
-    """The uniform-disc transit of rung 2's fit in ppm at ``hours`` from mid-transit, or None without a usable fit. A
-    fit stored without its orbit size takes the one that gives the signal's duration."""
+    """The uniform-disc transit of rung 2's fit in ppm at ``hours`` from mid-transit, or None without a usable fit (a
+    model with any non-finite value counts as none). A fit stored without its orbit size takes the one that gives the
+    signal's duration."""
     k, b = _number(m.get("fit_k")), _number(m.get("fit_b"))
     if k is None or b is None or k <= 0 or b < 0:
         return None
@@ -50,7 +51,8 @@ def _fit_model(hours: np.ndarray, period: float, duration: float, m: dict) -> np
         a = math.sqrt(inner) / s
     if a <= 1.0:
         return None
-    return (uniform_disc_flux(hours / 24.0, period, k, b, a) - 1.0) * 1e6
+    model = (uniform_disc_flux(hours / 24.0, period, k, b, a) - 1.0) * 1e6
+    return model if np.isfinite(model).all() else None
 
 
 def fold_points(lc: LightCurve, signal: dict, tests: list[dict]) -> dict:
