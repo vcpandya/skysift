@@ -97,7 +97,9 @@ class LightCurveLoader:
             s.expunge_all()
             return rows
 
-    def load(self, target: dict) -> LightCurve:
+    def load(self, target: dict, pin: bool = True) -> LightCurve:
+        """The target's light curve from the stored raw file, else re-fetched and verified. ``pin`` keeps the raw file
+        from budget retention, as the signal page needs; a list view (the card sparklines) passes False."""
         tid, source = target["target_id"], target.get("source", "kbonus_bkg")
         parse = self.parsers.get(source, parse_kbonus_fits)
         rows = self._raw_rows(tid)
@@ -110,7 +112,8 @@ class LightCurveLoader:
                 except Exception as e:
                     raise IntegrityError(f"the stored raw file {row.sha256[:12]} for {tid} cannot be read: {e}") from e
                 lc.meta.setdefault("target_id", tid)
-                self.store.pin_target_artifacts(tid)      # budget retention must not evict the file being viewed
+                if pin:
+                    self.store.pin_target_artifacts(tid)  # budget retention must not evict the file being viewed
                 return lc
         # released by retention (or never fetched): re-fetch with nothing stored, verify, then record
         hold = _HoldBlob()

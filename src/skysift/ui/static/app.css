@@ -402,6 +402,36 @@ kbd { padding: 0 4px; font-size: var(--fs-12); border: 1px solid currentColor; b
 .verdict-foot { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--line); }
 .verdict-glossary { margin: 0 0 12px; padding-left: 18px; color: var(--fg-2); font-size: var(--fs-13); }
 .verdict-glossary li + li { margin-top: 4px; }
+
+/* ---- Candidate cards and the queue. The name's link covers the card; the pill sits above it as its own control. ---- */
+.card.candidate { position: relative; display: grid; gap: 10px; align-content: start; transition: border-color var(--ease), transform var(--ease); }
+.card.candidate:hover { border-color: var(--muted); transform: translateY(-1px); }
+.card.candidate:focus-within { border-color: var(--ion); }
+.card-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 12px; }
+.card-name { margin: 0; font: 500 var(--fs-16)/1.3 var(--font-display); overflow-wrap: anywhere; }
+.card-name code { font: 500 var(--fs-14)/1.3 var(--font-mono); }
+.card-link { color: var(--fg); text-decoration: none; }
+.card-link::after { content: ""; position: absolute; inset: 0; border-radius: inherit; }
+.card-link:focus-visible { outline: none; }
+.card-link:focus-visible::after { outline: 2px solid var(--ion); outline-offset: 2px; }
+.card-stage { color: var(--fg-2); font-size: var(--fs-12); font-weight: 600; letter-spacing: .02em; }
+/* the picture keeps a night panel in both themes: its ion points and solar line are fixed colours (sparkline.py) */
+.sparkline { display: block; width: 100%; height: auto; aspect-ratio: 240 / 72; background: #0e1422; border: 1px solid var(--line); border-radius: 8px; }
+.card-summary { margin: 0; color: var(--fg-2); }
+.card-facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 0; }
+.card-facts dt { color: var(--fg-2); font-size: var(--fs-12); }
+.card-facts dd { margin: 0; font: 500 var(--fs-13)/1.4 var(--font-mono); font-variant-numeric: tabular-nums; }
+.card-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.card-foot .pill { position: relative; z-index: 1; }
+.card-reviewer { color: var(--fg-2); font-size: var(--fs-13); font-weight: 600; }
+.queue-tools { display: flex; flex-wrap: wrap; align-items: end; gap: 12px 16px; margin: 0 0 12px; }
+.queue-search { flex: 1 1 220px; max-width: 320px; }
+.queue-clear { align-self: center; font-size: var(--fs-13); }
+tr.row-link.is-selected { background: var(--raised); box-shadow: inset 3px 0 0 var(--ion); }
+.detail .hero-name { font-size: var(--fs-20); }
+.detail-summary { margin: 0 0 12px; }
+.detail-open { margin-left: auto; }
+.detail #decision .decision-bar { position: static; }
 .htmx-indicator { opacity: 0; transition: opacity var(--ease); }
 .htmx-request .htmx-indicator, .htmx-request.htmx-indicator { opacity: 1; }
 

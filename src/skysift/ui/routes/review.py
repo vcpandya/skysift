@@ -2,10 +2,12 @@
 `ui.queries`; the only write is `Store.decide`, which appends to the decision history."""
 from __future__ import annotations
 
+import re
 from urllib.parse import quote, urlencode
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse
+from markupsafe import Markup
 
 from skysift import jsonutil
 from skysift.ui import explain, plots, queries
@@ -111,6 +113,11 @@ def _explained(d: dict, signal_id: int) -> dict:
 
 
 VERSIONS = ("current", "all")
+SEARCH = re.compile(r"[A-Za-z0-9 _.:-]{0,64}")
+# the chips' words, in QUEUE_STATUSES order
+CHIP_LABELS = {"candidate_stage1": "stage 1 candidates", "candidate_stage2": "stage 2 candidates",
+               "undetermined": "undetermined", "rejected": "rejected", "superseded": "superseded",
+               "approved": "approved", "needs_data": "needs data", "all": "all"}
 
 
 class _BadView(ValueError):
@@ -118,11 +125,11 @@ class _BadView(ValueError):
 
 
 def _view(request: Request) -> dict:
-    """The queue view carried in the query string (filter, sort column, direction, which search versions), checked
-    against the allow-lists."""
+    """The queue view carried in the query string (filter, sort column, direction, which search versions, the target
+    id search), checked against the allow-lists."""
     q = request.query_params
     view = {"status": q.get("status", "candidate_stage1"), "sort": q.get("sort", "sde"), "dir": q.get("dir", "desc"),
-            "versions": q.get("versions", "current")}
+            "versions": q.get("versions", "current"), "q": q.get("q", "")}
     if view["status"] not in queries.QUEUE_STATUSES:
         raise _BadView(f"unknown status {view['status']!r}; one of {', '.join(queries.QUEUE_STATUSES)}")
     if view["sort"] not in queries.SORT_COLUMNS:
@@ -131,7 +138,16 @@ def _view(request: Request) -> dict:
         raise _BadView(f"unknown direction {view['dir']!r}; asc or desc")
     if view["versions"] not in VERSIONS:
         raise _BadView(f"unknown versions {view['versions']!r}; {' or '.join(VERSIONS)}")
+    if not SEARCH.fullmatch(view["q"]):
+        raise _BadView("a target search is at most 64 letters, digits, spaces and the characters _ . : -")
     return view
+
+
+def _qs(view: dict, **changes) -> Markup:
+    """The view as a query string (with ``changes``), the search only when there is one. Every value is checked or
+    percent-encoded, so the string is safe in an attribute as it is and the links keep their plain ``&``."""
+    v = {**view, **changes}
+    return Markup(urlencode({k: x for k, x in v.items() if k != "q" or x}))
 
 
 def _version(store, view: dict) -> str | None:
@@ -152,9 +168,10 @@ def candidates_page(request: Request):
         return _bad_request(request, e)
     version = _version(st.store, view)
     rows = queries.review_queue(st.store, status=view["status"], sort=view["sort"], desc=view["dir"] != "asc",
-                                version=version)
-    return render(request, "candidates.html", rows=rows, view=view, statuses=list(queries.QUEUE_STATUSES),
-                  columns=COLUMNS, hidden=queries.hidden_by_version(st.store, view["status"], version))
+                                version=version, search=view["q"])
+    return render(request, "candidates.html", rows=rows, view=view, qs=lambda **c: _qs(view, **c),
+                  chips=CHIP_LABELS, counts=queries.status_counts(st.store, version), columns=COLUMNS,
+                  hidden=queries.hidden_by_version(st.store, view["status"], version))
 
 
 @router.get("/signals/{signal_id}", response_class=HTMLResponse)
@@ -168,8 +185,8 @@ def signal_page(request: Request, signal_id: int):
     if d is None:
         return render(request, "error.html", status_code=404, error=f"no signal {signal_id}", log_hint="")
     prev_id, next_id = queries.neighbours(st.store, signal_id, view["status"], view["sort"], view["dir"] != "asc",
-                                          version=_version(st.store, view))
-    qs = "?" + urlencode(view)
+                                          version=_version(st.store, view), search=view["q"])
+    qs = "?" + _qs(view)
     ex = _explained(d, signal_id)
     return render(request, "signal.html", d=d, links=_links(d["target"]), **ex,
                   summary=explain.summary_sentence(d["signal"], d["target"], d["tests"]),
@@ -177,7 +194,8 @@ def signal_page(request: Request, signal_id: int):
                                                  f"{request.base_url}signals/{signal_id}"),
                   pixel_figures=None, plot_layout=plots.LAYOUT, marks=plots.MARKS, captions=plots.CAPTIONS,
                   prev_url=f"/signals/{prev_id}{qs}" if prev_id else None,
-                  next_url=f"/signals/{next_id}{qs}" if next_id else None, view=view, signal_id=signal_id, error=None)
+                  next_url=f"/signals/{next_id}{qs}" if next_id else None, view=view, queue_qs=_qs(view),
+                  signal_id=signal_id, error=None)
 
 
 @router.get("/partials/signals/{signal_id}/verdict", response_class=HTMLResponse)
@@ -189,6 +207,16 @@ def verdict_popup(request: Request, signal_id: int):
         return HTMLResponse(f"no signal {signal_id}", status_code=404)
     return render(request, "partials/verdict.html", signal=d["signal"], target=d["target"], signal_id=signal_id,
                   **_explained(d, signal_id))
+
+
+@router.get("/partials/signals/{signal_id}/detail", response_class=HTMLResponse)
+def signal_detail_partial(request: Request, signal_id: int):
+    """The expert split view's right pane: the hero, the Why rows and the decision bar, without the plots."""
+    d = queries.signal_detail(request.app.state.store, signal_id)
+    if d is None:
+        return HTMLResponse(f"no signal {signal_id}", status_code=404)
+    return render(request, "partials/signal_detail.html", d=d, signal_id=signal_id, error=None,
+                  summary=explain.summary_sentence(d["signal"], d["target"], d["tests"]), **_explained(d, signal_id))
 
 
 # the toast a recorded decision sends (app.js shows HX-Trigger "toast" events), in the tone of the new status

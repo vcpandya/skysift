@@ -1,0 +1,21 @@
+{# The expert split view's right pane, swapped into #detail: the signal page's hero, its Why rows and the decision bar,
+   with a link to the full page for the plots. Context: d, signal_id, summary, v, rows, ladder, recheck_history,
+   verdict_src, error. #}
+{% from "partials/pill.html" import pill %}
+{% set s = d.signal %}
+<article class="detail" data-signal="{{ signal_id }}">
+  <header class="hero detail-hero">
+    <h2 class="hero-name"><code>{{ s.target_id }}</code></h2>
+    <p class="detail-summary">{{ summary }}</p>
+    <div class="hero-verdict">
+      {{ pill(v.tone, v.word, verdict_src) }}
+      {%- if v.stage %}<span class="hero-stage">{{ v.stage }}</span>{% endif %}
+      {%- if v.reviewer %}<span class="hero-reviewer">{{ v.reviewer }}</span>{% endif %}
+      <a class="btn detail-open" href="/signals/{{ signal_id }}">Open the signal page</a>
+    </div>
+    <p class="hero-facts muted mono">P {{ s.period | fmt(4) }} d · depth {{ s.depth_ppm | fmt(0) }} ppm · {{ (s.duration * 24) | fmt(2) }} h · SDE {{ s.sde | fmt(1) }} · SNR {{ s.snr | fmt(1) }} · {{ s.n_events | fmt }} transits</p>
+  </header>
+  <p class="why-headline pill-{{ v.tone }}">{{ v.headline }}.</p>
+  {% with show_numbers = True %}{% include "partials/why.html" %}{% endwith %}
+  <div id="decision">{% include "partials/decision_bar.html" %}</div>
+</article>

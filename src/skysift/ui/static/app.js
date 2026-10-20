@@ -130,19 +130,55 @@
     }
   });
 
-  // ---- Keys on the signal page: a approve, r reject, n needs data, j next, k previous; ? lists them.
+  // ---- The expert queue. A row opens its signal: at 1280 px and above into #detail beside the table (the row's
+  // hx-get, fired by the "split" event) with the URL remembering it, narrower on the signal page. j and k move the
+  // selection, Enter opens it.
+  const queue = document.getElementById("queue");
+  const detail = document.getElementById("detail");
+  const wide = window.matchMedia("(min-width: 1280px)");
+  const queueRows = () => (queue ? [...queue.querySelectorAll("tr.row-link[data-href]")] : []);
+  const selected = () => queueRows().find((r) => r.classList.contains("is-selected"));
+  const select = (row) => {
+    queueRows().forEach((r) => {
+      r.classList.toggle("is-selected", r === row);
+      if (r === row) r.setAttribute("aria-current", "true"); else r.removeAttribute("aria-current");
+    });
+    row.scrollIntoView({ block: "nearest" });
+  };
+  const openRow = (row) => {
+    if (!(detail && wide.matches)) { window.location = row.dataset.href; return; }
+    select(row);
+    window.htmx.trigger(row, "split");
+    const url = new URL(window.location.href);
+    url.searchParams.set("signal", row.dataset.id);
+    history.replaceState(null, "", url);
+  };
+  const step = (by) => {
+    const rows = queueRows();
+    if (!rows.length) return;
+    const at = rows.indexOf(selected());
+    select(rows[at < 0 ? (by > 0 ? 0 : rows.length - 1) : Math.min(rows.length - 1, Math.max(0, at + by))]);
+  };
+  document.addEventListener("click", (e) => {
+    const row = e.target.closest("tr.row-link[data-href]");
+    if (row && !e.target.closest("a, button, input")) openRow(row);
+  });
+  if (detail && wide.matches) {             // a reload keeps the open signal
+    const id = new URLSearchParams(window.location.search).get("signal");
+    const row = id && queueRows().find((r) => r.dataset.id === id);
+    if (row) document.addEventListener("htmx:load", () => openRow(row), { once: true });
+  }
+
+  // ---- Keys: a approve, r reject, n needs data (the signal page and the split view's detail); j next, k previous
+  // (the signal page's links, or the queue's selection, Enter opening it); ? lists them.
   const KEYS = { a: "btn-approve", r: "btn-reject", n: "btn-needs-data", j: "link-next", k: "link-prev" };
   document.addEventListener("keydown", (e) => {
     if (e.ctrlKey || e.metaKey || e.altKey || dialog.open || e.target.matches("input, textarea, select, [contenteditable]")) return;
-    if (e.key === "?") { toast("Keys: j next, k previous, a approve, r reject, n needs data, Esc closes a popup."); return; }
+    if (e.key === "?") { toast("Keys: j next, k previous, Enter opens, a approve, r reject, n needs data, Esc closes a popup."); return; }
+    if (queue && (e.key === "j" || e.key === "k")) { e.preventDefault(); step(e.key === "j" ? 1 : -1); return; }
+    if (queue && e.key === "Enter" && !e.target.closest("a, button") && selected()) { e.preventDefault(); openRow(selected()); return; }
     const el = KEYS[e.key] && document.getElementById(KEYS[e.key]);
     if (el) el.click();
-  });
-
-  // ---- Table rows that link to a signal.
-  document.addEventListener("click", (e) => {
-    const row = e.target.closest("tr.row-link[data-href]");
-    if (row && !e.target.closest("a, button, input")) window.location = row.dataset.href;
   });
 
   // htmx does not swap 4xx responses by default; the start-sweep form answers 400/409 with the form and its error

@@ -17,6 +17,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from skysift import __version__ as engine_version
 from skysift.config import Settings
+from skysift.sources.factory import make_source
 from skysift.store.blob import Blob, blob_from_url
 from skysift.store.db import Store
 
@@ -116,6 +117,7 @@ def create_app(settings: Settings, store: Store | None = None, blob: Blob | None
     st.plotly_path = plotly_path
     st.git_commit = _git_commit()
     st.plot_cache = {}
+    st.source_factory = make_source        # how the signal page re-fetches a released light curve; tests replace it
     # the vendor mount goes first: Starlette tries mounts in order and "/static" would swallow "/static/vendor/..."
     if plotly_path is not None:
         app.mount("/static/vendor", StaticFiles(directory=str(plotly_path.parent)), name="vendor")

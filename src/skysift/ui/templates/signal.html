@@ -6,7 +6,7 @@
 {% set s = d.signal %}
 {% set simple = mode != "expert" %}
 <nav class="signal-nav" aria-label="Queue">
-  <a href="/candidates?status={{ view.status }}&sort={{ view.sort }}&dir={{ view.dir }}&versions={{ view.versions }}">← queue</a>
+  <a href="/candidates?{{ queue_qs }}">← queue</a>
   {%- if mode == "expert" %}
   {%- if prev_url %} · <a id="link-prev" href="{{ prev_url }}">previous (k)</a>{% endif %}
   {%- if next_url %} · <a id="link-next" href="{{ next_url }}">next (j)</a>{% endif %}

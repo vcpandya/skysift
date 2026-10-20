@@ -1,0 +1,12 @@
+{# One row of the expert queue. A click opens the signal page; at 1280 px and above app.js fires "split" instead, which
+   loads the signal's detail into #detail beside the table. The verdict pill opens the popup. Context: r, qs. #}
+{% from "partials/pill.html" import pill %}
+<tr class="row-link" data-href="/signals/{{ r.id }}?{{ qs() }}" data-id="{{ r.id }}" hx-get="/partials/signals/{{ r.id }}/detail" hx-target="#detail" hx-trigger="split" hx-swap="innerHTML">
+  <td><code>{{ r.target_id }}</code>{% if r.kic %} <span class="muted">KIC {{ r.kic }}</span>{% endif %}</td>
+  <td class="num">{{ r.period | fmt(4) }}</td><td class="num">{{ r.depth_ppm | fmt(0) }}</td><td class="num">{{ r.duration_h | fmt(2) }}</td>
+  <td class="num">{{ r.sde | fmt(1) }}</td><td class="num">{{ r.snr | fmt(1) }}</td><td class="num">{{ r.n_events | fmt }}</td><td class="num muted">#{{ r.id }}</td>
+  <td>{{ r.last_rung or '–' }}</td>
+  <td>{{ pill(r.verdict_tone, r.verdict_word, "/partials/signals/" ~ r.id ~ "/verdict") }}{% if r.stage %} <span class="muted">{{ r.stage }}</span>{% endif %}</td>
+  <td class="muted">{{ r.reason }}</td>
+  <td class="status-{{ r.decision }}">{{ r.reviewer or '' }}</td>
+</tr>

@@ -567,9 +567,17 @@ def test_prefs_refuses_paths_that_leave_the_origin_and_unknown_values(settings):
 def test_existing_pages_render_on_the_shared_components(settings, tmp_path):
     client, _app, _ids, _launcher = make_seeded_client(settings, tmp_path)
     html = client.get("/candidates").text
-    assert 'class="chip" aria-current="true">candidate_stage1</a>' in html and 'class="pill pill-' in html
+    assert 'aria-current="true">stage 1 candidates <span class="chip-count">3</span></a>' in html and 'class="pill pill-' in html
     assert '<a class="chip" href="/approved?status=approved" aria-current="true">approved</a>' in client.get("/approved").text
     live = client.get("/live").text
     assert 'class="tile stat"' in live and "data-count=" in live
     assert 'class="envinfo only-expert"' in live and 'aria-current="page"' in live
     assert "style=" not in live + html + client.get("/partials/sweep-form?source=kbonus_bkg").text
+
+
+def test_the_queue_script_opens_the_split_view_only_on_wide_screens(settings):
+    client, _app = make_client(settings)
+    js = client.get("/static/app.js").text
+    assert "(min-width: 1280px)" in js and "history.replaceState" in js and 'htmx.trigger(' in js
+    css = client.get("/static/app.css").text
+    assert ".card.candidate" in css and ".sparkline" in css and "tr.row-link.is-selected" in css

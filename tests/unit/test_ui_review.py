@@ -10,10 +10,10 @@ from tests.unit.ui_seed import add_older_version
 
 def test_queue_page_defaults_and_filters(settings, tmp_path):
     client, _app, ids, _launcher = make_seeded_client(settings, tmp_path)
-    r = client.get("/candidates")
+    r = client.get("/candidates?mode=expert")                         # the table and its reason column are expert
     assert r.status_code == 200 and "kic-005689121" in r.text and "gaia-dr3-2101234567890123457" not in r.text
     assert f'data-href="/signals/{ids["candidate"]}' in r.text and "13.7695" in r.text
-    r = client.get("/candidates?status=undetermined")
+    r = client.get("/candidates?status=undetermined&mode=expert")
     assert "gaia-dr3-2101234567890123457" in r.text and "outage:vizier" in r.text
     r = client.get("/candidates?status=all&sort=period&dir=asc")
     first = r.text.index("gaia-dr3-2101234567890123458"); last = r.text.index("kic-005689121")
@@ -36,7 +36,8 @@ def test_signal_page_shows_ladder_metrics_links_and_plots_hook(settings, tmp_pat
     assert "season_depths" not in r.text or "raw" in r.text                                # dict metrics only in raw
     assert f'id="plots" data-signal="{ids["candidate"]}"' in r.text and "/static/plots.js" in r.text
     assert "exofop.ipac.caltech.edu" not in r.text and "archive.stsci.edu" in r.text and "gea.esac.esa.int" in r.text
-    assert f'id="link-prev" href="/signals/{ids["approved"]}' in r.text and 'id="link-next"' not in r.text
+    assert f'id="link-prev" href="/signals/{ids["approved"]}' in r.text
+    assert f'id="link-next" href="/signals/{ids["stage2"]}' in r.text                      # "all" holds stage 2 too
     assert client.get("/signals/999999").status_code == 404
 
 
@@ -210,13 +211,13 @@ def test_signal_header_says_when_the_period_was_multiplied(settings, tmp_path):
 def test_queue_shows_the_current_search_version_by_default(settings, tmp_path):
     client, app, ids, _launcher = make_seeded_client(settings, tmp_path)
     old = add_older_version(app.state.store)                         # same target, earlier sweep, period 6.88475 d
-    r = client.get("/candidates")
+    r = client.get("/candidates?mode=expert")                         # the table rows carry data-href
     assert r.status_code == 200 and "13.7695" in r.text and "6.8848" not in r.text
     assert f'data-href="/signals/{old}' not in r.text
     assert "Current search version only (1 older hidden)" in r.text
     assert 'href="/candidates?status=candidate_stage1&sort=sde&dir=desc&versions=all">show all</a>' in r.text
     assert f'data-href="/signals/{ids["candidate"]}?status=candidate_stage1&sort=sde&dir=desc&versions=current"' in r.text
-    r = client.get("/candidates?versions=all")
+    r = client.get("/candidates?versions=all&mode=expert")
     assert "13.7695" in r.text and "6.8848" in r.text and "All search versions" in r.text
     assert 'href="/candidates?status=candidate_stage1&sort=sde&dir=desc&versions=current">current only</a>' in r.text
     assert "older hidden" not in r.text
@@ -417,3 +418,200 @@ def test_simple_why_shows_the_numbers_and_hides_the_engine_notes(seeded):
     notes = html[html.index('<span class="only-expert"> · whitened: 1 wave removed'):]
     notes = notes[:notes.index("</span>")]          # the engine notes sit in one expert-only span
     assert "put back at the detection" in notes and "period multiplied by 2 from 6.88475 d" in notes
+
+
+# ---- candidate cards, sparklines and the Candidates page (mission control, task 4)
+
+APPROVED = "gaia-dr3-2101234567890123461"
+
+
+def _synthetic_curve(monkeypatch, period=13.7695, t0=136.3, duration=0.096, depth=1800):
+    """The seed's raw files are fake bytes, not FITS: the parser hands back a synthetic curve with the transit
+    injected at the seeded candidate's period and epoch, as the plots.json tests do."""
+    from skysift.ui import plots as plots_mod
+    from tests.synthetic import inject_transit, make_lightcurve
+    lc = inject_transit(make_lightcurve(n_days=400, seed=3, noise_ppm=500), period, t0, duration, depth)
+    monkeypatch.setitem(plots_mod.PARSERS, "kbonus_bkg", lambda b: lc)
+    return lc
+
+
+def _card(html: str, signal_id: int) -> str:
+    """The card of one signal, from its article tag to its end."""
+    img = html.index(f'src="/api/signals/{signal_id}/sparkline.svg"')
+    start = html.rindex('<article class="card candidate', 0, img)
+    return html[start:html.index("</article>", img)]
+
+
+def test_sparkline_is_svg_and_cached(seeded, settings, monkeypatch):
+    client, ids = seeded
+    _synthetic_curve(monkeypatch)
+    r = client.get(f"/api/signals/{ids['candidate']}/sparkline.svg")
+    assert r.status_code == 200 and r.headers["content-type"].startswith("image/svg+xml") and "<svg" in r.text
+    assert r.headers["cache-control"] == "max-age=86400"
+    assert 'viewBox="0 0 240 72"' in r.text and "<circle" in r.text and "#4fd1e8" in r.text and "#ffb454" in r.text
+    assert "light curve not cached" not in r.text
+    cached = settings.data_dir / "ui" / "sparklines" / f"{ids['candidate']}.svg"
+    assert cached.exists() and cached.read_text(encoding="utf-8") == r.text
+
+
+def test_sparkline_cache_hit_serves_the_file_without_loading(seeded, settings, monkeypatch):
+    from skysift.ui import plots as plots_mod
+    client, ids = seeded
+    cached = settings.data_dir / "ui" / "sparklines" / f"{ids['candidate']}.svg"
+    cached.parent.mkdir(parents=True, exist_ok=True)
+    cached.write_text('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 72"><title>from disk</title></svg>',
+                      encoding="utf-8")
+    monkeypatch.setattr(plots_mod.LightCurveLoader, "load", lambda *a, **k: pytest.fail("the cache was not used"))
+    r = client.get(f"/api/signals/{ids['candidate']}/sparkline.svg")
+    assert r.status_code == 200 and "from disk" in r.text and r.headers["cache-control"] == "max-age=86400"
+    assert r.headers["content-type"].startswith("image/svg+xml")
+
+
+def test_sparkline_without_a_cached_curve_returns_a_placeholder(seeded, settings):
+    client, ids = seeded
+    r = client.get(f"/api/signals/{ids['rejected']}/sparkline.svg")        # the seed stores no raw file for it
+    assert r.status_code == 200 and "light curve not cached" in r.text
+    assert r.headers["content-type"].startswith("image/svg+xml") and r.headers["cache-control"] == "no-store"
+    assert not (settings.data_dir / "ui" / "sparklines" / f"{ids['rejected']}.svg").exists()   # never cached
+
+
+def test_sparkline_of_an_unreadable_curve_is_a_placeholder_and_unknown_ids_404(seeded, settings):
+    client, ids = seeded
+    r = client.get(f"/api/signals/{ids['candidate']}/sparkline.svg")      # fake bytes: the loader's IntegrityError
+    assert r.status_code == 200 and "light curve not cached" in r.text and r.headers["cache-control"] == "no-store"
+    assert not (settings.data_dir / "ui" / "sparklines" / f"{ids['candidate']}.svg").exists()
+    assert client.get("/api/signals/999999/sparkline.svg").status_code == 404
+
+
+def test_sparkline_never_pins_or_fetches(seeded, monkeypatch):
+    client, ids = seeded
+    store = client.app.state.store
+    monkeypatch.setattr(store, "pin_target_artifacts", lambda tid: pytest.fail("a list view pinned evidence"))
+    client.app.state.source_factory = lambda *a, **k: pytest.fail("a list view fetched a light curve")
+    _synthetic_curve(monkeypatch)
+    assert client.get(f"/api/signals/{ids['candidate']}/sparkline.svg").status_code == 200
+    assert "light curve not cached" in client.get(f"/api/signals/{ids['rejected']}/sparkline.svg").text
+
+
+def test_candidates_simple_mode_renders_cards_with_pills_and_sparklines(seeded):
+    client, ids = seeded
+    html = client.get("/candidates?mode=simple").text
+    assert 'class="card candidate' in html and "sparkline.svg" in html and 'data-dialog-src="/partials/signals/' in html
+    assert "stage 1" in html
+    card = _card(html, ids["candidate"])
+    assert 'loading="lazy"' in card and 'alt="Folded transit of kic-005689121"' in card
+    assert "A dip of 0.18 percent repeats every 13.8 days" in card                          # the summary sentence
+    assert f'href="/signals/{ids["candidate"]}?status=candidate_stage1&sort=sde&dir=desc&versions=current"' in card
+    assert f'data-dialog-src="/partials/signals/{ids["candidate"]}/verdict"' in card and ">Candidate</button>" in card
+    assert "13.77" in card and "1,800" in card and "stage 1" in card and "<table" not in html
+
+
+def test_candidates_expert_mode_renders_the_table_and_the_detail_slot(seeded):
+    client, ids = seeded
+    html = client.get("/candidates?mode=expert").text
+    assert "<table" in html and 'id="detail"' in html and "hx-get=\"/partials/signals/" in html
+    assert f'hx-get="/partials/signals/{ids["candidate"]}/detail"' in html and 'class="card candidate' not in html
+    assert f'data-dialog-src="/partials/signals/{ids["candidate"]}/verdict"' in html          # the same pill
+
+
+def test_candidates_chips_carry_counts_and_search_filters(seeded):
+    client, _ids = seeded
+    html = client.get("/candidates").text
+    assert "undetermined" in html and "rejected" in html
+    assert 'class="chip-count">1<' in html                              # every chip carries its count
+    assert "kic-005689121" in client.get("/candidates?q=5689").text
+    assert "kic-005689121" not in client.get("/candidates?q=zzz").text
+
+
+def test_candidates_chips_are_every_status_in_order_with_their_counts(seeded):
+    client, _ids = seeded
+    html = client.get("/candidates?status=all&versions=all").text
+    chips = html[html.index('class="chips"'):]
+    chips = chips[:chips.index("</nav>")]
+    counts = {"candidate_stage1": 3, "candidate_stage2": 1, "undetermined": 1, "rejected": 1, "superseded": 0,
+              "approved": 1, "needs_data": 0, "all": 6}
+    positions = []
+    for status, n in counts.items():
+        at = chips.index(f'href="/candidates?status={status}&sort=sde&dir=desc&versions=all"')
+        positions.append(at)
+        assert f'<span class="chip-count">{n}</span>' in chips[at:chips.index("</a>", at)], status
+    assert positions == sorted(positions)
+
+
+def test_candidates_search_is_case_insensitive_kept_in_links_and_literal(seeded):
+    client, _ids = seeded
+    html = client.get("/candidates?q=KIC-0056&status=all").text
+    assert "kic-005689121" in html and "gaia-dr3-2101234567890123457" not in html
+    assert 'name="q" value="KIC-0056"' in html and "&q=KIC-0056" in html                   # chips keep the search
+    assert "kic-005689121" not in client.get("/candidates?q=kic_005&status=all").text      # _ is not a wildcard
+
+
+def test_candidates_search_is_validated(seeded):
+    client, _ids = seeded
+    for q in ("<script>", "a" * 65, "x%", "kic'005"):
+        r = client.get("/candidates", params={"q": q})
+        assert r.status_code == 400 and "Something went wrong" in r.text and "<script>" not in r.text, q
+    assert client.get("/candidates", params={"q": "a" * 64}).status_code == 200
+    assert client.get("/candidates", params={"q": "kic 005.1:2_3-4"}).status_code == 200
+
+
+def test_candidates_approved_chip_lists_only_decided_signals(seeded):
+    client, _ids = seeded
+    html = client.get("/candidates?status=approved")
+    assert html.status_code == 200 and "Approved by reviewer" in html.text
+    assert APPROVED in html.text and "kic-005689121" not in html.text
+
+
+def test_candidates_needs_data_chip_follows_the_latest_decision(seeded):
+    client, ids = seeded
+    assert "kic-005689121" not in client.get("/candidates?status=needs_data").text
+    client.post(f"/signals/{ids['candidate']}/decide", data={"decision": "needs_data", "note": "", "_token": token(client)})
+    html = client.get("/candidates?status=needs_data").text
+    assert "kic-005689121" in html and "Needs data" in html and APPROVED not in html
+    client.post(f"/signals/{ids['candidate']}/decide", data={"decision": "approve", "note": "", "_token": token(client)})
+    assert "kic-005689121" not in client.get("/candidates?status=needs_data").text
+    assert "kic-005689121" in client.get("/candidates?status=approved").text
+
+
+def test_candidates_render_every_status_in_both_modes_and_themes(seeded):
+    from skysift.ui import queries
+    client, ids = seeded
+    client.post(f"/signals/{ids['undetermined']}/decide", data={"decision": "needs_data", "note": "", "_token": token(client)})
+    for status in queries.QUEUE_STATUSES:
+        for mode in ("simple", "expert"):
+            for theme in ("dark", "light"):
+                r = client.get(f"/candidates?status={status}&mode={mode}&theme={theme}&versions=all")
+                assert r.status_code == 200, (status, mode, theme)
+                assert "—" not in r.text and "style=" not in r.text and "discover" not in r.text.lower()
+
+
+def test_candidates_empty_list_says_so(seeded):
+    client, _ids = seeded
+    for mode in ("simple", "expert"):
+        html = client.get(f"/candidates?status=superseded&mode={mode}").text
+        assert 'class="empty"' in html and "Nothing in this list" in html
+
+
+def test_signal_detail_partial_has_the_hero_why_and_decision_bar(seeded):
+    client, ids = seeded
+    r = client.get(f"/partials/signals/{ids['undetermined']}/detail?mode=expert")
+    assert r.status_code == 200 and "<html" not in r.text
+    html = r.text
+    assert "gaia-dr3-2101234567890123457" in html and "Undetermined" in html and "A dip of" in html
+    assert html.count('class="why-row') == len(explain.LADDER_ORDER) and "What was missing" in html
+    assert 'id="decision"' in html and 'id="btn-approve"' in html
+    assert f'hx-post="/signals/{ids["undetermined"]}/decide"' in html
+    assert f'href="/signals/{ids["undetermined"]}"' in html and 'id="plots"' not in html and "plots.js" not in html
+    assert client.get("/partials/signals/999999/detail").status_code == 404
+
+
+def test_queue_rows_link_to_the_signal_page_and_load_the_detail(seeded):
+    client, ids = seeded
+    html = client.get("/candidates?mode=expert&q=5689").text
+    row = html[html.index('<tr class="row-link'):]
+    row = row[:row.index("</tr>")]
+    qs = "status=candidate_stage1&sort=sde&dir=desc&versions=current&q=5689"
+    assert f'data-href="/signals/{ids["candidate"]}?{qs}"' in row and f'data-id="{ids["candidate"]}"' in row
+    assert f'hx-get="/partials/signals/{ids["candidate"]}/detail"' in row and 'hx-target="#detail"' in row
+    page = client.get(f"/signals/{ids['candidate']}?{qs}").text                     # the search survives the page
+    assert f'href="/candidates?{qs}"' in page

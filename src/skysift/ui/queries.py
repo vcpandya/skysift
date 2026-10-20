@@ -8,6 +8,7 @@ from sqlalchemy import func, select
 from skysift.store.db import (
     ArtifactRow,
     CandidateRow,
+    DecisionRow,
     QueryRow,
     RunRow,
     SignalRow,
@@ -16,12 +17,15 @@ from skysift.store.db import (
     TestRow,
 )
 from skysift.store.retention import Retention
+from skysift.ui import explain
 
 SORT_COLUMNS = {"sde": SignalRow.sde, "snr": SignalRow.snr, "period": SignalRow.period, "depth_ppm": SignalRow.depth_ppm,
                 "duration": SignalRow.duration, "n_events": SignalRow.n_events, "detected": SignalRow.id,
                 "target_id": SignalRow.target_id}
-QUEUE_STATUSES = {"candidate_stage1": ("candidate_stage1",), "undetermined": ("undetermined",),
-                  "rejected": ("rejected",), "all": ("candidate_stage1", "undetermined", "rejected")}
+# the Candidates page's filters, in chip order: the engine's statuses, then the reviewer's decisions, then everything
+QUEUE_STATUSES = ("candidate_stage1", "candidate_stage2", "undetermined", "rejected", "superseded", "approved",
+                  "needs_data", "all")
+ENGINE_STATUSES = QUEUE_STATUSES[:5]       # "all" is these; a pending signal is still being vetted, so in no queue
 
 
 def _iso(dt) -> str | None:
@@ -98,8 +102,45 @@ def current_search_version(store: Store) -> str | None:
                         .order_by(RunRow.started.desc(), RunRow.id.desc()).limit(1))
 
 
-def _statuses(status: str) -> tuple[str, ...]:
-    return QUEUE_STATUSES.get(status, QUEUE_STATUSES["candidate_stage1"])
+def _latest_decision_subquery():
+    """(signal_id, decision) of each signal's latest reviewer decision."""
+    last_id = select(DecisionRow.signal_id, func.max(DecisionRow.id).label("did")).group_by(DecisionRow.signal_id).subquery()
+    return (select(DecisionRow.signal_id, DecisionRow.decision)
+            .join(last_id, DecisionRow.id == last_id.c.did)).subquery()
+
+
+def _filtered(q, status: str, version: str | None, search: str, latest):
+    """``q`` (selecting from SignalRow, with CandidateRow and the ``latest`` decision subquery outer-joined) kept to one
+    queue status, search version and target-id substring. ``approved`` and ``needs_data`` follow the reviewer's latest
+    decision; the substring is matched case-insensitively and literally (no LIKE wildcards)."""
+    if status == "approved":
+        q = q.where(CandidateRow.status == "approved")
+    elif status == "needs_data":
+        q = q.where(CandidateRow.status == "review", latest.c.decision == "needs_data")
+    else:
+        q = q.where(SignalRow.final_status.in_(ENGINE_STATUSES if status == "all" else (status,)))
+    if version is not None:
+        q = q.join(RunRow, RunRow.id == SignalRow.run_id).where(RunRow.detector_version == version)
+    if search:
+        q = q.where(func.lower(SignalRow.target_id).contains(search.lower(), autoescape=True))
+    return q
+
+
+def _base(*cols, latest):
+    return (select(*cols).select_from(SignalRow)
+            .outerjoin(CandidateRow, CandidateRow.signal_id == SignalRow.id)
+            .outerjoin(latest, latest.c.signal_id == SignalRow.id))
+
+
+def _count(s, status: str, version: str | None) -> int:
+    latest = _latest_decision_subquery()
+    return s.scalar(_filtered(_base(func.count(), latest=latest), status, version, "", latest))
+
+
+def status_counts(store: Store, version: str | None = None) -> dict[str, int]:
+    """How many signals each chip lists, kept to ``version`` like the queue."""
+    with store.session() as s:
+        return {status: _count(s, status, version) for status in QUEUE_STATUSES}
 
 
 def hidden_by_version(store: Store, status: str, version: str | None) -> int:
@@ -107,23 +148,20 @@ def hidden_by_version(store: Store, status: str, version: str | None) -> int:
     if version is None:
         return 0
     with store.session() as s:
-        return s.scalar(select(func.count()).select_from(SignalRow).join(RunRow, RunRow.id == SignalRow.run_id)
-                        .where(SignalRow.final_status.in_(_statuses(status)), RunRow.detector_version != version))
+        return _count(s, status, None) - _count(s, status, version)
 
 
-def _queue_select(status: str, sort: str, desc: bool, ids_only: bool = False, version: str | None = None):
-    last = _last_test_subquery()
+def _queue_select(status: str, sort: str, desc: bool, ids_only: bool = False, version: str | None = None,
+                  search: str = ""):
+    last, latest = _last_test_subquery(), _latest_decision_subquery()
     col = SORT_COLUMNS.get(sort, SignalRow.sde)
     cols = ([SignalRow.id] if ids_only else
             [SignalRow, TargetRow, CandidateRow.status.label("decision"), last.c.rung, last.c.status.label("verdict"),
-             last.c.reason])
-    q = (select(*cols).select_from(SignalRow)
+             last.c.reason, latest.c.decision.label("latest_decision")])
+    q = (_base(*cols, latest=latest)
          .join(TargetRow, TargetRow.target_id == SignalRow.target_id)
-         .outerjoin(CandidateRow, CandidateRow.signal_id == SignalRow.id)
-         .outerjoin(last, last.c.signal_id == SignalRow.id)
-         .where(SignalRow.final_status.in_(_statuses(status))))
-    if version is not None:
-        q = q.join(RunRow, RunRow.id == SignalRow.run_id).where(RunRow.detector_version == version)
+         .outerjoin(last, last.c.signal_id == SignalRow.id))
+    q = _filtered(q, status, version, search, latest)
     return q.order_by(col.desc() if desc else col.asc(), SignalRow.id.desc())
 
 
@@ -135,18 +173,38 @@ def _queue_row(sig: SignalRow, t: TargetRow, decision, rung, verdict, reason=Non
             "source": t.source}
 
 
+def _tests_by_signal(s, ids: list[int]) -> dict[int, list[dict]]:
+    """Every test row of these signals in one query, grouped by signal and ordered by id as ``explain`` expects."""
+    out: dict[int, list[dict]] = {i: [] for i in ids}
+    if ids:
+        for t in s.scalars(select(TestRow).where(TestRow.signal_id.in_(ids)).order_by(TestRow.id)):
+            out[t.signal_id].append({"rung": t.rung, "status": t.status, "reason": t.reason, "metrics": t.metrics})
+    return out
+
+
+def _explained(row: dict, tests: list[dict], latest_decision: str | None) -> dict:
+    """The queue row with the verdict in words (``explain.verdict``) and the summary sentence. The row itself carries
+    the signal and target fields both need."""
+    decision = {"status": row["decision"]} if row["decision"] else None
+    v = explain.verdict(row, tests, decision, [{"decision": latest_decision}] if latest_decision else None)
+    return {**row, "stage": v.stage, "verdict_word": v.word, "verdict_tone": v.tone, "reviewer": v.reviewer,
+            "summary": explain.summary_sentence(row, row, tests)}
+
+
 def review_queue(store: Store, status: str = "candidate_stage1", sort: str = "sde", desc: bool = True,
-                 limit: int = 500, version: str | None = None) -> list[dict]:
-    """The queue rows; with ``version``, only signals found by runs of that detector version."""
+                 limit: int = 500, version: str | None = None, search: str = "") -> list[dict]:
+    """The queue rows with their verdict in words; with ``version``, only signals found by runs of that detector
+    version; with ``search``, only targets whose id contains it."""
     with store.session() as s:
-        return [_queue_row(*row) for row in
-                s.execute(_queue_select(status, sort, desc, version=version).limit(limit)).all()]
+        found = s.execute(_queue_select(status, sort, desc, version=version, search=search).limit(limit)).all()
+        tests = _tests_by_signal(s, [row[0].id for row in found])
+        return [_explained(_queue_row(*row[:6]), tests[row[0].id], row[6]) for row in found]
 
 
 def neighbours(store: Store, signal_id: int, status: str, sort: str, desc: bool,
-               version: str | None = None) -> tuple[int | None, int | None]:
+               version: str | None = None, search: str = "") -> tuple[int | None, int | None]:
     with store.session() as s:
-        ids = list(s.scalars(_queue_select(status, sort, desc, ids_only=True, version=version)))
+        ids = list(s.scalars(_queue_select(status, sort, desc, ids_only=True, version=version, search=search)))
     if signal_id not in ids:
         return None, None
     i = ids.index(signal_id)

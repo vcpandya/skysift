@@ -1,0 +1,27 @@
+{# A candidate card: the target, its transit as a picture, the sentence, three numbers and the verdict pill. The name
+   is the link to the signal page (its hit area covers the card); the pill is a separate control that opens the popup.
+   qs: the queue view, so the signal page keeps the list's order. #}
+{% from "partials/pill.html" import pill %}
+{% macro card(r, qs) -%}
+<article class="card candidate tone-{{ r.verdict_tone }}">
+  <header class="card-head">
+    <h2 class="card-name"><a class="card-link" href="/signals/{{ r.id }}?{{ qs }}"><code>{{ r.target_id }}</code></a></h2>
+    {%- if r.stage %}
+    <span class="card-stage">{{ r.stage }}{% if r.stage == "stage 2" %}, pixel-vetted{% endif %}</span>
+    {%- endif %}
+  </header>
+  <img class="sparkline" src="/api/signals/{{ r.id }}/sparkline.svg" width="240" height="72" loading="lazy" alt="Folded transit of {{ r.target_id }}">
+  <p class="card-summary">{{ r.summary }}</p>
+  <dl class="card-facts">
+    <div><dt>period</dt><dd>{{ r.period | fmt(2) }} days</dd></div>
+    <div><dt>depth</dt><dd>{{ "%.2g" | format(r.depth_ppm / 10000) }}%, {{ r.depth_ppm | fmt(0) }} ppm</dd></div>
+    <div><dt>transits</dt><dd>{{ r.n_events | fmt }}</dd></div>
+  </dl>
+  <div class="card-foot">
+    {{ pill(r.verdict_tone, r.verdict_word, "/partials/signals/" ~ r.id ~ "/verdict") }}
+    {%- if r.reviewer %}
+    <span class="card-reviewer">{{ r.reviewer }}</span>
+    {%- endif %}
+  </div>
+</article>
+{%- endmacro %}
