@@ -16,11 +16,11 @@
       <p class="field-help" id="help-limit"><span class="field-what">What it does:</span> how many stars this sweep takes from the source's list, highest priority first. Stars already searched are skipped. <span class="field-default">Default 500.</span></p>
     </div>
     <div class="field">
-      <label>Shortest period, days<input name="min_period" type="number" step="any" value="{{ values.get('min_period', th.min_period_days) }}" aria-describedby="help-min-period"></label>
+      <label>Shortest period, days<input name="min_period" type="number" step="any" value="{{ values.get('min_period', '%g' % th.min_period_days) }}" aria-describedby="help-min-period"></label>
       <p class="field-help" id="help-min-period"><span class="field-what">What it does:</span> the shortest time between two dips that the search tries. <span class="field-default">Default {{ "%g" | format(th.min_period_days) }} days.</span></p>
     </div>
     <div class="field">
-      <label>Longest period, days<input name="max_period" type="number" step="any" value="{{ values.get('max_period', th.max_period_days) }}" aria-describedby="help-max-period"></label>
+      <label>Longest period, days<input name="max_period" type="number" step="any" value="{{ values.get('max_period', '%g' % th.max_period_days) }}" aria-describedby="help-max-period"></label>
       <p class="field-help" id="help-max-period"><span class="field-what">What it does:</span> the longest time between two dips that the search tries. A wider window takes longer and needs its own threshold calibration. <span class="field-default">Default {{ "%g" | format(th.max_period_days) }} days.</span></p>
     </div>
     <div class="field">
@@ -42,20 +42,20 @@
       <p class="field-help" id="help-workers-cpu"><span class="field-what">What it does:</span> how many stars are searched at the same time, one processor core each. <span class="field-default">Default {{ settings.workers_cpu }}.</span></p>
     </div>
     <div class="field">
-      <label>Faintest star, G magnitude<input name="gmag_max" type="number" step="any" value="{{ values.get('gmag_max', 19.0) }}" aria-describedby="help-gmag"></label>
-      <p class="field-help" id="help-gmag"><span class="field-what">What it does:</span> skips stars fainter than this in Gaia's G band. A larger number lets fainter stars in. <span class="field-default">Default 19.</span></p>
+      <label>Faintest star, G magnitude<input name="gmag_max" type="number" step="any" value="{{ values.get('gmag_max', 19) }}" aria-describedby="help-gmag"></label>
+      <p class="field-help" id="help-gmag"><span class="field-what">What it does:</span> skips stars fainter than this G magnitude (brightness in Gaia's G band, bigger is fainter). A larger number lets fainter stars in. <span class="field-default">Default 19.</span></p>
     </div>
     <div class="field">
       <label>Periodogram summary<select name="store_periodogram" aria-describedby="help-periodogram">
         {% for m, lbl in periodogram_labels.items() %}<option value="{{ m }}" {{ 'selected' if values.get('store_periodogram', settings.store_periodogram) == m else '' }}>{{ lbl }}</option>{% endfor %}
       </select></label>
-      <p class="field-help" id="help-periodogram"><span class="field-what">What it does:</span> keeps the score of every period tried, about 8 kB a star, so the signal page can draw it. <span class="field-default">Default {{ periodogram_labels.get(settings.store_periodogram, settings.store_periodogram) }}.</span></p>
+      <p class="field-help" id="help-periodogram"><span class="field-what">What it does:</span> keeps the periodogram (the strength of every trial period), about 8 kB a star, so the signal page can draw it. <span class="field-default">Default {{ periodogram_labels.get(settings.store_periodogram, settings.store_periodogram) }}.</span></p>
     </div>
     <div class="field">
       <label class="check"><input type="checkbox" name="background_only" {{ 'checked' if (not values or values.get('background_only')) else '' }} aria-describedby="help-background"> Background stars only</label>
       <p class="field-help" id="help-background"><span class="field-what">What it does:</span> skips the stars Kepler's own pipeline already searched. <span class="field-default">Default on.</span></p>
     </div>
-    <p class="field-help drawer-note">The detection threshold is SDE {{ "%g" | format(th.sde_min) }}, from the configuration: a signal needs that score to count. The About page explains it.</p>
+    <p class="field-help drawer-note">The detection threshold is SDE {{ "%g" | format(th.sde_min) }}, from the configuration: a signal needs that score to count. The <a href="/about#method-title">About page</a> explains it.</p>
     <div class="form-actions"><button class="primary" type="submit">Start the sweep</button></div>
   </form>
 </section>

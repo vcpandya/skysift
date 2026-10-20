@@ -132,6 +132,14 @@ body::before {
     radial-gradient(circle at 389px 307px, var(--star) 0 1.5px, transparent 2.3px) 0 0 / 487px 449px;
   animation: drift 120s linear infinite alternate;
 }
+/* Text that sits on the sky itself (headings, ledes, the footer) is backed by the page colour, so no star shows in a
+   word gap or behind a glyph and the pinned contrast holds; the backing is invisible against the page. Zero-specificity
+   selectors, so any component's own background wins, and text on a surface drops the backing. */
+:where(.page, .footer) :where(h1, h2, h3, p, li, dt, dd, figcaption, label, small, .ring-label, .ring-caption,
+  .hero-verdict > span, .section-head > a, .signal-nav, .footer > *) { background-color: var(--bg); }
+:where(.card, .tile, .step, .table-wrap, .why-list, .plot-figure, .plot-note, .glossary div, .ticker-row, .empty,
+  .decision-bar, .dialog, .toast, .envinfo-list) :where(h1, h2, h3, p, li, dt, dd, figcaption, label, small,
+  .ring-label, .ring-caption) { background-color: transparent; }
 h1, h2, h3 { margin: 0 0 12px; }
 h1 { font: 700 var(--fs-28)/1.15 var(--font-display); letter-spacing: -.01em; }
 h2 { font: 500 var(--fs-20)/1.25 var(--font-display); margin-top: 24px; }
@@ -174,7 +182,8 @@ code { font-size: .92em; overflow-wrap: anywhere; }
 .topnav { display: flex; flex: 1; gap: 4px; }
 .topnav a { padding: 6px 10px; border-radius: 8px; color: var(--fg-2); font-weight: 500; text-decoration: none; transition: color var(--ease), background var(--ease); }
 .topnav a:hover { color: var(--fg); background: var(--raised); }
-.topnav a[aria-current="page"] { color: var(--fg); box-shadow: inset 0 -2px 0 var(--ion); border-radius: 8px 8px 0 0; }
+/* the current page's bar is a 2 px background strip: an inset shadow leaves hairlines on a box of fractional width */
+.topnav a[aria-current="page"] { color: var(--fg); background: linear-gradient(var(--ion), var(--ion)) bottom / 100% 2px no-repeat; border-radius: 8px 8px 0 0; }
 .topbar-controls { display: flex; align-items: center; gap: 8px; margin-left: auto; }
 .envinfo { position: relative; }
 .envinfo summary { display: grid; place-items: center; width: 32px; height: 32px; list-style: none; cursor: pointer; border: 1px solid var(--line); border-radius: 999px; color: var(--fg-2); }
@@ -196,7 +205,7 @@ code { font-size: .92em; overflow-wrap: anywhere; }
   border-top: 1px solid var(--line); background: color-mix(in srgb, var(--surface) 94%, transparent); backdrop-filter: blur(10px);
 }
 .bottomnav a { display: grid; justify-items: center; align-content: center; gap: 2px; color: var(--fg-2); font-size: var(--fs-12); font-weight: 500; text-decoration: none; }
-.bottomnav a[aria-current="page"] { color: var(--ion); box-shadow: inset 0 2px 0 var(--ion); }
+.bottomnav a[aria-current="page"] { color: var(--ion); background: linear-gradient(var(--ion), var(--ion)) top / 100% 2px no-repeat; }
 .bottomnav .icon { width: 22px; height: 22px; }
 
 /* ---- Layout: 12 columns, 16 px gutters; split view from 1280 px ---- */
@@ -287,7 +296,7 @@ button.pill:hover { text-decoration: underline; }
 .dialog[open] { animation: fade 160ms ease both; }
 .dialog::backdrop { background: var(--backdrop); backdrop-filter: blur(2px); }
 .dialog-close { position: sticky; top: 0; float: right; width: 32px; height: 32px; min-height: 32px; margin: -8px -8px 0 8px; padding: 0; font-size: 20px; line-height: 1; border-radius: 999px; }
-.dialog:has(.drawer) { width: min(480px, 100vw); height: 100vh; max-height: 100vh; margin: 0 0 0 auto; border-radius: 16px 0 0 16px; }
+.dialog:has(.drawer) { width: min(480px, 100%); max-width: 100%; height: 100vh; max-height: 100vh; margin: 0 0 0 auto; border-radius: 16px 0 0 16px; }
 .drawer { display: grid; gap: 16px; }
 
 .toasts { position: fixed; right: 16px; bottom: 16px; z-index: 50; display: grid; gap: 8px; width: min(360px, calc(100vw - 32px)); pointer-events: none; }
@@ -310,7 +319,18 @@ button.pill:hover { text-decoration: underline; }
 .empty .btn { margin-top: 8px; }
 
 /* ---- Tables, forms and the page parts that later tasks rebuild ---- */
-.table-wrap { overflow-x: auto; margin-bottom: 16px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
+/* A table wider than its box scrolls inside it, and an edge that hides columns shows a soft shade (the covers scroll
+   with the content, the shades stay put), because a phone's overlay scrollbar does not say that more is there. */
+.table-wrap {
+  --edge: color-mix(in srgb, var(--fg) 24%, transparent);
+  overflow-x: auto; margin-bottom: 16px; border: 1px solid var(--line); border-radius: var(--radius);
+  background:
+    linear-gradient(to right, var(--surface) 40%, transparent) left / 32px 100% no-repeat local,
+    linear-gradient(to left, var(--surface) 40%, transparent) right / 32px 100% no-repeat local,
+    radial-gradient(farthest-side at 0 50%, var(--edge), transparent) left / 12px 100% no-repeat scroll,
+    radial-gradient(farthest-side at 100% 50%, var(--edge), transparent) right / 12px 100% no-repeat scroll,
+    var(--surface);
+}
 table { width: 100%; border-collapse: collapse; font-size: var(--fs-13); font-variant-numeric: tabular-nums; }
 th, td { padding: 8px 12px; text-align: left; white-space: nowrap; vertical-align: top; border-bottom: 1px solid var(--line); }
 th { font-size: var(--fs-12); font-weight: 600; color: var(--fg-2); }
@@ -555,7 +575,8 @@ tr.row-link.is-selected { background: var(--raised); box-shadow: inset 3px 0 0 v
   .grid > [class*="span-"] { grid-column: span 12; }
   .page-hero, .hero-number { font-size: var(--fs-28); }
   .dialog { width: calc(100vw - 16px); max-height: calc(100vh - 16px); padding: 16px; }
-  .dialog:has(.drawer) { width: 100vw; max-width: 100vw; height: auto; max-height: 90vh; margin: auto 0 0; border-radius: 16px 16px 0 0; }
+  /* the bottom sheet: 100% of the viewport box, as 100vw would run under a desktop scrollbar */
+  .dialog:has(.drawer) { width: 100%; max-width: 100%; height: auto; max-height: 90vh; margin: auto 0 0; border-radius: 16px 16px 0 0; }
   .decision-choice { max-width: none; }
   .hero-summary { font-size: var(--fs-16); }
   .hero-copy { margin-left: 0; }

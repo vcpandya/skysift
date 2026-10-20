@@ -4,7 +4,7 @@
   <form hx-post="/signals/{{ signal_id }}/decide" hx-target="#decision" hx-swap="innerHTML" class="decision-form">
     <input type="hidden" name="_token" value="{{ token }}">
     <label class="decision-note"><span>Note <span class="muted">(needed to reject)</span></span>
-      <textarea name="note" placeholder="What you saw, in a sentence">{{ d.candidate.note if d.candidate else '' }}</textarea>
+      <textarea name="note"{% if error %} aria-describedby="decision-error" aria-invalid="true"{% endif %} placeholder="What you saw, in a sentence">{{ d.candidate.note if d.candidate else '' }}</textarea>
     </label>
     <div class="decision-choices">
       <div class="decision-choice">
@@ -23,7 +23,7 @@
   </form>
   <div class="decision-state" role="status">
     {%- if error %}
-    <p class="error">{{ error }}</p>
+    <p class="error" id="decision-error">{{ error }}</p>
     {%- endif %}
     {%- if d.candidate and d.decisions %}{% set word = "needs data" if d.candidate.status == "review" else d.candidate.status %}
     <p>Reviewer decision: <strong class="status-{{ d.candidate.status }}">{{ word }}</strong> <span class="muted">{{ d.candidate.decided_at }}</span></p>

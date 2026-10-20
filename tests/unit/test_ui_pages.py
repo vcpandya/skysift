@@ -844,3 +844,34 @@ def test_about_omits_the_citation_when_the_file_is_missing(settings, tmp_path, m
     client, _app = make_client(settings)
     r = client.get("/about")
     assert r.status_code == 200 and "How to cite" not in r.text and "Terms" in r.text
+
+
+def test_about_configuration_follows_an_overridden_threshold_and_calls_it_provisional(settings, monkeypatch):
+    from skysift.config import load_settings
+    monkeypatch.setenv("SKYSIFT_THRESHOLDS__SDE_MIN", "13")
+    client, _app = make_client(load_settings())
+    main = client.get("/about").text.split("<main")[1].split("</main>")[0]
+    row = main.split("<code>sde_min</code>")[1].split("</tr>")[0]
+    assert '<td class="num">13</td>' in row
+    method = main.split("How SkySift works")[1].split("What the words mean")[0]
+    assert "The current threshold, SDE 13, is provisional until the 1,000-star pilot reports." in method
+
+
+def test_about_omits_a_citation_file_that_is_not_utf8(settings, tmp_path, monkeypatch):
+    import skysift.ui.app as app_module
+    bad = tmp_path / "CITATION.cff"
+    bad.write_bytes(b"title: Sky\xffSift\nauthors: []\n")
+    monkeypatch.setattr(app_module, "CITATION", bad)
+    client, _app = make_client(settings)
+    r = client.get("/about")
+    assert r.status_code == 200 and "How to cite" not in r.text
+
+
+def test_sweep_form_links_the_threshold_note_and_glosses_its_terms_once(seeded_settings):
+    client, _ids = make_seeded_client(seeded_settings)
+    form = client.get("/partials/sweep-form?source=kbonus_bkg").text
+    note = form.split('class="field-help drawer-note"')[1].split("</p>")[0]
+    assert "SDE" in note and 'href="/about' in note
+    assert form.count("brightness in Gaia's G band, bigger is fainter") == 1
+    assert form.count("the strength of every trial period") == 1
+    assert "—" not in form and "discover" not in form.lower()

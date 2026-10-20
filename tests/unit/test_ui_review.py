@@ -666,3 +666,137 @@ def test_a_non_finite_fit_model_falls_back_to_the_box(monkeypatch):
     monkeypatch.setattr(sparkline, "uniform_disc_flux", lambda dt, *a: np.full(np.size(dt), np.nan))
     pts = sparkline.fold_points(lc, sig, tests)
     assert pts["model_kind"] == "box" and "nan" not in sparkline.render_svg(pts, 1800.0).lower()
+
+
+# ---- accessibility: the dialog, the status words and the page structure (mission control, task 7)
+
+def test_dialog_and_controls_are_labelled(seeded):
+    client, ids = seeded
+    html = client.get(f"/partials/signals/{ids['undetermined']}/verdict").text
+    # the shared <dialog> lives in base.html and the partial fills it, so the shell and the partial are read together
+    shell = client.get(f"/signals/{ids['undetermined']}").text
+    dialog = shell.split("<dialog")[1].split("</dialog>")[0]
+    both = dialog + html
+    assert 'role="dialog"' in both and 'aria-labelledby=' in both and 'aria-label="Close"' in both
+    assert 'aria-labelledby="dialog-title"' in dialog and 'id="dialog-title"' in html
+    home = client.get("/").text
+    assert 'aria-live="polite"' in home and 'aria-hidden="true"' in home     # counters; starfield
+    # the drawer names the dialog by its own heading: app.js points aria-labelledby at the loaded [data-dialog-focus]
+    form = client.get("/partials/sweep-form?source=kbonus_bkg").text
+    assert 'id="sweep-title"' in form and "data-dialog-focus" in form
+    js = client.get("/static/app.js").text
+    assert 'setAttribute("aria-labelledby"' in js
+
+
+def test_status_is_never_colour_alone(seeded):
+    client, _ids = seeded
+    html = client.get("/candidates?mode=expert").text
+    import re
+    found = list(re.finditer(r'class="pill pill-(pass|fail|undetermined|muted)[^>]*>(.*?)</', html))
+    assert found
+    for m in found:
+        assert m.group(2).strip()
+    for status in ("all", "rejected", "undetermined"):
+        simple = client.get(f"/candidates?status={status}&mode=simple").text
+        for m in re.finditer(r'class="pill pill-(?:pass|fail|undetermined|running|muted)[^>]*>(.*?)</', simple):
+            assert m.group(1).strip(), status
+
+
+class _Structure:
+    """The facts the structure test needs from one page, read with the standard library's HTML parser."""
+
+    def __init__(self, html: str):
+        from html.parser import HTMLParser
+
+        self.h1 = 0
+        self.imgs_without_alt: list[str] = []
+        self.controls: list[dict] = []          # every visible form control and how it is labelled
+        self.label_for: set[str] = set()
+        self.skip_to_main = False
+        self.main_id = False
+        facts = self
+        label_depth = [0]
+
+        class Parser(HTMLParser):
+            def handle_starttag(self, tag, attrs):
+                a = dict(attrs)
+                if tag == "h1":
+                    facts.h1 += 1
+                elif tag == "img" and "alt" not in a:
+                    facts.imgs_without_alt.append(a.get("src", "?"))
+                elif tag == "label":
+                    label_depth[0] += 1
+                    if a.get("for"):
+                        facts.label_for.add(a["for"])
+                elif tag in ("input", "select", "textarea") and a.get("type") not in ("hidden", "submit", "button"):
+                    facts.controls.append({"tag": tag, "name": a.get("name"), "id": a.get("id"),
+                                           "wrapped": label_depth[0] > 0,
+                                           "aria": bool(a.get("aria-label") or a.get("aria-labelledby"))})
+                elif tag == "a" and a.get("href") == "#main" and "skip" in (a.get("class") or ""):
+                    facts.skip_to_main = True
+                elif tag == "main" and a.get("id") == "main":
+                    facts.main_id = True
+
+            def handle_endtag(self, tag):
+                if tag == "label":
+                    label_depth[0] -= 1
+
+        Parser().feed(html)
+
+    def unlabelled(self) -> list:
+        return [c for c in self.controls
+                if not (c["wrapped"] or c["aria"] or (c["id"] and c["id"] in self.label_for))]
+
+
+def test_every_page_has_one_h1_alt_text_labelled_controls_and_the_skip_link(seeded):
+    client, ids = seeded
+    pages = ["/", "/candidates", "/candidates?status=all", f"/signals/{ids['candidate']}",
+             f"/signals/{ids['undetermined']}", f"/signals/{ids['stage2']}", "/live", "/sources",
+             "/sources?start=kbonus_bkg", "/approved", "/about"]
+    for path in pages:
+        for mode in ("simple", "expert"):
+            sep = "&" if "?" in path else "?"
+            r = client.get(f"{path}{sep}mode={mode}")
+            assert r.status_code == 200, (path, mode)
+            page = _Structure(r.text)
+            assert page.h1 == 1, (path, mode, page.h1)
+            assert page.imgs_without_alt == [], (path, mode)
+            assert page.unlabelled() == [], (path, mode, page.unlabelled())
+            assert page.skip_to_main and page.main_id, (path, mode)
+    for partial in (f"/partials/signals/{ids['undetermined']}/verdict", "/partials/sweep-form?source=kbonus_bkg",
+                    f"/partials/signals/{ids['candidate']}/detail"):
+        part = _Structure(client.get(partial).text)
+        assert part.h1 == 0 and part.imgs_without_alt == [] and part.unlabelled() == [], partial
+
+
+def test_keyboard_reaches_every_queue_row_and_a_refused_reject_lands_in_the_note(seeded):
+    client, ids = seeded
+    html = client.get("/candidates?mode=expert&status=all").text
+    for role in ("candidate", "undetermined", "rejected"):                 # each row has a real link, not only j/k
+        assert f'<a class="row-name" href="/signals/{ids[role]}?' in html, role
+    assert 'aria-sort="descending"' in html and html.count("aria-sort=") == 1
+    r = client.post(f"/signals/{ids['candidate']}/decide",
+                    data={"decision": "reject", "note": "", "_token": token(client)}, headers={"HX-Request": "true"})
+    assert r.status_code == 400
+    assert 'aria-describedby="decision-error" aria-invalid="true"' in r.text and 'id="decision-error"' in r.text
+    assert 'aria-invalid' not in client.get(f"/signals/{ids['candidate']}").text
+    js = client.get("/static/app.js").text
+    after = js[js.index('"htmx:afterSwap"'):]
+    assert 'xhr.status !== 400' in after and 'textarea[name=note]' in after and "note.focus()" in after
+    assert "'a[href], button, summary, input" in js                           # the trap knows disclosures
+
+
+def test_the_sky_never_sits_behind_text_and_wide_tables_show_their_edge(settings):
+    from tests.unit.test_ui_pages import make_client
+    client, _app = make_client(settings)
+    css = client.get("/static/app.css").text
+    sky = css[css.index("body::before {"):]
+    assert "z-index: -1" in sky.split("}")[0] and "pointer-events: none" in sky.split("}")[0]
+    backing = css[css.index(":where(.page, .footer) :where("):]
+    assert "{ background-color: var(--bg); }" in backing.split("}")[0] + "}"
+    assert "background-color: transparent" in backing[:backing.index("h1, h2, h3 { margin")]
+    wrap = css[css.index(".table-wrap {"):].split("}")[0]
+    assert "local" in wrap and "scroll" in wrap and "overflow-x: auto" in wrap
+    # the bottom sheet and the side drawer are sized by the viewport box, never 100vw (which runs under a scrollbar)
+    assert ".dialog:has(.drawer) { width: 100%" in css and "min(480px, 100%)" in css and "100vw; max-width: 100vw" not in css
+    assert "box-shadow: inset 0 2px 0 var(--ion)" not in css                 # hairlines on fractional nav cells

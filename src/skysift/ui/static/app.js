@@ -34,9 +34,12 @@
   const dialog = document.getElementById("dialog");
   let opener = null;
   const focusables = () => [...dialog.querySelectorAll(
-    'a[href], button, input, select, textarea, [tabindex]:not([tabindex="-1"])')]
+    'a[href], button, summary, input, select, textarea, [tabindex]:not([tabindex="-1"])')]
     .filter((el) => !el.disabled && !el.closest("[hidden]") && el.offsetParent !== null);
   const openDialog = () => {
+    // the dialog is named by the loaded partial's heading (#dialog-title in the popup, #sweep-title in the drawer)
+    const heading = dialog.querySelector("[data-dialog-focus][id]");
+    dialog.setAttribute("aria-labelledby", heading ? heading.id : "dialog-title");
     if (!dialog.open) dialog.showModal();
     // a long partial marks its heading [data-dialog-focus] (tabindex -1) so focus starts at the top, not on a far link
     const first = dialog.querySelector("[data-dialog-focus]")
@@ -201,5 +204,11 @@
   // htmx does not swap 4xx responses by default; the start-sweep form answers 400/409 with the form and its error
   document.body.addEventListener("htmx:beforeSwap", (e) => {
     if (e.detail.xhr.status === 400 || e.detail.xhr.status === 409) { e.detail.shouldSwap = true; e.detail.isError = false; }
+  });
+  // a refused decision (r without a note) puts the cursor in the note, which the error now describes
+  document.body.addEventListener("htmx:afterSwap", (e) => {
+    if (e.detail.xhr.status !== 400 || !e.detail.target || e.detail.target.id !== "decision") return;
+    const note = e.detail.target.querySelector("textarea[name=note]");
+    if (note) note.focus();
   });
 })();

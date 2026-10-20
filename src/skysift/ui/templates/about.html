@@ -15,7 +15,7 @@
     <li>{{ name }}</li>
     {%- endfor %}
   </ol>
-  <p>The detection threshold is measured, not guessed. SkySift runs the same search on light curves that cannot hold a real transit: each one flipped upside down, and each one shuffled within its quarters. The threshold sits above the strongest score that noise alone produced, with a margin. It is measured again after every change to the search.</p>
+  <p>The detection threshold is measured, not guessed. SkySift runs the same search on light curves that cannot hold a real transit: each one flipped upside down, and each one shuffled within its quarters. The threshold sits above the strongest score that noise alone produced, with a margin. It is measured again after every change to the search. The current threshold, SDE {{ "%g" | format(thresholds.sde_min) }}, is provisional until the 1,000-star pilot reports.</p>
   <p>A signal that cannot get a verdict is not thrown away. At the end of every sweep, SkySift takes each undetermined signal and each stage 1 candidate and tries the step that can settle it. The steps are listed below.</p>
   <p>The engine never approves anything. A person opens each candidate, reads why it passed, looks at the plots and decides: approve, reject or ask for more data. Every decision is kept with its note. A later decision adds to the record and erases nothing.</p>
 </section>

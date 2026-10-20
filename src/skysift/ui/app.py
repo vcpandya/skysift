@@ -49,7 +49,7 @@ def _citation(path: Path) -> dict | None:
     """Title, authors, version and URL from CITATION.cff, or None when the file is missing or unreadable."""
     try:
         cff = yaml.safe_load(path.read_text(encoding="utf-8"))
-    except (OSError, yaml.YAMLError):
+    except (OSError, ValueError, yaml.YAMLError):     # ValueError: a file that is not UTF-8 (UnicodeDecodeError)
         return None
     if not isinstance(cff, dict):
         return None

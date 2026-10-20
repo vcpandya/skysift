@@ -23,7 +23,7 @@
 </footer>
 {% include "partials/bottomnav.html" %}
 {% include "partials/toast.html" %}
-<dialog id="dialog" class="dialog" aria-labelledby="dialog-title">
+<dialog id="dialog" class="dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title">
   <button type="button" class="dialog-close" data-dialog-close aria-label="Close">×</button>
   <div id="dialog-slot"></div>
 </dialog>
