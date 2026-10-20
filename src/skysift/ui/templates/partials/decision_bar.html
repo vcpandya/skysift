@@ -1,15 +1,39 @@
+{# The decision bar and the decision history. Each button says what it does under it; a reject needs a note. The
+   decide route answers with this partial, swapped into #decision. #}
 <div class="decision-bar">
   <form hx-post="/signals/{{ signal_id }}/decide" hx-target="#decision" hx-swap="innerHTML" class="decision-form">
     <input type="hidden" name="_token" value="{{ token }}">
-    <textarea name="note" placeholder="note (required for reject)">{{ d.candidate.note if d.candidate else '' }}</textarea>
-    <button id="btn-approve" class="primary" name="decision" value="approve">Approve (a)</button>
-    <button id="btn-reject" class="danger" name="decision" value="reject">Reject (r)</button>
-    <button id="btn-needs-data" name="decision" value="needs_data">Needs data (n)</button>
+    <label class="decision-note"><span>Note <span class="muted">(needed to reject)</span></span>
+      <textarea name="note" placeholder="What you saw, in a sentence">{{ d.candidate.note if d.candidate else '' }}</textarea>
+    </label>
+    <div class="decision-choices">
+      <div class="decision-choice">
+        <button id="btn-approve" class="primary" name="decision" value="approve" aria-describedby="say-approve">Approve <kbd class="only-expert">a</kbd></button>
+        <p id="say-approve" class="decision-say">Goes to the Approved list for the write-up.</p>
+      </div>
+      <div class="decision-choice">
+        <button id="btn-reject" class="danger" name="decision" value="reject" aria-describedby="say-reject">Reject <kbd class="only-expert">r</kbd></button>
+        <p id="say-reject" class="decision-say">Leaves the queue. The note is kept.</p>
+      </div>
+      <div class="decision-choice">
+        <button id="btn-needs-data" name="decision" value="needs_data" aria-describedby="say-needs-data">Needs data <kbd class="only-expert">n</kbd></button>
+        <p id="say-needs-data" class="decision-say">Stays listed, marked as waiting.</p>
+      </div>
+    </div>
   </form>
-  {% if error %}<span class="error">{{ error }}</span>{% endif %}
-  {% if d.candidate %}<span>current: <strong class="status-{{ d.candidate.status }}">{{ d.candidate.status }}</strong> <span class="muted">{{ d.candidate.decided_at }}</span></span>{% else %}<span class="muted">no decision yet</span>{% endif %}
+  <div class="decision-state" role="status">
+    {%- if error %}
+    <p class="error">{{ error }}</p>
+    {%- endif %}
+    {%- if d.candidate and d.decisions %}{% set word = "needs data" if d.candidate.status == "review" else d.candidate.status %}
+    <p>Reviewer decision: <strong class="status-{{ d.candidate.status }}">{{ word }}</strong> <span class="muted">{{ d.candidate.decided_at }}</span></p>
+    {%- else %}
+    <p class="muted">No reviewer decision yet.</p>
+    {%- endif %}
+  </div>
 </div>
 {% if d.decisions %}
+<h2 class="history-title">History</h2>
 <div class="table-wrap"><table><thead><tr><th>when</th><th>decision</th><th>who</th><th>note</th></tr></thead><tbody>
 {% for h in d.decisions %}<tr class="history-row"><td class="muted">{{ h.utc }}</td><td class="status-{{ 'approved' if h.decision == 'approve' else ('rejected' if h.decision == 'reject' else 'review') }}">{{ h.decision }}</td><td>{{ h.who }}</td><td>{{ h.note }}</td></tr>{% endfor %}
 </tbody></table></div>

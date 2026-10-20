@@ -1,26 +1,58 @@
 {% extends "base.html" %}
+{% from "partials/pill.html" import pill %}
+{% from "partials/stat.html" import stat %}
 {% block title %}SkySift · {{ d.signal.target_id }}{% endblock %}
 {% block content %}
-<h1><code>{{ d.signal.target_id }}</code> <span class="muted">P = {{ d.signal.period | fmt(5) }} d · depth {{ d.signal.depth_ppm | fmt(0) }} ppm · SDE {{ d.signal.sde | fmt(1) }}</span></h1>
-<p class="muted">
-  {% for label, href in links %}<a href="{{ href }}" target="_blank" rel="noopener">{{ label }}</a> · {% endfor %}
-  G {{ d.target.gmag | fmt(2) }} · RA {{ d.target.ra | fmt(5) }} Dec {{ d.target.dec | fmt(5) }} · source {{ d.target.source }}
-  · detector {{ d.signal.detector }} {{ d.signal.detector_version }}{% set pw = (d.signal.extra or {}).get('prewhitening') %}{% if pw and pw.n %} · whitened: {{ pw.n }} wave{{ 's' if pw.n != 1 else '' }} removed{% if pw.components %} (strongest P = {{ (1 / pw.components[0].frequency) | fmt(4) }} d, {{ pw.components[0].amplitude_ppm | fmt(0) }} ppm){% endif %}{% endif %}{% if pw and pw.restored %} · {{ pw.restored | length }} wave{{ 's' if pw.restored | length != 1 else '' }} put back at the detection's harmonics{% endif %}{% set ar = (d.signal.extra or {}).get('alias_resolved') %}{% if ar %} · period multiplied by {{ ar.get('factor', 2) }} from {{ ar.from_period | fmt(5) }} d{% endif %}{% if d.signal.extra and d.signal.extra.get('pass') == 2 %} · second pass, found after masking the {% set mp = d.signal.extra.masked_period %}{% if mp is sequence and mp is not string %}{% for p in mp %}{{ p | fmt(4) }} d{% if not loop.last %}{{ ' and ' if loop.revindex == 2 else ', ' }}{% endif %}{% endfor %} signal{{ 's' if mp | length > 1 else '' }}{% else %}{{ mp | fmt(4) }} d signal{% endif %}{% endif %}{% for t in d.tests %}{% set m = t.metrics or {} %}{% if m.get('suggested_period') %} · the secondary matches the primary; the true period may be {{ m.suggested_period | fmt(4) }} d (half the detected period){% endif %}{% if m.get('occultation_exception') %} · secondary consistent with a planet occultation (albedo {{ m.occultation_albedo | fmt(2) }}){% endif %}{% endfor %}{% if d.run %} · run #{{ d.run.id }} {{ d.run.finished or '' }}{% endif %}
-</p>
-<p><a href="/candidates?status={{ view.status }}&sort={{ view.sort }}&dir={{ view.dir }}&versions={{ view.versions }}">← queue</a>
-{% if prev_url %} · <a id="link-prev" href="{{ prev_url }}">previous (k)</a>{% endif %}{% if next_url %} · <a id="link-next" href="{{ next_url }}">next (j)</a>{% endif %}</p>
+{% set s = d.signal %}
+{% set simple = mode != "expert" %}
+<nav class="signal-nav" aria-label="Queue">
+  <a href="/candidates?status={{ view.status }}&sort={{ view.sort }}&dir={{ view.dir }}&versions={{ view.versions }}">← queue</a>
+  {%- if mode == "expert" %}
+  {%- if prev_url %} · <a id="link-prev" href="{{ prev_url }}">previous (k)</a>{% endif %}
+  {%- if next_url %} · <a id="link-next" href="{{ next_url }}">next (j)</a>{% endif %}
+  · <a href="/signals/{{ signal_id }}/review.json">review JSON</a>
+  {%- endif %}
+</nav>
 
-<h2>Ladder</h2>
-<div class="table-wrap"><table><thead><tr><th>rung</th><th>status</th><th>reason</th><th class="num">s</th><th>metrics</th></tr></thead><tbody>
-{% for t in ladder %}
-<tr><td>{{ t.rung }}</td><td class="status-{{ t.status }}">{{ t.status }}</td><td class="wrap">{{ t.reason }}</td><td class="num">{{ t.duration_s | fmt(2) }}</td>
-<td class="wrap metrics">{% for k, v in t.shown %}<span class="metric"><span class="muted">{{ k }}</span> {{ v | fmt(2) }}</span>{% endfor %}
-<details class="raw"><summary class="muted">raw</summary><pre>{{ t.raw }}</pre></details></td></tr>
-{% endfor %}
-</tbody></table></div>
+<header class="hero">
+  <h1 class="hero-name"><code>{{ s.target_id }}</code></h1>
+  <p class="hero-summary">{{ summary }}</p>
+  <div class="hero-verdict">
+    {{ pill(v.tone, v.word, verdict_src) }}
+    {%- if v.stage %}<span class="hero-stage">{{ v.stage }}</span>{% endif %}
+    {%- if v.reviewer %}<span class="hero-reviewer">{{ v.reviewer }}</span>{% endif %}
+    <button type="button" class="btn hero-copy" data-copy="{{ copy_text }}">Copy summary</button>
+  </div>
+  <div class="tiles hero-stats">
+    {{ stat("period, days", s.period, "Time from one dip to the next." if simple, 4) }}
+    {{ stat("depth, ppm", s.depth_ppm, "Share of the star's light the dip takes, in parts per million." if simple, 0) }}
+    {{ stat("duration, hours", s.duration * 24 if s.duration is not none else none, "How long each dip lasts." if simple, 2) }}
+    {{ stat("SDE", s.sde, "How far the signal stands above the noise. Higher is stronger." if simple, 1) }}
+  </div>
+  <p class="hero-facts muted">
+    {% for label, href in links %}<a href="{{ href }}" target="_blank" rel="noopener">{{ label }}</a> · {% endfor %}
+    G {{ d.target.gmag | fmt(2) }}<span class="only-expert"> · RA {{ d.target.ra | fmt(5) }} Dec {{ d.target.dec | fmt(5) }} · source {{ d.target.source }} · detector {{ s.detector }} {{ s.detector_version }}</span>{% set pw = (s.extra or {}).get('prewhitening') %}{% if pw and pw.n %} · whitened: {{ pw.n }} wave{{ 's' if pw.n != 1 else '' }} removed{% if pw.components %} (strongest P = {{ (1 / pw.components[0].frequency) | fmt(4) }} d, {{ pw.components[0].amplitude_ppm | fmt(0) }} ppm){% endif %}{% endif %}{% if pw and pw.restored %} · {{ pw.restored | length }} wave{{ 's' if pw.restored | length != 1 else '' }} put back at the detection's harmonics{% endif %}{% set ar = (s.extra or {}).get('alias_resolved') %}{% if ar %} · period multiplied by {{ ar.get('factor', 2) }} from {{ ar.from_period | fmt(5) }} d{% endif %}{% if s.extra and s.extra.get('pass') == 2 %} · second pass, found after masking the {% set mp = s.extra.masked_period %}{% if mp is sequence and mp is not string %}{% for p in mp %}{{ p | fmt(4) }} d{% if not loop.last %}{{ ' and ' if loop.revindex == 2 else ', ' }}{% endif %}{% endfor %} signal{{ 's' if mp | length > 1 else '' }}{% else %}{{ mp | fmt(4) }} d signal{% endif %}{% endif %}{% for t in d.tests %}{% set m = t.metrics or {} %}{% if m.get('suggested_period') %} · the secondary matches the primary; the true period may be {{ m.suggested_period | fmt(4) }} d (half the detected period){% endif %}{% if m.get('occultation_exception') %} · secondary consistent with a planet occultation (albedo {{ m.occultation_albedo | fmt(2) }}){% endif %}{% endfor %}<span class="only-expert">{% if d.run %} · run #{{ d.run.id }} {{ d.run.finished or '' }}{% endif %}</span>
+  </p>
+</header>
 
-<h2>Plots</h2>
-<div id="plots" data-signal="{{ signal_id }}"><p class="muted">{% if plotly_url %}Loading light curve…{% else %}Plots are unavailable: the Plotly bundle could not be fetched. Start the dashboard once with network access to download it.{% endif %}</p></div>
+<section class="signal-section" aria-labelledby="fold-title">
+  <h2 id="fold-title">The dip</h2>
+  <div id="fold" class="plot-hero">
+    <p class="muted">{% if plotly_url %}Loading the light curve…{% else %}Plots are unavailable: the Plotly bundle could not be fetched. Start the dashboard once with network access to download it.{% endif %}</p>
+  </div>
+</section>
+
+<section id="why" class="signal-section" aria-labelledby="why-title">
+  <h2 id="why-title">Why</h2>
+  <p class="why-headline pill-{{ v.tone }}">{{ v.headline }}.</p>
+  {% with show_numbers = mode == "expert" %}{% include "partials/why.html" %}{% endwith %}
+</section>
+
+<section class="signal-section" aria-labelledby="plots-title">
+  <h2 id="plots-title">The light curve</h2>
+  <div id="plots" data-signal="{{ signal_id }}" data-mode="{{ mode }}" data-layout='{{ plot_layout | tojson }}'
+       data-marks='{{ marks | tojson }}' data-captions='{{ captions | tojson }}' class="plots-grid"></div>
+</section>
 <script src="/static/plots.js?v={{ git_commit }}" defer></script>
 
 <div id="decision">{% include "partials/decision_bar.html" %}</div>

@@ -27,6 +27,27 @@ PANEL_POINTS = 4_000        # each scatter in the fold, odd/even and secondary p
 BIN_MINUTES = 15.0
 ALIAS_FACTORS = (0.5, 2.0, 3.0)
 TARGET_FIELDS = ("source", "target_id", "ra", "dec", "gaia_id", "kic", "gmag")
+# The figure template plots.js merges into every panel's layout (the signal page carries it in data-layout): transparent
+# paper so the card shows through, hairline grid, the page's body face. Colours depend on the theme, so MARKS names
+# the CSS custom properties plots.js reads for the data, the faint points, the model line and the grid.
+LAYOUT = {"paper_bgcolor": "rgba(0,0,0,0)", "plot_bgcolor": "rgba(0,0,0,0)", "showlegend": False,
+          "font": {"family": '"IBM Plex Sans", system-ui, sans-serif', "size": 12},
+          "title": {"font": {"family": '"Space Grotesk", system-ui, sans-serif', "size": 13}, "x": 0, "xanchor": "left"},
+          "margin": {"l": 56, "r": 12, "t": 32, "b": 44},
+          "xaxis": {"gridwidth": 1, "zeroline": False, "linewidth": 1, "ticks": "outside", "ticklen": 4},
+          "yaxis": {"gridwidth": 1, "zeroline": False, "linewidth": 1, "ticks": "outside", "ticklen": 4}}
+MARKS = {"data": "--fg", "faint": "--muted", "model": "--ion", "grid": "--line", "text": "--fg-2"}
+# one plain caption under each panel, keyed by the panel id plots.js gives it
+CAPTIONS = {
+    "plot-fold": "Every transit stacked on top of each other. The dip should be the same shape each time.",
+    "plot-full": "The whole light curve with the star's slow changes removed. The ticks mark each predicted transit.",
+    "plot-oddeven": "The odd and the even transits measured apart. A planet makes them equally deep.",
+    "plot-secondary": ("Half an orbit after the dip, on the same scale. A second dip here is the mark of two stars "
+                       "eclipsing each other."),
+    "plot-periodogram": ("How far each trial period stands above the others. The dotted line is the threshold and the "
+                         "dashed lines mark aliases and spacecraft rhythms."),
+    "plot-seasons": "The depth of the dip on each detector. A real transit is equally deep on all of them.",
+}
 # the detrend of every signal stored before signals carried their detrend settings (DETREND_VERSION 1)
 LEGACY_DETREND = {"version": 1, "edge_mask_days": 0.0, "edge_gap_days": GAP_EDGE_TRIGGER_DAYS, "median_mode": "nearest"}
 

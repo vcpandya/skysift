@@ -143,6 +143,7 @@ code, kbd, pre, .mono { font-family: var(--font-mono); }
 code { font-size: .92em; overflow-wrap: anywhere; }
 .num, [data-count] { font-variant-numeric: tabular-nums; }
 :focus-visible { outline: 2px solid var(--ion); outline-offset: 2px; }
+[data-dialog-focus]:focus { outline: none; }   /* a heading that only holds the start of a long dialog */
 ::selection { background: color-mix(in srgb, var(--ion) 30%, transparent); }
 .skip { position: absolute; left: 8px; top: -48px; z-index: 100; padding: 8px 12px; border-radius: 8px; background: var(--surface); }
 .skip:focus { top: 8px; }
@@ -341,7 +342,66 @@ pre.log { max-height: 420px; overflow: auto; padding: 12px; font-size: var(--fs-
   background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow);
 }
 .decision-form { display: contents; }
-.decision-bar textarea { flex: 1; min-width: 240px; min-height: 36px; }
+.decision-note { flex: 1 1 280px; }
+.decision-note textarea { width: 100%; min-height: 36px; }
+.decision-choices { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 12px 16px; }
+.decision-choice { display: grid; gap: 4px; max-width: 13rem; }
+.decision-say { margin: 0; color: var(--fg-2); font-size: var(--fs-12); }
+.decision-state p { margin: 0; }
+.history-title { font-size: var(--fs-16); }
+kbd { padding: 0 4px; font-size: var(--fs-12); border: 1px solid currentColor; border-radius: 4px; opacity: .8; }
+.copy-fallback { position: fixed; top: 0; left: 0; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+
+/* ---- The signal page and the verdict popup. A .pill-<tone> class on a headline lends it the tone and the icon. ---- */
+.signal-nav { margin: 0 0 16px; color: var(--fg-2); font-size: var(--fs-13); }
+.hero { margin-bottom: 24px; }
+.hero-name { margin-bottom: 8px; overflow-wrap: anywhere; }
+.hero-name code { font: inherit; }
+.hero-summary { max-width: 60ch; margin-bottom: 12px; font-size: var(--fs-20); line-height: 1.4; }
+.hero-verdict { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-bottom: 16px; }
+.hero-stage { font-weight: 600; }
+.hero-reviewer { color: var(--fg-2); }
+.hero-copy { margin-left: auto; }
+.hero-stats { margin-bottom: 12px; }
+.hero-facts { margin: 0; font-size: var(--fs-13); overflow-wrap: anywhere; }
+.signal-section { margin-bottom: 24px; }
+.plots-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 440px), 1fr)); gap: var(--gutter); }
+.plot-figure { margin: 0; padding: 12px 16px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
+.plot-figure .plot { margin: 0; }
+.plot-hero .plot { height: 380px; }
+.plot-figure figcaption { max-width: 68ch; margin-top: 8px; color: var(--fg-2); font-size: var(--fs-13); }
+.plot-note { margin: 0; padding: 16px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
+.why-headline, .verdict-head { display: flex; align-items: center; gap: 8px; color: var(--tone); }
+.why-headline { margin-bottom: 12px; font: 500 var(--fs-16)/1.4 var(--font-display); }
+.why-headline::before, .verdict-head::before {
+  content: ""; width: 18px; height: 18px; flex: none; background: currentColor;
+  -webkit-mask: var(--icon) center / contain no-repeat; mask: var(--icon) center / contain no-repeat;
+}
+.why-list { margin: 0; padding: 0; list-style: none; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
+.why-row { padding: 12px 16px; border-bottom: 1px solid var(--line); }
+.why-row:last-child { border-bottom: 0; }
+.why-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.why-head .pill { min-width: 6.5rem; }
+.why-name { font-weight: 600; }
+.why-sentence { margin: 4px 0 0; }
+.why-numbers { margin: 4px 0 0; color: var(--fg-2); font-size: var(--fs-12); overflow-wrap: anywhere; }
+.why-skipped .why-name, .why-skipped .why-sentence { color: var(--fg-2); font-weight: 400; }
+.why-skipped .why-sentence { font-size: var(--fs-13); }
+.why-next { display: grid; gap: 8px; margin: 10px 0 0; padding: 10px 12px; background: var(--raised); border-left: 3px solid var(--undet); border-radius: 8px; }
+.why-next dt { font-size: var(--fs-12); font-weight: 600; letter-spacing: .02em; }
+.why-next dd { margin: 0; }
+.why-raw { margin-top: 8px; }
+.why-raw summary { cursor: pointer; color: var(--fg-2); font-size: var(--fs-13); }
+.why-raw .metrics { margin: 8px 0; font-size: var(--fs-13); }
+.why-raw .metric { display: inline-block; margin-right: .75rem; white-space: nowrap; }
+.why-raw pre { max-height: 300px; margin: 0; padding: 8px 12px; overflow: auto; font-size: var(--fs-12); background: var(--bg); border-radius: 8px; }
+.why-history { margin: 8px 0 0; padding-left: 18px; }
+.verdict-target { margin: 0 0 4px; color: var(--fg-2); font-size: var(--fs-13); }
+.verdict-head { margin: 0 0 16px; padding-right: 32px; font: 500 var(--fs-20)/1.3 var(--font-display); }
+.verdict-reviewer { margin: -8px 0 16px; font-weight: 600; }
+.verdict-foot { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--line); }
+.verdict-glossary { margin: 0 0 12px; padding-left: 18px; color: var(--fg-2); font-size: var(--fs-13); }
+.verdict-glossary li + li { margin-top: 4px; }
 .htmx-indicator { opacity: 0; transition: opacity var(--ease); }
 .htmx-request .htmx-indicator, .htmx-request.htmx-indicator { opacity: 1; }
 
@@ -376,7 +436,10 @@ pre.log { max-height: 420px; overflow: auto; padding: 12px; font-size: var(--fs-
   .page-hero, .hero-number { font-size: var(--fs-28); }
   .dialog { width: calc(100vw - 16px); max-height: calc(100vh - 16px); padding: 16px; }
   .dialog:has(.drawer) { width: 100vw; height: auto; max-height: 90vh; margin: auto 0 0; border-radius: 16px 16px 0 0; }
-  .decision-bar textarea { min-width: 100%; }
+  .decision-choice { max-width: none; }
+  .hero-summary { font-size: var(--fs-16); }
+  .hero-copy { margin-left: 0; }
+  .plot-hero .plot { height: 300px; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 1ms !important; animation-iteration-count: 1 !important; transition-duration: 1ms !important; scroll-behavior: auto !important; }

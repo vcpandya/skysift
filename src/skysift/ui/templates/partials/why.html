@@ -1,0 +1,41 @@
+{# One row per check in ladder order, shared by the verdict popup and the signal page's Why section: the status word
+   with its icon, the check's name and the plain sentence. show_numbers adds the deciding numbers; a check that could
+   not decide adds what was missing and what happens next; expert mode adds the key and raw metrics and the seconds
+   the rung took. Context: rows (explain.why), ladder (the expert rows by rung), recheck_history, mode. #}
+{% from "partials/pill.html" import pill %}
+{% set STATUS = {"pass": ("pass", "passed"), "fail": ("fail", "failed"), "undetermined": ("undetermined", "no verdict"),
+                 "skipped": ("muted", "not run")} %}
+<ol class="why-list">
+{% for w in rows %}
+{% set tone, word = STATUS.get(w.status, ("muted", w.status)) %}
+<li class="why-row why-{{ w.status }}" data-rung="{{ w.rung }}">
+  <div class="why-head">{{ pill(tone, word) }}<span class="why-name">{{ w.name }}</span></div>
+  <p class="why-sentence">{{ w.sentence }}</p>
+  {%- if show_numbers and w.numbers %}
+  <p class="why-numbers mono">{{ w.numbers }}</p>
+  {%- endif %}
+  {%- if w.status == "undetermined" %}
+  <dl class="why-next">
+    <div><dt>What was missing</dt><dd>{{ w.missing }}</dd></div>
+    <div><dt>What happens next</dt><dd>{{ w.next_step[:1] | upper }}{{ w.next_step[1:] }}</dd></div>
+  </dl>
+  {%- endif %}
+  {%- if mode == "expert" and w.rung in ladder %}{% set t = ladder[w.rung] %}
+  <details class="why-raw">
+    <summary>Key and raw metrics <span class="muted mono">{{ w.rung }} · {{ t.duration_s | fmt(2) }} s</span></summary>
+    {%- if t.reason %}
+    <p class="mono">{{ t.reason }}</p>
+    {%- endif %}
+    <p class="metrics">{% for k, v in t.shown %}<span class="metric"><span class="muted">{{ k }}</span> {{ v | fmt(2) }}</span>{% endfor %}</p>
+    <pre>{{ t.raw }}</pre>
+  </details>
+  {%- endif %}
+</li>
+{% endfor %}
+</ol>
+{% if recheck_history %}
+<h3 class="why-history-title">Rechecks</h3>
+<ul class="why-history">
+  {% for h in recheck_history %}<li>{{ h.get("date") }}, {{ h.get("step") }}: {{ h.get("outcome") }}</li>{% endfor %}
+</ul>
+{% endif %}

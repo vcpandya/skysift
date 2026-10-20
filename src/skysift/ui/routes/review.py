@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse
 
 from skysift import jsonutil
-from skysift.ui import queries
+from skysift.ui import explain, plots, queries
 from skysift.ui.app import render, require_token
 
 router = APIRouter()
@@ -77,13 +77,37 @@ def _links(target: dict) -> list[tuple[str, str]]:
     return out
 
 
-def _ladder_rows(tests: list[dict]) -> list[dict]:
-    rows = []
+def _ladder_rows(tests: list[dict]) -> dict[str, dict]:
+    """The expert view of each rung's latest row (tests come ordered by id): key metrics as the ladder shows them and
+    the raw metrics as JSON, keyed by rung like ``explain.why``'s rows."""
+    rows = {}
     for t in tests:
+        metrics = t["metrics"] or {}
         keys = RUNG_METRICS.get(t["rung"], [])
-        shown = [(k, v) for k in keys if k in t["metrics"] and (v := _display(k, t["metrics"][k])) is not _HIDDEN]
-        rows.append({**t, "shown": shown, "raw": jsonutil.dumps(t["metrics"], indent=1)})
+        shown = [(k, v) for k in keys if k in metrics and (v := _display(k, metrics[k])) is not _HIDDEN]
+        rows[t["rung"]] = {**t, "shown": shown, "raw": jsonutil.dumps(metrics, indent=1)}
     return rows
+
+
+# the status glossary's words as the popup footer says them ("Stage 1 means ..."); the reviewer row is plural
+GLOSSARY_SUBJECT = {"Candidate, stage 1": "Stage 1 means", "Candidate, stage 2": "Stage 2 means",
+                    "Approved / Rejected by reviewer / Needs data": "Approved, Rejected by reviewer and Needs data mean"}
+
+
+def _glossary(v: explain.Verdict) -> list[str]:
+    """One sentence per status word, the signal's own word first."""
+    own = f"{v.word}, {v.stage}" if v.stage else v.word
+    lines = [(word != own, f"{GLOSSARY_SUBJECT.get(word, word + ' means')} {meaning[:1].lower()}{meaning[1:]}")
+             for word, meaning in explain.STATUS_GLOSSARY]
+    return [line for _later, line in sorted(lines, key=lambda x: x[0])]
+
+
+def _explained(d: dict, signal_id: int) -> dict:
+    """What the popup and the signal page's Why section share: the verdict, one row per rung, the expert's raw rows,
+    the glossary footer and where the pill opens the popup."""
+    v = explain.verdict(d["signal"], d["tests"], d["candidate"], d["decisions"])
+    return {"v": v, "rows": explain.why(d["tests"]), "ladder": _ladder_rows(d["tests"]), "glossary": _glossary(v),
+            "recheck_history": [], "verdict_src": f"/partials/signals/{signal_id}/verdict"}
 
 
 VERSIONS = ("current", "all")
@@ -146,9 +170,25 @@ def signal_page(request: Request, signal_id: int):
     prev_id, next_id = queries.neighbours(st.store, signal_id, view["status"], view["sort"], view["dir"] != "asc",
                                           version=_version(st.store, view))
     qs = "?" + urlencode(view)
-    return render(request, "signal.html", d=d, ladder=_ladder_rows(d["tests"]), links=_links(d["target"]),
+    ex = _explained(d, signal_id)
+    return render(request, "signal.html", d=d, links=_links(d["target"]), **ex,
+                  summary=explain.summary_sentence(d["signal"], d["target"], d["tests"]),
+                  copy_text=explain.copy_summary(d["signal"], d["target"], ex["v"],
+                                                 f"{request.base_url}signals/{signal_id}"),
+                  pixel_figures=None, plot_layout=plots.LAYOUT, marks=plots.MARKS, captions=plots.CAPTIONS,
                   prev_url=f"/signals/{prev_id}{qs}" if prev_id else None,
                   next_url=f"/signals/{next_id}{qs}" if next_id else None, view=view, signal_id=signal_id, error=None)
+
+
+@router.get("/partials/signals/{signal_id}/verdict", response_class=HTMLResponse)
+def verdict_popup(request: Request, signal_id: int):
+    """The verdict popup's body: the headline, one row per check, what an undetermined check was missing and what
+    happens next, and the status glossary."""
+    d = queries.signal_detail(request.app.state.store, signal_id)
+    if d is None:
+        return HTMLResponse(f"no signal {signal_id}", status_code=404)
+    return render(request, "partials/verdict.html", signal=d["signal"], target=d["target"], signal_id=signal_id,
+                  **_explained(d, signal_id))
 
 
 @router.post("/signals/{signal_id}/decide", dependencies=[Depends(require_token)], response_class=HTMLResponse)

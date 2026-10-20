@@ -346,7 +346,7 @@ def test_plots_endpoint_reports_outage_without_breaking_the_page(settings, tmp_p
     r = client.get(f"/api/signals/{ids['candidate']}/plots.json")
     assert r.status_code == 503 and "mast down" in r.json()["detail"]
     page = client.get(f"/signals/{ids['candidate']}")          # an archive outage must not break the page itself
-    assert page.status_code == 200 and "Ladder" in page.text and "rung1_detection" in page.text
+    assert page.status_code == 200 and 'id="why"' in page.text and "rung1_detection" in page.text
     assert 'id="plots"' in page.text
     assert client.get("/api/signals/999999/plots.json").status_code == 404
 

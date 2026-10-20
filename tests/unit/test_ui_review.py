@@ -3,6 +3,7 @@ import json
 import pytest
 from sqlalchemy import text
 
+from skysift.ui import explain
 from tests.unit.test_ui_pages import make_seeded_client
 from tests.unit.ui_seed import add_older_version
 
@@ -29,7 +30,7 @@ def test_queue_rejects_unknown_query_parameters(settings, tmp_path):
 
 def test_signal_page_shows_ladder_metrics_links_and_plots_hook(settings, tmp_path):
     client, _app, ids, _launcher = make_seeded_client(settings, tmp_path)
-    r = client.get(f"/signals/{ids['candidate']}?status=all&sort=period&dir=asc")
+    r = client.get(f"/signals/{ids['candidate']}?status=all&sort=period&dir=asc&mode=expert")   # raw rows, neighbours
     assert r.status_code == 200
     assert "rung1_detection" in r.text and "parity_sigma" in r.text and "0.20" in r.text    # rung 2 metric shown
     assert "season_depths" not in r.text or "raw" in r.text                                # dict metrics only in raw
@@ -145,16 +146,16 @@ def _set_metrics(app, signal_id, rung, metrics, status=None):
 
 
 def _shown(html, rung):
-    """The key-metrics cell of one ladder row."""
-    row = html[html.index(f"<tr><td>{rung}</td>"):]
-    return row[:row.index("<details")]
+    """The key metrics of one rung: its Why row up to the raw JSON (expert mode only)."""
+    row = html[html.index(f'data-rung="{rung}"'):]
+    return row[:row.index("<pre>")]
 
 
 def test_rungs_2_and_3_show_whether_the_stacked_fold_answered(settings, tmp_path):
     client, app, ids, _launcher = make_seeded_client(settings, tmp_path)
     _set_metrics(app, ids["candidate"], "rung2_shape", {"stacked": True, "parity_sigma": 0.4, "n_events": 480})
     _set_metrics(app, ids["candidate"], "rung3_stability", {"stacked": False, "p_value": 0.9, "n_events": 99})
-    r = client.get(f"/signals/{ids['candidate']}")
+    r = client.get(f"/signals/{ids['candidate']}?mode=expert")
     assert r.status_code == 200
     assert '<span class="muted">stacked</span> yes' in _shown(r.text, "rung2_shape")
     assert '<span class="muted">stacked</span> no' in _shown(r.text, "rung3_stability")
@@ -170,7 +171,7 @@ def test_signal_page_shows_the_key_metrics_of_rung1_events(settings, tmp_path):
                "ses_summary": {"n_finite": 99, "min": -0.5, "median": 3.1, "max": 6.2}}
     with app.state.store.session() as s:
         s.add(TestRow(signal_id=ids["candidate"], rung="rung1_events", status="pass", metrics=metrics)); s.commit()
-    r = client.get(f"/signals/{ids['candidate']}")
+    r = client.get(f"/signals/{ids['candidate']}?mode=expert")
     assert r.status_code == 200
     shown = _shown(r.text, "rung1_events")
     assert '<span class="muted">n_good</span> 95' in shown, shown
@@ -181,12 +182,12 @@ def test_rung4_shows_the_period_matched_object_and_its_separation(settings, tmp_
     client, app, ids, _launcher = make_seeded_client(settings, tmp_path)
     matched = [{"catalog": "cumulative", "id": "K77777.01", "period": 13.77, "sep_arcsec": 90.04}]
     _set_metrics(app, ids["candidate"], "rung4_novelty", {"cumulative": 1, "period_matched": matched}, status="fail")
-    r = client.get(f"/signals/{ids['candidate']}")
+    r = client.get(f"/signals/{ids['candidate']}?mode=expert")
     shown = _shown(r.text, "rung4_novelty")
     assert '<span class="muted">period_matched</span> cumulative K77777.01 at 90.0 arcsec' in shown
     without = [{**matched[0], "sep_arcsec": None}]
     _set_metrics(app, ids["candidate"], "rung4_novelty", {"cumulative": 1, "period_matched": without})
-    shown = _shown(client.get(f"/signals/{ids['candidate']}").text, "rung4_novelty")
+    shown = _shown(client.get(f"/signals/{ids['candidate']}?mode=expert").text, "rung4_novelty")
     assert '<span class="muted">period_matched</span> cumulative K77777.01, no position' in shown
 
 
@@ -227,10 +228,10 @@ def test_queue_shows_the_current_search_version_by_default(settings, tmp_path):
 def test_signal_neighbours_stay_inside_the_search_version(settings, tmp_path):
     client, app, ids, _launcher = make_seeded_client(settings, tmp_path)
     old = add_older_version(app.state.store)                         # higher SDE: it precedes the candidate in 'all'
-    r = client.get(f"/signals/{ids['candidate']}")
+    r = client.get(f"/signals/{ids['candidate']}?mode=expert")
     assert f'href="/signals/{old}?' not in r.text and 'id="link-prev"' not in r.text
     assert 'href="/candidates?status=candidate_stage1&sort=sde&dir=desc&versions=current"' in r.text   # back to queue
-    r = client.get(f"/signals/{ids['candidate']}?versions=all")
+    r = client.get(f"/signals/{ids['candidate']}?versions=all&mode=expert")
     amp = "&amp;"                                                    # the prev/next URLs are escaped expressions
     assert (f'id="link-prev" href="/signals/{old}?status=candidate_stage1{amp}sort=sde{amp}dir=desc{amp}versions=all"'
             in r.text)
@@ -264,7 +265,7 @@ def test_rung4_notes_whether_the_known_object_epoch_agrees(settings, tmp_path):
                             ({}, f"{prefix}<")):
         _set_metrics(app, ids["candidate"], "rung4_novelty", {"cumulative": 1, "period_matched": [{**base, **extra}]},
                      status="fail")
-        shown = _shown(client.get(f"/signals/{ids['candidate']}").text, "rung4_novelty")
+        shown = _shown(client.get(f"/signals/{ids['candidate']}?mode=expert").text, "rung4_novelty")
         assert expected in shown, (extra, shown)
 
 
@@ -295,3 +296,100 @@ def test_signal_page_keeps_quiet_when_the_occultation_exception_did_not_apply(se
                  {"parity_sigma": 0.2, "occultation_albedo": 3.4, "occultation_exception": False}, status="fail")
     r = client.get(f"/signals/{ids['candidate']}")
     assert r.status_code == 200 and "planet occultation" not in r.text
+
+
+# ---- the verdict popup and the signal page (mission control, task 3)
+
+@pytest.fixture
+def seeded(settings, tmp_path):
+    client, _app, ids, _launcher = make_seeded_client(settings, tmp_path)
+    return client, ids
+
+
+def token(client) -> str:
+    return client.app.state.token
+
+
+def test_verdict_popup_for_an_undetermined_signal_has_the_three_blocks(seeded):
+    client, ids = seeded
+    html = client.get(f"/partials/signals/{ids['undetermined']}/verdict").text
+    assert "Undetermined: one check could not decide" in html
+    assert "What was missing" in html and "What happens next" in html and "catalogue" in html.lower()
+    assert html.count('class="why-row') == len(explain.LADDER_ORDER)
+    assert "Stage 1 means" in html                                   # glossary footer
+    assert 'id="dialog-title"' in html and "<html" not in html
+    assert html.index("Undetermined means") < html.index("Stage 1 means")   # the signal's own word comes first
+
+
+def test_verdict_popup_for_a_candidate_has_no_missing_block(seeded):
+    client, ids = seeded
+    html = client.get(f"/partials/signals/{ids['candidate']}/verdict").text
+    assert "What was missing" not in html and "Candidate" in html and "stage 1" in html
+    assert f'href="/signals/{ids["candidate"]}"' in html                    # the full page
+
+
+def test_verdict_popup_for_a_signal_without_tests(seeded):
+    client, ids = seeded
+    html = client.get(f"/partials/signals/{ids['pending']}/verdict").text
+    assert "Not vetted yet" in html
+
+
+def test_verdict_popup_renders_for_every_role_in_both_modes(seeded):
+    client, ids = seeded
+    for role in ("candidate", "undetermined", "rejected", "legacy", "stage2", "approved", "pending"):
+        for mode in ("simple", "expert"):
+            r = client.get(f"/partials/signals/{ids[role]}/verdict?mode={mode}")
+            assert r.status_code == 200 and r.text.count('class="why-row') == len(explain.LADDER_ORDER), (role, mode)
+    expert = client.get(f"/partials/signals/{ids['candidate']}/verdict?mode=expert").text
+    simple = client.get(f"/partials/signals/{ids['candidate']}/verdict?mode=simple").text
+    assert "raw metrics" in expert and "raw metrics" not in simple
+    assert "Rejected: failed the check &#34;Transit shape&#34;" in client.get(f"/partials/signals/{ids['rejected']}/verdict").text
+
+
+def test_verdict_popup_unknown_signal_is_404(seeded):
+    client, _ids = seeded
+    assert client.get("/partials/signals/999999/verdict").status_code == 404
+
+
+def test_signal_page_has_hero_why_plots_and_decision_in_both_modes(seeded):
+    client, ids = seeded
+    for mode in ("simple", "expert"):
+        html = client.get(f"/signals/{ids['candidate']}?mode={mode}").text
+        assert "A dip of" in html and 'class="pill' in html and 'id="why"' in html and 'id="plots"' in html
+        assert "Copy summary" in html and "Approve" in html
+        assert f'data-dialog-src="/partials/signals/{ids["candidate"]}/verdict"' in html
+        assert f'data-mode="{mode}"' in html and "data-captions=" in html
+        assert html.index('class="hero') < html.index('id="fold"') < html.index('id="why"') < html.index('id="plots"')
+        assert html.index('id="plots"') < html.index('id="decision"')
+        assert "Goes to the Approved list for the write-up" in html
+    assert "raw" in client.get(f"/signals/{ids['candidate']}?mode=expert").text
+    assert "raw" not in client.get(f"/signals/{ids['candidate']}?mode=simple").text.split('id="why"')[1].split('id="plots"')[0]
+
+
+def test_signal_page_renders_a_legacy_signal_in_both_modes(seeded):
+    client, ids = seeded
+    for mode in ("simple", "expert"):
+        assert client.get(f"/signals/{ids['legacy']}?mode={mode}").status_code == 200
+
+
+def test_signal_page_renders_every_role_in_both_modes_and_themes(seeded):
+    client, ids = seeded
+    for role in ("candidate", "undetermined", "rejected", "legacy", "stage2", "approved", "pending"):
+        for mode in ("simple", "expert"):
+            for theme in ("dark", "light"):
+                r = client.get(f"/signals/{ids[role]}?mode={mode}&theme={theme}")
+                assert r.status_code == 200 and r.text.count('class="why-row') == len(explain.LADDER_ORDER), role
+                assert "—" not in r.text                                                    # no em-dashes
+
+
+def test_copy_summary_carries_the_plain_text_paragraph(seeded):
+    client, ids = seeded
+    html = client.get(f"/signals/{ids['candidate']}").text
+    assert 'data-copy="kic-005689121 (KIC 5689121). A dip of 0.18 percent (1,800 ppm) repeats every 13.8 days' in html
+    assert f"Details: http://127.0.0.1/signals/{ids['candidate']}" in html
+
+
+def test_reject_requires_a_note_in_simple_mode(seeded):
+    client, ids = seeded
+    r = client.post(f"/signals/{ids['candidate']}/decide", data={"decision": "reject", "note": "", "_token": token(client)})
+    assert r.status_code == 400 and "note" in r.text.lower()

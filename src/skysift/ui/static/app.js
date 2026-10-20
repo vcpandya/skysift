@@ -38,7 +38,9 @@
     .filter((el) => !el.disabled && !el.closest("[hidden]") && el.offsetParent !== null);
   const openDialog = () => {
     if (!dialog.open) dialog.showModal();
-    const first = focusables().find((el) => !el.matches("[data-dialog-close]")) || focusables()[0];
+    // a long partial marks its heading [data-dialog-focus] (tabindex -1) so focus starts at the top, not on a far link
+    const first = dialog.querySelector("[data-dialog-focus]")
+      || focusables().find((el) => !el.matches("[data-dialog-close]")) || focusables()[0];
     if (first) first.focus();
   };
   const closeDialog = () => { if (dialog.open) dialog.close(); };
@@ -104,6 +106,28 @@
   document.body.addEventListener("toast", (e) => {
     const d = e.detail || {};
     if (d.message || d.value) toast(String(d.message || d.value), d.tone);
+  });
+
+  // ---- Copy: a [data-copy] button puts its text on the clipboard. Without the clipboard API (an old browser, a page
+  // that is not a secure context) the text goes into a hidden textarea, is selected there and copied the old way.
+  document.addEventListener("click", async (e) => {
+    const button = e.target.closest("[data-copy]");
+    if (!button) return;
+    const text = button.dataset.copy;
+    try {
+      await navigator.clipboard.writeText(text);
+      toast("Copied", "pass");
+    } catch {
+      const area = document.createElement("textarea");
+      area.className = "copy-fallback"; area.value = text; area.readOnly = true; area.setAttribute("aria-hidden", "true");
+      document.body.appendChild(area);
+      area.select();
+      let copied = false;
+      try { copied = document.execCommand("copy"); } catch { copied = false; }
+      area.remove();
+      button.focus();
+      toast(copied ? "Copied" : "Could not copy. The browser refused the clipboard.", copied ? "pass" : "fail");
+    }
   });
 
   // ---- Keys on the signal page: a approve, r reject, n needs data, j next, k previous; ? lists them.
