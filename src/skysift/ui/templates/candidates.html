@@ -1,11 +1,12 @@
 {% extends "base.html" %}
 {% block title %}SkySift · Candidates{% endblock %}
 {% block content %}
+{% from "partials/pill.html" import pill %}
 <h1>Candidates</h1>
-<p>
-{% for s in statuses %}<a href="/candidates?status={{ s }}&sort={{ view.sort }}&dir={{ view.dir }}&versions={{ view.versions }}" class="{{ 'status-running' if s == view.status else 'muted' }}">{{ s }}</a>{% if not loop.last %} · {% endif %}{% endfor %}
-<span class="muted"> | {% if view.versions == 'current' %}Current search version only ({{ hidden }} older hidden) · <a href="/candidates?status={{ view.status }}&sort={{ view.sort }}&dir={{ view.dir }}&versions=all">show all</a>{% else %}All search versions · <a href="/candidates?status={{ view.status }}&sort={{ view.sort }}&dir={{ view.dir }}&versions=current">current only</a>{% endif %}</span>
-</p>
+<nav class="chips" aria-label="Status">
+{% for s in statuses %}<a href="/candidates?status={{ s }}&sort={{ view.sort }}&dir={{ view.dir }}&versions={{ view.versions }}" class="chip"{% if s == view.status %} aria-current="true"{% endif %}>{{ s }}</a>{% endfor %}
+</nav>
+<p class="muted">{% if view.versions == 'current' %}Current search version only ({{ hidden }} older hidden) · <a href="/candidates?status={{ view.status }}&sort={{ view.sort }}&dir={{ view.dir }}&versions=all">show all</a>{% else %}All search versions · <a href="/candidates?status={{ view.status }}&sort={{ view.sort }}&dir={{ view.dir }}&versions=current">current only</a>{% endif %}</p>
 <div class="table-wrap"><table>
 <thead><tr>
 {% for key, label in columns %}{% set is_sorted = view.sort == key %}
@@ -18,7 +19,7 @@
   <td><code>{{ r.target_id }}</code>{% if r.kic %} <span class="muted">KIC {{ r.kic }}</span>{% endif %}</td>
   <td class="num">{{ r.period | fmt(4) }}</td><td class="num">{{ r.depth_ppm | fmt(0) }}</td><td class="num">{{ r.duration_h | fmt(2) }}</td>
   <td class="num">{{ r.sde | fmt(1) }}</td><td class="num">{{ r.snr | fmt(1) }}</td><td class="num">{{ r.n_events | fmt }}</td><td class="num muted">#{{ r.id }}</td>
-  <td>{{ r.last_rung or '–' }}</td><td class="status-{{ r.verdict }}">{{ r.verdict or '–' }}</td><td class="muted">{{ r.reason }}</td><td class="status-{{ r.decision }}">{{ r.decision or '' }}</td>
+  <td>{{ r.last_rung or '–' }}</td><td>{% if r.verdict %}{{ pill(r.verdict, r.verdict) }}{% else %}–{% endif %}</td><td class="muted">{{ r.reason }}</td><td class="status-{{ r.decision }}">{{ r.decision or '' }}</td>
 </tr>
 {% else %}<tr><td colspan="12" class="muted">Nothing in this queue.</td></tr>{% endfor %}
 </tbody></table></div>

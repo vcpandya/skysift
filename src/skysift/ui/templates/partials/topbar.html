@@ -1,0 +1,47 @@
+{% set theme_icons = {
+  "system": "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zm0 0v18",
+  "dark": "M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z",
+  "light": "M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zM12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4",
+} %}
+{% set theme_labels = {"system": "Follow the system theme", "dark": "Dark theme", "light": "Light theme"} %}
+<header class="topbar">
+  <a class="brand" href="/">
+    <svg class="brand-mark" viewBox="0 0 32 32" width="28" height="28" aria-hidden="true" focusable="false">
+      <circle class="brand-ring" cx="16" cy="16" r="11"/>
+      <circle class="brand-planet" cx="23.8" cy="8.2" r="3.6"/>
+    </svg>
+    <span class="brand-name">SkySift</span>
+    <span class="brand-tagline">mission control</span>
+  </a>
+  <nav class="topnav" aria-label="Primary">
+    {% for href, label in nav %}<a href="{{ href }}"{% if href == active_nav %} aria-current="page"{% endif %}>{{ label }}</a>{% endfor %}
+  </nav>
+  <div class="topbar-controls">
+    <form class="segmented" method="post" action="/prefs" data-prefs role="group" aria-label="Mode">
+      <input type="hidden" name="_token" value="{{ token }}">
+      <input type="hidden" name="next" value="{{ here }}">
+      {% for value, label in [("simple", "Simple"), ("expert", "Expert")] %}
+      <button name="mode" value="{{ value }}" aria-pressed="{{ 'true' if mode == value else 'false' }}">{{ label }}</button>
+      {% endfor %}
+    </form>
+    <form class="segmented" method="post" action="/prefs" data-prefs role="group" aria-label="Theme">
+      <input type="hidden" name="_token" value="{{ token }}">
+      <input type="hidden" name="next" value="{{ here }}">
+      {% for value, d in theme_icons.items() %}
+      <button class="icon-only" name="theme" value="{{ value }}" aria-pressed="{{ 'true' if theme == value else 'false' }}" aria-label="{{ theme_labels[value] }}" title="{{ theme_labels[value] }}">
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="{{ d }}"/></svg>
+      </button>
+      {% endfor %}
+    </form>
+    <details class="envinfo only-expert">
+      <summary aria-label="Engine settings" title="Engine settings">
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 6c0 1.7 3.6 3 8 3s8-1.3 8-3-3.6-3-8-3-8 1.3-8 3zm0 0v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg>
+      </summary>
+      <dl class="envinfo-list">
+        <dt>data</dt><dd><code>{{ data_dir }}</code></dd>
+        <dt>db</dt><dd><code>{{ db_display }}</code></dd>
+        <dt>retention</dt><dd><code>{{ retention }}</code></dd>
+      </dl>
+    </details>
+  </div>
+</header>

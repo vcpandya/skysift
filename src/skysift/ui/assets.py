@@ -1,5 +1,5 @@
-"""Front-end assets without a CDN at view time. HTMX (about 50 kB) is vendored in the package; Plotly (about 4.5 MB)
-is downloaded once into the data directory, SHA-256 verified against the hash recorded here, and served locally."""
+"""Front-end assets without a CDN at view time. HTMX (about 50 kB) and the woff2 fonts are vendored in the package;
+Plotly (about 4.5 MB) is downloaded once into the data directory, SHA-256 verified against the hash recorded here, and served locally."""
 from __future__ import annotations
 
 import hashlib
@@ -15,6 +15,16 @@ HTMX_VERSION = "2.0.3"
 PLOTLY_VERSION = "2.35.2"
 PLOTLY_URL = f"https://cdn.plot.ly/plotly-{PLOTLY_VERSION}.min.js"
 PLOTLY_SHA256 = "6d21266ce1bd7d9e5ab4e115989c70c20de0382fd973a8f26ab58619eba4d603"
+# committed in static/fonts (Latin subsets, SIL OFL 1.1); sources and license texts in static/fonts/LICENSES.md
+FONT_SHA256 = {
+    "SpaceGrotesk-Medium.woff2": "1b1a8131d9edf975d9decee81e2f2bf504812f7a4f498e5500f28a613e22e64c",
+    "SpaceGrotesk-Bold.woff2": "35f8aec56cfd5cbfdb03cc68733a54a0b05bb3617ffcd5fd332badc0b045ca55",
+    "IBMPlexSans-Regular.woff2": "3b646991d30055a93a4ecc499713d4347953a74a947ecab435ab72070cbdab0e",
+    "IBMPlexSans-Medium.woff2": "0717336fb31fcdcde4b8deb3675bb4a0f7f6d484864afcd6751ac29975962203",
+    "IBMPlexSans-SemiBold.woff2": "8960851d691c054ed38e259bdcf1a6190d157b4203ed5bb32c632a863fb8ec2f",
+    "IBMPlexMono-Regular.woff2": "08949f728dc52d528e69b1667d15c89a5686a4ee9a296ff90983985f99c380f7",
+    "IBMPlexMono-Medium.woff2": "01d285447409c8a588692162439a038b8cbd7871309ee20267b0d2d91c6e8e22",
+}
 
 
 def ensure_plotly(data_dir: Path, fetch=net.fetch) -> Path | None:

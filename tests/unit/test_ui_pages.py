@@ -482,3 +482,93 @@ def test_live_history_marks_a_graceful_stop(settings, tmp_path):
         time.sleep(0.1)
     r = client.get("/partials/live/sweep")
     assert "processed 4" in r.text and "stopped early" in r.text
+
+
+def test_mode_and_theme_cookies_drive_the_html_attributes(settings):
+    client, app = make_client(settings)
+    assert 'data-mode="simple"' in client.get("/").text and 'data-theme="system"' in client.get("/").text
+    r = client.post("/prefs", data={"mode": "expert", "theme": "dark", "next": "/candidates", "_token": app.state.token},
+                    follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/candidates"
+    assert "skysift_mode=expert" in r.headers.get("set-cookie", "") or r.cookies.get("skysift_mode") == "expert"
+    html = client.get("/").text
+    assert 'data-mode="expert"' in html and 'data-theme="dark"' in html
+    assert 'data-mode="simple"' in client.get("/?mode=simple").text          # the query wins for one request
+    r = client.post("/prefs", data={"mode": "expert", "theme": "dark", "next": "https://evil.example/",
+                                    "_token": app.state.token}, follow_redirects=False)
+    assert r.headers["location"] == "/"                                       # only same-origin paths
+
+
+def test_prefs_requires_the_token(settings):
+    client, _app = make_client(settings)
+    assert client.post("/prefs", data={"mode": "expert", "theme": "dark"}).status_code == 403
+
+
+def test_stylesheet_declares_the_phone_breakpoints(settings):
+    client, _app = make_client(settings)
+    css = client.get("/static/app.css").text
+    for token in ("--bg", "--surface", "--ion", "--solar", "--pass", "--fail", "--undet", "--running"):
+        assert token + ":" in css
+    assert "@media (max-width: 720px)" in css and "@media (max-width: 900px)" in css and "@media (min-width: 1280px)" in css
+    assert "prefers-reduced-motion" in css and "[data-theme=\"dark\"]" in css and "prefers-color-scheme: dark" in css
+
+
+def test_every_page_links_the_local_fonts_and_nothing_remote(settings):
+    client, _app = make_client(settings)
+    for path in ("/", "/candidates", "/live", "/approved", "/about"):    # /sources arrives with Task 5
+        html = client.get(path).text
+        assert "https://" not in html.split("<main")[0].replace("https://github.com", "")   # head has no remote asset
+    css = client.get("/static/app.css").text
+    assert "/static/fonts/SpaceGrotesk-Bold.woff2" in css and "/static/fonts/IBMPlexSans-Regular.woff2" in css
+    assert client.get("/static/fonts/IBMPlexMono-Regular.woff2").status_code == 200
+
+
+def test_contrast_tool_passes_on_the_shipped_stylesheet():
+    from tools.contrast_check import check
+    assert check() == []
+
+
+def test_contrast_tool_reports_a_failing_pair():
+    from tools.contrast_check import check
+    css = (assets_static() / "app.css").read_text(encoding="utf-8").replace("--muted: #6b7489", "--muted: #2a3040")
+    assert any("muted" in failure and "dark" in failure for failure in check(css))
+
+
+def test_about_placeholder_and_shell_render_in_both_modes_and_themes(settings):
+    client, _app = make_client(settings)
+    for mode in ("simple", "expert"):
+        for theme in ("system", "dark", "light"):
+            r = client.get(f"/about?mode={mode}&theme={theme}")
+            assert r.status_code == 200 and f'data-mode="{mode}"' in r.text and f'data-theme="{theme}"' in r.text
+            assert 'class="topbar' in r.text and 'class="bottomnav' in r.text and 'id="toasts"' in r.text
+    assert client.get("/about?mode=bogus&theme=neon").text.count('data-mode="simple" data-theme="system"') == 1
+
+
+def assets_static():
+    from skysift.ui.assets import STATIC
+    return STATIC
+
+
+def test_prefs_refuses_paths_that_leave_the_origin_and_unknown_values(settings):
+    client, app = make_client(settings)
+    for target in ("//evil.example/", "/\\evil.example", "/\t/evil.example", "javascript:alert(1)", "candidates"):
+        r = client.post("/prefs", data={"mode": "expert", "next": target, "_token": app.state.token},
+                        follow_redirects=False)
+        assert r.status_code == 303 and r.headers["location"] == "/", target
+    r = client.post("/prefs", data={"next": "/live?status=all", "theme": "light", "_token": app.state.token},
+                    follow_redirects=False)
+    assert r.headers["location"] == "/live?status=all" and "skysift_mode" not in r.headers.get("set-cookie", "")
+    assert client.post("/prefs", data={"mode": "wizard", "_token": app.state.token}).status_code == 400
+    html = client.get("/live?mode=expert&status=all").text
+    assert 'name="next" value="/live?status=all"' in html                    # the one-request override is not kept
+
+
+def test_existing_pages_render_on_the_shared_components(settings, tmp_path):
+    client, _app, _ids, _launcher = make_seeded_client(settings, tmp_path)
+    html = client.get("/candidates").text
+    assert 'class="chip" aria-current="true">candidate_stage1</a>' in html and 'class="pill pill-' in html
+    assert '<a class="chip" href="/approved?status=approved" aria-current="true">approved</a>' in client.get("/approved").text
+    live = client.get("/live").text
+    assert 'class="tile stat"' in live and "data-count=" in live
+    assert 'class="envinfo only-expert"' in live and 'aria-current="page"' in live
+    assert "style=" not in live + html + client.get("/partials/sweep-form?source=kbonus_bkg").text

@@ -1,8 +1,8 @@
 <form class="inline" hx-post="/sweeps" hx-target="#sweep-form" hx-swap="innerHTML">
   <input type="hidden" name="_token" value="{{ token }}">
   <input type="hidden" name="source" value="{{ source }}">
-  <h2 style="grid-column:1/-1;margin:0">Start sweep of {{ source }}</h2>
-  {% if error %}<p class="error" style="grid-column:1/-1;margin:0">{{ error }}</p>{% endif %}
+  <h2 class="span-all">Start sweep of {{ source }}</h2>
+  {% if error %}<p class="error span-all">{{ error }}</p>{% endif %}
   <label>limit (targets)<input name="limit" type="number" min="1" value="{{ values.get('limit', 500) }}"></label>
   <label>min period (d)<input name="min_period" type="number" step="any" value="{{ values.get('min_period', th.min_period_days) }}"></label>
   <label>max period (d)<input name="max_period" type="number" step="any" value="{{ values.get('max_period', th.max_period_days) }}"></label>
@@ -16,6 +16,6 @@
   <label>store periodogram summary (~8 kB/star)<select name="store_periodogram">
     {% for m, lbl in [('all', 'all targets'), ('signals', 'only targets with a signal'), ('off', 'off')] %}<option value="{{ m }}" {{ 'selected' if values.get('store_periodogram', settings.store_periodogram) == m else '' }}>{{ lbl }}</option>{% endfor %}
   </select></label>
-  <label style="flex-direction:row;align-items:center;gap:6px"><input type="checkbox" name="background_only" {{ 'checked' if (not values or values.get('background_only')) else '' }}> background sources only</label>
+  <label class="check"><input type="checkbox" name="background_only" {{ 'checked' if (not values or values.get('background_only')) else '' }}> background sources only</label>
   <div><button class="primary" type="submit">Start</button></div>
 </form>

@@ -1,5 +1,5 @@
 <div class="decision-bar">
-  <form hx-post="/signals/{{ signal_id }}/decide" hx-target="#decision" hx-swap="innerHTML" style="display:contents">
+  <form hx-post="/signals/{{ signal_id }}/decide" hx-target="#decision" hx-swap="innerHTML" class="decision-form">
     <input type="hidden" name="_token" value="{{ token }}">
     <textarea name="note" placeholder="note (required for reject)">{{ d.candidate.note if d.candidate else '' }}</textarea>
     <button id="btn-approve" class="primary" name="decision" value="approve">Approve (a)</button>

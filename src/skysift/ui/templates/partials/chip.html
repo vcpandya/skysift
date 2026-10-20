@@ -1,0 +1,4 @@
+{# A filter chip: a link with an optional count; the current filter is marked with aria-current. #}
+{% macro chip(label, href, count=None, active=False) -%}
+<a class="chip" href="{{ href }}"{% if active %} aria-current="true"{% endif %}>{{ label }}{% if count is not none %} <span class="chip-count">{{ count | fmt }}</span>{% endif %}</a>
+{%- endmacro %}

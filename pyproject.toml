@@ -27,7 +27,7 @@ skysift = "skysift.cli:app"
 where = ["src"]
 
 [tool.setuptools.package-data]
-"skysift.ui" = ["templates/*.html", "templates/partials/*.html", "static/*"]
+"skysift.ui" = ["templates/*.html", "templates/partials/*.html", "static/*", "static/fonts/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -1,0 +1,10 @@
+{# A stat tile: the number, what it counts and an optional one-line gloss. A numeric value counts up once on load. #}
+{% macro stat(label, value, gloss=None, digits=0) -%}
+<div class="tile stat">
+  <div class="stat-value"{% if value is number %} data-count="{{ value }}" data-decimals="{{ digits }}"{% endif %}>{{ value | fmt(digits) }}</div>
+  <div class="stat-label">{{ label }}</div>
+  {%- if gloss %}
+  <p class="stat-gloss">{{ gloss }}</p>
+  {%- endif %}
+</div>
+{%- endmacro %}

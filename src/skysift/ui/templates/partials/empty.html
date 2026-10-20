@@ -1,0 +1,16 @@
+{# An empty state: what is missing, what it means, and the one action that fills it. #}
+{% macro empty(title, body=None, href=None, action=None) -%}
+<div class="empty">
+  <svg class="empty-mark" viewBox="0 0 32 32" width="40" height="40" aria-hidden="true" focusable="false">
+    <circle class="brand-ring" cx="16" cy="16" r="11"/>
+    <circle class="brand-planet" cx="23.8" cy="8.2" r="3.6"/>
+  </svg>
+  <p class="empty-title">{{ title }}</p>
+  {%- if body %}
+  <p class="empty-body">{{ body }}</p>
+  {%- endif %}
+  {%- if href and action %}
+  <a class="btn primary" href="{{ href }}">{{ action }}</a>
+  {%- endif %}
+</div>
+{%- endmacro %}

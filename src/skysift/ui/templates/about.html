@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="page-head">
+  <h1>About SkySift</h1>
+  <p class="lede">SkySift searches archival Kepler light curves for small dips in brightness that repeat. Every repeating dip goes through a ladder of checks, and a person decides what it is.</p>
+</section>
+<section class="card prose">
+  <p>This page will explain the method, what each status word means and how a recheck works.</p>
+  <p class="muted">SkySift {{ engine_version }}, commit <code>{{ git_commit }}</code>.</p>
+</section>
+{% endblock %}

@@ -1,7 +1,10 @@
 {% extends "base.html" %}
 {% block title %}SkySift · error{% endblock %}
 {% block content %}
-<h1>Something went wrong</h1>
-<p class="error">{{ error }}</p>
-<p>The full traceback is in the dashboard log: <code>{{ log_hint }}</code></p>
+<section class="card notice-fail" role="alert">
+  <h1>Something went wrong</h1>
+  <p class="error">{{ error }}</p>
+  {% if log_hint %}<p>The full traceback is in the dashboard log: <code>{{ log_hint }}</code></p>{% endif %}
+  <p><a class="btn" href="/">Back to the start</a></p>
+</section>
 {% endblock %}

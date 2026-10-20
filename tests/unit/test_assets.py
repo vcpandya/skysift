@@ -111,3 +111,13 @@ def test_vendor_mount_serves_plotly_and_static_still_serves_htmx(settings, tmp_p
     assert r.status_code == 200 and r.content == plotly.read_bytes()
     r = client.get("/static/htmx.min.js")
     assert r.status_code == 200 and r.content == (HERE_STATIC / "htmx.min.js").read_bytes()
+
+
+def test_vendored_fonts_match_their_recorded_hashes():
+    fonts = HERE_STATIC / "fonts"
+    assert set(assets.FONT_SHA256) == {p.name for p in fonts.glob("*.woff2")}
+    for name, sha in assets.FONT_SHA256.items():
+        data = (fonts / name).read_bytes()
+        assert data[:4] == b"wOF2" and hashlib.sha256(data).hexdigest() == sha, name
+        assert sha in (fonts / "LICENSES.md").read_text(encoding="utf-8"), name
+    assert sum((fonts / n).stat().st_size for n in assets.FONT_SHA256) < 600_000

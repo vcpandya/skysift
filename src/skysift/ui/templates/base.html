@@ -1,31 +1,31 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-mode="{{ mode }}" data-theme="{{ theme }}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{% block title %}SkySift{% endblock %}</title>
+<meta name="color-scheme" content="{{ 'light dark' if theme == 'system' else theme }}">
+<title>{% block title %}SkySift · {{ page_title }}{% endblock %}</title>
 <link rel="stylesheet" href="/static/app.css?v={{ git_commit }}">
 <script src="/static/htmx.min.js?v={{ git_commit }}" defer></script>
 {% if plotly_url %}<script src="{{ plotly_url }}?v={{ git_commit }}" defer></script>{% endif %}
 <script src="/static/app.js?v={{ git_commit }}" defer></script>
 </head>
-<body hx-headers='{"X-SkySift-Token": "{{ token }}"}'>
-<nav class="side">
-  <div class="brand">SkySift</div>
-  {% for href, label in nav %}
-  <a href="{{ href }}" class="{{ 'active' if (href == '/' and active_path == '/') or (href != '/' and active_path.startswith(href)) else '' }}">{{ label }}</a>
-  {% endfor %}
-</nav>
-<main>
-  <header class="top">
-    <span>data <code>{{ data_dir }}</code></span>
-    <span>db <code>{{ db_display }}</code></span>
-    <span>retention <code>{{ retention }}</code></span>
-  </header>
-  <section class="page">
-  {% block content %}{% endblock %}
-  </section>
-  <footer>SkySift {{ engine_version }} · {{ git_commit }}</footer>
+<body hx-headers='{"X-SkySift-Token": "{{ token }}"}' data-token="{{ token }}">
+<a class="skip" href="#main">Skip to content</a>
+{% include "partials/topbar.html" %}
+<main id="main" class="page">
+{% block content %}{% endblock %}
 </main>
+<footer class="footer">
+  <a href="/about">About</a>
+  <span>SkySift {{ engine_version }}</span>
+  <code>{{ git_commit }}</code>
+</footer>
+{% include "partials/bottomnav.html" %}
+{% include "partials/toast.html" %}
+<dialog id="dialog" class="dialog" aria-labelledby="dialog-title">
+  <button type="button" class="dialog-close" data-dialog-close aria-label="Close">×</button>
+  <div id="dialog-slot"></div>
+</dialog>
 </body>
 </html>
