@@ -1,0 +1,57 @@
+#
+#   VizieR Astronomical Server vizier.cds.unistra.fr
+#    Date: 2026-10-20T07:16:09 [V7.6.1]
+#   In case of problem, please report to:	cds-question@unistra.fr
+#
+#
+#Coosys	J2000:	eq_FK5 J2000
+#INFO	service_protocol=ASU	  IVOID of the protocol through which the data was retrieved
+#INFO	request_date=2026-10-20T07:16:09	  Query execution date
+#INFO	request=https://vizier.cds.unistra.fr/viz-bin/asu-tsv?-source=J%2FAJ%2F151%2F68%2Fcatalog&-c=285.90782692874626+%2B40.94198844296448&-c.rs=30&-out.all=&-out.add=_r&-sort=_r	  Full request URL
+#INFO	contact=cds-question@unistra.fr	  Email or URL to contact publisher
+#INFO	server_software=VizieR/7.6.1	  Software version
+#INFO	publisher=CDS	  Data centre that produced the VOTable
+#INFO	MaxTuples=50000	
+#INFO	-c=285.907827+40.941988,rs=30.	
+#Constraint -sort=_r
+
+#RESOURCE=yCat_51510068
+#Name: J/AJ/151/68
+#Title: Kepler Mission. VII. Eclipsing binaries in DR3 (Kirk+, 2016)
+#INFO	ivoid=ivo://cds.vizier/j/aj/151/68	    IVOID of underlying data collection
+#INFO	data_ivoid=ivo://cds.vizier/j/aj/151/68	    IVOID of underlying data collection
+#INFO	creator=Kirk B.	    First author or institution
+#INFO	cites=bibcode:2016AJ....151...68K	    Article or Data origin sources
+#INFO	journal=AJ	    Journal name
+#INFO	original_date=2016	    Year of the article publication
+#INFO	reference_url=https://cdsarc.cds.unistra.fr/viz-bin/cat/J/AJ/151/68	    Dataset landing page
+#INFO	citation=doi:10.26093/cds/vizier.51510068	    Dataset identifier that can be used for citation
+#INFO	publication_date=2024-06-14	    Date of first publication in the data centre
+#INFO	rights_uri=https://cds.unistra.fr/vizier-org/licences_vizier.html	    Licence URI
+#Coosys	J2000_2000.000:	eq_FK5 J2000
+#Table	J_AJ_151_68_catalog:
+#Name: J/AJ/151/68/catalog
+#Title: Kepler Eclipsing Binary Catalog - Third Revision (downloaded on https://keplerebs.villanova.edu/ - 2016 Aug 18)
+#Column	_r	(F5.2)	Distance from center (285.90783+40.94199)[FK5/J2000], at Epoch=J2000.0	[ucd=pos.angDistance]
+#Column	V1	(I3)	1 indicates a binary studied in version 1 of the Catalog (paper I ; Prsa et al. 2011, Cat. J/AJ/141/83)	[ucd=meta.number]
+#Column	V2	(I3)	1 indicates a binary studied in version 2 of the Catalog (paper II; Slawson et al. 2011, Cat. J/AJ/142/160)	[ucd=meta.number]
+#Column	V3b	(I3)	1 indicates a binary in the third revision (Beta) of the Kepler eclipsing binary catalog	[ucd=meta.number]
+#Column	PapIV	(I3)	1 indicates a binary studied in paper IV (Conroy et al. 2014, Cat. J/AJ/147/45)	[ucd=meta.number]
+#Column	KIC	(A8)	[1026032/12785282] Kepler Input Catalog number	[ucd=meta.id;meta.main]
+#Column	HB	(I3)	1 indicates a HearBeat star (table 1)	[ucd=meta.number]
+#Column	DV	(A2)	Indicates a system that exhibit eclipse Depth Variation (table 8)	[ucd=meta.ref.url]
+#Column	Per	(F12.7)	[0.07/1087.3]Period of the eclipsing binary signal	[ucd=time.period]
+#Column	e_Per	(F10.7)	[0/0.0147]? Period error	[ucd=stat.error]
+#Column	BJD0	(F12.6)	[5487.3/56903.9]? Time of eclipse BJD_0_ (Barycentric Julian Date-2400000) (1)	[ucd=time.epoch]
+#Column	e_BJD0	(F9.6)	[0.003/2.5]? BJD_0_ error	[ucd=stat.error]
+#Column	Morph	(F5.2)	[0/1]? Morphology value (between 0-1) (2)	[ucd=src.morph]
+#Column	GLON	(F7.4)	? Kepler galactic longitude	[ucd=pos.galactic.lon]
+#Column	GLAT	(F7.4)	? Kepler galactic latitude	[ucd=pos.galactic.lat]
+#Column	Kpmag	(F7.4)	[-1/19.742]? Kepler magnitude of the target	[ucd=phot.mag;em.opt]
+#Column	Teff	(I5)	? Kepler effective temperature	[ucd=phys.temperature.effective]
+#Column	SC	(A5)	Short-Cadence data? (True or False)	[ucd=meta.code]
+#Column	LC	(A2)	VizieR added column, not part of original data	[ucd=meta.ref.url]
+#Column	TS	(A2)	VizieR added column, not part of original data	[ucd=meta.ref.url]
+#Column	Simbad	(a6)	Simbad column added by the CDS	[ucd=meta.ref.url]
+#Column	_RA	(F9.5)	Right Ascension (J2000) from SIMBAD (not part of the original data)	[ucd=pos.eq.ra;meta.main]
+#Column	_DE	(F9.5)	Declination (J2000) from SIMBAD (not part of the original data)	[ucd=pos.eq.dec;meta.main]

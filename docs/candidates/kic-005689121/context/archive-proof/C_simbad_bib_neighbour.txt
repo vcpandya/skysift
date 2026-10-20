@@ -1,0 +1,78 @@
+C.D.S.  -  SIMBAD4 rel 1.8  -  2026.10.20CEST09:24:35
+
+KIC 5689116
+-----------
+
+Object 2MASS J19033726+4056316  ---  *  ---  OID=@9375785   (@@-1,255)  ---  coobox=19931
+
+Coordinates(ICRS,ep=J2000,eq=2000): 19 03 37.2654453144  +40 56 31.566925536 (Opt ) A [0.1866 0.2162 90] 2020yCat.1350....0G
+Coordinates(FK4,ep=B1950,eq=1950): 19 01 59.2462533197  +40 52 00.715045621
+Coordinates(Gal,ep=J2000,eq=2000): 071.5019052575249  +15.2531231962228
+hierarchy counts: #parents=0, #children=0, #siblings=0
+Proper motions: -9.437 -7.312 [0.285 0.295 90] A 2020yCat.1350....0G
+Parallax: 0.3016 [0.2289] A 2020yCat.1350....0G
+Radial Velocity: ~ [~ ~ ] ~ ~                  
+Redshift: ~ [~ ~ ] ~ ~                  
+cz: ~ [~ ~ ] ~ ~                  
+Flux G : 15.477595 [0.003364] C 2020yCat.1350....0G
+Flux J : 14.32 [0.027] C 2003yCat.2246....0C
+Flux H : 13.914 [0.03] C 2003yCat.2246....0C
+Flux K : 13.926 [0.052] C 2003yCat.2246....0C
+Spectral type: ~ ~ ~
+Morphological type: ~ ~ ~
+Angular size:     ~     ~   ~ (~)  ~ ~
+
+Identifiers (5):
+   TIC 120686466                        Gaia DR3 2103792427466721792         2MASS J19033726+4056316            
+   Gaia DR2 2103792427466721792         KIC 5689116                                                             
+
+References 1850-2026 () (4):
+
+2014ApJS..211...24M
+Astrophys. J., Suppl. Ser., 211, 24 (2014/April-0)
+McQUILLAN A., MAZEH T. and AIGRAIN S.
+Rotation periods of 34,030 Kepler main-sequence stars: the full autocorrelation
+sample.
+-Files: (abstract)
+-Notes: <Available at CDS: table1.dat table2.dat>
+
+
+2015ApJ...809....8B
+Astrophys. J., 809, 8 (2015/August-8)
+BURKE C.J., CHRISTIANSEN J.L., MULLALLY F., SEADER S., HUBER D., ROWE J.F.,
+COUGHLIN J.L., THOMPSON S.E., CATANZARITE J., CLARKE B.D., MORTON T.D.,
+CALDWELL D.A., BRYSON S.T., HAAS M.R., BATALHA N.M., JENKINS J.M., TENENBAUM P.,
+TWICKEN J.D., LI J., QUINTANA E., BARCLAY T., HENZE C.E., BORUCKI W.J.,
+HOWELL S.B. and STILL M.
+Terrestrial planet occurrence rates for the Kepler GK dwarf sample.
+-Files: (abstract)
+-Notes: <Available at CDS: table1.dat table3.dat table4.dat table8.dat>
+
+
+2021ApJS..255...17S
+Astrophys. J., Suppl. Ser., 255, 17-17 (2021/July-0)
+SANTOS A.R.G., BRETON S.N., MATHUR S. and GARCIA R.A.
+Surface rotation and photometric activity for Kepler targets. II. G and F
+main-sequence stars and cool subgiant stars.
+-Files: (abstract)
+-Notes: <Available at CDS: table1.dat table2.dat>
+
+
+2023ApJ...952..131M
+Astrophys. J., 952, 131 (2023/August-1)
+MATHUR S., CLAYTOR Z.R., SANTOS A.R.G., GARCIA R.A., AMARD L., BUGNET L.,
+CORSARO E., BONANNO A., BRETON S.N., GODOY-RIVERA D., PINSONNEAULT M.H. and
+VAN SADERS J.
+Magnetic Activity Evolution of Solar-like Stars. I. {\em S}_ph_-Age Relation
+Derived from Kepler Observations.
+-Files: (abstract)
+-Notes: <Available at CDS: table1.dat table3.dat>
+
+
+Measures (PLX:2  PM:2  V*:2  ):
+PLX:2PM:2V*:2
+
+Notes (0) :
+
+================================================================================
+

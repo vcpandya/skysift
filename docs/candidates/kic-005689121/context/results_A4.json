@@ -1,0 +1,266 @@
+{
+ "method": "A.4 (extension): in-transit centroid shift of the candidate from the per-quarter CENTROID_COLUMN / CENTROID_ROW\ncolumns of its KBonus file (read-only cache). Per quarter: subtract a 2-day running median (transits masked),\ntake mean(in) - mean(out) with the same 2.0 h / 1-3 duration windows as the depth test. Quarters of one season share the\nCCD orientation, so they are averaged per season (inverse-variance). Implied offset of the dip source from the\nout-of-transit centroid = -shift / depth (depth = SAP depth of that season), in pixels and arcsec (3.98 arcsec/px).",
+ "VALID": false,
+ "verdict": "NOT USABLE: the KBonus CENTROID_COLUMN/ROW of the candidate and of KIC 5689116 move identically (difference scatter ~1e-6 px, correlation 1.0), i.e. they are the PSF-model positions (catalogue position plus a common pointing model), not flux-weighted centroids. They cannot respond to a dip, so the near-zero shifts below carry no information about the location of the dip source.",
+ "diagnostic_vs_KIC5689116": {
+  "LIGHTCURVE_Q1": {
+   "std_candidate_px": 0.011942455199650068,
+   "std_of_difference_px": 7.898041149012061e-07,
+   "corr": 0.9999999999781158
+  },
+  "LIGHTCURVE_Q2": {
+   "std_candidate_px": 0.018083714556123252,
+   "std_of_difference_px": 2.12186305745884e-06,
+   "corr": 0.9999999937895232
+  },
+  "LIGHTCURVE_Q3": {
+   "std_candidate_px": 0.005435902237641673,
+   "std_of_difference_px": 8.013332221541658e-07,
+   "corr": 0.9999999968553573
+  },
+  "LIGHTCURVE_Q4": {
+   "std_candidate_px": 0.009584851866830913,
+   "std_of_difference_px": 2.336361731604603e-06,
+   "corr": 0.9999999990597997
+  },
+  "LIGHTCURVE_Q6": {
+   "std_candidate_px": 0.012154508047630647,
+   "std_of_difference_px": 2.070934073952304e-06,
+   "corr": 0.9999999999278415
+  },
+  "LIGHTCURVE_Q7": {
+   "std_candidate_px": 0.005415213391707474,
+   "std_of_difference_px": 7.028706367526977e-07,
+   "corr": 0.9999999977353687
+  },
+  "LIGHTCURVE_Q8": {
+   "std_candidate_px": 0.00835717130668658,
+   "std_of_difference_px": 1.8116776790221643e-06,
+   "corr": 0.9999999998302013
+  },
+  "LIGHTCURVE_Q10": {
+   "std_candidate_px": 0.013000626723654199,
+   "std_of_difference_px": 2.15241288838706e-06,
+   "corr": 0.9999999998792504
+  },
+  "LIGHTCURVE_Q11": {
+   "std_candidate_px": 0.00711569964581135,
+   "std_of_difference_px": 8.543344909442505e-07,
+   "corr": 0.9999999988197936
+  },
+  "LIGHTCURVE_Q12": {
+   "std_candidate_px": 0.008795807152766138,
+   "std_of_difference_px": 2.084462392784168e-06,
+   "corr": 0.9999999995981452
+  },
+  "LIGHTCURVE_Q14": {
+   "std_candidate_px": 0.013684238731489108,
+   "std_of_difference_px": 2.282221140501837e-06,
+   "corr": 0.9999999997562468
+  },
+  "LIGHTCURVE_Q15": {
+   "std_candidate_px": 0.007080368468747256,
+   "std_of_difference_px": 8.784608594612287e-07,
+   "corr": 0.9999999979042472
+  },
+  "LIGHTCURVE_Q16": {
+   "std_candidate_px": 0.008609473902554862,
+   "std_of_difference_px": 1.9977672320586154e-06,
+   "corr": 0.9999999995112666
+  }
+ },
+ "per_quarter": {
+  "1": {
+   "season": 3,
+   "dcol_px": -4.210528705852408e-05,
+   "dcol_err": 0.00037823473649756907,
+   "drow_px": 0.0004367789098532354,
+   "drow_err": 0.0002937587142526315,
+   "inflation": 1.262687870600321,
+   "centroid_rms_px": 0.0005570253976091379
+  },
+  "2": {
+   "season": 0,
+   "dcol_px": -0.001225513918517598,
+   "dcol_err": 0.005758589951205859,
+   "drow_px": 0.0007328161904472978,
+   "drow_err": 0.00345801089009357,
+   "inflation": 3.01862132854233,
+   "centroid_rms_px": 0.0023186978520513372
+  },
+  "3": {
+   "season": 1,
+   "dcol_px": -6.3968900869987056e-06,
+   "dcol_err": 0.00016186075258367065,
+   "drow_px": 1.3705669599090983e-05,
+   "drow_err": 0.0001373471910696216,
+   "inflation": 1.5618466581675015,
+   "centroid_rms_px": 0.00036856807450900243
+  },
+  "4": {
+   "season": 2,
+   "dcol_px": 5.086486785899069e-05,
+   "dcol_err": 0.00012869050385381958,
+   "drow_px": -0.00020642893039061954,
+   "drow_err": 0.00018399215122404423,
+   "inflation": 1.142350797660382,
+   "centroid_rms_px": 0.0003552872780741247
+  },
+  "6": {
+   "season": 0,
+   "dcol_px": 5.4483406586629734e-05,
+   "dcol_err": 0.00016764693749082114,
+   "drow_px": -6.59763583746101e-05,
+   "drow_err": 0.00013904328307357293,
+   "inflation": 1.6850625855240422,
+   "centroid_rms_px": 0.00048462175689257983
+  },
+  "7": {
+   "season": 1,
+   "dcol_px": 5.42039969546896e-05,
+   "dcol_err": 7.597441746031697e-05,
+   "drow_px": 3.9107015883963046e-05,
+   "drow_err": 5.887567465535564e-05,
+   "inflation": 1.0,
+   "centroid_rms_px": 0.00034106925415827716
+  },
+  "8": {
+   "season": 2,
+   "dcol_px": -8.703251541333742e-05,
+   "dcol_err": 0.00011499816974902998,
+   "drow_px": -0.00014702967053559717,
+   "drow_err": 0.00013571671455135792,
+   "inflation": 1.3559958579190259,
+   "centroid_rms_px": 0.00034220609436289576
+  },
+  "10": {
+   "season": 0,
+   "dcol_px": -9.173327225857911e-05,
+   "dcol_err": 0.00019246494683442713,
+   "drow_px": 9.118910829003843e-05,
+   "drow_err": 0.00021345155808120554,
+   "inflation": 2.3019057178494067,
+   "centroid_rms_px": 0.00045845137207082084
+  },
+  "11": {
+   "season": 1,
+   "dcol_px": 1.809518533466164e-05,
+   "dcol_err": 9.799230600236741e-05,
+   "drow_px": 0.00018079906770228468,
+   "drow_err": 0.00017733483483405347,
+   "inflation": 1.0607442730014585,
+   "centroid_rms_px": 0.0003433457732747402
+  },
+  "12": {
+   "season": 2,
+   "dcol_px": 6.668784828304933e-05,
+   "dcol_err": 9.448162866148586e-05,
+   "drow_px": 0.0002021609852640695,
+   "drow_err": 0.0004081621805447117,
+   "inflation": 1.2313852250836446,
+   "centroid_rms_px": 0.00039497060523396713
+  },
+  "14": {
+   "season": 0,
+   "dcol_px": -0.00015862520829493555,
+   "dcol_err": 0.00041703612012928436,
+   "drow_px": 1.5218456147776237e-06,
+   "drow_err": 0.000972668659152004,
+   "inflation": 2.071541734958696,
+   "centroid_rms_px": 0.0005521905117498206
+  },
+  "15": {
+   "season": 1,
+   "dcol_px": -0.0001606681242563468,
+   "dcol_err": 9.619109700325788e-05,
+   "drow_px": -1.8503060206978314e-05,
+   "drow_err": 9.460340730883095e-05,
+   "inflation": 1.2597292638445348,
+   "centroid_rms_px": 0.0003689193154085526
+  },
+  "16": {
+   "season": 2,
+   "dcol_px": 4.6735119585635894e-05,
+   "dcol_err": 0.00020861177717538187,
+   "drow_px": -4.800187822078577e-05,
+   "drow_err": 0.00023112921977138702,
+   "inflation": 1.49147192116258,
+   "centroid_rms_px": 0.00039048728618905023
+  }
+ },
+ "per_season": {
+  "0": {
+   "quarters": [
+    2,
+    6,
+    10,
+    14
+   ],
+   "dcol_px": -2.1752335160699485e-05,
+   "dcol_err": 0.00012095160283263227,
+   "drow_px": -1.8021832037371587e-05,
+   "drow_err": 0.00011561359971598265,
+   "shift_sig": 0.2379960995968909,
+   "sap_depth_used": 0.0009075,
+   "implied_offset_px": 0.031127292444923394,
+   "implied_offset_err_px": 0.13091773472517557,
+   "implied_offset_arcsec": 0.12388662393079511,
+   "implied_offset_err_arcsec": 0.5210525842061987,
+   "offset_3sigma_upper_arcsec": 1.6870443765493914
+  },
+  "1": {
+   "quarters": [
+    3,
+    7,
+    11,
+    15
+   ],
+   "dcol_px": -1.4950416934920837e-05,
+   "dcol_err": 4.858536913849438e-05,
+   "drow_px": 3.23488923021055e-05,
+   "drow_err": 4.540617285899802e-05,
+   "shift_sig": 0.7760477191461906,
+   "sap_depth_used": 0.0019165,
+   "implied_offset_px": 0.01859461493212473,
+   "implied_offset_err_px": 0.023992515340496057,
+   "implied_offset_arcsec": 0.07400656742985642,
+   "implied_offset_err_arcsec": 0.09549021105517431,
+   "offset_3sigma_upper_arcsec": 0.36047720059537935
+  },
+  "2": {
+   "quarters": [
+    4,
+    8,
+    12,
+    16
+   ],
+   "dcol_px": 1.8578043625330566e-05,
+   "dcol_err": 6.074570307461812e-05,
+   "drow_px": -0.00012680778860220412,
+   "drow_err": 9.597966430066513e-05,
+   "shift_sig": 1.3561299056709957,
+   "sap_depth_used": 0.0020721999999999997,
+   "implied_offset_px": 0.061848014954848166,
+   "implied_offset_err_px": 0.04602513084480594,
+   "implied_offset_arcsec": 0.2461550995202957,
+   "implied_offset_err_arcsec": 0.18318002076232764,
+   "offset_3sigma_upper_arcsec": 0.7956951618072785
+  },
+  "3": {
+   "quarters": [
+    1
+   ],
+   "dcol_px": -4.210528705852407e-05,
+   "dcol_err": 0.00037823473649756907,
+   "drow_px": 0.0004367789098532355,
+   "drow_err": 0.0002937587142526315,
+   "shift_sig": 1.4910242449842976,
+   "sap_depth_used": 0.0011392,
+   "implied_offset_px": 0.38518581631645343,
+   "implied_offset_err_px": 0.2586437880879734,
+   "implied_offset_arcsec": 1.5330395489394846,
+   "implied_offset_err_arcsec": 1.029402276590134,
+   "offset_3sigma_upper_arcsec": 4.621246378709888
+  }
+ }
+}

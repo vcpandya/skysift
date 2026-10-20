@@ -1,0 +1,94 @@
+#
+#   VizieR Astronomical Server vizier.cds.unistra.fr
+#    Date: 2026-10-20T07:16:12 [V7.6.1]
+#   In case of problem, please report to:	cds-question@unistra.fr
+#
+#
+#Coosys	J2000:	eq_FK5 J2000
+#INFO	service_protocol=ASU	  IVOID of the protocol through which the data was retrieved
+#INFO	request_date=2026-10-20T07:16:13	  Query execution date
+#INFO	request=https://vizier.cds.unistra.fr/viz-bin/asu-tsv?-source=IV%2F39%2Ftic82&-c=285.90782692874626+%2B40.94198844296448&-c.rs=30&-out.all=&-out.add=_r&-sort=_r	  Full request URL
+#INFO	contact=cds-question@unistra.fr	  Email or URL to contact publisher
+#INFO	server_software=VizieR/7.6.1	  Software version
+#INFO	publisher=CDS	  Data centre that produced the VOTable
+#INFO	MaxTuples=50000	
+#INFO	-c=285.907827+40.941988,rs=30.	
+#Constraint -sort=_r
+
+#RESOURCE=yCat_4039
+#Name: IV/39
+#Title: TESS Input Catalog version 8.2 (TIC v8.2) (Paegert+, 2021)
+#INFO	ivoid=ivo://cds.vizier/iv/39	    IVOID of underlying data collection
+#INFO	data_ivoid=ivo://cds.vizier/iv/39	    IVOID of underlying data collection
+#INFO	creator=Paegert M.	    First author or institution
+#INFO	cites=bibcode:2021arXiv210804778P	    Article or Data origin sources
+#INFO	journal=arXi	    Journal name
+#INFO	original_date=2021	    Year of the article publication
+#INFO	reference_url=https://cdsarc.cds.unistra.fr/viz-bin/cat/IV/39	    Dataset landing page
+#INFO	publication_date=2024-02-20	    Date of first publication in the data centre
+#INFO	rights_uri=https://cds.unistra.fr/vizier-org/licences_vizier.html	    Licence URI
+#Coosys	J2000_2000.000:	eq_FK5 J2000
+#Table	IV_39_tic82:
+#Name: IV/39/tic82
+#Title: Transiting Exoplanet Survey Satellite (TESS) Input Catalog - v8.2 (TIC-8.2), outpout (on a total of 1,727,987,580 sources)
+#Column	_r	(F6.3)	Distance from center (285.90782692875+40.94198844296)[FK5/J2000], at Epoch=J2000.0	[ucd=pos.angDistance]
+#Column	TIC	(I11)	[1/10005000540] TESS Input Catalog identifier ( ID ) (1)	[ucd=meta.id;meta.main]
+#Column	RAJ2000	(F15.11)	Right Ascension (J2000) (ra) (2)	[ucd=pos.eq.ra;meta.main]
+#Column	DEJ2000	(F15.11)	Declination (J2000) (dec) (2)	[ucd=pos.eq.dec;meta.main]
+#Column	TYC	(a12)	Tycho2 identifier	[ucd=meta.id]
+#Column	UCAC4	(a10)	UCAC4 identifier (UCAC)	[ucd=meta.id]
+#Column	2MASS	(a17)	2MASS identifier (HHMMSSss+DDMMSSs, J2000) (TWOMASS)	[ucd=meta.id]
+#Column	GAIA	(I19)	? GAIA DR2 identifier	[ucd=meta.id]
+#Column	S/G	(a8)	Object Type (stellarity: "STAR" or "EXTENDED") (objType)	[ucd=src.class.starGalaxy]
+#Column	Ref	(a11)	The source of the object in the TIC (typeSrc)	[ucd=meta.bib]
+#Column	pmRA	(F9.3)	[-4411/6766]? Proper motion in Right Ascension	[ucd=pos.pm;pos.eq.ra]
+#Column	e_pmRA	(F7.3)	[0/200]? Uncertainty in pmRA	[ucd=stat.error;pos.pm;pos.eq.ra]
+#Column	pmDE	(F9.3)	[-5818/10363]? Proper motion in Declination (pmDEC)	[ucd=pos.pm;pos.eq.dec]
+#Column	e_pmDE	(F6.3)	[0.01/99]? Uncertainty in pmDE (e_pmDEC)	[ucd=stat.error;pos.pm;pos.eq.dec]
+#Column	r_pm	(a6)	Source of the proper motion (PMflag) (4)	[ucd=meta.ref;pos.frame]
+#Column	Teff	(F7.1)	[2717/79742]? Effective temperature (11)	[ucd=phys.temperature.effective]
+#Column	s_Teff	(F7.1)	[0/27791]? Uncertainty in Teff ( e_Teff ) (12)	[ucd=stat.error;phys.temperature.effective]
+#Column	logg	(F7.4)	[3/6.6]? Log of the surface gravity (13)	[ucd=phys.gravity]
+#Column	s_logg	(F7.4)	[0.0004/4.9]? Uncertainty in logg ( e_logg ) (12)	[ucd=stat.error]
+#Column	[M/H]	(F7.4)	[-4.7/1.4]? Metallicity (MH) (14)	[ucd=phys.abund.Z]
+#Column	e_[M/H]	(F7.4)	[0.001/0.5]? Uncertainty in [M/H] (e_MH) (15)	[ucd=stat.error;phys.abund]
+#Column	Rad	(F8.3)	[0.05/2753]? Radius (rad) (16)	[ucd=phys.size.radius]
+#Column	s_Rad	(F6.3)	[0.001/13]? Uncertainty in Rad ( e_rad ) (12)	[ucd=stat.error]
+#Column	Mass	(F6.3)	[0.08/3.3]? Mass (17)	[ucd=phys.mass]
+#Column	s_Mass	(F6.3)	[0.01/1.7]? Uncertainty in Mass ( e_mass ) (12)	[ucd=stat.error;phys.mass]
+#Column	LClass	(a8)	Luminosity Class (lumclass) (18)	[ucd=src.class.luminosity]
+#Column	Dist	(F12.4)	[1/1567769]? Distance from Bailer-Jones+ (2018, I/347) (d)	[ucd=pos.distance;pos.heliocentric]
+#Column	s_Dist	(F12.4)	[0.0003/1565730]? Uncertainty in Dist (e_d) (12)	[ucd=stat.error]
+#Column	Ncont	(I5)	[6/15080]? Number of contaminants found within 10" of the star, used in the calculation of the contamination ratio (numcont)	[ucd=meta.number]
+#Column	Rcont	(F10.4)	[0/40556]? Contamination ratio (contratio) (20)	[ucd=stat.fit.omc]
+#Column	e_Mass	(F6.3)	[0/2]? Negative error for Mass (eneg_Mass)	[ucd=stat.error;phys.mass;stat.min]
+#Column	E_Mass	(F6.3)	[0.03/2]? Positive error for Mass (epos_Mass)	[ucd=stat.error;phys.mass;stat.max]
+#Column	e_Rad	(F6.3)	[0.008/3.1]? Negative error for Radius (eneg_Rad)	[ucd=stat.error;phys.size.radius;stat.min]
+#Column	E_Rad	(F6.3)	[0.01/24]? Positive error for Radius (epos_Rad)	[ucd=stat.error;phys.size.radius;stat.max]
+#Column	e_logg	(F7.4)	[0.02/1.7]? Negative error for Surface Gravity (eneg_logg)	[ucd=stat.error;phys.gravity;stat.min]
+#Column	E_logg	(F7.4)	[0.01/0.7]? Positive error for Surface Gravity (epos_logg)	[ucd=stat.error;phys.gravity;stat.max]
+#Column	e_Dist	(F10.4)	[0.0003/19098]? Negative Error for Distance (eneg_dist) (24)	[ucd=stat.error;pos.distance;stat.min]
+#Column	E_Dist	(F14.4)	[0.0003/155560992]? Positive Error for Distance (epos_dist) (24)	[ucd=stat.error;pos.distance;stat.max]
+#Column	r_Dist	(a6)	Source of distance (distflag) (4)	[ucd=meta.ref;pos.frame]
+#Column	e_Teff	(F6.1)	[7/6390]? Negative error for effective temperature (eneg_Teff)	[ucd=stat.error;phys.temperature.effective;stat.min]
+#Column	E_Teff	(F6.1)	[10/4809]? Positive error for effective temperature (epos_Teff)	[ucd=stat.error;phys.temperature.effective;stat.max]
+#Column	r_Teff	(a6)	Source of effective Temperature (Tefflag) (4)	[ucd=meta.ref;pos.frame]
+#Column	e_RAJ2000	(F13.6)	[4.6e-5/281160]? Error in RAdeg (e_RA)	[ucd=stat.error;pos.eq.ra]
+#Column	e_DEJ2000	(F13.6)	[4e-5/241060]? Error in DEdeg (e_Dec)	[ucd=stat.error;pos.eq.dec]
+#Column	RAOdeg	(F15.11)	? RA from original catalog (RA_orig)	[ucd=pos.eq.ra]
+#Column	DEOdeg	(F15.11)	? Dec from original catalog (Dec_orig)	[ucd=pos.eq.dec]
+#Column	e_RAOdeg	(F13.6)	[4.6e-5/281160]? RA error as given in original catalog (e_RA_orig)	[ucd=stat.error;pos.eq.ra]
+#Column	e_DEOdeg	(F13.6)	[4e-5/241060]? DEC error as given in original catalog (e_Dec_orig)	[ucd=stat.error;pos.eq.dec]
+#Column	Sloan	(a5)	Display the SDSS data for this object	[ucd=meta.ref.url]
+_r	TIC	RAJ2000	DEJ2000	TYC	UCAC4	2MASS	GAIA	S/G	Ref	pmRA	e_pmRA	pmDE	e_pmDE	r_pm	Teff	s_Teff	logg	s_logg	[M/H]	e_[M/H]	Rad	s_Rad	Mass	s_Mass	LClass	Dist	s_Dist	Ncont	Rcont	e_Mass	E_Mass	e_Rad	E_Rad	e_logg	E_logg	e_Dist	E_Dist	r_Dist	e_Teff	E_Teff	r_Teff	e_RAJ2000	e_DEJ2000	RAOdeg	DEOdeg	e_RAOdeg	e_DEOdeg	Sloan
+arcsec	 	deg	deg	 	 	 	 	 	 	mas/yr	mas/yr	mas/yr	mas/yr	 	K	K	[cm/s2]	[cm/s2]	[Sun]	[Sun]	Rsun	Rsun	Msun	Msun	 	pc	pc	 	 	Msun	Msun	Rsun	Rsun	[cm/s2]	[cm/s2]	pc	pc	 	K	K	 	mas	mas	deg	deg	mas	mas	
+------	-----------	---------------	---------------	------------	----------	-----------------	-------------------	--------	-----------	---------	-------	---------	------	------	-------	-------	-------	-------	-------	-------	--------	------	------	------	--------	------------	------------	-----	----------	------	------	------	------	-------	-------	----------	--------------	------	------	------	------	-------------	-------------	---------------	---------------	-------------	-------------	-----
+ 0.096	  120686465	285.90785792581	+40.94197587367	            	          	19033788+4056311 	2103792461826460288	STAR    	tmgaia2    	   -5.265	  0.096	    2.829	 0.103	gaia2 	 3633.0	  157.0	 4.7309	 0.0097	       	       	   0.507	 0.016	 0.505	 0.021	DWARF   	    297.9920	      4.4925	  337	    0.3320	      	      	      	      	       	       	          	              	bj2018	      	      	cdwrf 	     1.596827	     1.602003	285.90782791355	 40.94198805461	     0.040428	     0.045686	Sloan
+ 6.852	  120686466	285.90531286456	+40.94211798336	            	655-069304	19033726+4056316 	2103792427466721792	STAR    	tmgaia2    	  -16.476	  2.117	  -11.032	 2.117	hsoy  	       	       	       	       	       	       	        	      	      	      	DWARF   	            	            	     	          	      	      	      	      	       	       	          	              	      	      	      	      	    35.020339	    32.808682	285.90521895334	 40.94207048408	     0.227776	     0.265203	Sloan
+14.641	 1716418433	285.91076706928	+40.93858164839	            	          	                 	2103792393102276480	STAR    	gaia2      	   -4.121	  0.799	   -5.684	 0.916	gaia2 	       	       	       	       	       	       	        	      	      	      	        	   1823.8100	   1077.3200	     	          	      	      	      	      	       	       	  724.9700	     1429.6700	bj2018	      	      	      	    13.229739	    14.204848	285.91074358000	 40.93855717527	     0.323331	     0.366316	Sloan
+16.033	 1716418436	285.91174935001	+40.93866339795	            	          	                 	2103792393106983808	STAR    	gaia2      	    7.921	  0.835	  -21.718	 0.918	gaia2 	       	       	       	       	       	       	        	      	      	      	        	   1118.8500	    775.4060	     	          	      	      	      	      	       	       	  424.2020	     1126.6100	bj2018	      	      	      	    13.810728	    14.235718	285.91179449690	 40.93856988905	     0.338053	     0.397680	Sloan
+17.871	 1716418440	285.90125899588	+40.94181509154	            	          	                 	2103792427462012544	STAR    	gaia2      	   -3.672	  0.930	   -7.907	 1.029	gaia2 	       	       	       	       	       	       	        	      	      	      	        	   2543.7700	   1296.1900	     	          	      	      	      	      	       	       	  986.2900	     1606.0800	bj2018	      	      	      	    15.390613	    15.960736	285.90123806635	 40.94178104648	     0.382425	     0.413062	Sloan
+18.896	 1716418439	285.90129259120	+40.94020301122	            	          	                 	2103792427462012032	STAR    	gaia2      	   -2.079	  1.584	   -6.434	 1.854	gaia2 	       	       	       	       	       	       	        	      	      	      	        	   2375.0600	   1306.6500	     	          	      	      	      	      	       	       	 1002.5200	     1610.7700	bj2018	      	      	      	    26.222638	    28.747821	285.90128073863	 40.94017531018	     0.649593	     0.748117	Sloan
+22.283	 1716418442	285.91109558290	+40.94766452127	            	          	                 	2103792461821756544	STAR    	gaia2      	    1.124	  0.734	   -1.318	 0.938	gaia2 	 4182.0	  226.0	       	       	       	       	        	      	      	      	DWARF   	    844.1330	    533.5610	     	          	      	      	      	      	       	       	  288.3850	      778.7370	bj2018	      	      	dered 	    12.148077	    14.540292	285.91110199254	 40.94765884749	     0.347123	     0.414030	Sloan
+28.345	 1716418435	285.91806383611	+40.94347132371	            	          	                 	2103792393102280576	STAR    	gaia2      	   -3.225	  0.966	    7.055	 1.164	gaia2 	       	       	       	       	       	       	        	      	      	      	        	    999.2820	    792.4400	     	          	      	      	      	      	       	       	  402.7710	     1182.1100	bj2018	      	      	      	    15.986585	    18.054213	285.91804545225	 40.94350169837	     0.441624	     0.471875	Sloan
+

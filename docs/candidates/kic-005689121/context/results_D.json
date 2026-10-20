@@ -1,0 +1,415 @@
+{
+ "inputs": {
+  "G": 16.282413,
+  "BP_RP": 2.1940956,
+  "parallax_mas": 3.4064818259534495,
+  "parallax_err_mas": 0.03973076,
+  "zero_point_L21_mas": -0.033,
+  "parallax_corrected_mas": 3.4395,
+  "parallax_err_used_mas": 0.0425,
+  "Ks_2MASS": [
+   12.969,
+   0.028
+  ],
+  "P_d": 13.769508917830883,
+  "box_depth_ppm": 1983,
+  "k": 0.046,
+  "b_fit": 0.86,
+  "duration_h": 2.0
+ },
+ "distance_pc": {
+  "median": 290.7,
+  "minus": 3.5,
+  "plus": 3.6
+ },
+ "distance_pc_simple": 290.7,
+ "abs_G_mag_noext": 8.965,
+ "abs_Ks_mag_noext": 5.651,
+ "mamajek_at_observed_colour": {
+  "Teff": 3581.543,
+  "R": 0.459,
+  "M": 0.451,
+  "M_G": 9.179,
+  "M_Ks": 5.897
+ },
+ "mamajek_at_2.10": {
+  "Teff": 3650.0,
+  "R": 0.496,
+  "M": 0.492,
+  "M_G": 8.86,
+  "M_Ks": 5.668
+ },
+ "mamajek_at_2.20": {
+  "Teff": 3578.0,
+  "R": 0.457,
+  "M": 0.449,
+  "M_G": 9.197,
+  "M_Ks": 5.911
+ },
+ "mamajek_at_2.30": {
+  "Teff": 3520.625,
+  "R": 0.435,
+  "M": 0.423,
+  "M_G": 9.456,
+  "M_Ks": 6.067
+ },
+ "mamajek_at_2.00_if_E0.2": {
+  "Teff": 3742.5,
+  "R": 0.533,
+  "M": 0.53,
+  "M_G": 8.535,
+  "M_Ks": 5.43
+ },
+ "mamajek_rows_used": [
+  {
+   "SpT": "K8V",
+   "BP_RP": 1.73,
+   "Teff": 3990.0,
+   "R": 0.615,
+   "M": 0.62,
+   "M_G": 7.74,
+   "M_Ks": 4.95
+  },
+  {
+   "SpT": "K9V",
+   "BP_RP": 1.79,
+   "Teff": 3930.0,
+   "R": 0.608,
+   "M": 0.59,
+   "M_G": 8.03,
+   "M_Ks": 5.01
+  },
+  {
+   "SpT": "M0V",
+   "BP_RP": 1.84,
+   "Teff": 3850.0,
+   "R": 0.588,
+   "M": 0.57,
+   "M_G": 8.16,
+   "M_Ks": 5.15
+  },
+  {
+   "SpT": "M0.5V",
+   "BP_RP": 1.97,
+   "Teff": 3770.0,
+   "R": 0.544,
+   "M": 0.54,
+   "M_G": 8.44,
+   "M_Ks": 5.36
+  },
+  {
+   "SpT": "M1V",
+   "BP_RP": 2.09,
+   "Teff": 3660.0,
+   "R": 0.501,
+   "M": 0.5,
+   "M_G": 8.82,
+   "M_Ks": 5.64
+  },
+  {
+   "SpT": "M1.5V",
+   "BP_RP": 2.13,
+   "Teff": 3620.0,
+   "R": 0.482,
+   "M": 0.47,
+   "M_G": 8.98,
+   "M_Ks": 5.75
+  },
+  {
+   "SpT": "M2V",
+   "BP_RP": 2.23,
+   "Teff": 3560.0,
+   "R": 0.446,
+   "M": 0.44,
+   "M_G": 9.29,
+   "M_Ks": 5.98
+  },
+  {
+   "SpT": "M2.5V",
+   "BP_RP": 2.39,
+   "Teff": 3470.0,
+   "R": 0.421,
+   "M": 0.4,
+   "M_G": 9.67,
+   "M_Ks": 6.18
+  },
+  {
+   "SpT": "M3V",
+   "BP_RP": 2.5,
+   "Teff": 3430.0,
+   "R": 0.361,
+   "M": 0.37,
+   "M_G": 10.05,
+   "M_Ks": 6.55
+  }
+ ],
+ "mann_MKs_check": {
+  "R_Mann2015_Rsun": {
+   "median": 0.504,
+   "minus": 0.016,
+   "plus": 0.016
+  },
+  "M_Mann2019_Msun": {
+   "median": 0.502,
+   "minus": 0.013,
+   "plus": 0.013
+  },
+  "M_Ks": {
+   "median": 5.617,
+   "minus": 0.044,
+   "plus": 0.044
+  }
+ },
+ "tic_v82": {
+  "Teff": "3633",
+  "Teff_e": "157",
+  "R": "0.50748",
+  "R_e": "0.0162773",
+  "M": "0.505399",
+  "M_e": "0.0211521",
+  "dist_pc": "297.992",
+  "logg": "4.73086",
+  "source": "ExoFOP target.php?id=120686465&json (None)"
+ },
+ "gaia_dr3_apsis": {
+  "teff_gspphot": "3752.7253",
+  "radius_gspphot": "0.5553",
+  "ebpminrp_gspphot": "0.2729",
+  "ag_gspphot": "0.4708",
+  "radius_flame": "0.5420065",
+  "mass_flame": "0.54462016",
+  "teff_msc1": "3823.9683",
+  "mh_msc": "-0.17627837",
+  "mh_gspphot": "-0.1537",
+  "spectraltype_esphs": "M"
+ },
+ "extinction": {
+  "SFD98_EBV_total_los": 0.1017,
+  "SF11_EBV_total_los": 0.0875,
+  "b_deg": 15.251301674042766,
+  "SF11_scaled_to_distance_h125pc": 0.04,
+  "note": "Bayestar19 (argonaut.skymaps.info) timed out from this machine; values from IRSA DUST (2-D, full line of sight)."
+ },
+ "planet_baseline_observed_colour_pm0.10": {
+  "label": "Mamajek at BP-RP 2.19 +- 0.10 (E(BP-RP) <= 0.1 assumed)",
+  "Teff_K": {
+   "median": 3582.0,
+   "minus": 57.0,
+   "plus": 74.0
+  },
+  "R_star_Rsun": {
+   "median": 0.459,
+   "minus": 0.023,
+   "plus": 0.04
+  },
+  "M_star_Msun": {
+   "median": 0.451,
+   "minus": 0.027,
+   "plus": 0.046
+  },
+  "rho_star_gcc": {
+   "median": 6.58,
+   "minus": 0.94,
+   "plus": 0.64
+  },
+  "a_AU": {
+   "median": 0.0862,
+   "minus": 0.0017,
+   "plus": 0.0028
+  },
+  "a_over_Rstar": {
+   "median": 40.4,
+   "minus": 2.0,
+   "plus": 1.3
+  },
+  "Rp_from_k_Rearth": {
+   "median": 2.3,
+   "minus": 0.11,
+   "plus": 0.2
+  },
+  "Rp_from_boxdepth_Rearth": {
+   "median": 2.23,
+   "minus": 0.11,
+   "plus": 0.19
+  },
+  "Teq_K_A0.3_full_redistribution": {
+   "median": 364.0,
+   "minus": 11.0,
+   "plus": 17.0
+  },
+  "transit_probability_Rstar_over_a": {
+   "median": 0.0248,
+   "minus": 0.0007,
+   "plus": 0.0013
+  },
+  "T14_central_h": {
+   "median": 2.72,
+   "minus": 0.08,
+   "plus": 0.14
+  },
+  "b_if_obs_dur_is_T14": {
+   "median": 0.72,
+   "minus": 0.13,
+   "plus": 0.09
+  },
+  "b_if_obs_dur_is_mean_T14_T23": {
+   "median": 0.65,
+   "minus": 0.14,
+   "plus": 0.1
+  },
+  "fraction_b_mid_undefined": 0.0,
+  "T14_for_fitted_b_h": {
+   "median": 1.55,
+   "minus": 0.05,
+   "plus": 0.08
+  }
+ },
+ "planet_alt_dereddened_minus0.2_pm0.10": {
+  "label": "Mamajek at BP-RP 1.99 +- 0.10 (if E(BP-RP) ~ 0.2)",
+  "Teff_K": {
+   "median": 3748.0,
+   "minus": 92.0,
+   "plus": 68.0
+  },
+  "R_star_Rsun": {
+   "median": 0.535,
+   "minus": 0.036,
+   "plus": 0.034
+  },
+  "M_star_Msun": {
+   "median": 0.532,
+   "minus": 0.035,
+   "plus": 0.025
+  },
+  "rho_star_gcc": {
+   "median": 4.89,
+   "minus": 0.63,
+   "plus": 0.75
+  },
+  "a_AU": {
+   "median": 0.0911,
+   "minus": 0.002,
+   "plus": 0.0014
+  },
+  "a_over_Rstar": {
+   "median": 36.6,
+   "minus": 1.6,
+   "plus": 1.8
+  },
+  "Rp_from_k_Rearth": {
+   "median": 2.69,
+   "minus": 0.18,
+   "plus": 0.17
+  },
+  "Rp_from_boxdepth_Rearth": {
+   "median": 2.6,
+   "minus": 0.18,
+   "plus": 0.16
+  },
+  "Teq_K_A0.3_full_redistribution": {
+   "median": 401.0,
+   "minus": 19.0,
+   "plus": 17.0
+  },
+  "transit_probability_Rstar_over_a": {
+   "median": 0.0273,
+   "minus": 0.0013,
+   "plus": 0.0013
+  },
+  "T14_central_h": {
+   "median": 3.01,
+   "minus": 0.14,
+   "plus": 0.14
+  },
+  "b_if_obs_dur_is_T14": {
+   "median": 0.78,
+   "minus": 0.1,
+   "plus": 0.07
+  },
+  "b_if_obs_dur_is_mean_T14_T23": {
+   "median": 0.72,
+   "minus": 0.1,
+   "plus": 0.08
+  },
+  "fraction_b_mid_undefined": 0.0,
+  "T14_for_fitted_b_h": {
+   "median": 1.71,
+   "minus": 0.08,
+   "plus": 0.08
+  }
+ },
+ "planet_mann_MKs": {
+  "label": "Mann M_Ks radius and mass, Teff 3582 +- 100",
+  "Teff_K": {
+   "median": 3582.0,
+   "minus": 100.0,
+   "plus": 99.0
+  },
+  "R_star_Rsun": {
+   "median": 0.504,
+   "minus": 0.016,
+   "plus": 0.016
+  },
+  "M_star_Msun": {
+   "median": 0.502,
+   "minus": 0.013,
+   "plus": 0.013
+  },
+  "rho_star_gcc": {
+   "median": 5.52,
+   "minus": 0.49,
+   "plus": 0.55
+  },
+  "a_AU": {
+   "median": 0.0894,
+   "minus": 0.0007,
+   "plus": 0.0007
+  },
+  "a_over_Rstar": {
+   "median": 38.1,
+   "minus": 1.2,
+   "plus": 1.2
+  },
+  "Rp_from_k_Rearth": {
+   "median": 2.53,
+   "minus": 0.08,
+   "plus": 0.08
+  },
+  "Rp_from_boxdepth_Rearth": {
+   "median": 2.45,
+   "minus": 0.08,
+   "plus": 0.08
+  },
+  "Teq_K_A0.3_full_redistribution": {
+   "median": 375.0,
+   "minus": 12.0,
+   "plus": 12.0
+  },
+  "transit_probability_Rstar_over_a": {
+   "median": 0.0262,
+   "minus": 0.0008,
+   "plus": 0.0008
+  },
+  "T14_central_h": {
+   "median": 2.89,
+   "minus": 0.09,
+   "plus": 0.09
+  },
+  "b_if_obs_dur_is_T14": {
+   "median": 0.75,
+   "minus": 0.1,
+   "plus": 0.08
+  },
+  "b_if_obs_dur_is_mean_T14_T23": {
+   "median": 0.69,
+   "minus": 0.11,
+   "plus": 0.08
+  },
+  "fraction_b_mid_undefined": 0.0,
+  "T14_for_fitted_b_h": {
+   "median": 1.64,
+   "minus": 0.05,
+   "plus": 0.05
+  }
+ }
+}

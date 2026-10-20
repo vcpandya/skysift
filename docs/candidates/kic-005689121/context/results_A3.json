@@ -1,0 +1,77 @@
+[
+ {
+  "source_id": "2103792427466721792",
+  "sep_arcsec": 7.1,
+  "G": 15.477595,
+  "kic": 5689116,
+  "kbonus_quarters_with_flux": [
+   1,
+   2,
+   3,
+   4,
+   6,
+   7,
+   8,
+   10,
+   11,
+   12,
+   14,
+   15,
+   16
+  ],
+  "kbonus_psf": {
+   "label": "KBonus PSF kic-005689116",
+   "depth_ppm": 11.5,
+   "formal_err_ppm": 56.3,
+   "control_scatter_ppm": 40.4,
+   "control_mean_ppm": -1.8,
+   "inflation": 1.086,
+   "err_ppm": 61.1,
+   "snr": 0.19,
+   "n_in": 284,
+   "n_out": 1114,
+   "n_events_with_data": 74,
+   "n_control_phases": 100,
+   "rms_ppm_per_cadence": 657.6
+  }
+ },
+ {
+  "source_id": "2103792393102276480",
+  "sep_arcsec": 14.68,
+  "G": 19.788946,
+  "kic": null
+ },
+ {
+  "source_id": "2103792393108242176",
+  "sep_arcsec": 16.37,
+  "G": 19.13066,
+  "kic": 5689129,
+  "kepler_llc_files": 0
+ },
+ {
+  "source_id": "2103792427462012544",
+  "sep_arcsec": 17.94,
+  "G": 19.962969,
+  "kic": 5689108,
+  "kepler_llc_files": 0
+ },
+ {
+  "source_id": "2103792427462012032",
+  "sep_arcsec": 18.96,
+  "G": 20.577702,
+  "kic": null
+ },
+ {
+  "source_id": "2103792461821756544",
+  "sep_arcsec": 22.27,
+  "G": 19.790209,
+  "kic": 5689127,
+  "kepler_llc_files": 0
+ },
+ {
+  "source_id": "2103792393102280576",
+  "sep_arcsec": 28.32,
+  "G": 20.193298,
+  "kic": null
+ }
+]

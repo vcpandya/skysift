@@ -1,0 +1,502 @@
+C_planethunt_site 420060 
+C_planethunt_github_release 192630 
+C_planethunt_github_readme 9580 
+C_simbad_refs_candidate_retry 0 simbad https://simbad.cds.unistra.fr/simbad/sim-tap/sync -> HTTP 400 b''
+C_simbad_refs_neighbour_retry 0 simbad https://simbad.cds.unistra.fr/simbad/sim-tap/sync -> HTTP 400 b''
+== a3
+{"label": "KBonus PSF kic-005689116", "depth_ppm": 11.5, "formal_err_ppm": 56.3, "control_scatter_ppm": 40.4, "control_mean_ppm": -1.8, "inflation": 1.086, "err_ppm": 61.1, "snr": 0.19, "n_in": 284, "n_out": 1114, "n_events_with_data": 74, "n_control_phases": 100, "rms_ppm_per_cadence": 657.6}
+{"source_id": "2103792427466721792", "sep_arcsec": 7.1, "G": 15.477595, "kic": 5689116, "kbonus_quarters_with_flux": [1, 2, 3, 4, 6, 7, 8, 10, 11, 12, 14, 15, 16]} 11.5
+{"source_id": "2103792393102276480", "sep_arcsec": 14.68, "G": 19.788946, "kic": null} None
+{"source_id": "2103792393108242176", "sep_arcsec": 16.37, "G": 19.13066, "kic": 5689129, "kepler_llc_files": 0} None
+{"source_id": "2103792427462012544", "sep_arcsec": 17.94, "G": 19.962969, "kic": 5689108, "kepler_llc_files": 0} None
+{"source_id": "2103792427462012032", "sep_arcsec": 18.96, "G": 20.577702, "kic": null} None
+{"source_id": "2103792461821756544", "sep_arcsec": 22.27, "G": 19.790209, "kic": 5689127, "kepler_llc_files": 0} None
+{"source_id": "2103792393102280576", "sep_arcsec": 28.32, "G": 20.193298, "kic": null} None
+== a4
+0 {'quarters': [2, 6, 10, 14], 'dcol_px': np.float64(-2e-05), 'dcol_err': np.float64(0.00012), 'drow_px': np.float64(-2e-05), 'drow_err': np.float64(0.00012), 'shift_sig': 0.238, 'sap_depth_used': 0.00091, 'implied_offset_px': np.float64(0.03113), 'implied_offset_err_px': np.float64(0.13092), 'implied_offset_arcsec': np.float64(0.12389), 'implied_offset_err_arcsec': np.float64(0.52105), 'offset_3sigma_upper_arcsec': np.float64(1.68704)}
+1 {'quarters': [3, 7, 11, 15], 'dcol_px': np.float64(-1e-05), 'dcol_err': np.float64(5e-05), 'drow_px': np.float64(3e-05), 'drow_err': np.float64(5e-05), 'shift_sig': 0.77605, 'sap_depth_used': 0.00192, 'implied_offset_px': np.float64(0.01859), 'implied_offset_err_px': np.float64(0.02399), 'implied_offset_arcsec': np.float64(0.07401), 'implied_offset_err_arcsec': np.float64(0.09549), 'offset_3sigma_upper_arcsec': np.float64(0.36048)}
+2 {'quarters': [4, 8, 12, 16], 'dcol_px': np.float64(2e-05), 'dcol_err': np.float64(6e-05), 'drow_px': np.float64(-0.00013), 'drow_err': np.float64(0.0001), 'shift_sig': 1.35613, 'sap_depth_used': 0.00207, 'implied_offset_px': np.float64(0.06185), 'implied_offset_err_px': np.float64(0.04603), 'implied_offset_arcsec': np.float64(0.24616), 'implied_offset_err_arcsec': np.float64(0.18318), 'offset_3sigma_upper_arcsec': np.float64(0.7957)}
+3 {'quarters': [1], 'dcol_px': np.float64(-4e-05), 'dcol_err': np.float64(0.00038), 'drow_px': np.float64(0.00044), 'drow_err': np.float64(0.00029), 'shift_sig': 1.49102, 'sap_depth_used': 0.00114, 'implied_offset_px': np.float64(0.38519), 'implied_offset_err_px': np.float64(0.25864), 'implied_offset_arcsec': np.float64(1.53304), 'implied_offset_err_arcsec': np.float64(1.0294), 'offset_3sigma_upper_arcsec': np.float64(4.62125)}
+== b
+2103792427466721792 7.1 15.478 -0.805 None False brighter than the candidate; tested directly in check A (own Kepler light curve)
+2103792393102276480 14.68 19.789 3.507 0.0501 True co-moving? no
+2103792393108242176 16.37 19.131 2.848 0.0273 True co-moving? no
+2103792427462012544 17.94 19.963 3.681 0.0588 True co-moving? no
+2103792427462012032 18.96 20.578 4.295 0.1036 True co-moving? no
+2103792461821756544 22.27 19.79 3.508 0.0502 True co-moving? no
+2103792393102280576 28.32 20.193 3.911 0.0727 True co-moving? no
+{'vari_summary_cone30': 0, 'vari_classifier_result_cone30': 0, 'nss_two_body_orbit_cone30': 0, 'vari_eclipsing_binary_cone30': 0, 'nss_non_linear_spectro_cone30': 0, 'nss_acceleration_astro_cone30': 0, 'vari_summary_candidate': 0, 'vari_classifier_result_candidate': 0, 'nss_two_body_orbit_candidate': 0, 'vari_eclipsing_binary_candidate': 0}
+{'source_id': '2103792461826460288', 'parallax': '3.4064818259534495', 'parallax_error': '0.03973076', 'ruwe': '0.98412067', 'radial_velocity': '', 'radial_velocity_error': '', 'phot_variable_flag': 'NOT_AVAILABLE', 'non_single_star': '0', 'ipd_frac_multi_peak': '0', 'ipd_gof_harmonic_amplitude': '0.01988767', 'astrometric_excess_noise': '0.0', 'phot_bp_rp_excess_factor': '1.3643997', 'has_rvs': 'false', 'pmra': '-5.40189635732881', 'pmdec': '2.8478749358326523'}
+== d
+{
+ "inputs": {
+  "G": 16.282413,
+  "BP_RP": 2.1940956,
+  "parallax_mas": 3.4064818259534495,
+  "parallax_err_mas": 0.03973076,
+  "zero_point_L21_mas": -0.033,
+  "parallax_corrected_mas": 3.4395,
+  "parallax_err_used_mas": 0.0425,
+  "Ks_2MASS": [
+   12.969,
+   0.028
+  ],
+  "P_d": 13.769508917830883,
+  "box_depth_ppm": 1983,
+  "k": 0.046,
+  "b_fit": 0.86,
+  "duration_h": 2.0
+ },
+ "distance_pc": {
+  "median": 290.7,
+  "minus": 3.5,
+  "plus": 3.6
+ },
+ "distance_pc_simple": 290.7,
+ "abs_G_mag_noext": 8.965,
+ "abs_Ks_mag_noext": 5.651,
+ "mamajek_at_observed_colour": {
+  "Teff": 3581.543,
+  "R": 0.459,
+  "M": 0.451,
+  "M_G": 9.179,
+  "M_Ks": 5.897
+ },
+ "mamajek_at_2.10": {
+  "Teff": 3650.0,
+  "R": 0.496,
+  "M": 0.492,
+  "M_G": 8.86,
+  "M_Ks": 5.668
+ },
+ "mamajek_at_2.20": {
+  "Teff": 3578.0,
+  "R": 0.457,
+  "M": 0.449,
+  "M_G": 9.197,
+  "M_Ks": 5.911
+ },
+ "mamajek_at_2.30": {
+  "Teff": 3520.625,
+  "R": 0.435,
+  "M": 0.423,
+  "M_G": 9.456,
+  "M_Ks": 6.067
+ },
+ "mamajek_at_2.00_if_E0.2": {
+  "Teff": 3742.5,
+  "R": 0.533,
+  "M": 0.53,
+  "M_G": 8.535,
+  "M_Ks": 5.43
+ },
+ "mann_MKs_check": {
+  "R_Mann2015_Rsun": {
+   "median": 0.504,
+   "minus": 0.016,
+   "plus": 0.016
+  },
+  "M_Mann2019_Msun": {
+   "median": 0.502,
+   "minus": 0.013,
+   "plus": 0.013
+  },
+  "M_Ks": {
+   "median": 5.617,
+   "minus": 0.044,
+   "plus": 0.044
+  }
+ },
+ "tic_v82": {
+  "Teff": "3633",
+  "Teff_e": "157",
+  "R": "0.50748",
+  "R_e": "0.0162773",
+  "M": "0.505399",
+  "M_e": "0.0211521",
+  "dist_pc": "297.992",
+  "logg": "4.73086",
+  "source": "ExoFOP target.php?id=120686465&json (None)"
+ },
+ "gaia_dr3_apsis": {
+  "teff_gspphot": "3752.7253",
+  "radius_gspphot": "0.5553",
+  "ebpminrp_gspphot": "0.2729",
+  "ag_gspphot": "0.4708",
+  "radius_flame": "0.5420065",
+  "mass_flame": "0.54462016",
+  "teff_msc1": "3823.9683",
+  "mh_msc": "-0.17627837",
+  "mh_gspphot": "-0.1537",
+  "spectraltype_esphs": "M"
+ },
+ "extinction": {
+  "SFD98_EBV_total_los": 0.1017,
+  "SF11_EBV_total_los": 0.0875,
+  "b_deg": 15.251301674042766,
+  "SF11_scaled_to_distance_h125pc": 0.04,
+  "note": "Bayestar19 (argonaut.skymaps.info) timed out from this machine; values from IRSA DUST (2-D, full line of sight)."
+ },
+ "planet_baseline_observed_colour_pm0.10": {
+  "label": "Mamajek at BP-RP 2.19 +- 0.10 (E(BP-RP) <= 0.1 assumed)",
+  "Teff_K": {
+   "median": 3582.0,
+   "minus": 57.0,
+   "plus": 74.0
+  },
+  "R_star_Rsun": {
+   "median": 0.459,
+   "minus": 0.023,
+   "plus": 0.04
+  },
+  "M_star_Msun": {
+   "median": 0.451,
+   "minus": 0.027,
+   "plus": 0.046
+  },
+  "rho_star_gcc": {
+   "median": 6.58,
+   "minus": 0.94,
+   "plus": 0.64
+  },
+  "a_AU": {
+   "median": 0.0862,
+   "minus": 0.0017,
+   "plus": 0.0028
+  },
+  "a_over_Rstar": {
+   "median": 40.4,
+   "minus": 2.0,
+   "plus": 1.3
+  },
+  "Rp_from_k_Rearth": {
+   "median": 2.3,
+   "minus": 0.11,
+   "plus": 0.2
+  },
+  "Rp_from_boxdepth_Rearth": {
+   "median": 2.23,
+   "minus": 0.11,
+   "plus": 0.19
+  },
+  "Teq_K_A0.3_full_redistribution": {
+   "median": 364.0,
+   "minus": 11.0,
+   "plus": 17.0
+  },
+  "transit_probability_Rstar_over_a": {
+   "median": 0.0248,
+   "minus": 0.0007,
+   "plus": 0.0013
+  },
+  "T14_central_h": {
+   "median": 2.72,
+   "minus": 0.08,
+   "plus": 0.14
+  },
+  "b_if_obs_dur_is_T14": {
+   "median": 0.72,
+   "minus": 0.13,
+   "plus": 0.09
+  },
+  "b_if_obs_dur_is_mean_T14_T23": {
+   "median": 0.65,
+   "minus": 0.14,
+   "plus": 0.1
+  },
+  "fraction_b_mid_undefined": 0.0,
+  "T14_for_fitted_b_h": {
+   "median": 1.55,
+   "minus": 0.05,
+   "plus": 0.08
+  }
+ },
+ "planet_alt_dereddened_minus0.2_pm0.10": {
+  "label": "Mamajek at BP-RP 1.99 +- 0.10 (if E(BP-RP) ~ 0.2)",
+  "Teff_K": {
+   "median": 3748.0,
+   "minus": 92.0,
+   "plus": 68.0
+  },
+  "R_star_Rsun": {
+   "median": 0.535,
+   "minus": 0.036,
+   "plus": 0.034
+  },
+  "M_star_Msun": {
+   "median": 0.532,
+   "minus": 0.035,
+   "plus": 0.025
+  },
+  "rho_star_gcc": {
+   "median": 4.89,
+   "minus": 0.63,
+   "plus": 0.75
+  },
+  "a_AU": {
+   "median": 0.0911,
+   "minus": 0.002,
+   "plus": 0.0014
+  },
+  "a_over_Rstar": {
+   "median": 36.6,
+   "minus": 1.6,
+   "plus": 1.8
+  },
+  "Rp_from_k_Rearth": {
+   "median": 2.69,
+   "minus": 0.18,
+   "plus": 0.17
+  },
+  "Rp_from_boxdepth_Rearth": {
+   "median": 2.6,
+   "minus": 0.18,
+   "plus": 0.16
+  },
+  "Teq_K_A0.3_full_redistribution": {
+   "median": 401.0,
+   "minus": 19.0,
+   "plus": 17.0
+  },
+  "transit_probability_Rstar_over_a": {
+   "median": 0.0273,
+   "minus": 0.0013,
+   "plus": 0.0013
+  },
+  "T14_central_h": {
+   "median": 3.01,
+   "minus": 0.14,
+   "plus": 0.14
+  },
+  "b_if_obs_dur_is_T14": {
+   "median": 0.78,
+   "minus": 0.1,
+   "plus": 0.07
+  },
+  "b_if_obs_dur_is_mean_T14_T23": {
+   "median": 0.72,
+   "minus": 0.1,
+   "plus": 0.08
+  },
+  "fraction_b_mid_undefined": 0.0,
+  "T14_for_fitted_b_h": {
+   "median": 1.71,
+   "minus": 0.08,
+   "plus": 0.08
+  }
+ },
+ "planet_mann_MKs": {
+  "label": "Mann M_Ks radius and mass, Teff 3582 +- 100",
+  "Teff_K": {
+   "median": 3582.0,
+   "minus": 100.0,
+   "plus": 99.0
+  },
+  "R_star_Rsun": {
+   "median": 0.504,
+   "minus": 0.016,
+   "plus": 0.016
+  },
+  "M_star_Msun": {
+   "median": 0.502,
+   "minus": 0.013,
+   "plus": 0.013
+  },
+  "rho_star_gcc": {
+   "median": 5.52,
+   "minus": 0.49,
+   "plus": 0.55
+  },
+  "a_AU": {
+   "median": 0.0894,
+   "minus": 0.0007,
+   "plus": 0.0007
+  },
+  "a_over_Rstar": {
+   "median": 38.1,
+   "minus": 1.2,
+   "plus": 1.2
+  },
+  "Rp_from_k_Rearth": {
+   "median": 2.53,
+   "minus": 0.08,
+   "plus": 0.08
+  },
+  "Rp_from_boxdepth_Rearth": {
+   "median": 2.45,
+   "minus": 0.08,
+   "plus": 0.08
+  },
+  "Teq_K_A0.3_full_redistribution": {
+   "median": 375.0,
+   "minus": 12.0,
+   "plus": 12.0
+  },
+  "transit_probability_Rstar_over_a": {
+   "median": 0.0262,
+   "minus": 0.0008,
+   "plus": 0.0008
+  },
+  "T14_central_h": {
+   "median": 2.89,
+   "minus": 0.09,
+   "plus": 0.09
+  },
+  "b_if_obs_dur_is_T14": {
+   "median": 0.75,
+   "minus": 0.1,
+   "plus": 0.08
+  },
+  "b_if_obs_dur_is_mean_T14_T23": {
+   "median": 0.69,
+   "minus": 0.11,
+   "plus": 0.08
+  },
+  "fraction_b_mid_undefined": 0.0,
+  "T14_for_fitted_b_h": {
+   "median": 1.64,
+   "minus": 0.05,
+   "plus": 0.05
+  }
+ }
+}
+== e
+{
+ "neighbour_KIC5689116_pdcsap_depth_ppm": [
+  110.4,
+  32.5
+ ],
+ "neighbour_KIC5689116_sap_depth_ppm": [
+  127.1,
+  41.8
+ ],
+ "neighbour_expected_leak_case_ppm_max": 619.7,
+ "neighbour_expected_on_target_case_ppm_min": 1983,
+ "candidate_psf_depth_ppm": [
+  2136.1,
+  157.8
+ ],
+ "candidate_sap_depth_ppm": [
+  1595.3,
+  127.2
+ ],
+ "candidate_sap_over_psf": [
+  0.747,
+  0.081
+ ],
+ "gaia_neighbours_30arcsec": 7,
+ "gaia_neighbours_able_to_mimic_by_magnitude": 6,
+ "stellar_baseline": {
+  "Teff_K": {
+   "median": 3582.0,
+   "minus": 57.0,
+   "plus": 74.0
+  },
+  "R_star_Rsun": {
+   "median": 0.459,
+   "minus": 0.023,
+   "plus": 0.04
+  },
+  "M_star_Msun": {
+   "median": 0.451,
+   "minus": 0.027,
+   "plus": 0.046
+  }
+ },
+ "distance_pc": {
+  "median": 290.7,
+  "minus": 3.5,
+  "plus": 3.6
+ },
+ "planet_baseline": {
+  "Rp_from_k_Rearth": {
+   "median": 2.3,
+   "minus": 0.11,
+   "plus": 0.2
+  },
+  "Rp_from_boxdepth_Rearth": {
+   "median": 2.23,
+   "minus": 0.11,
+   "plus": 0.19
+  },
+  "a_AU": {
+   "median": 0.0862,
+   "minus": 0.0017,
+   "plus": 0.0028
+  },
+  "a_over_Rstar": {
+   "median": 40.4,
+   "minus": 2.0,
+   "plus": 1.3
+  },
+  "Teq_K_A0.3_full_redistribution": {
+   "median": 364.0,
+   "minus": 11.0,
+   "plus": 17.0
+  },
+  "transit_probability_Rstar_over_a": {
+   "median": 0.0248,
+   "minus": 0.0007,
+   "plus": 0.0013
+  },
+  "T14_central_h": {
+   "median": 2.72,
+   "minus": 0.08,
+   "plus": 0.14
+  },
+  "b_if_obs_dur_is_T14": {
+   "median": 0.72,
+   "minus": 0.13,
+   "plus": 0.09
+  },
+  "b_if_obs_dur_is_mean_T14_T23": {
+   "median": 0.65,
+   "minus": 0.14,
+   "plus": 0.1
+  },
+  "T14_for_fitted_b_h": {
+   "median": 1.55,
+   "minus": 0.05,
+   "plus": 0.08
+  }
+ },
+ "archives_any_match": false
+}
+{
+ "C_nea_cumulative_box": 0,
+ "C_nea_cumulative_kepid": 0,
+ "C_nea_dr25tce_box": 0,
+ "C_nea_dr25tce_kepid": 0,
+ "C_nea_dr24tce_kepid": 0,
+ "C_nea_toi_box": 0,
+ "C_nea_dr25stellar_kepid": null,
+ "C_nea_keplerstellar_kepid": 5,
+ "C_vizier_keplerEB_kirk2016": 0,
+ "C_vizier_KIC": 5,
+ "C_vizier_TICv82": 8,
+ "C_vizier_planethunters_schwamb2012": null,
+ "C_vizier_planethunters_lintott2013": null,
+ "C_vizier_planethunters_wang2013": null,
+ "C_vizier_planethunters_schmitt2014_PH6": null,
+ "C_vizier_planethunters_schmitt2014": 0,
+ "C_vizier_kepler_fpp_morton2016": 0,
+ "C_simbad_cone30": null,
+ "C_nea_dr25stellar_kepid_retry": null,
+ "C_nea_q1q16tce_kepid": 0,
+ "C_nea_q1q12tce_kepid": 0,
+ "C_nea_fpwg_kepid": null,
+ "C_simbad_refs_candidate": null,
+ "C_simbad_ids_candidate": 1,
+ "C_simbad_refs_neighbour": null,
+ "C_simbad_ids_neighbour": 5,
+ "C_vizier_planethunters_lintott2013_bykic": null,
+ "C_vizier_planethunters_wang2013_bykic": null,
+ "C_vizier_planethunters_schmitt2014_PH6_bykic": null,
+ "C_vizier_planethunters_schwamb2012_bykic": null,
+ "C_planethunt_site": null,
+ "C_planethunt_github_release": null,
+ "C_planethunt_github_readme": null,
+ "C_simbad_refs_candidate_retry": null,
+ "C_simbad_refs_neighbour_retry": null
+}
+[]

@@ -1,0 +1,494 @@
+{
+ "B_gaia_cone30": {
+  "url": "https://gea.esac.esa.int/tap-server/tap/sync?request=doQuery&lang=ADQL&format=csv&query=SELECT+source_id%2Cra%2Cdec%2CDISTANCE%28POINT%28ra%2Cdec%29%2CPOINT%28285.90782692874626%2C40.94198844296448%29%29%2A3600+AS+sep_arcsec%2Cphot_g_mean_mag%2Cbp_rp%2Cparallax%2Cparallax_error%2Cparallax_over_error%2Cpmra%2Cpmdec%2Cruwe%2Cphot_variable_flag%2Cnon_single_star+FROM+gaiadr3.gaia_source+WHERE+1%3DCONTAINS%28POINT%28ra%2Cdec%29%2CCIRCLE%28285.90782692874626%2C40.94198844296448%2C0.00833333%29%29+ORDER+BY+sep_arcsec",
+  "file": "B_gaia_cone30.csv",
+  "bytes": 1732,
+  "error": null,
+  "sha256": "1652b8bb6386390022e4f40574c8e7d3847517a90d9269cab3ba6b8c815fb985"
+ },
+ "B_gaia_source_candidate": {
+  "url": "https://gea.esac.esa.int/tap-server/tap/sync?request=doQuery&lang=ADQL&format=csv&query=SELECT+%2A+FROM+gaiadr3.gaia_source+WHERE+source_id%3D2103792461826460288",
+  "file": "B_gaia_source_candidate.csv",
+  "bytes": 3915,
+  "error": null,
+  "sha256": "18d7212ec6d74e5c5fb68b92cd00d4a633111e750b5a175adf37b96ab3c52668"
+ },
+ "B_gaia_source_neighbour": {
+  "url": "https://gea.esac.esa.int/tap-server/tap/sync?request=doQuery&lang=ADQL&format=csv&query=SELECT+source_id%2Cra%2Cdec%2Cphot_g_mean_mag%2Cbp_rp%2Cparallax%2Cparallax_error%2Cruwe%2Cradial_velocity%2Cteff_gspphot%2Cphot_variable_flag%2Cnon_single_star+FROM+gaiadr3.gaia_source+WHERE+source_id%3D2103792427466721792",
+  "file": "B_gaia_source_neighbour.csv",
+  "bytes": 273,
+  "error": null,
+  "sha256": "a46763acbcef30c2b285d62aba60d6b7412b298d6b887320475129d5d32ef77e"
+ },
+ "B_gaia_astrophys_candidate": {
+  "url": "https://gea.esac.esa.int/tap-server/tap/sync?request=doQuery&lang=ADQL&format=csv&query=SELECT+%2A+FROM+gaiadr3.astrophysical_parameters+WHERE+source_id%3D2103792461826460288",
+  "file": "B_gaia_astrophys_candidate.csv",
+  "bytes": 5269,
+  "error": null,
+  "sha256": "9863454b67c1a48f070f13d9887b86aec4040682af428371da089e47d0c2a588"
+ },
+ "B_gaia_vari_summary_candidate": {
+  "url": "https://gea.esac.esa.int/tap-server/tap/sync?request=doQuery&lang=ADQL&format=csv&query=SELECT+%2A+FROM+gaiadr3.vari_summary+WHERE+source_id%3D2103792461826460288",
+  "file": "B_gaia_vari_summary_candidate.csv",
+  "bytes": 1173,
+  "error": null,
+  "sha256": "541a3503e473b547a20e01cabb5dd4892130e9960516bc17ebf57dad817cf555"
+ },
+ "B_gaia_vari_classifier_result_candidate": {
+  "url": "https://gea.esac.esa.int/tap-server/tap/sync?request=doQuery&lang=ADQL&format=csv&query=SELECT+%2A+FROM+gaiadr3.vari_classifier_result+WHERE+source_id%3D2103792461826460288",
+  "file": "B_gaia_vari_classifier_result_candidate.csv",
+  "bytes": 71,
+  "error": null,
+  "sha256": "47a46b8eaa3b4742d6e4549cac67d6f5fe2fa3fa5806b9830a409c26cd73d841"
+ },
+ "B_gaia_nss_two_body_orbit_candidate": {
+  "url": "https://gea.esac.esa.int/tap-server/tap/sync?request=doQuery&lang=ADQL&format=csv&query=SELECT+%2A+FROM+gaiadr3.nss_two_body_orbit+WHERE+source_id%3D2103792461826460288",
+  "file": "B_gaia_nss_two_body_orbit_candidate.csv",
+  "bytes": 1273,
+  "error": null,
+  "sha256": "94624a15e17c05bdf5000d96375440e83eca594ad8fd6a175ca97630095c9aa2"
+ },
+ "B_gaia_vari_eclipsing_binary_candidate": {
+  "url": "https://gea.esac.esa.int/tap-server/tap/sync?request=doQuery&lang=ADQL&format=csv&query=SELECT+%2A+FROM+gaiadr3.vari_eclipsing_binary+WHERE+source_id%3D2103792461826460288",
+  "file": "B_gaia_vari_eclipsing_binary_candidate.csv",
+  "bytes": 1079,
+  "error": null,
+  "sha256": "93cbc676ff20b178c1f3468781d80b3b7f64421f5892f788a105b39b9e210bcb"
+ },
+ "B_gaia_vari_summary_cone30": {
+  "url": "https://gea.esac.esa.int/tap-server/tap/sync?request=doQuery&lang=ADQL&format=csv&query=SELECT+t.%2A+FROM+gaiadr3.vari_summary+AS+t+WHERE+t.source_id+IN+%28SELECT+source_id+FROM+gaiadr3.gaia_source+WHERE+1%3DCONTAINS%28POINT%28ra%2Cdec%29%2CCIRCLE%28285.90782692874626%2C40.94198844296448%2C0.00833333%29%29%29",
+  "file": "B_gaia_vari_summary_cone30.csv",
+  "bytes": 0,
+  "error": "gaia-tap https://gea.esac.esa.int/tap-server/tap/sync -> HTTP 400",
+  "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "superseded_by": "B_gaia_vari_summary_cone30_ids"
+ },
+ "B_gaia_vari_classifier_result_cone30": {
+  "url": "https://gea.esac.esa.int/tap-server/tap/sync?request=doQuery&lang=ADQL&format=csv&query=SELECT+t.%2A+FROM+gaiadr3.vari_classifier_result+AS+t+WHERE+t.source_id+IN+%28SELECT+source_id+FROM+gaiadr3.gaia_source+WHERE+1%3DCONTAINS%28POINT%28ra%2Cdec%29%2CCIRCLE%28285.90782692874626%2C40.94198844296448%2C0.00833333%29%29%29",
+  "file": "B_gaia_vari_classifier_result_cone30.csv",
+  "bytes": 0,
+  "error": "gaia-tap https://gea.esac.esa.int/tap-server/tap/sync -> HTTP 400",
+  "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "superseded_by": "B_gaia_vari_classifier_result_cone30_ids"
+ },
+ "B_gaia_nss_two_body_orbit_cone30": {
+  "url": "https://gea.esac.esa.int/tap-server/tap/sync?request=doQuery&lang=ADQL&format=csv&query=SELECT+t.%2A+FROM+gaiadr3.nss_two_body_orbit+AS+t+WHERE+t.source_id+IN+%28SELECT+source_id+FROM+gaiadr3.gaia_source+WHERE+1%3DCONTAINS%28POINT%28ra%2Cdec%29%2CCIRCLE%28285.90782692874626%2C40.94198844296448%2C0.00833333%29%29%29",
+  "file": "B_gaia_nss_two_body_orbit_cone30.csv",
+  "bytes": 0,
+  "error": "gaia-tap https://gea.esac.esa.int/tap-server/tap/sync -> HTTP 400",
+  "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "superseded_by": "B_gaia_nss_two_body_orbit_cone30_ids"
+ },
+ "B_gaia_vari_eclipsing_binary_cone30": {
+  "url": "https://gea.esac.esa.int/tap-server/tap/sync?request=doQuery&lang=ADQL&format=csv&query=SELECT+t.%2A+FROM+gaiadr3.vari_eclipsing_binary+AS+t+WHERE+t.source_id+IN+%28SELECT+source_id+FROM+gaiadr3.gaia_source+WHERE+1%3DCONTAINS%28POINT%28ra%2Cdec%29%2CCIRCLE%28285.90782692874626%2C40.94198844296448%2C0.00833333%29%29%29",
+  "file": "B_gaia_vari_eclipsing_binary_cone30.csv",
+  "bytes": 0,
+  "error": "gaia-tap https://gea.esac.esa.int/tap-server/tap/sync -> HTTP 400",
+  "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "superseded_by": "B_gaia_vari_eclipsing_binary_cone30_ids"
+ },
+ "C_nea_cumulative_box": {
+  "url": "https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query=select+kepid%2Ckepoi_name%2Ckepler_name%2Ckoi_disposition%2Ckoi_pdisposition%2Ckoi_period%2Ckoi_time0bk%2Ckoi_depth%2Ckoi_duration%2Cra%2Cdec+from+cumulative+where+ra+between+285.896795+and+285.918859+and+dec+between+40.933655+and+40.950322&format=csv",
+  "file": "C_nea_cumulative_box.csv",
+  "bytes": 115,
+  "error": null,
+  "sha256": "945d6a8d971a45d5281703ee3c18591c94d4a8a7e41effd2a0044e87812d86ed"
+ },
+ "C_nea_cumulative_kepid": {
+  "url": "https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query=select+kepid%2Ckepoi_name%2Ckepler_name%2Ckoi_disposition%2Ckoi_period%2Ckoi_depth%2Cra%2Cdec+from+cumulative+where+kepid+in+%285689116%2C5689121%29&format=csv",
+  "file": "C_nea_cumulative_kepid.csv",
+  "bytes": 73,
+  "error": null,
+  "sha256": "20fff5165ebaf3f57da69990c409960c33fd44fa97e1fd9472b1ec0d283643e8"
+ },
+ "C_nea_dr25tce_box": {
+  "url": "https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query=select+%2A+from+q1_q17_dr25_tce+where+ra+between+285.896795+and+285.918859+and+dec+between+40.933655+and+40.950322&format=csv",
+  "file": "C_nea_dr25tce_box.csv",
+  "bytes": 2101,
+  "error": null,
+  "sha256": "ed1d6952fb50da5cc9e5cd78c7eca0b44d6aaef613c1f18aee2a1953e8674d15"
+ },
+ "C_nea_dr25tce_kepid": {
+  "url": "https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query=select+%2A+from+q1_q17_dr25_tce+where+kepid+in+%285689116%2C5689121%29&format=csv",
+  "file": "C_nea_dr25tce_kepid.csv",
+  "bytes": 2101,
+  "error": null,
+  "sha256": "ed1d6952fb50da5cc9e5cd78c7eca0b44d6aaef613c1f18aee2a1953e8674d15"
+ },
+ "C_nea_dr24tce_kepid": {
+  "url": "https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query=select+%2A+from+q1_q17_dr24_tce+where+kepid+in+%285689116%2C5689121%29&format=csv",
+  "file": "C_nea_dr24tce_kepid.csv",
+  "bytes": 2101,
+  "error": null,
+  "sha256": "ed1d6952fb50da5cc9e5cd78c7eca0b44d6aaef613c1f18aee2a1953e8674d15"
+ },
+ "C_nea_toi_box": {
+  "url": "https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query=select+%2A+from+toi+where+ra+between+285.896795+and+285.918859+and+dec+between+40.933655+and+40.950322&format=csv",
+  "file": "C_nea_toi_box.csv",
+  "bytes": 1027,
+  "error": null,
+  "sha256": "7c6a6990c18ec203ed68512b56149fa3e1487e04d654ad13dcce2506f8986689"
+ },
+ "C_nea_dr25stellar_kepid": {
+  "url": "https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query=select+%2A+from+q1_q17_dr25_stellar+where+kepid+in+%285689116%2C5689121%29&format=csv",
+  "file": "C_nea_dr25stellar_kepid.csv",
+  "bytes": 0,
+  "error": "nasa-exoplanet-archive https://exoplanetarchive.ipac.caltech.edu/TAP/sync -> HTTP 400",
+  "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+ },
+ "C_nea_keplerstellar_kepid": {
+  "url": "https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query=select+kepid%2Cteff%2Clogg%2Cradius%2Cmass%2Ckepmag%2Cra%2Cdec+from+keplerstellar+where+kepid+in+%285689116%2C5689121%29&format=csv",
+  "file": "C_nea_keplerstellar_kepid.csv",
+  "bytes": 336,
+  "error": null,
+  "sha256": "0017b402b3c07d64925dfc4b711bca4d45ac9bb79402c3f863f3247fb0909e6c"
+ },
+ "C_vizier_keplerEB_kirk2016": {
+  "url": "https://vizier.cds.unistra.fr/viz-bin/asu-tsv?-source=J%2FAJ%2F151%2F68%2Fcatalog&-c=285.90782692874626+%2B40.94198844296448&-c.rs=30&-out.all=&-out.add=_r&-sort=_r",
+  "file": "C_vizier_keplerEB_kirk2016.tsv",
+  "bytes": 4040,
+  "error": null,
+  "sha256": "8428c64f193442f7fbcb844a40163bf7649b41a4ae726ee9c52fbd9e1dfe33d7"
+ },
+ "C_vizier_KIC": {
+  "url": "https://vizier.cds.unistra.fr/viz-bin/asu-tsv?-source=V%2F133%2Fkic&-c=285.90782692874626+%2B40.94198844296448&-c.rs=30&-out.all=&-out.add=_r&-sort=_r",
+  "file": "C_vizier_KIC.tsv",
+  "bytes": 3512,
+  "error": null,
+  "sha256": "761132314e31a70738f5d65aafd7f711c197dae949bcc0ba2ef8f5825e675465"
+ },
+ "C_vizier_TICv82": {
+  "url": "https://vizier.cds.unistra.fr/viz-bin/asu-tsv?-source=IV%2F39%2Ftic82&-c=285.90782692874626+%2B40.94198844296448&-c.rs=30&-out.all=&-out.add=_r&-sort=_r",
+  "file": "C_vizier_TICv82.tsv",
+  "bytes": 11438,
+  "error": null,
+  "sha256": "0233e69553b75ed980fb13222091ceb6626a4d354c4657f8e32a4724dc884237"
+ },
+ "C_vizier_planethunters_schwamb2012": {
+  "url": "https://vizier.cds.unistra.fr/viz-bin/asu-tsv?-source=J%2FApJ%2F754%2F129&-c=285.90782692874626+%2B40.94198844296448&-c.rs=30&-out.all=&-out.add=_r&-sort=_r",
+  "file": "C_vizier_planethunters_schwamb2012.tsv",
+  "bytes": 776,
+  "error": null,
+  "sha256": "520a012122159d9554e23fa7366d6c0423a0984a0a6a4ba95e453701fe9e9ca3"
+ },
+ "C_vizier_planethunters_lintott2013": {
+  "url": "https://vizier.cds.unistra.fr/viz-bin/asu-tsv?-source=J%2FAJ%2F145%2F151&-c=285.90782692874626+%2B40.94198844296448&-c.rs=30&-out.all=&-out.add=_r&-sort=_r",
+  "file": "C_vizier_planethunters_lintott2013.tsv",
+  "bytes": 774,
+  "error": null,
+  "sha256": "cc07c7b890b58dacb58e7c4d8cbbec4d6c70e084eaedd334be50942771f58c14"
+ },
+ "C_vizier_planethunters_wang2013": {
+  "url": "https://vizier.cds.unistra.fr/viz-bin/asu-tsv?-source=J%2FApJ%2F776%2F10&-c=285.90782692874626+%2B40.94198844296448&-c.rs=30&-out.all=&-out.add=_r&-sort=_r",
+  "file": "C_vizier_planethunters_wang2013.tsv",
+  "bytes": 774,
+  "error": null,
+  "sha256": "0be9713e6cad22aa7abff93bad907eb690d9952c2c1ec52e20b7d00aa2122868"
+ },
+ "C_vizier_planethunters_schmitt2014_PH6": {
+  "url": "https://vizier.cds.unistra.fr/viz-bin/asu-tsv?-source=J%2FAJ%2F148%2F28&-c=285.90782692874626+%2B40.94198844296448&-c.rs=30&-out.all=&-out.add=_r&-sort=_r",
+  "file": "C_vizier_planethunters_schmitt2014_PH6.tsv",
+  "bytes": 772,
+  "error": null,
+  "sha256": "fe37b8708ad5f72372770fd6d57c1f266c2fb986c6a440f046a6e2df29a4b425"
+ },
+ "C_vizier_planethunters_schmitt2014": {
+  "url": "https://vizier.cds.unistra.fr/viz-bin/asu-tsv?-source=J%2FApJ%2F795%2F167&-c=285.90782692874626+%2B40.94198844296448&-c.rs=30&-out.all=&-out.add=_r&-sort=_r",
+  "file": "C_vizier_planethunters_schmitt2014.tsv",
+  "bytes": 771,
+  "error": null,
+  "sha256": "299b0798a0d35db6449407aae40905a3ca2c3219a369442b200154fbaed46dd4"
+ },
+ "C_vizier_kepler_fpp_morton2016": {
+  "url": "https://vizier.cds.unistra.fr/viz-bin/asu-tsv?-source=J%2FApJ%2F822%2F86&-c=285.90782692874626+%2B40.94198844296448&-c.rs=30&-out.all=&-out.add=_r&-sort=_r",
+  "file": "C_vizier_kepler_fpp_morton2016.tsv",
+  "bytes": 4325,
+  "error": null,
+  "sha256": "5158c5e188f5f3316ecfa4cb9da30cecfb97b095c4aa66c159677da529091255"
+ },
+ "C_simbad_cone30": {
+  "url": "https://simbad.cds.unistra.fr/simbad/sim-coo?Coord=285.90782692874626+%2B40.94198844296448&Radius=30&Radius.unit=arcsec&output.format=ASCII&list.idsel=on",
+  "file": "C_simbad_cone30.txt",
+  "bytes": 947,
+  "error": null,
+  "sha256": "502cd5e00fe42db4aa9518e1c8f523373f7425fde9d6c99b15fc754f42d58bb4"
+ },
+ "B_gaia_vari_summary_cone30_ids": {
+  "url": "https://gea.esac.esa.int/tap-server/tap/sync?request=doQuery&lang=ADQL&format=csv&query=SELECT+source_id+FROM+gaiadr3.vari_summary+WHERE+source_id+IN+%282103792461826460288%2C2103792427466721792%2C2103792393102276480%2C2103792393108242176%2C2103792427462012544%2C2103792427462012032%2C2103792461821756544%2C2103792393102280576%29",
+  "file": "B_gaia_vari_summary_cone30_ids.csv",
+  "bytes": 10,
+  "error": null,
+  "sha256": "f6db5247aff1b01ec5aa88f24c7204a524a23efcdf81fb1bd13ca234533c090f"
+ },
+ "B_gaia_vari_classifier_result_cone30_ids": {
+  "url": "https://gea.esac.esa.int/tap-server/tap/sync?request=doQuery&lang=ADQL&format=csv&query=SELECT+source_id+FROM+gaiadr3.vari_classifier_result+WHERE+source_id+IN+%282103792461826460288%2C2103792427466721792%2C2103792393102276480%2C2103792393108242176%2C2103792427462012544%2C2103792427462012032%2C2103792461821756544%2C2103792393102280576%29",
+  "file": "B_gaia_vari_classifier_result_cone30_ids.csv",
+  "bytes": 10,
+  "error": null,
+  "sha256": "f6db5247aff1b01ec5aa88f24c7204a524a23efcdf81fb1bd13ca234533c090f"
+ },
+ "B_gaia_nss_two_body_orbit_cone30_ids": {
+  "url": "https://gea.esac.esa.int/tap-server/tap/sync?request=doQuery&lang=ADQL&format=csv&query=SELECT+source_id+FROM+gaiadr3.nss_two_body_orbit+WHERE+source_id+IN+%282103792461826460288%2C2103792427466721792%2C2103792393102276480%2C2103792393108242176%2C2103792427462012544%2C2103792427462012032%2C2103792461821756544%2C2103792393102280576%29",
+  "file": "B_gaia_nss_two_body_orbit_cone30_ids.csv",
+  "bytes": 10,
+  "error": null,
+  "sha256": "f6db5247aff1b01ec5aa88f24c7204a524a23efcdf81fb1bd13ca234533c090f"
+ },
+ "B_gaia_vari_eclipsing_binary_cone30_ids": {
+  "url": "https://gea.esac.esa.int/tap-server/tap/sync?request=doQuery&lang=ADQL&format=csv&query=SELECT+source_id+FROM+gaiadr3.vari_eclipsing_binary+WHERE+source_id+IN+%282103792461826460288%2C2103792427466721792%2C2103792393102276480%2C2103792393108242176%2C2103792427462012544%2C2103792427462012032%2C2103792461821756544%2C2103792393102280576%29",
+  "file": "B_gaia_vari_eclipsing_binary_cone30_ids.csv",
+  "bytes": 10,
+  "error": null,
+  "sha256": "f6db5247aff1b01ec5aa88f24c7204a524a23efcdf81fb1bd13ca234533c090f"
+ },
+ "B_gaia_nss_non_linear_spectro_cone30_ids": {
+  "url": "https://gea.esac.esa.int/tap-server/tap/sync?request=doQuery&lang=ADQL&format=csv&query=SELECT+source_id+FROM+gaiadr3.nss_non_linear_spectro+WHERE+source_id+IN+%282103792461826460288%2C2103792427466721792%2C2103792393102276480%2C2103792393108242176%2C2103792427462012544%2C2103792427462012032%2C2103792461821756544%2C2103792393102280576%29",
+  "file": "B_gaia_nss_non_linear_spectro_cone30_ids.csv",
+  "bytes": 10,
+  "error": null,
+  "sha256": "f6db5247aff1b01ec5aa88f24c7204a524a23efcdf81fb1bd13ca234533c090f"
+ },
+ "B_gaia_nss_acceleration_astro_cone30_ids": {
+  "url": "https://gea.esac.esa.int/tap-server/tap/sync?request=doQuery&lang=ADQL&format=csv&query=SELECT+source_id+FROM+gaiadr3.nss_acceleration_astro+WHERE+source_id+IN+%282103792461826460288%2C2103792427466721792%2C2103792393102276480%2C2103792393108242176%2C2103792427462012544%2C2103792427462012032%2C2103792461821756544%2C2103792393102280576%29",
+  "file": "B_gaia_nss_acceleration_astro_cone30_ids.csv",
+  "bytes": 10,
+  "error": null,
+  "sha256": "f6db5247aff1b01ec5aa88f24c7204a524a23efcdf81fb1bd13ca234533c090f"
+ },
+ "_candidate_tic": "120686465",
+ "D_exofop_tic120686465": {
+  "url": "https://exofop.ipac.caltech.edu/tess/target.php?id=120686465&json=",
+  "file": "D_exofop_tic120686465.json",
+  "bytes": 7431,
+  "error": null,
+  "sha256": "d84fb27850877bd05491d7ede91670cbf5809cf2d2af0152e907e74f6c649b96"
+ },
+ "D_mamajek_dwarf_table": {
+  "url": "https://www.pas.rochester.edu/~emamajek/EEM_dwarf_UBVIJHK_colors_Teff.txt",
+  "file": "D_mamajek_dwarf_table.txt",
+  "bytes": 55680,
+  "error": null,
+  "sha256": "1de2edeec17bb3346e0e4e70b999de5ee29947df38474e64cddb7cfacc164b7f"
+ },
+ "D_bayestar19_a": {
+  "url": "http://argonaut.skymaps.info/api/v2/bayestar19/query?l=71.50258&b=15.25130&mode=percentile",
+  "file": "D_bayestar19_a.json",
+  "bytes": 0,
+  "error": "bayestar http://argonaut.skymaps.info/api/v2/bayestar19/query failed after 5 attempts: ConnectTimeout(MaxRetryError(\"HTTPConnectionPool(host='argonaut.skymaps.info', port=80): Max retries exceeded with url: /api/v2/bayestar19/query?l=71.50258&b=15.25130&mode=percentile (Caused by ConnectTimeoutError(<HTTPConnection(host='argonaut.skymaps.info', port=80) at 0x18e7a9232c0>, 'Connection to argonaut.skymaps.info timed out. (connect timeout=300)'))\"))",
+  "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+ },
+ "D_bayestar19_b": {
+  "url": "https://argonaut.skymaps.info/api/v2/bayestar19/query?lon=71.50258&lat=15.25130&coordsys=gal&mode=percentile",
+  "file": "D_bayestar19_b.json",
+  "bytes": 0,
+  "error": "bayestar https://argonaut.skymaps.info/api/v2/bayestar19/query failed after 5 attempts: ConnectTimeout(MaxRetryError(\"HTTPSConnectionPool(host='argonaut.skymaps.info', port=443): Max retries exceeded with url: /api/v2/bayestar19/query?lon=71.50258&lat=15.25130&coordsys=gal&mode=percentile (Caused by ConnectTimeoutError(<HTTPSConnection(host='argonaut.skymaps.info', port=443) at 0x18e7a923bc0>, 'Connection to argonaut.skymaps.info timed out. (connect timeout=300)'))\"))",
+  "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+ },
+ "C_nea_dr25stellar_kepid_retry": {
+  "url": "https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query=select+kepid%2Cteff%2Clogg%2Cradius%2Cmass%2Ckepmag+from+q1_q17_dr25_stellar+where+kepid+in+%285689116%2C5689121%29&format=csv",
+  "file": "C_nea_dr25stellar_kepid_retry.csv",
+  "bytes": 0,
+  "error": "nasa-exoplanet-archive https://exoplanetarchive.ipac.caltech.edu/TAP/sync -> HTTP 400",
+  "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+ },
+ "C_nea_q1q16tce_kepid": {
+  "url": "https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query=select+kepid%2Ctce_plnt_num%2Ctce_period%2Ctce_depth+from+q1_q16_tce+where+kepid+in+%285689116%2C5689121%29&format=csv",
+  "file": "C_nea_q1q16tce_kepid.csv",
+  "bytes": 40,
+  "error": null,
+  "sha256": "a7568f8c3f654f214c19f1bc88aaca28a1999d8e36ae3fefffb8cb527381bdfc"
+ },
+ "C_nea_q1q12tce_kepid": {
+  "url": "https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query=select+kepid%2Ctce_plnt_num%2Ctce_period%2Ctce_depth+from+q1_q12_tce+where+kepid+in+%285689116%2C5689121%29&format=csv",
+  "file": "C_nea_q1q12tce_kepid.csv",
+  "bytes": 40,
+  "error": null,
+  "sha256": "a7568f8c3f654f214c19f1bc88aaca28a1999d8e36ae3fefffb8cb527381bdfc"
+ },
+ "C_nea_fpwg_kepid": {
+  "url": "https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query=select+kepid%2Ckepoi_name%2Cfpwg_disp_status+from+fpwg+where+kepid+in+%285689116%2C5689121%29&format=csv",
+  "file": "C_nea_fpwg_kepid.csv",
+  "bytes": 0,
+  "error": "nasa-exoplanet-archive https://exoplanetarchive.ipac.caltech.edu/TAP/sync -> HTTP 400",
+  "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+ },
+ "D_irsa_dust": {
+  "url": "https://irsa.ipac.caltech.edu/cgi-bin/DUST/nph-dust?locstr=285.90782692874626+40.94198844296448+equ+j2000&regSize=2.0",
+  "file": "D_irsa_dust.xml",
+  "bytes": 2773,
+  "error": null,
+  "sha256": "d4ee766cce3c044ca797ae25e448c1ef80c4f69c6a62158cf589a8950f816e82"
+ },
+ "C_simbad_refs_candidate": {
+  "url": "https://simbad.cds.unistra.fr/simbad/sim-tap/sync?request=doQuery&lang=ADQL&format=csv&query=SELECT+DISTINCT+r.bibcode%2C+r.title%2C+r.journal%2C+r.year+FROM+ref+AS+r+JOIN+has_ref+AS+h+ON+h.oidbibref+%3D+r.oidbib+JOIN+ident+AS+i+ON+i.oidref+%3D+h.oidref+WHERE+i.id+%3D+%27Gaia+DR3+2103792461826460288%27+ORDER+BY+r.year",
+  "file": "C_simbad_refs_candidate.csv",
+  "bytes": 0,
+  "error": "simbad https://simbad.cds.unistra.fr/simbad/sim-tap/sync -> HTTP 400",
+  "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+ },
+ "C_simbad_ids_candidate": {
+  "url": "https://simbad.cds.unistra.fr/simbad/sim-tap/sync?request=doQuery&lang=ADQL&format=csv&query=SELECT+i2.id+FROM+ident+AS+i+JOIN+ident+AS+i2+ON+i.oidref+%3D+i2.oidref+WHERE+i.id+%3D+%27Gaia+DR3+2103792461826460288%27",
+  "file": "C_simbad_ids_candidate.csv",
+  "bytes": 34,
+  "error": null,
+  "sha256": "27ecffba05a78fcd0edef0bc1dc1a77bfb7b07ff1eec6f4be2072393a8b25122"
+ },
+ "C_simbad_refs_neighbour": {
+  "url": "https://simbad.cds.unistra.fr/simbad/sim-tap/sync?request=doQuery&lang=ADQL&format=csv&query=SELECT+DISTINCT+r.bibcode%2C+r.title%2C+r.journal%2C+r.year+FROM+ref+AS+r+JOIN+has_ref+AS+h+ON+h.oidbibref+%3D+r.oidbib+JOIN+ident+AS+i+ON+i.oidref+%3D+h.oidref+WHERE+i.id+%3D+%272MASS+J19033726%2B4056316%27+ORDER+BY+r.year",
+  "file": "C_simbad_refs_neighbour.csv",
+  "bytes": 0,
+  "error": "simbad https://simbad.cds.unistra.fr/simbad/sim-tap/sync -> HTTP 400",
+  "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+ },
+ "C_simbad_ids_neighbour": {
+  "url": "https://simbad.cds.unistra.fr/simbad/sim-tap/sync?request=doQuery&lang=ADQL&format=csv&query=SELECT+i2.id+FROM+ident+AS+i+JOIN+ident+AS+i2+ON+i.oidref+%3D+i2.oidref+WHERE+i.id+%3D+%272MASS+J19033726%2B4056316%27",
+  "file": "C_simbad_ids_neighbour.csv",
+  "bytes": 121,
+  "error": null,
+  "sha256": "f0a16821cd9a229d29540e8a9c5acab4de914b62c462f0d97ddc5e56213672f7"
+ },
+ "C_vizier_planethunters_lintott2013_bykic": {
+  "url": "https://vizier.cds.unistra.fr/viz-bin/asu-tsv?-source=J%2FAJ%2F145%2F151&KIC=%3D5689121&-out.all=",
+  "file": "C_vizier_planethunters_lintott2013_bykic.tsv",
+  "bytes": 716,
+  "error": null,
+  "sha256": "1cca1bbe5cd1429dd94441ec7997157e23e94005db321ad948991289f4962b99"
+ },
+ "C_vizier_planethunters_wang2013_bykic": {
+  "url": "https://vizier.cds.unistra.fr/viz-bin/asu-tsv?-source=J%2FApJ%2F776%2F10&KIC=%3D5689121&-out.all=",
+  "file": "C_vizier_planethunters_wang2013_bykic.tsv",
+  "bytes": 716,
+  "error": null,
+  "sha256": "ff49383a17b2ce5dfd064045e24cd0447ee9da868f2d12e2c73552720fc7c95e"
+ },
+ "C_vizier_planethunters_schmitt2014_PH6_bykic": {
+  "url": "https://vizier.cds.unistra.fr/viz-bin/asu-tsv?-source=J%2FAJ%2F148%2F28&KIC=%3D5689121&-out.all=",
+  "file": "C_vizier_planethunters_schmitt2014_PH6_bykic.tsv",
+  "bytes": 714,
+  "error": null,
+  "sha256": "6706ff547da863c615ed498b4bda1229ce99727b9de52524f4c1a588b37c31f4"
+ },
+ "C_vizier_planethunters_schwamb2012_bykic": {
+  "url": "https://vizier.cds.unistra.fr/viz-bin/asu-tsv?-source=J%2FApJ%2F754%2F129&KIC=%3D5689121&-out.all=",
+  "file": "C_vizier_planethunters_schwamb2012_bykic.tsv",
+  "bytes": 718,
+  "error": null,
+  "sha256": "a3546fe0f19fe39f896de4af1f475d9a2374da76c66fc92277839f9d08047358"
+ },
+ "C_planethunt_site": {
+  "url": "https://kuber.studio/planethunt/",
+  "file": "C_planethunt_site.html",
+  "bytes": 420060,
+  "error": null,
+  "sha256": "429e8ac2c0bac598e26703f4140319386baea0682e10b1c491f99f14caa97c4c"
+ },
+ "C_planethunt_github_release": {
+  "url": "https://github.com/Kuberwastaken/planethunt/releases/tag/evidence-20261013",
+  "file": "C_planethunt_github_release.html",
+  "bytes": 192630,
+  "error": null,
+  "sha256": "b1cdcbecd593eb709dd6547d20d7b2238072a63309410e263c6d4a070a52598a"
+ },
+ "C_planethunt_github_readme": {
+  "url": "https://raw.githubusercontent.com/Kuberwastaken/planethunt/main/README.md",
+  "file": "C_planethunt_github_readme.md",
+  "bytes": 9580,
+  "error": null,
+  "sha256": "1898e457adfd8b88f681ad62b7c927e9daceb855e18658c8b3e54b79b4c2c93b"
+ },
+ "C_simbad_refs_candidate_retry": {
+  "url": "https://simbad.cds.unistra.fr/simbad/sim-tap/sync?request=doQuery&lang=ADQL&format=csv&query=SELECT+ref.bibcode%2C+ref.year%2C+ref.journal%2C+ref.title+FROM+ref+JOIN+has_ref+ON+ref.oidbib+%3D+has_ref.oidbibref+JOIN+ident+ON+ident.oidref+%3D+has_ref.oidref+WHERE+ident.id+%3D+%27Gaia+DR3+2103792461826460288%27",
+  "file": "C_simbad_refs_candidate_retry.csv",
+  "bytes": 0,
+  "error": "simbad https://simbad.cds.unistra.fr/simbad/sim-tap/sync -> HTTP 400",
+  "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+ },
+ "C_simbad_refs_neighbour_retry": {
+  "url": "https://simbad.cds.unistra.fr/simbad/sim-tap/sync?request=doQuery&lang=ADQL&format=csv&query=SELECT+ref.bibcode%2C+ref.year%2C+ref.journal%2C+ref.title+FROM+ref+JOIN+has_ref+ON+ref.oidbib+%3D+has_ref.oidbibref+JOIN+ident+ON+ident.oidref+%3D+has_ref.oidref+WHERE+ident.id+%3D+%27KIC+5689116%27",
+  "file": "C_simbad_refs_neighbour_retry.csv",
+  "bytes": 0,
+  "error": "simbad https://simbad.cds.unistra.fr/simbad/sim-tap/sync -> HTTP 400",
+  "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+ },
+ "A3_kbonus_kic-005689116": {
+  "url": "https://archive.stsci.edu/hlsps/kbonus-bkg/lcs/0056/005689116/hlsp_kbonus-bkg_kepler_kepler_kic-005689116_kepler_v1.0_lc.fits",
+  "file": "downloads\\neighbour_lcs\\hlsp_kbonus-bkg_kepler_kepler_kic-005689116_kepler_v1.0_lc.fits",
+  "bytes": 8847360,
+  "error": null,
+  "sha256": "67ca0e7545f2ddb8bf051b30dabdf63a87fa6acc86d513f2ade5b1e6812382d3"
+ },
+ "A3_kbonus_gaia-dr3-2103792393102276480": {
+  "url": "https://archive.stsci.edu/hlsps/kbonus-bkg/lcs/2103/2103792393102276480/hlsp_kbonus-bkg_kepler_kepler_gaia-dr3-2103792393102276480_kepler_v1.0_lc.fits",
+  "file": null,
+  "bytes": 0,
+  "error": "mast-neighbour-lc https://archive.stsci.edu/hlsps/kbonus-bkg/lcs/2103/2103792393102276480/hlsp_kbonus-bkg_kepler_kepler_gaia-dr3-2103792393102276480_kepler_v1.0_lc.fits -> HTTP 404",
+  "sha256": null
+ },
+ "A3_kbonus_kic-005689129": {
+  "url": "https://archive.stsci.edu/hlsps/kbonus-bkg/lcs/0056/005689129/hlsp_kbonus-bkg_kepler_kepler_kic-005689129_kepler_v1.0_lc.fits",
+  "file": null,
+  "bytes": 0,
+  "error": "mast-neighbour-lc https://archive.stsci.edu/hlsps/kbonus-bkg/lcs/0056/005689129/hlsp_kbonus-bkg_kepler_kepler_kic-005689129_kepler_v1.0_lc.fits -> HTTP 404",
+  "sha256": null
+ },
+ "A3_mast_dirlisting_005689129": {
+  "url": "https://archive.stsci.edu/missions/kepler/lightcurves/0056/005689129/",
+  "file": null,
+  "bytes": 0,
+  "error": "mast-kepler-lc https://archive.stsci.edu/missions/kepler/lightcurves/0056/005689129/ -> HTTP 404"
+ },
+ "A3_kbonus_kic-005689108": {
+  "url": "https://archive.stsci.edu/hlsps/kbonus-bkg/lcs/0056/005689108/hlsp_kbonus-bkg_kepler_kepler_kic-005689108_kepler_v1.0_lc.fits",
+  "file": null,
+  "bytes": 0,
+  "error": "mast-neighbour-lc https://archive.stsci.edu/hlsps/kbonus-bkg/lcs/0056/005689108/hlsp_kbonus-bkg_kepler_kepler_kic-005689108_kepler_v1.0_lc.fits -> HTTP 404",
+  "sha256": null
+ },
+ "A3_mast_dirlisting_005689108": {
+  "url": "https://archive.stsci.edu/missions/kepler/lightcurves/0056/005689108/",
+  "file": null,
+  "bytes": 0,
+  "error": "mast-kepler-lc https://archive.stsci.edu/missions/kepler/lightcurves/0056/005689108/ -> HTTP 404"
+ },
+ "A3_kbonus_gaia-dr3-2103792427462012032": {
+  "url": "https://archive.stsci.edu/hlsps/kbonus-bkg/lcs/2103/2103792427462012032/hlsp_kbonus-bkg_kepler_kepler_gaia-dr3-2103792427462012032_kepler_v1.0_lc.fits",
+  "file": null,
+  "bytes": 0,
+  "error": "mast-neighbour-lc https://archive.stsci.edu/hlsps/kbonus-bkg/lcs/2103/2103792427462012032/hlsp_kbonus-bkg_kepler_kepler_gaia-dr3-2103792427462012032_kepler_v1.0_lc.fits -> HTTP 404",
+  "sha256": null
+ },
+ "A3_kbonus_kic-005689127": {
+  "url": "https://archive.stsci.edu/hlsps/kbonus-bkg/lcs/0056/005689127/hlsp_kbonus-bkg_kepler_kepler_kic-005689127_kepler_v1.0_lc.fits",
+  "file": null,
+  "bytes": 0,
+  "error": "mast-neighbour-lc https://archive.stsci.edu/hlsps/kbonus-bkg/lcs/0056/005689127/hlsp_kbonus-bkg_kepler_kepler_kic-005689127_kepler_v1.0_lc.fits -> HTTP 404",
+  "sha256": null
+ },
+ "A3_mast_dirlisting_005689127": {
+  "url": "https://archive.stsci.edu/missions/kepler/lightcurves/0056/005689127/",
+  "file": null,
+  "bytes": 0,
+  "error": "mast-kepler-lc https://archive.stsci.edu/missions/kepler/lightcurves/0056/005689127/ -> HTTP 404"
+ },
+ "A3_kbonus_gaia-dr3-2103792393102280576": {
+  "url": "https://archive.stsci.edu/hlsps/kbonus-bkg/lcs/2103/2103792393102280576/hlsp_kbonus-bkg_kepler_kepler_gaia-dr3-2103792393102280576_kepler_v1.0_lc.fits",
+  "file": null,
+  "bytes": 0,
+  "error": "mast-neighbour-lc https://archive.stsci.edu/hlsps/kbonus-bkg/lcs/2103/2103792393102280576/hlsp_kbonus-bkg_kepler_kepler_gaia-dr3-2103792393102280576_kepler_v1.0_lc.fits -> HTTP 404",
+  "sha256": null
+ },
+ "C_simbad_bib_candidate": {
+  "url": "https://simbad.cds.unistra.fr/simbad/sim-id?Ident=Gaia+DR3+2103792461826460288&output.format=ASCII&obj.bibsel=on&list.bibsel=on&bibdisplay=refsum&bibyear1=1850&bibyear2=%24currentYear",
+  "file": "C_simbad_bib_candidate.txt",
+  "bytes": 1674,
+  "error": null,
+  "sha256": "d31fc13553248299ccfb7f0f984989408dcbc5c75525b0fbd7f6618bd581111d"
+ },
+ "C_simbad_bib_neighbour": {
+  "url": "https://simbad.cds.unistra.fr/simbad/sim-id?Ident=KIC+5689116&output.format=ASCII&obj.bibsel=on&list.bibsel=on&bibdisplay=refsum&bibyear1=1850&bibyear2=%24currentYear",
+  "file": "C_simbad_bib_neighbour.txt",
+  "bytes": 2967,
+  "error": null,
+  "sha256": "6fa94ac43ff02330b37e14e69b2ad9cd8c03b5944e568fc5a4130fdb101eb3fe"
+ }
+}

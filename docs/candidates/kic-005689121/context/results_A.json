@@ -1,0 +1,402 @@
+{
+ "ephemeris": {
+  "P_d": 13.769508917830883,
+  "t0_bkjd": 136.31664409177998,
+  "dur_h": 2.0
+ },
+ "method": "A.2 Neighbour leak test and candidate SAP-vs-PSF depth.\nBox depth in a 2.0 h window at P=13.769508917830883 d, t0=136.31664409177998 BKJD, after a 2-day running median (transits masked) per quarter.\ndepth = mean(out) - mean(in); out = 1..3 durations from mid-transit; formal error = std(out)*sqrt(1/N_in+1/N_out);\ninflated by the scatter of 100 control phases (phase 0.03..0.97).",
+ "neighbour_KIC5689116": {
+  "quarters": {
+   "1": {
+    "CROWDSAP": 0.9469,
+    "FLFRCSAP": 0.8176,
+    "file": "kplr005689116-2009166043257_llc.fits"
+   },
+   "2": {
+    "CROWDSAP": 0.9325,
+    "FLFRCSAP": 0.8658,
+    "file": "kplr005689116-2009259160929_llc.fits"
+   },
+   "3": {
+    "CROWDSAP": 0.9734,
+    "FLFRCSAP": 0.8571,
+    "file": "kplr005689116-2009350155506_llc.fits"
+   },
+   "4": {
+    "CROWDSAP": 0.9676,
+    "FLFRCSAP": 0.8204,
+    "file": "kplr005689116-2010078095331_llc.fits"
+   },
+   "6": {
+    "CROWDSAP": 0.9717,
+    "FLFRCSAP": 0.8057,
+    "file": "kplr005689116-2010265121752_llc.fits"
+   },
+   "7": {
+    "CROWDSAP": 0.9787,
+    "FLFRCSAP": 0.7167,
+    "file": "kplr005689116-2010355172524_llc.fits"
+   },
+   "8": {
+    "CROWDSAP": 0.9666,
+    "FLFRCSAP": 0.8209,
+    "file": "kplr005689116-2011073133259_llc.fits"
+   },
+   "10": {
+    "CROWDSAP": 0.9291,
+    "FLFRCSAP": 0.8831,
+    "file": "kplr005689116-2011271113734_llc.fits"
+   },
+   "11": {
+    "CROWDSAP": 0.9713,
+    "FLFRCSAP": 0.8565,
+    "file": "kplr005689116-2012004120508_llc.fits"
+   },
+   "12": {
+    "CROWDSAP": 0.9587,
+    "FLFRCSAP": 0.8238,
+    "file": "kplr005689116-2012088054726_llc.fits"
+   },
+   "14": {
+    "CROWDSAP": 0.9727,
+    "FLFRCSAP": 0.7683,
+    "file": "kplr005689116-2012277125453_llc.fits"
+   },
+   "15": {
+    "CROWDSAP": 0.9725,
+    "FLFRCSAP": 0.8577,
+    "file": "kplr005689116-2013011073258_llc.fits"
+   },
+   "16": {
+    "CROWDSAP": 0.9616,
+    "FLFRCSAP": 0.8241,
+    "file": "kplr005689116-2013098041711_llc.fits"
+   }
+  },
+  "n_cadences": 46514,
+  "pdcsap": {
+   "label": "KIC 5689116 PDCSAP",
+   "depth_ppm": 110.4,
+   "formal_err_ppm": 32.5,
+   "control_scatter_ppm": 31.7,
+   "control_mean_ppm": -0.9,
+   "inflation": 1.0,
+   "err_ppm": 32.5,
+   "snr": 3.4,
+   "n_in": 283,
+   "n_out": 1114,
+   "n_events_with_data": 74,
+   "n_control_phases": 100,
+   "rms_ppm_per_cadence": 481.6
+  },
+  "sap": {
+   "label": "KIC 5689116 SAP",
+   "depth_ppm": 127.1,
+   "formal_err_ppm": 41.8,
+   "control_scatter_ppm": 32.0,
+   "control_mean_ppm": -1.3,
+   "inflation": 1.0,
+   "err_ppm": 41.8,
+   "snr": 3.04,
+   "n_in": 283,
+   "n_out": 1114,
+   "n_events_with_data": 74,
+   "n_control_phases": 100,
+   "rms_ppm_per_cadence": 503.2
+  }
+ },
+ "neighbour_expectation": {
+  "flux_ratio_target_over_candidate": 2.2,
+  "leak_case_max_depth_on_target_ppm": 619.7,
+  "leak_case_max_depth_on_target_ppm_simple": 901.4,
+  "on_target_case_min_depth_ppm": 1983.0,
+  "note": "Leak case: candidate light fully mixed into the target aperture gives at most D*Fc/(Fc+Ft); in reality the target's optimal aperture holds only part of the candidate's light 7.1 arcsec (1.8 px) away, so less. On-target case: a target dip D_t leaking a fraction e of the target flux into the candidate photometry gives D_c = D_t*e*Ft/(Fc+e*Ft) < D_t, so D_t > 1983 ppm."
+ },
+ "candidate_KIC5689121": {
+  "psf": {
+   "label": "KIC 5689121 KBonus PSF",
+   "depth_ppm": 2136.1,
+   "formal_err_ppm": 124.0,
+   "control_scatter_ppm": 129.3,
+   "control_mean_ppm": -4.4,
+   "inflation": 1.273,
+   "err_ppm": 157.8,
+   "snr": 13.54,
+   "n_in": 284,
+   "n_out": 1114,
+   "n_events_with_data": 74,
+   "n_control_phases": 100,
+   "rms_ppm_per_cadence": 1645.7
+  },
+  "sap": {
+   "label": "KIC 5689121 KBonus SAP",
+   "depth_ppm": 1595.3,
+   "formal_err_ppm": 95.0,
+   "control_scatter_ppm": 106.8,
+   "control_mean_ppm": -5.8,
+   "inflation": 1.338,
+   "err_ppm": 127.2,
+   "snr": 12.54,
+   "n_in": 284,
+   "n_out": 1114,
+   "n_events_with_data": 74,
+   "n_control_phases": 100,
+   "rms_ppm_per_cadence": 1288.9
+  },
+  "sap_over_psf": 0.747,
+  "sap_over_psf_err": 0.081,
+  "kbonus_crowdsap_median": 0.8838,
+  "kbonus_crowdsap_range": [
+   0.7472,
+   0.9597
+  ],
+  "per_quarter_header": {
+   "1": {
+    "CROWDSAP": 0.8131334524,
+    "FLFRCSAP": 0.9128600638,
+    "NPIXSAP": 6,
+    "PSFFRAC": 0.8149089756891917,
+    "SEASON": 3
+   },
+   "2": {
+    "CROWDSAP": 0.7484572313,
+    "FLFRCSAP": 0.9547344105,
+    "NPIXSAP": 7,
+    "PSFFRAC": 0.685087119336938,
+    "SEASON": 0
+   },
+   "3": {
+    "CROWDSAP": 0.9059001749,
+    "FLFRCSAP": 0.8893766567,
+    "NPIXSAP": 5,
+    "PSFFRAC": 0.8712159653204101,
+    "SEASON": 1
+   },
+   "4": {
+    "CROWDSAP": 0.8908542731,
+    "FLFRCSAP": 0.8840759695,
+    "NPIXSAP": 4,
+    "PSFFRAC": 0.7991371176945362,
+    "SEASON": 2
+   },
+   "6": {
+    "CROWDSAP": 0.7472471618,
+    "FLFRCSAP": 0.9532782865,
+    "NPIXSAP": 7,
+    "PSFFRAC": 0.6757009579294657,
+    "SEASON": 0
+   },
+   "7": {
+    "CROWDSAP": 0.7984616252,
+    "FLFRCSAP": 0.9423375604,
+    "NPIXSAP": 6,
+    "PSFFRAC": 0.866314417392134,
+    "SEASON": 1
+   },
+   "8": {
+    "CROWDSAP": 0.8967737994,
+    "FLFRCSAP": 0.8887717026,
+    "NPIXSAP": 4,
+    "PSFFRAC": 0.7970577546488454,
+    "SEASON": 2
+   },
+   "10": {
+    "CROWDSAP": 0.8673521584,
+    "FLFRCSAP": 0.7405962473,
+    "NPIXSAP": 4,
+    "PSFFRAC": 0.6729635448449048,
+    "SEASON": 0
+   },
+   "11": {
+    "CROWDSAP": 0.905892946,
+    "FLFRCSAP": 0.8868524012,
+    "NPIXSAP": 5,
+    "PSFFRAC": 0.8617641631872588,
+    "SEASON": 1
+   },
+   "12": {
+    "CROWDSAP": 0.883795552,
+    "FLFRCSAP": 0.7818269173,
+    "NPIXSAP": 3,
+    "PSFFRAC": 0.8265257321273747,
+    "SEASON": 2
+   },
+   "14": {
+    "CROWDSAP": 0.7481767119,
+    "FLFRCSAP": 0.9509742361,
+    "NPIXSAP": 7,
+    "PSFFRAC": 0.6661181206211804,
+    "SEASON": 0
+   },
+   "15": {
+    "CROWDSAP": 0.9063473346,
+    "FLFRCSAP": 0.8851424374,
+    "NPIXSAP": 5,
+    "PSFFRAC": 0.8591304023608807,
+    "SEASON": 1
+   },
+   "16": {
+    "CROWDSAP": 0.9597207545,
+    "FLFRCSAP": 0.6881423515,
+    "NPIXSAP": 2,
+    "PSFFRAC": 0.8017121243805302,
+    "SEASON": 2
+   }
+  },
+  "per_season": {
+   "0": {
+    "quarters": [
+     2,
+     6,
+     10,
+     14
+    ],
+    "psf": {
+     "label": "PSF season 0",
+     "depth_ppm": 1844.3,
+     "formal_err_ppm": 279.6,
+     "control_scatter_ppm": 237.5,
+     "control_mean_ppm": 6.2,
+     "inflation": 1.226,
+     "err_ppm": 342.8,
+     "snr": 5.38,
+     "n_in": 98,
+     "n_out": 370,
+     "n_events_with_data": 25,
+     "n_control_phases": 100,
+     "rms_ppm_per_cadence": 1929.6
+    },
+    "sap": {
+     "label": "SAP season 0",
+     "depth_ppm": 907.5,
+     "formal_err_ppm": 188.8,
+     "control_scatter_ppm": 165.5,
+     "control_mean_ppm": 0.4,
+     "inflation": 1.46,
+     "err_ppm": 275.8,
+     "snr": 3.29,
+     "n_in": 98,
+     "n_out": 370,
+     "n_events_with_data": 25,
+     "n_control_phases": 100,
+     "rms_ppm_per_cadence": 1220.0
+    },
+    "mean_crowdsap": 0.7778
+   },
+   "1": {
+    "quarters": [
+     3,
+     7,
+     11,
+     15
+    ],
+    "psf": {
+     "label": "PSF season 1",
+     "depth_ppm": 2251.1,
+     "formal_err_ppm": 174.0,
+     "control_scatter_ppm": 219.8,
+     "control_mean_ppm": -7.6,
+     "inflation": 1.355,
+     "err_ppm": 235.7,
+     "snr": 9.55,
+     "n_in": 97,
+     "n_out": 382,
+     "n_events_with_data": 26,
+     "n_control_phases": 100,
+     "rms_ppm_per_cadence": 1624.6
+    },
+    "sap": {
+     "label": "SAP season 1",
+     "depth_ppm": 1916.5,
+     "formal_err_ppm": 146.7,
+     "control_scatter_ppm": 186.3,
+     "control_mean_ppm": -8.8,
+     "inflation": 1.298,
+     "err_ppm": 190.4,
+     "snr": 10.06,
+     "n_in": 97,
+     "n_out": 382,
+     "n_events_with_data": 26,
+     "n_control_phases": 100,
+     "rms_ppm_per_cadence": 1415.0
+    },
+    "mean_crowdsap": 0.8792
+   },
+   "2": {
+    "quarters": [
+     4,
+     8,
+     12,
+     16
+    ],
+    "psf": {
+     "label": "PSF season 2",
+     "depth_ppm": 2360.7,
+     "formal_err_ppm": 167.4,
+     "control_scatter_ppm": 174.1,
+     "control_mean_ppm": -2.3,
+     "inflation": 1.189,
+     "err_ppm": 199.0,
+     "snr": 11.86,
+     "n_in": 81,
+     "n_out": 331,
+     "n_events_with_data": 21,
+     "n_control_phases": 100,
+     "rms_ppm_per_cadence": 1293.2
+    },
+    "sap": {
+     "label": "SAP season 2",
+     "depth_ppm": 2072.2,
+     "formal_err_ppm": 160.3,
+     "control_scatter_ppm": 174.9,
+     "control_mean_ppm": -2.2,
+     "inflation": 1.236,
+     "err_ppm": 198.1,
+     "snr": 10.46,
+     "n_in": 81,
+     "n_out": 331,
+     "n_events_with_data": 21,
+     "n_control_phases": 100,
+     "rms_ppm_per_cadence": 1226.6
+    },
+    "mean_crowdsap": 0.9078
+   },
+   "3": {
+    "quarters": [
+     1
+    ],
+    "psf": {
+     "label": "PSF season 3",
+     "depth_ppm": 1784.9,
+     "formal_err_ppm": 604.7,
+     "control_scatter_ppm": 621.4,
+     "control_mean_ppm": -68.7,
+     "inflation": 1.252,
+     "err_ppm": 757.1,
+     "snr": 2.36,
+     "n_in": 8,
+     "n_out": 31,
+     "n_events_with_data": 2,
+     "n_control_phases": 99,
+     "rms_ppm_per_cadence": 1454.2
+    },
+    "sap": {
+     "label": "SAP season 3",
+     "depth_ppm": 1139.2,
+     "formal_err_ppm": 463.3,
+     "control_scatter_ppm": 460.2,
+     "control_mean_ppm": -55.9,
+     "inflation": 1.182,
+     "err_ppm": 547.5,
+     "snr": 2.08,
+     "n_in": 8,
+     "n_out": 31,
+     "n_events_with_data": 2,
+     "n_control_phases": 99,
+     "rms_ppm_per_cadence": 1118.0
+    },
+    "mean_crowdsap": 0.8131
+   }
+  }
+ }
+}

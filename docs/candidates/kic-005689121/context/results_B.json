@@ -1,0 +1,255 @@
+{
+ "candidate_gaia_source": {
+  "source_id": "2103792461826460288",
+  "parallax": "3.4064818259534495",
+  "parallax_error": "0.03973076",
+  "ruwe": "0.98412067",
+  "radial_velocity": "",
+  "radial_velocity_error": "",
+  "phot_variable_flag": "NOT_AVAILABLE",
+  "non_single_star": "0",
+  "ipd_frac_multi_peak": "0",
+  "ipd_gof_harmonic_amplitude": "0.01988767",
+  "astrometric_excess_noise": "0.0",
+  "phot_bp_rp_excess_factor": "1.3643997",
+  "has_rvs": "false",
+  "pmra": "-5.40189635732881",
+  "pmdec": "2.8478749358326523"
+ },
+ "n_neighbours_30arcsec": 7,
+ "neighbours": [
+  {
+   "source_id": "2103792427466721792",
+   "ra": 285.9052171647008,
+   "dec": 40.942069424984716,
+   "sep_arcsec": 7.1,
+   "sep_kepler_px": 1.78,
+   "G": 15.478,
+   "bp_rp": 0.917,
+   "parallax": 0.302,
+   "parallax_over_error": 1.32,
+   "pmra": -9.44,
+   "pmdec": -7.31,
+   "ruwe": 8.73,
+   "dG_vs_candidate": -0.805,
+   "required_eclipse_depth_frac": null,
+   "can_mimic_by_magnitude": false,
+   "note": "brighter than the candidate; tested directly in check A (own Kepler light curve)"
+  },
+  {
+   "source_id": "2103792393102276480",
+   "ra": 285.91074299769525,
+   "dec": 40.93855621473023,
+   "sep_arcsec": 14.68,
+   "sep_kepler_px": 3.69,
+   "G": 19.789,
+   "bp_rp": 1.055,
+   "parallax": 0.346,
+   "parallax_over_error": 1.13,
+   "pmra": -3.38,
+   "pmdec": -6.69,
+   "ruwe": 0.981,
+   "dG_vs_candidate": 3.507,
+   "required_eclipse_depth_frac": 0.0501,
+   "can_mimic_by_magnitude": true,
+   "note": "co-moving? no"
+  },
+  {
+   "source_id": "2103792393108242176",
+   "ra": 285.9117949216987,
+   "dec": 40.93856842600761,
+   "sep_arcsec": 16.37,
+   "sep_kepler_px": 4.11,
+   "G": 19.131,
+   "bp_rp": 1.66,
+   "parallax": -0.01,
+   "parallax_over_error": -0.02,
+   "pmra": 3.72,
+   "pmdec": -9.89,
+   "ruwe": 2.679,
+   "dG_vs_candidate": 2.848,
+   "required_eclipse_depth_frac": 0.0273,
+   "can_mimic_by_magnitude": true,
+   "note": "co-moving? no"
+  },
+  {
+   "source_id": "2103792427462012544",
+   "ra": 285.90123735822306,
+   "dec": 40.941779943981075,
+   "sep_arcsec": 17.94,
+   "sep_kepler_px": 4.51,
+   "G": 19.963,
+   "bp_rp": 1.854,
+   "parallax": 0.027,
+   "parallax_over_error": 0.07,
+   "pmra": -3.98,
+   "pmdec": -8.14,
+   "ruwe": 0.929,
+   "dG_vs_candidate": 3.681,
+   "required_eclipse_depth_frac": 0.0588,
+   "can_mimic_by_magnitude": true,
+   "note": "co-moving? no"
+  },
+  {
+   "source_id": "2103792427462012032",
+   "ra": 285.90128087865025,
+   "dec": 40.940174634658035,
+   "sep_arcsec": 18.96,
+   "sep_kepler_px": 4.76,
+   "G": 20.578,
+   "bp_rp": 1.385,
+   "parallax": -0.272,
+   "parallax_over_error": -0.39,
+   "pmra": 0.66,
+   "pmdec": -5.74,
+   "ruwe": 1.012,
+   "dG_vs_candidate": 4.295,
+   "required_eclipse_depth_frac": 0.1036,
+   "can_mimic_by_magnitude": true,
+   "note": "co-moving? no"
+  },
+  {
+   "source_id": "2103792461821756544",
+   "ra": 285.91110217195893,
+   "dec": 40.947658649157326,
+   "sep_arcsec": 22.27,
+   "sep_kepler_px": 5.6,
+   "G": 19.79,
+   "bp_rp": 1.673,
+   "parallax": 1.056,
+   "parallax_over_error": 3.13,
+   "pmra": 1.17,
+   "pmdec": -1.21,
+   "ruwe": 1.03,
+   "dG_vs_candidate": 3.508,
+   "required_eclipse_depth_frac": 0.0502,
+   "can_mimic_by_magnitude": true,
+   "note": "co-moving? no"
+  },
+  {
+   "source_id": "2103792393102280576",
+   "ra": 285.91804479583925,
+   "dec": 40.943502771072914,
+   "sep_arcsec": 28.32,
+   "sep_kepler_px": 7.11,
+   "G": 20.193,
+   "bp_rp": 2.436,
+   "parallax": 1.352,
+   "parallax_over_error": 3.23,
+   "pmra": -3.44,
+   "pmdec": 7.61,
+   "ruwe": 0.868,
+   "dG_vs_candidate": 3.911,
+   "required_eclipse_depth_frac": 0.0727,
+   "can_mimic_by_magnitude": true,
+   "note": "co-moving? no"
+  }
+ ],
+ "neighbours_able_to_mimic_by_magnitude": [
+  "2103792393102276480",
+  "2103792393108242176",
+  "2103792427462012544",
+  "2103792427462012032",
+  "2103792461821756544",
+  "2103792393102280576"
+ ],
+ "max_required_depth_frac": 0.1036,
+ "kic_sources_30arcsec": [
+  {
+   "KIC": 5689121,
+   "sep_arcsec": 0.123,
+   "ra": 285.90787,
+   "dec": 40.941978,
+   "Kp": "16.332",
+   "nearest_gaia": "2103792461826460288",
+   "nearest_gaia_sep_arcsec": 0.12
+  },
+  {
+   "KIC": 5689116,
+   "sep_arcsec": 6.972,
+   "ra": 285.90527,
+   "dec": 40.942131,
+   "Kp": "15.476",
+   "nearest_gaia": "2103792427466721792",
+   "nearest_gaia_sep_arcsec": 0.26
+  },
+  {
+   "KIC": 5689129,
+   "sep_arcsec": 15.517,
+   "ra": 285.9115,
+   "dec": 40.93869,
+   "Kp": "18.268",
+   "nearest_gaia": "2103792393108242176",
+   "nearest_gaia_sep_arcsec": 0.91
+  },
+  {
+   "KIC": 5689108,
+   "sep_arcsec": 17.642,
+   "ra": 285.90134,
+   "dec": 40.941925,
+   "Kp": "19.870",
+   "nearest_gaia": "2103792427462012544",
+   "nearest_gaia_sep_arcsec": 0.59
+  },
+  {
+   "KIC": 5689127,
+   "sep_arcsec": 22.349,
+   "ra": 285.91101,
+   "dec": 40.947712,
+   "Kp": "19.813",
+   "nearest_gaia": "2103792461821756544",
+   "nearest_gaia_sep_arcsec": 0.32
+  }
+ ],
+ "kic_only_sources_no_gaia_within_2arcsec": [],
+ "gaia_variability_and_nss": {
+  "vari_summary_cone30": {
+   "rows": 0,
+   "verbatim": [
+    "source_id"
+   ]
+  },
+  "vari_classifier_result_cone30": {
+   "rows": 0,
+   "verbatim": [
+    "source_id"
+   ]
+  },
+  "nss_two_body_orbit_cone30": {
+   "rows": 0,
+   "verbatim": [
+    "source_id"
+   ]
+  },
+  "vari_eclipsing_binary_cone30": {
+   "rows": 0,
+   "verbatim": [
+    "source_id"
+   ]
+  },
+  "nss_non_linear_spectro_cone30": {
+   "rows": 0,
+   "verbatim": [
+    "source_id"
+   ]
+  },
+  "nss_acceleration_astro_cone30": {
+   "rows": 0,
+   "verbatim": [
+    "source_id"
+   ]
+  },
+  "vari_summary_candidate": {
+   "rows": 0
+  },
+  "vari_classifier_result_candidate": {
+   "rows": 0
+  },
+  "nss_two_body_orbit_candidate": {
+   "rows": 0
+  },
+  "vari_eclipsing_binary_candidate": {
+   "rows": 0
+  }
+ }
+}

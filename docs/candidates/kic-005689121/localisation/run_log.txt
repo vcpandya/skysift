@@ -1,0 +1,97 @@
+Q 1 s3 ev=2 cen=(1.10,0.35) dC=0.26 dT=1.95 sig=0.49(bootstrap) nearer=candidate snrcen=(1.10,0.35) bright=[0, 1] ratio=1.91 maxSNR=2.9@[0, 1] fracdepth C=1322 T=377 fit C=1813+-465 T=182+-240
+Q 2 s0 ev=6 cen=(1.23,0.14) dC=0.10 dT=1.73 sig=0.08(noise-MC) nearer=candidate snrcen=(1.23,0.14) bright=[0, 1] ratio=3.53 maxSNR=6.6@[0, 1] fracdepth C=840 T=187 fit C=2538+-313 T=136+-125
+Q 3 s1 ev=5 cen=(1.73,0.79) dC=0.17 dT=1.63 sig=0.12(noise-MC) nearer=candidate snrcen=(1.56,0.82) bright=[1, 2] ratio=2.54 maxSNR=5.1@[1, 1] fracdepth C=661 T=277 fit C=2274+-265 T=70+-98
+Q 4 s2 ev=4 cen=(1.12,0.09) dC=0.12 dT=1.88 sig=0.08(noise-MC) nearer=candidate snrcen=(1.12,0.09) bright=[0, 1] ratio=17.11 maxSNR=11.1@[0, 1] fracdepth C=1258 T=50 fit C=2304+-191 T=-110+-185
+Q 6 s0 ev=6 cen=(1.31,0.24) dC=0.23 dT=1.57 sig=0.09(bootstrap) nearer=candidate snrcen=(1.31,0.24) bright=[0, 1] ratio=0.98 maxSNR=8.3@[0, 1] fracdepth C=1072 T=722 fit C=2669+-276 T=250+-126
+Q 7 s1 ev=6 cen=(1.83,0.94) dC=0.33 dT=1.46 sig=0.12(bootstrap) nearer=candidate snrcen=(1.83,0.94) bright=[1, 2] ratio=1.98 maxSNR=5.9@[1, 2] fracdepth C=609 T=328 fit C=1657+-245 T=63+-106
+Q 8 s2 ev=5 cen=(1.12,0.15) dC=0.12 dT=1.84 sig=0.08(noise-MC) nearer=candidate snrcen=(1.12,0.15) bright=[0, 1] ratio=3.41 maxSNR=10.8@[0, 1] fracdepth C=1380 T=280 fit C=2373+-217 T=152+-187
+Q10 s0 ev=7 cen=(1.21,0.18) dC=0.12 dT=1.68 sig=0.23(noise-MC) nearer=candidate snrcen=(1.21,0.18) bright=[0, 1] ratio=0.84 maxSNR=4.2@[0, 1] fracdepth C=647 T=508 fit C=1522+-269 T=194+-112
+Q11 s1 ev=5 cen=(1.79,0.77) dC=0.19 dT=1.62 sig=0.19(bootstrap) nearer=candidate snrcen=(1.56,0.76) bright=[1, 2] ratio=2.74 maxSNR=6.9@[1, 1] fracdepth C=828 T=321 fit C=2352+-216 T=118+-102
+Q12 s2 ev=6 cen=(1.12,0.20) dC=0.18 dT=1.88 sig=0.19(noise-MC) nearer=candidate snrcen=(1.12,0.20) bright=[0, 1] ratio=62.42 maxSNR=4.5@[0, 1] fracdepth C=1106 T=11 fit C=1622+-314 T=-120+-199
+Q14 s0 ev=5 cen=(1.35,0.00) dC=0.21 dT=1.73 sig=0.25(bootstrap) nearer=candidate snrcen=(1.56,0.04) bright=[0, 1] ratio=1.17 maxSNR=4.1@[0, 2] fracdepth C=419 T=235 fit C=1389+-293 T=-32+-134
+Q15 s1 ev=6 cen=(1.66,0.70) dC=0.05 dT=1.75 sig=0.10(noise-MC) nearer=candidate snrcen=(1.66,0.70) bright=[1, 2] ratio=2.32 maxSNR=6.4@[1, 2] fracdepth C=747 T=342 fit C=2355+-265 T=29+-97
+Q16 s2 ev=5 cen=(1.17,0.27) dC=0.19 dT=1.80 sig=0.09(noise-MC) nearer=candidate snrcen=(1.17,0.27) bright=[0, 1] ratio=8.16 maxSNR=8.2@[0, 1] fracdepth C=1458 T=118 fit C=2087+-233 T=-35+-158
+season 0: Q[2, 6, 10, 14] ev=24 cen=(1.28,0.14) C=(1.14,0.09) T=(2.26,1.49) dC=0.14+-0.07 dT=1.67+-0.06 nearer=candidate ratio=0.92 maxSNR=11.2@[0, 1] fracdepth C=750+-64 T=540+-55 fit C=2002+-143 T=147+-62
+season 1: Q[3, 7, 11, 15] ev=22 cen=(1.72,0.79) C=(1.61,0.69) T=(2.73,2.09) dC=0.15+-0.07 dT=1.64+-0.07 nearer=candidate ratio=2.41 maxSNR=11.8@[1, 2] fracdepth C=709+-53 T=312+-53 fit C=2161+-123 T=68+-50
+season 2: Q[4, 8, 12, 16] ev=20 cen=(1.14,0.18) C=(1.27,0.14) T=(2.39,1.54) dC=0.13+-0.04 dT=1.84+-0.06 nearer=candidate ratio=7.40 maxSNR=18.0@[0, 1] fracdepth C=1330+-94 T=119+-86 fit C=2190+-114 T=-28+-89
+season 3: Q[1] ev=2 cen=(1.10,0.35) C=(1.36,0.33) T=(2.48,1.73) dC=0.26+-0.65 dT=1.95+-0.51 nearer=candidate ratio=1.91 maxSNR=2.9@[0, 1] fracdepth C=1322+-432 T=377+-278 fit C=1813+-465 T=182+-240
+{
+ "n_quarters_total": 13,
+ "n_quarters_usable": 13,
+ "unusable_quarters": [],
+ "n_events_used": 68,
+ "n_events_rejected": 6,
+ "n_quarters_centroid_nearer_candidate": 13,
+ "n_quarters_brightest_diff_pixel_nearer_candidate": 13,
+ "n_quarters_max_snr_pixel_nearer_candidate": 13,
+ "n_quarters_snrbox_centroid_nearer_candidate": 13,
+ "n_quarters_box3_frac_depth_candidate_gt_target_3sigma": 6,
+ "two_source_fit_depth_ppm_candidate_weighted_mean": [
+  2124.2547020590055,
+  71.23614783320231
+ ],
+ "two_source_fit_depth_ppm_target_weighted_mean": [
+  81.86244857994467,
+  35.35846229895376
+ ],
+ "n_quarters_box3_ratio_gt1": 11,
+ "median_diff_centroid_dist_to_candidate_pix": 0.18027274340525612,
+ "median_diff_centroid_dist_to_candidate_arcsec": 0.7174855187529193,
+ "median_diff_centroid_dist_to_target_pix": 1.7313715096491233,
+ "median_diff_centroid_dist_to_target_arcsec": 6.890858608403511,
+ "median_direct_centroid_minus_target_pix": 0.18305992664684403,
+ "multi_quarter_mean_offset": {
+  "candidate": {
+   "offset_EN_arcsec": [
+    -0.294046048213191,
+    -0.1535178970958704
+   ],
+   "sigma_EN_arcsec": [
+    0.13536856342771403,
+    0.0974261083684155
+   ],
+   "offset_arcsec": 0.33170894350097424,
+   "offset_significance_sigma": 3.4220942773486827
+  },
+  "target": {
+   "offset_EN_arcsec": [
+    6.802792889633461,
+    -0.44505315667604156
+   ],
+   "sigma_EN_arcsec": [
+    0.13536856342771403,
+    0.0974261083684155
+   ],
+   "offset_arcsec": 6.817335506744177,
+   "offset_significance_sigma": 52.908998060610884
+  }
+ },
+ "seasons_nearer": {
+  "0": "candidate",
+  "1": "candidate",
+  "2": "candidate",
+  "3": "candidate"
+ },
+ "seasons_snrbox_centroid_dist_to_candidate_pix": {
+  "0": 0.14389250474079623,
+  "1": 0.15033400331583344,
+  "2": 0.1340586231745122,
+  "3": 0.2630481641173392
+ },
+ "seasons_snrbox_centroid_dist_to_target_pix": {
+  "0": 1.6699565095518543,
+  "1": 1.6432620460325147,
+  "2": 1.8447799970329628,
+  "3": 1.9514929420970022
+ },
+ "seasons_max_snr": {
+  "0": 11.210470307783755,
+  "1": 11.833052607202145,
+  "2": 17.96812512072344,
+  "3": 2.881515244838229
+ },
+ "notes": [
+  "diff_centroid_* is the specified estimator (3x3 box around the brightest difference pixel by flux). Per quarter the brightest pixel is often a noise excursion in the target's core (its S/N is listed as brightest_diff_pixel_snr), so this estimator is bimodal; its bootstrap/MC covariance and the multi_quarter_mean_offset built from it are not reliable. snrbox_* uses the same 3x3 flux-weighted centroid boxed on the highest-S/N difference pixel.",
+  "two_source_fit uses a Gaussian PSF (not the Kepler PRF) with both stars at their Gaia/WCS positions; it is an approximate check, implied depth = fitted difference amplitude / fitted direct amplitude of the same star."
+ ]
+}

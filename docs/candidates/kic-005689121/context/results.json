@@ -1,0 +1,1716 @@
+{
+ "target": {
+  "name": "KIC 5689121",
+  "gaia_dr3": "2103792461826460288",
+  "tic": "120686465",
+  "ra": 285.90782692874626,
+  "dec": 40.94198844296448
+ },
+ "ephemeris": {
+  "P_d": 13.769508917830883,
+  "t0_bkjd": 136.31664409177998,
+  "dur_h": 2.0
+ },
+ "summary": {
+  "neighbour_KIC5689116_pdcsap_depth_ppm": [
+   110.4,
+   32.5
+  ],
+  "neighbour_KIC5689116_sap_depth_ppm": [
+   127.1,
+   41.8
+  ],
+  "neighbour_expected_leak_case_ppm_max": 619.7,
+  "neighbour_expected_on_target_case_ppm_min": 1983,
+  "candidate_psf_depth_ppm": [
+   2136.1,
+   157.8
+  ],
+  "candidate_sap_depth_ppm": [
+   1595.3,
+   127.2
+  ],
+  "candidate_sap_over_psf": [
+   0.747,
+   0.081
+  ],
+  "gaia_neighbours_30arcsec": 7,
+  "gaia_neighbours_able_to_mimic_by_magnitude": 6,
+  "stellar_baseline": {
+   "Teff_K": {
+    "median": 3582.0,
+    "minus": 57.0,
+    "plus": 74.0
+   },
+   "R_star_Rsun": {
+    "median": 0.459,
+    "minus": 0.023,
+    "plus": 0.04
+   },
+   "M_star_Msun": {
+    "median": 0.451,
+    "minus": 0.027,
+    "plus": 0.046
+   }
+  },
+  "distance_pc": {
+   "median": 290.7,
+   "minus": 3.5,
+   "plus": 3.6
+  },
+  "planet_baseline": {
+   "Rp_from_k_Rearth": {
+    "median": 2.3,
+    "minus": 0.11,
+    "plus": 0.2
+   },
+   "Rp_from_boxdepth_Rearth": {
+    "median": 2.23,
+    "minus": 0.11,
+    "plus": 0.19
+   },
+   "a_AU": {
+    "median": 0.0862,
+    "minus": 0.0017,
+    "plus": 0.0028
+   },
+   "a_over_Rstar": {
+    "median": 40.4,
+    "minus": 2.0,
+    "plus": 1.3
+   },
+   "Teq_K_A0.3_full_redistribution": {
+    "median": 364.0,
+    "minus": 11.0,
+    "plus": 17.0
+   },
+   "transit_probability_Rstar_over_a": {
+    "median": 0.0248,
+    "minus": 0.0007,
+    "plus": 0.0013
+   },
+   "T14_central_h": {
+    "median": 2.72,
+    "minus": 0.08,
+    "plus": 0.14
+   },
+   "b_if_obs_dur_is_T14": {
+    "median": 0.72,
+    "minus": 0.13,
+    "plus": 0.09
+   },
+   "b_if_obs_dur_is_mean_T14_T23": {
+    "median": 0.65,
+    "minus": 0.14,
+    "plus": 0.1
+   },
+   "T14_for_fitted_b_h": {
+    "median": 1.55,
+    "minus": 0.05,
+    "plus": 0.08
+   }
+  },
+  "archives_any_match": false
+ },
+ "A_leak_test": {
+  "ephemeris": {
+   "P_d": 13.769508917830883,
+   "t0_bkjd": 136.31664409177998,
+   "dur_h": 2.0
+  },
+  "method": "A.2 Neighbour leak test and candidate SAP-vs-PSF depth.\nBox depth in a 2.0 h window at P=13.769508917830883 d, t0=136.31664409177998 BKJD, after a 2-day running median (transits masked) per quarter.\ndepth = mean(out) - mean(in); out = 1..3 durations from mid-transit; formal error = std(out)*sqrt(1/N_in+1/N_out);\ninflated by the scatter of 100 control phases (phase 0.03..0.97).",
+  "neighbour_KIC5689116": {
+   "quarters": {
+    "1": {
+     "CROWDSAP": 0.9469,
+     "FLFRCSAP": 0.8176,
+     "file": "kplr005689116-2009166043257_llc.fits"
+    },
+    "2": {
+     "CROWDSAP": 0.9325,
+     "FLFRCSAP": 0.8658,
+     "file": "kplr005689116-2009259160929_llc.fits"
+    },
+    "3": {
+     "CROWDSAP": 0.9734,
+     "FLFRCSAP": 0.8571,
+     "file": "kplr005689116-2009350155506_llc.fits"
+    },
+    "4": {
+     "CROWDSAP": 0.9676,
+     "FLFRCSAP": 0.8204,
+     "file": "kplr005689116-2010078095331_llc.fits"
+    },
+    "6": {
+     "CROWDSAP": 0.9717,
+     "FLFRCSAP": 0.8057,
+     "file": "kplr005689116-2010265121752_llc.fits"
+    },
+    "7": {
+     "CROWDSAP": 0.9787,
+     "FLFRCSAP": 0.7167,
+     "file": "kplr005689116-2010355172524_llc.fits"
+    },
+    "8": {
+     "CROWDSAP": 0.9666,
+     "FLFRCSAP": 0.8209,
+     "file": "kplr005689116-2011073133259_llc.fits"
+    },
+    "10": {
+     "CROWDSAP": 0.9291,
+     "FLFRCSAP": 0.8831,
+     "file": "kplr005689116-2011271113734_llc.fits"
+    },
+    "11": {
+     "CROWDSAP": 0.9713,
+     "FLFRCSAP": 0.8565,
+     "file": "kplr005689116-2012004120508_llc.fits"
+    },
+    "12": {
+     "CROWDSAP": 0.9587,
+     "FLFRCSAP": 0.8238,
+     "file": "kplr005689116-2012088054726_llc.fits"
+    },
+    "14": {
+     "CROWDSAP": 0.9727,
+     "FLFRCSAP": 0.7683,
+     "file": "kplr005689116-2012277125453_llc.fits"
+    },
+    "15": {
+     "CROWDSAP": 0.9725,
+     "FLFRCSAP": 0.8577,
+     "file": "kplr005689116-2013011073258_llc.fits"
+    },
+    "16": {
+     "CROWDSAP": 0.9616,
+     "FLFRCSAP": 0.8241,
+     "file": "kplr005689116-2013098041711_llc.fits"
+    }
+   },
+   "n_cadences": 46514,
+   "pdcsap": {
+    "label": "KIC 5689116 PDCSAP",
+    "depth_ppm": 110.4,
+    "formal_err_ppm": 32.5,
+    "control_scatter_ppm": 31.7,
+    "control_mean_ppm": -0.9,
+    "inflation": 1.0,
+    "err_ppm": 32.5,
+    "snr": 3.4,
+    "n_in": 283,
+    "n_out": 1114,
+    "n_events_with_data": 74,
+    "n_control_phases": 100,
+    "rms_ppm_per_cadence": 481.6
+   },
+   "sap": {
+    "label": "KIC 5689116 SAP",
+    "depth_ppm": 127.1,
+    "formal_err_ppm": 41.8,
+    "control_scatter_ppm": 32.0,
+    "control_mean_ppm": -1.3,
+    "inflation": 1.0,
+    "err_ppm": 41.8,
+    "snr": 3.04,
+    "n_in": 283,
+    "n_out": 1114,
+    "n_events_with_data": 74,
+    "n_control_phases": 100,
+    "rms_ppm_per_cadence": 503.2
+   }
+  },
+  "neighbour_expectation": {
+   "flux_ratio_target_over_candidate": 2.2,
+   "leak_case_max_depth_on_target_ppm": 619.7,
+   "leak_case_max_depth_on_target_ppm_simple": 901.4,
+   "on_target_case_min_depth_ppm": 1983.0,
+   "note": "Leak case: candidate light fully mixed into the target aperture gives at most D*Fc/(Fc+Ft); in reality the target's optimal aperture holds only part of the candidate's light 7.1 arcsec (1.8 px) away, so less. On-target case: a target dip D_t leaking a fraction e of the target flux into the candidate photometry gives D_c = D_t*e*Ft/(Fc+e*Ft) < D_t, so D_t > 1983 ppm."
+  },
+  "candidate_KIC5689121": {
+   "psf": {
+    "label": "KIC 5689121 KBonus PSF",
+    "depth_ppm": 2136.1,
+    "formal_err_ppm": 124.0,
+    "control_scatter_ppm": 129.3,
+    "control_mean_ppm": -4.4,
+    "inflation": 1.273,
+    "err_ppm": 157.8,
+    "snr": 13.54,
+    "n_in": 284,
+    "n_out": 1114,
+    "n_events_with_data": 74,
+    "n_control_phases": 100,
+    "rms_ppm_per_cadence": 1645.7
+   },
+   "sap": {
+    "label": "KIC 5689121 KBonus SAP",
+    "depth_ppm": 1595.3,
+    "formal_err_ppm": 95.0,
+    "control_scatter_ppm": 106.8,
+    "control_mean_ppm": -5.8,
+    "inflation": 1.338,
+    "err_ppm": 127.2,
+    "snr": 12.54,
+    "n_in": 284,
+    "n_out": 1114,
+    "n_events_with_data": 74,
+    "n_control_phases": 100,
+    "rms_ppm_per_cadence": 1288.9
+   },
+   "sap_over_psf": 0.747,
+   "sap_over_psf_err": 0.081,
+   "kbonus_crowdsap_median": 0.8838,
+   "kbonus_crowdsap_range": [
+    0.7472,
+    0.9597
+   ],
+   "per_quarter_header": {
+    "1": {
+     "CROWDSAP": 0.8131334524,
+     "FLFRCSAP": 0.9128600638,
+     "NPIXSAP": 6,
+     "PSFFRAC": 0.8149089756891917,
+     "SEASON": 3
+    },
+    "2": {
+     "CROWDSAP": 0.7484572313,
+     "FLFRCSAP": 0.9547344105,
+     "NPIXSAP": 7,
+     "PSFFRAC": 0.685087119336938,
+     "SEASON": 0
+    },
+    "3": {
+     "CROWDSAP": 0.9059001749,
+     "FLFRCSAP": 0.8893766567,
+     "NPIXSAP": 5,
+     "PSFFRAC": 0.8712159653204101,
+     "SEASON": 1
+    },
+    "4": {
+     "CROWDSAP": 0.8908542731,
+     "FLFRCSAP": 0.8840759695,
+     "NPIXSAP": 4,
+     "PSFFRAC": 0.7991371176945362,
+     "SEASON": 2
+    },
+    "6": {
+     "CROWDSAP": 0.7472471618,
+     "FLFRCSAP": 0.9532782865,
+     "NPIXSAP": 7,
+     "PSFFRAC": 0.6757009579294657,
+     "SEASON": 0
+    },
+    "7": {
+     "CROWDSAP": 0.7984616252,
+     "FLFRCSAP": 0.9423375604,
+     "NPIXSAP": 6,
+     "PSFFRAC": 0.866314417392134,
+     "SEASON": 1
+    },
+    "8": {
+     "CROWDSAP": 0.8967737994,
+     "FLFRCSAP": 0.8887717026,
+     "NPIXSAP": 4,
+     "PSFFRAC": 0.7970577546488454,
+     "SEASON": 2
+    },
+    "10": {
+     "CROWDSAP": 0.8673521584,
+     "FLFRCSAP": 0.7405962473,
+     "NPIXSAP": 4,
+     "PSFFRAC": 0.6729635448449048,
+     "SEASON": 0
+    },
+    "11": {
+     "CROWDSAP": 0.905892946,
+     "FLFRCSAP": 0.8868524012,
+     "NPIXSAP": 5,
+     "PSFFRAC": 0.8617641631872588,
+     "SEASON": 1
+    },
+    "12": {
+     "CROWDSAP": 0.883795552,
+     "FLFRCSAP": 0.7818269173,
+     "NPIXSAP": 3,
+     "PSFFRAC": 0.8265257321273747,
+     "SEASON": 2
+    },
+    "14": {
+     "CROWDSAP": 0.7481767119,
+     "FLFRCSAP": 0.9509742361,
+     "NPIXSAP": 7,
+     "PSFFRAC": 0.6661181206211804,
+     "SEASON": 0
+    },
+    "15": {
+     "CROWDSAP": 0.9063473346,
+     "FLFRCSAP": 0.8851424374,
+     "NPIXSAP": 5,
+     "PSFFRAC": 0.8591304023608807,
+     "SEASON": 1
+    },
+    "16": {
+     "CROWDSAP": 0.9597207545,
+     "FLFRCSAP": 0.6881423515,
+     "NPIXSAP": 2,
+     "PSFFRAC": 0.8017121243805302,
+     "SEASON": 2
+    }
+   },
+   "per_season": {
+    "0": {
+     "quarters": [
+      2,
+      6,
+      10,
+      14
+     ],
+     "psf": {
+      "label": "PSF season 0",
+      "depth_ppm": 1844.3,
+      "formal_err_ppm": 279.6,
+      "control_scatter_ppm": 237.5,
+      "control_mean_ppm": 6.2,
+      "inflation": 1.226,
+      "err_ppm": 342.8,
+      "snr": 5.38,
+      "n_in": 98,
+      "n_out": 370,
+      "n_events_with_data": 25,
+      "n_control_phases": 100,
+      "rms_ppm_per_cadence": 1929.6
+     },
+     "sap": {
+      "label": "SAP season 0",
+      "depth_ppm": 907.5,
+      "formal_err_ppm": 188.8,
+      "control_scatter_ppm": 165.5,
+      "control_mean_ppm": 0.4,
+      "inflation": 1.46,
+      "err_ppm": 275.8,
+      "snr": 3.29,
+      "n_in": 98,
+      "n_out": 370,
+      "n_events_with_data": 25,
+      "n_control_phases": 100,
+      "rms_ppm_per_cadence": 1220.0
+     },
+     "mean_crowdsap": 0.7778
+    },
+    "1": {
+     "quarters": [
+      3,
+      7,
+      11,
+      15
+     ],
+     "psf": {
+      "label": "PSF season 1",
+      "depth_ppm": 2251.1,
+      "formal_err_ppm": 174.0,
+      "control_scatter_ppm": 219.8,
+      "control_mean_ppm": -7.6,
+      "inflation": 1.355,
+      "err_ppm": 235.7,
+      "snr": 9.55,
+      "n_in": 97,
+      "n_out": 382,
+      "n_events_with_data": 26,
+      "n_control_phases": 100,
+      "rms_ppm_per_cadence": 1624.6
+     },
+     "sap": {
+      "label": "SAP season 1",
+      "depth_ppm": 1916.5,
+      "formal_err_ppm": 146.7,
+      "control_scatter_ppm": 186.3,
+      "control_mean_ppm": -8.8,
+      "inflation": 1.298,
+      "err_ppm": 190.4,
+      "snr": 10.06,
+      "n_in": 97,
+      "n_out": 382,
+      "n_events_with_data": 26,
+      "n_control_phases": 100,
+      "rms_ppm_per_cadence": 1415.0
+     },
+     "mean_crowdsap": 0.8792
+    },
+    "2": {
+     "quarters": [
+      4,
+      8,
+      12,
+      16
+     ],
+     "psf": {
+      "label": "PSF season 2",
+      "depth_ppm": 2360.7,
+      "formal_err_ppm": 167.4,
+      "control_scatter_ppm": 174.1,
+      "control_mean_ppm": -2.3,
+      "inflation": 1.189,
+      "err_ppm": 199.0,
+      "snr": 11.86,
+      "n_in": 81,
+      "n_out": 331,
+      "n_events_with_data": 21,
+      "n_control_phases": 100,
+      "rms_ppm_per_cadence": 1293.2
+     },
+     "sap": {
+      "label": "SAP season 2",
+      "depth_ppm": 2072.2,
+      "formal_err_ppm": 160.3,
+      "control_scatter_ppm": 174.9,
+      "control_mean_ppm": -2.2,
+      "inflation": 1.236,
+      "err_ppm": 198.1,
+      "snr": 10.46,
+      "n_in": 81,
+      "n_out": 331,
+      "n_events_with_data": 21,
+      "n_control_phases": 100,
+      "rms_ppm_per_cadence": 1226.6
+     },
+     "mean_crowdsap": 0.9078
+    },
+    "3": {
+     "quarters": [
+      1
+     ],
+     "psf": {
+      "label": "PSF season 3",
+      "depth_ppm": 1784.9,
+      "formal_err_ppm": 604.7,
+      "control_scatter_ppm": 621.4,
+      "control_mean_ppm": -68.7,
+      "inflation": 1.252,
+      "err_ppm": 757.1,
+      "snr": 2.36,
+      "n_in": 8,
+      "n_out": 31,
+      "n_events_with_data": 2,
+      "n_control_phases": 99,
+      "rms_ppm_per_cadence": 1454.2
+     },
+     "sap": {
+      "label": "SAP season 3",
+      "depth_ppm": 1139.2,
+      "formal_err_ppm": 463.3,
+      "control_scatter_ppm": 460.2,
+      "control_mean_ppm": -55.9,
+      "inflation": 1.182,
+      "err_ppm": 547.5,
+      "snr": 2.08,
+      "n_in": 8,
+      "n_out": 31,
+      "n_events_with_data": 2,
+      "n_control_phases": 99,
+      "rms_ppm_per_cadence": 1118.0
+     },
+     "mean_crowdsap": 0.8131
+    }
+   }
+  }
+ },
+ "A3_neighbour_own_lightcurves": [
+  {
+   "source_id": "2103792427466721792",
+   "sep_arcsec": 7.1,
+   "G": 15.477595,
+   "kic": 5689116,
+   "kbonus_quarters_with_flux": [
+    1,
+    2,
+    3,
+    4,
+    6,
+    7,
+    8,
+    10,
+    11,
+    12,
+    14,
+    15,
+    16
+   ],
+   "kbonus_psf": {
+    "label": "KBonus PSF kic-005689116",
+    "depth_ppm": 11.5,
+    "formal_err_ppm": 56.3,
+    "control_scatter_ppm": 40.4,
+    "control_mean_ppm": -1.8,
+    "inflation": 1.086,
+    "err_ppm": 61.1,
+    "snr": 0.19,
+    "n_in": 284,
+    "n_out": 1114,
+    "n_events_with_data": 74,
+    "n_control_phases": 100,
+    "rms_ppm_per_cadence": 657.6
+   }
+  },
+  {
+   "source_id": "2103792393102276480",
+   "sep_arcsec": 14.68,
+   "G": 19.788946,
+   "kic": null
+  },
+  {
+   "source_id": "2103792393108242176",
+   "sep_arcsec": 16.37,
+   "G": 19.13066,
+   "kic": 5689129,
+   "kepler_llc_files": 0
+  },
+  {
+   "source_id": "2103792427462012544",
+   "sep_arcsec": 17.94,
+   "G": 19.962969,
+   "kic": 5689108,
+   "kepler_llc_files": 0
+  },
+  {
+   "source_id": "2103792427462012032",
+   "sep_arcsec": 18.96,
+   "G": 20.577702,
+   "kic": null
+  },
+  {
+   "source_id": "2103792461821756544",
+   "sep_arcsec": 22.27,
+   "G": 19.790209,
+   "kic": 5689127,
+   "kepler_llc_files": 0
+  },
+  {
+   "source_id": "2103792393102280576",
+   "sep_arcsec": 28.32,
+   "G": 20.193298,
+   "kic": null
+  }
+ ],
+ "A4_centroid_test_INVALID": {
+  "method": "A.4 (extension): in-transit centroid shift of the candidate from the per-quarter CENTROID_COLUMN / CENTROID_ROW\ncolumns of its KBonus file (read-only cache). Per quarter: subtract a 2-day running median (transits masked),\ntake mean(in) - mean(out) with the same 2.0 h / 1-3 duration windows as the depth test. Quarters of one season share the\nCCD orientation, so they are averaged per season (inverse-variance). Implied offset of the dip source from the\nout-of-transit centroid = -shift / depth (depth = SAP depth of that season), in pixels and arcsec (3.98 arcsec/px).",
+  "VALID": false,
+  "verdict": "NOT USABLE: the KBonus CENTROID_COLUMN/ROW of the candidate and of KIC 5689116 move identically (difference scatter ~1e-6 px, correlation 1.0), i.e. they are the PSF-model positions (catalogue position plus a common pointing model), not flux-weighted centroids. They cannot respond to a dip, so the near-zero shifts below carry no information about the location of the dip source.",
+  "diagnostic_vs_KIC5689116": {
+   "LIGHTCURVE_Q1": {
+    "std_candidate_px": 0.011942455199650068,
+    "std_of_difference_px": 7.898041149012061e-07,
+    "corr": 0.9999999999781158
+   },
+   "LIGHTCURVE_Q2": {
+    "std_candidate_px": 0.018083714556123252,
+    "std_of_difference_px": 2.12186305745884e-06,
+    "corr": 0.9999999937895232
+   },
+   "LIGHTCURVE_Q3": {
+    "std_candidate_px": 0.005435902237641673,
+    "std_of_difference_px": 8.013332221541658e-07,
+    "corr": 0.9999999968553573
+   },
+   "LIGHTCURVE_Q4": {
+    "std_candidate_px": 0.009584851866830913,
+    "std_of_difference_px": 2.336361731604603e-06,
+    "corr": 0.9999999990597997
+   },
+   "LIGHTCURVE_Q6": {
+    "std_candidate_px": 0.012154508047630647,
+    "std_of_difference_px": 2.070934073952304e-06,
+    "corr": 0.9999999999278415
+   },
+   "LIGHTCURVE_Q7": {
+    "std_candidate_px": 0.005415213391707474,
+    "std_of_difference_px": 7.028706367526977e-07,
+    "corr": 0.9999999977353687
+   },
+   "LIGHTCURVE_Q8": {
+    "std_candidate_px": 0.00835717130668658,
+    "std_of_difference_px": 1.8116776790221643e-06,
+    "corr": 0.9999999998302013
+   },
+   "LIGHTCURVE_Q10": {
+    "std_candidate_px": 0.013000626723654199,
+    "std_of_difference_px": 2.15241288838706e-06,
+    "corr": 0.9999999998792504
+   },
+   "LIGHTCURVE_Q11": {
+    "std_candidate_px": 0.00711569964581135,
+    "std_of_difference_px": 8.543344909442505e-07,
+    "corr": 0.9999999988197936
+   },
+   "LIGHTCURVE_Q12": {
+    "std_candidate_px": 0.008795807152766138,
+    "std_of_difference_px": 2.084462392784168e-06,
+    "corr": 0.9999999995981452
+   },
+   "LIGHTCURVE_Q14": {
+    "std_candidate_px": 0.013684238731489108,
+    "std_of_difference_px": 2.282221140501837e-06,
+    "corr": 0.9999999997562468
+   },
+   "LIGHTCURVE_Q15": {
+    "std_candidate_px": 0.007080368468747256,
+    "std_of_difference_px": 8.784608594612287e-07,
+    "corr": 0.9999999979042472
+   },
+   "LIGHTCURVE_Q16": {
+    "std_candidate_px": 0.008609473902554862,
+    "std_of_difference_px": 1.9977672320586154e-06,
+    "corr": 0.9999999995112666
+   }
+  },
+  "per_quarter": {
+   "1": {
+    "season": 3,
+    "dcol_px": -4.210528705852408e-05,
+    "dcol_err": 0.00037823473649756907,
+    "drow_px": 0.0004367789098532354,
+    "drow_err": 0.0002937587142526315,
+    "inflation": 1.262687870600321,
+    "centroid_rms_px": 0.0005570253976091379
+   },
+   "2": {
+    "season": 0,
+    "dcol_px": -0.001225513918517598,
+    "dcol_err": 0.005758589951205859,
+    "drow_px": 0.0007328161904472978,
+    "drow_err": 0.00345801089009357,
+    "inflation": 3.01862132854233,
+    "centroid_rms_px": 0.0023186978520513372
+   },
+   "3": {
+    "season": 1,
+    "dcol_px": -6.3968900869987056e-06,
+    "dcol_err": 0.00016186075258367065,
+    "drow_px": 1.3705669599090983e-05,
+    "drow_err": 0.0001373471910696216,
+    "inflation": 1.5618466581675015,
+    "centroid_rms_px": 0.00036856807450900243
+   },
+   "4": {
+    "season": 2,
+    "dcol_px": 5.086486785899069e-05,
+    "dcol_err": 0.00012869050385381958,
+    "drow_px": -0.00020642893039061954,
+    "drow_err": 0.00018399215122404423,
+    "inflation": 1.142350797660382,
+    "centroid_rms_px": 0.0003552872780741247
+   },
+   "6": {
+    "season": 0,
+    "dcol_px": 5.4483406586629734e-05,
+    "dcol_err": 0.00016764693749082114,
+    "drow_px": -6.59763583746101e-05,
+    "drow_err": 0.00013904328307357293,
+    "inflation": 1.6850625855240422,
+    "centroid_rms_px": 0.00048462175689257983
+   },
+   "7": {
+    "season": 1,
+    "dcol_px": 5.42039969546896e-05,
+    "dcol_err": 7.597441746031697e-05,
+    "drow_px": 3.9107015883963046e-05,
+    "drow_err": 5.887567465535564e-05,
+    "inflation": 1.0,
+    "centroid_rms_px": 0.00034106925415827716
+   },
+   "8": {
+    "season": 2,
+    "dcol_px": -8.703251541333742e-05,
+    "dcol_err": 0.00011499816974902998,
+    "drow_px": -0.00014702967053559717,
+    "drow_err": 0.00013571671455135792,
+    "inflation": 1.3559958579190259,
+    "centroid_rms_px": 0.00034220609436289576
+   },
+   "10": {
+    "season": 0,
+    "dcol_px": -9.173327225857911e-05,
+    "dcol_err": 0.00019246494683442713,
+    "drow_px": 9.118910829003843e-05,
+    "drow_err": 0.00021345155808120554,
+    "inflation": 2.3019057178494067,
+    "centroid_rms_px": 0.00045845137207082084
+   },
+   "11": {
+    "season": 1,
+    "dcol_px": 1.809518533466164e-05,
+    "dcol_err": 9.799230600236741e-05,
+    "drow_px": 0.00018079906770228468,
+    "drow_err": 0.00017733483483405347,
+    "inflation": 1.0607442730014585,
+    "centroid_rms_px": 0.0003433457732747402
+   },
+   "12": {
+    "season": 2,
+    "dcol_px": 6.668784828304933e-05,
+    "dcol_err": 9.448162866148586e-05,
+    "drow_px": 0.0002021609852640695,
+    "drow_err": 0.0004081621805447117,
+    "inflation": 1.2313852250836446,
+    "centroid_rms_px": 0.00039497060523396713
+   },
+   "14": {
+    "season": 0,
+    "dcol_px": -0.00015862520829493555,
+    "dcol_err": 0.00041703612012928436,
+    "drow_px": 1.5218456147776237e-06,
+    "drow_err": 0.000972668659152004,
+    "inflation": 2.071541734958696,
+    "centroid_rms_px": 0.0005521905117498206
+   },
+   "15": {
+    "season": 1,
+    "dcol_px": -0.0001606681242563468,
+    "dcol_err": 9.619109700325788e-05,
+    "drow_px": -1.8503060206978314e-05,
+    "drow_err": 9.460340730883095e-05,
+    "inflation": 1.2597292638445348,
+    "centroid_rms_px": 0.0003689193154085526
+   },
+   "16": {
+    "season": 2,
+    "dcol_px": 4.6735119585635894e-05,
+    "dcol_err": 0.00020861177717538187,
+    "drow_px": -4.800187822078577e-05,
+    "drow_err": 0.00023112921977138702,
+    "inflation": 1.49147192116258,
+    "centroid_rms_px": 0.00039048728618905023
+   }
+  },
+  "per_season": {
+   "0": {
+    "quarters": [
+     2,
+     6,
+     10,
+     14
+    ],
+    "dcol_px": -2.1752335160699485e-05,
+    "dcol_err": 0.00012095160283263227,
+    "drow_px": -1.8021832037371587e-05,
+    "drow_err": 0.00011561359971598265,
+    "shift_sig": 0.2379960995968909,
+    "sap_depth_used": 0.0009075,
+    "implied_offset_px": 0.031127292444923394,
+    "implied_offset_err_px": 0.13091773472517557,
+    "implied_offset_arcsec": 0.12388662393079511,
+    "implied_offset_err_arcsec": 0.5210525842061987,
+    "offset_3sigma_upper_arcsec": 1.6870443765493914
+   },
+   "1": {
+    "quarters": [
+     3,
+     7,
+     11,
+     15
+    ],
+    "dcol_px": -1.4950416934920837e-05,
+    "dcol_err": 4.858536913849438e-05,
+    "drow_px": 3.23488923021055e-05,
+    "drow_err": 4.540617285899802e-05,
+    "shift_sig": 0.7760477191461906,
+    "sap_depth_used": 0.0019165,
+    "implied_offset_px": 0.01859461493212473,
+    "implied_offset_err_px": 0.023992515340496057,
+    "implied_offset_arcsec": 0.07400656742985642,
+    "implied_offset_err_arcsec": 0.09549021105517431,
+    "offset_3sigma_upper_arcsec": 0.36047720059537935
+   },
+   "2": {
+    "quarters": [
+     4,
+     8,
+     12,
+     16
+    ],
+    "dcol_px": 1.8578043625330566e-05,
+    "dcol_err": 6.074570307461812e-05,
+    "drow_px": -0.00012680778860220412,
+    "drow_err": 9.597966430066513e-05,
+    "shift_sig": 1.3561299056709957,
+    "sap_depth_used": 0.0020721999999999997,
+    "implied_offset_px": 0.061848014954848166,
+    "implied_offset_err_px": 0.04602513084480594,
+    "implied_offset_arcsec": 0.2461550995202957,
+    "implied_offset_err_arcsec": 0.18318002076232764,
+    "offset_3sigma_upper_arcsec": 0.7956951618072785
+   },
+   "3": {
+    "quarters": [
+     1
+    ],
+    "dcol_px": -4.210528705852407e-05,
+    "dcol_err": 0.00037823473649756907,
+    "drow_px": 0.0004367789098532355,
+    "drow_err": 0.0002937587142526315,
+    "shift_sig": 1.4910242449842976,
+    "sap_depth_used": 0.0011392,
+    "implied_offset_px": 0.38518581631645343,
+    "implied_offset_err_px": 0.2586437880879734,
+    "implied_offset_arcsec": 1.5330395489394846,
+    "implied_offset_err_arcsec": 1.029402276590134,
+    "offset_3sigma_upper_arcsec": 4.621246378709888
+   }
+  }
+ },
+ "B_gaia_neighbourhood": {
+  "candidate_gaia_source": {
+   "source_id": "2103792461826460288",
+   "parallax": "3.4064818259534495",
+   "parallax_error": "0.03973076",
+   "ruwe": "0.98412067",
+   "radial_velocity": "",
+   "radial_velocity_error": "",
+   "phot_variable_flag": "NOT_AVAILABLE",
+   "non_single_star": "0",
+   "ipd_frac_multi_peak": "0",
+   "ipd_gof_harmonic_amplitude": "0.01988767",
+   "astrometric_excess_noise": "0.0",
+   "phot_bp_rp_excess_factor": "1.3643997",
+   "has_rvs": "false",
+   "pmra": "-5.40189635732881",
+   "pmdec": "2.8478749358326523"
+  },
+  "n_neighbours_30arcsec": 7,
+  "neighbours": [
+   {
+    "source_id": "2103792427466721792",
+    "ra": 285.9052171647008,
+    "dec": 40.942069424984716,
+    "sep_arcsec": 7.1,
+    "sep_kepler_px": 1.78,
+    "G": 15.478,
+    "bp_rp": 0.917,
+    "parallax": 0.302,
+    "parallax_over_error": 1.32,
+    "pmra": -9.44,
+    "pmdec": -7.31,
+    "ruwe": 8.73,
+    "dG_vs_candidate": -0.805,
+    "required_eclipse_depth_frac": null,
+    "can_mimic_by_magnitude": false,
+    "note": "brighter than the candidate; tested directly in check A (own Kepler light curve)"
+   },
+   {
+    "source_id": "2103792393102276480",
+    "ra": 285.91074299769525,
+    "dec": 40.93855621473023,
+    "sep_arcsec": 14.68,
+    "sep_kepler_px": 3.69,
+    "G": 19.789,
+    "bp_rp": 1.055,
+    "parallax": 0.346,
+    "parallax_over_error": 1.13,
+    "pmra": -3.38,
+    "pmdec": -6.69,
+    "ruwe": 0.981,
+    "dG_vs_candidate": 3.507,
+    "required_eclipse_depth_frac": 0.0501,
+    "can_mimic_by_magnitude": true,
+    "note": "co-moving? no"
+   },
+   {
+    "source_id": "2103792393108242176",
+    "ra": 285.9117949216987,
+    "dec": 40.93856842600761,
+    "sep_arcsec": 16.37,
+    "sep_kepler_px": 4.11,
+    "G": 19.131,
+    "bp_rp": 1.66,
+    "parallax": -0.01,
+    "parallax_over_error": -0.02,
+    "pmra": 3.72,
+    "pmdec": -9.89,
+    "ruwe": 2.679,
+    "dG_vs_candidate": 2.848,
+    "required_eclipse_depth_frac": 0.0273,
+    "can_mimic_by_magnitude": true,
+    "note": "co-moving? no"
+   },
+   {
+    "source_id": "2103792427462012544",
+    "ra": 285.90123735822306,
+    "dec": 40.941779943981075,
+    "sep_arcsec": 17.94,
+    "sep_kepler_px": 4.51,
+    "G": 19.963,
+    "bp_rp": 1.854,
+    "parallax": 0.027,
+    "parallax_over_error": 0.07,
+    "pmra": -3.98,
+    "pmdec": -8.14,
+    "ruwe": 0.929,
+    "dG_vs_candidate": 3.681,
+    "required_eclipse_depth_frac": 0.0588,
+    "can_mimic_by_magnitude": true,
+    "note": "co-moving? no"
+   },
+   {
+    "source_id": "2103792427462012032",
+    "ra": 285.90128087865025,
+    "dec": 40.940174634658035,
+    "sep_arcsec": 18.96,
+    "sep_kepler_px": 4.76,
+    "G": 20.578,
+    "bp_rp": 1.385,
+    "parallax": -0.272,
+    "parallax_over_error": -0.39,
+    "pmra": 0.66,
+    "pmdec": -5.74,
+    "ruwe": 1.012,
+    "dG_vs_candidate": 4.295,
+    "required_eclipse_depth_frac": 0.1036,
+    "can_mimic_by_magnitude": true,
+    "note": "co-moving? no"
+   },
+   {
+    "source_id": "2103792461821756544",
+    "ra": 285.91110217195893,
+    "dec": 40.947658649157326,
+    "sep_arcsec": 22.27,
+    "sep_kepler_px": 5.6,
+    "G": 19.79,
+    "bp_rp": 1.673,
+    "parallax": 1.056,
+    "parallax_over_error": 3.13,
+    "pmra": 1.17,
+    "pmdec": -1.21,
+    "ruwe": 1.03,
+    "dG_vs_candidate": 3.508,
+    "required_eclipse_depth_frac": 0.0502,
+    "can_mimic_by_magnitude": true,
+    "note": "co-moving? no"
+   },
+   {
+    "source_id": "2103792393102280576",
+    "ra": 285.91804479583925,
+    "dec": 40.943502771072914,
+    "sep_arcsec": 28.32,
+    "sep_kepler_px": 7.11,
+    "G": 20.193,
+    "bp_rp": 2.436,
+    "parallax": 1.352,
+    "parallax_over_error": 3.23,
+    "pmra": -3.44,
+    "pmdec": 7.61,
+    "ruwe": 0.868,
+    "dG_vs_candidate": 3.911,
+    "required_eclipse_depth_frac": 0.0727,
+    "can_mimic_by_magnitude": true,
+    "note": "co-moving? no"
+   }
+  ],
+  "neighbours_able_to_mimic_by_magnitude": [
+   "2103792393102276480",
+   "2103792393108242176",
+   "2103792427462012544",
+   "2103792427462012032",
+   "2103792461821756544",
+   "2103792393102280576"
+  ],
+  "max_required_depth_frac": 0.1036,
+  "kic_sources_30arcsec": [
+   {
+    "KIC": 5689121,
+    "sep_arcsec": 0.123,
+    "ra": 285.90787,
+    "dec": 40.941978,
+    "Kp": "16.332",
+    "nearest_gaia": "2103792461826460288",
+    "nearest_gaia_sep_arcsec": 0.12
+   },
+   {
+    "KIC": 5689116,
+    "sep_arcsec": 6.972,
+    "ra": 285.90527,
+    "dec": 40.942131,
+    "Kp": "15.476",
+    "nearest_gaia": "2103792427466721792",
+    "nearest_gaia_sep_arcsec": 0.26
+   },
+   {
+    "KIC": 5689129,
+    "sep_arcsec": 15.517,
+    "ra": 285.9115,
+    "dec": 40.93869,
+    "Kp": "18.268",
+    "nearest_gaia": "2103792393108242176",
+    "nearest_gaia_sep_arcsec": 0.91
+   },
+   {
+    "KIC": 5689108,
+    "sep_arcsec": 17.642,
+    "ra": 285.90134,
+    "dec": 40.941925,
+    "Kp": "19.870",
+    "nearest_gaia": "2103792427462012544",
+    "nearest_gaia_sep_arcsec": 0.59
+   },
+   {
+    "KIC": 5689127,
+    "sep_arcsec": 22.349,
+    "ra": 285.91101,
+    "dec": 40.947712,
+    "Kp": "19.813",
+    "nearest_gaia": "2103792461821756544",
+    "nearest_gaia_sep_arcsec": 0.32
+   }
+  ],
+  "kic_only_sources_no_gaia_within_2arcsec": [],
+  "gaia_variability_and_nss": {
+   "vari_summary_cone30": {
+    "rows": 0,
+    "verbatim": [
+     "source_id"
+    ]
+   },
+   "vari_classifier_result_cone30": {
+    "rows": 0,
+    "verbatim": [
+     "source_id"
+    ]
+   },
+   "nss_two_body_orbit_cone30": {
+    "rows": 0,
+    "verbatim": [
+     "source_id"
+    ]
+   },
+   "vari_eclipsing_binary_cone30": {
+    "rows": 0,
+    "verbatim": [
+     "source_id"
+    ]
+   },
+   "nss_non_linear_spectro_cone30": {
+    "rows": 0,
+    "verbatim": [
+     "source_id"
+    ]
+   },
+   "nss_acceleration_astro_cone30": {
+    "rows": 0,
+    "verbatim": [
+     "source_id"
+    ]
+   },
+   "vari_summary_candidate": {
+    "rows": 0
+   },
+   "vari_classifier_result_candidate": {
+    "rows": 0
+   },
+   "nss_two_body_orbit_candidate": {
+    "rows": 0
+   },
+   "vari_eclipsing_binary_candidate": {
+    "rows": 0
+   }
+  }
+ },
+ "C_archives": {
+  "C_nea_cumulative_box": {
+   "rows": 0,
+   "url": "https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query=select+kepid%2Ckepoi_name%2Ckepler_name%2Ckoi_disposition%2Ckoi_pdisposition%2Ckoi_period%2Ckoi_time0bk%2Ckoi_depth%2Ckoi_duration%2Cra%2Cdec+from+cumulative+where+ra+between+285.896795+and+285.918859+and+dec+between+40.933655+and+40.950322&format=csv",
+   "file": "C_nea_cumulative_box.csv"
+  },
+  "C_nea_cumulative_kepid": {
+   "rows": 0,
+   "url": "https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query=select+kepid%2Ckepoi_name%2Ckepler_name%2Ckoi_disposition%2Ckoi_period%2Ckoi_depth%2Cra%2Cdec+from+cumulative+where+kepid+in+%285689116%2C5689121%29&format=csv",
+   "file": "C_nea_cumulative_kepid.csv"
+  },
+  "C_nea_dr25tce_box": {
+   "rows": 0,
+   "url": "https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query=select+%2A+from+q1_q17_dr25_tce+where+ra+between+285.896795+and+285.918859+and+dec+between+40.933655+and+40.950322&format=csv",
+   "file": "C_nea_dr25tce_box.csv"
+  },
+  "C_nea_dr25tce_kepid": {
+   "rows": 0,
+   "url": "https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query=select+%2A+from+q1_q17_dr25_tce+where+kepid+in+%285689116%2C5689121%29&format=csv",
+   "file": "C_nea_dr25tce_kepid.csv"
+  },
+  "C_nea_dr24tce_kepid": {
+   "rows": 0,
+   "url": "https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query=select+%2A+from+q1_q17_dr24_tce+where+kepid+in+%285689116%2C5689121%29&format=csv",
+   "file": "C_nea_dr24tce_kepid.csv"
+  },
+  "C_nea_toi_box": {
+   "rows": 0,
+   "url": "https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query=select+%2A+from+toi+where+ra+between+285.896795+and+285.918859+and+dec+between+40.933655+and+40.950322&format=csv",
+   "file": "C_nea_toi_box.csv"
+  },
+  "C_nea_dr25stellar_kepid": {
+   "rows": null,
+   "error": "nasa-exoplanet-archive https://exoplanetarchive.ipac.caltech.edu/TAP/sync -> HTTP 400",
+   "url": "https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query=select+%2A+from+q1_q17_dr25_stellar+where+kepid+in+%285689116%2C5689121%29&format=csv"
+  },
+  "C_nea_keplerstellar_kepid": {
+   "rows": 5,
+   "url": "https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query=select+kepid%2Cteff%2Clogg%2Cradius%2Cmass%2Ckepmag%2Cra%2Cdec+from+keplerstellar+where+kepid+in+%285689116%2C5689121%29&format=csv",
+   "file": "C_nea_keplerstellar_kepid.csv"
+  },
+  "C_vizier_keplerEB_kirk2016": {
+   "rows": 0,
+   "url": "https://vizier.cds.unistra.fr/viz-bin/asu-tsv?-source=J%2FAJ%2F151%2F68%2Fcatalog&-c=285.90782692874626+%2B40.94198844296448&-c.rs=30&-out.all=&-out.add=_r&-sort=_r",
+   "file": "C_vizier_keplerEB_kirk2016.tsv"
+  },
+  "C_vizier_KIC": {
+   "rows": 5,
+   "url": "https://vizier.cds.unistra.fr/viz-bin/asu-tsv?-source=V%2F133%2Fkic&-c=285.90782692874626+%2B40.94198844296448&-c.rs=30&-out.all=&-out.add=_r&-sort=_r",
+   "file": "C_vizier_KIC.tsv"
+  },
+  "C_vizier_TICv82": {
+   "rows": 8,
+   "url": "https://vizier.cds.unistra.fr/viz-bin/asu-tsv?-source=IV%2F39%2Ftic82&-c=285.90782692874626+%2B40.94198844296448&-c.rs=30&-out.all=&-out.add=_r&-sort=_r",
+   "file": "C_vizier_TICv82.tsv"
+  },
+  "C_vizier_planethunters_schwamb2012": {
+   "rows": null,
+   "error": "Error=Table or Catalog not found: J/ApJ/754/129",
+   "url": "https://vizier.cds.unistra.fr/viz-bin/asu-tsv?-source=J%2FApJ%2F754%2F129&-c=285.90782692874626+%2B40.94198844296448&-c.rs=30&-out.all=&-out.add=_r&-sort=_r"
+  },
+  "C_vizier_planethunters_lintott2013": {
+   "rows": null,
+   "error": "Error=Table or Catalog not found: J/AJ/145/151",
+   "url": "https://vizier.cds.unistra.fr/viz-bin/asu-tsv?-source=J%2FAJ%2F145%2F151&-c=285.90782692874626+%2B40.94198844296448&-c.rs=30&-out.all=&-out.add=_r&-sort=_r"
+  },
+  "C_vizier_planethunters_wang2013": {
+   "rows": null,
+   "error": "Error=Table or Catalog not found: J/ApJ/776/10",
+   "url": "https://vizier.cds.unistra.fr/viz-bin/asu-tsv?-source=J%2FApJ%2F776%2F10&-c=285.90782692874626+%2B40.94198844296448&-c.rs=30&-out.all=&-out.add=_r&-sort=_r"
+  },
+  "C_vizier_planethunters_schmitt2014_PH6": {
+   "rows": null,
+   "error": "Error=Table or Catalog not found: J/AJ/148/28",
+   "url": "https://vizier.cds.unistra.fr/viz-bin/asu-tsv?-source=J%2FAJ%2F148%2F28&-c=285.90782692874626+%2B40.94198844296448&-c.rs=30&-out.all=&-out.add=_r&-sort=_r"
+  },
+  "C_vizier_planethunters_schmitt2014": {
+   "rows": 0,
+   "url": "https://vizier.cds.unistra.fr/viz-bin/asu-tsv?-source=J%2FApJ%2F795%2F167&-c=285.90782692874626+%2B40.94198844296448&-c.rs=30&-out.all=&-out.add=_r&-sort=_r",
+   "file": "C_vizier_planethunters_schmitt2014.tsv"
+  },
+  "C_vizier_kepler_fpp_morton2016": {
+   "rows": 0,
+   "url": "https://vizier.cds.unistra.fr/viz-bin/asu-tsv?-source=J%2FApJ%2F822%2F86&-c=285.90782692874626+%2B40.94198844296448&-c.rs=30&-out.all=&-out.add=_r&-sort=_r",
+   "file": "C_vizier_kepler_fpp_morton2016.tsv"
+  },
+  "C_simbad_cone30": {
+   "rows": null,
+   "url": "https://simbad.cds.unistra.fr/simbad/sim-coo?Coord=285.90782692874626+%2B40.94198844296448&Radius=30&Radius.unit=arcsec&output.format=ASCII&list.idsel=on",
+   "file": "C_simbad_cone30.txt"
+  },
+  "C_nea_dr25stellar_kepid_retry": {
+   "rows": null,
+   "error": "nasa-exoplanet-archive https://exoplanetarchive.ipac.caltech.edu/TAP/sync -> HTTP 400",
+   "url": "https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query=select+kepid%2Cteff%2Clogg%2Cradius%2Cmass%2Ckepmag+from+q1_q17_dr25_stellar+where+kepid+in+%285689116%2C5689121%29&format=csv"
+  },
+  "C_nea_q1q16tce_kepid": {
+   "rows": 0,
+   "url": "https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query=select+kepid%2Ctce_plnt_num%2Ctce_period%2Ctce_depth+from+q1_q16_tce+where+kepid+in+%285689116%2C5689121%29&format=csv",
+   "file": "C_nea_q1q16tce_kepid.csv"
+  },
+  "C_nea_q1q12tce_kepid": {
+   "rows": 0,
+   "url": "https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query=select+kepid%2Ctce_plnt_num%2Ctce_period%2Ctce_depth+from+q1_q12_tce+where+kepid+in+%285689116%2C5689121%29&format=csv",
+   "file": "C_nea_q1q12tce_kepid.csv"
+  },
+  "C_nea_fpwg_kepid": {
+   "rows": null,
+   "error": "nasa-exoplanet-archive https://exoplanetarchive.ipac.caltech.edu/TAP/sync -> HTTP 400",
+   "url": "https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query=select+kepid%2Ckepoi_name%2Cfpwg_disp_status+from+fpwg+where+kepid+in+%285689116%2C5689121%29&format=csv"
+  },
+  "C_simbad_refs_candidate": {
+   "rows": null,
+   "error": "simbad https://simbad.cds.unistra.fr/simbad/sim-tap/sync -> HTTP 400",
+   "url": "https://simbad.cds.unistra.fr/simbad/sim-tap/sync?request=doQuery&lang=ADQL&format=csv&query=SELECT+DISTINCT+r.bibcode%2C+r.title%2C+r.journal%2C+r.year+FROM+ref+AS+r+JOIN+has_ref+AS+h+ON+h.oidbibref+%3D+r.oidbib+JOIN+ident+AS+i+ON+i.oidref+%3D+h.oidref+WHERE+i.id+%3D+%27Gaia+DR3+2103792461826460288%27+ORDER+BY+r.year"
+  },
+  "C_simbad_ids_candidate": {
+   "rows": 1,
+   "url": "https://simbad.cds.unistra.fr/simbad/sim-tap/sync?request=doQuery&lang=ADQL&format=csv&query=SELECT+i2.id+FROM+ident+AS+i+JOIN+ident+AS+i2+ON+i.oidref+%3D+i2.oidref+WHERE+i.id+%3D+%27Gaia+DR3+2103792461826460288%27",
+   "file": "C_simbad_ids_candidate.csv"
+  },
+  "C_simbad_refs_neighbour": {
+   "rows": null,
+   "error": "simbad https://simbad.cds.unistra.fr/simbad/sim-tap/sync -> HTTP 400",
+   "url": "https://simbad.cds.unistra.fr/simbad/sim-tap/sync?request=doQuery&lang=ADQL&format=csv&query=SELECT+DISTINCT+r.bibcode%2C+r.title%2C+r.journal%2C+r.year+FROM+ref+AS+r+JOIN+has_ref+AS+h+ON+h.oidbibref+%3D+r.oidbib+JOIN+ident+AS+i+ON+i.oidref+%3D+h.oidref+WHERE+i.id+%3D+%272MASS+J19033726%2B4056316%27+ORDER+BY+r.year"
+  },
+  "C_simbad_ids_neighbour": {
+   "rows": 5,
+   "url": "https://simbad.cds.unistra.fr/simbad/sim-tap/sync?request=doQuery&lang=ADQL&format=csv&query=SELECT+i2.id+FROM+ident+AS+i+JOIN+ident+AS+i2+ON+i.oidref+%3D+i2.oidref+WHERE+i.id+%3D+%272MASS+J19033726%2B4056316%27",
+   "file": "C_simbad_ids_neighbour.csv"
+  },
+  "C_vizier_planethunters_lintott2013_bykic": {
+   "rows": null,
+   "error": "Error=Table or Catalog not found: J/AJ/145/151",
+   "url": "https://vizier.cds.unistra.fr/viz-bin/asu-tsv?-source=J%2FAJ%2F145%2F151&KIC=%3D5689121&-out.all="
+  },
+  "C_vizier_planethunters_wang2013_bykic": {
+   "rows": null,
+   "error": "Error=Table or Catalog not found: J/ApJ/776/10",
+   "url": "https://vizier.cds.unistra.fr/viz-bin/asu-tsv?-source=J%2FApJ%2F776%2F10&KIC=%3D5689121&-out.all="
+  },
+  "C_vizier_planethunters_schmitt2014_PH6_bykic": {
+   "rows": null,
+   "error": "Error=Table or Catalog not found: J/AJ/148/28",
+   "url": "https://vizier.cds.unistra.fr/viz-bin/asu-tsv?-source=J%2FAJ%2F148%2F28&KIC=%3D5689121&-out.all="
+  },
+  "C_vizier_planethunters_schwamb2012_bykic": {
+   "rows": null,
+   "error": "Error=Table or Catalog not found: J/ApJ/754/129",
+   "url": "https://vizier.cds.unistra.fr/viz-bin/asu-tsv?-source=J%2FApJ%2F754%2F129&KIC=%3D5689121&-out.all="
+  },
+  "C_planethunt_site": {
+   "rows": null,
+   "url": "https://kuber.studio/planethunt/",
+   "file": "C_planethunt_site.html"
+  },
+  "C_planethunt_github_release": {
+   "rows": null,
+   "url": "https://github.com/Kuberwastaken/planethunt/releases/tag/evidence-20261013",
+   "file": "C_planethunt_github_release.html"
+  },
+  "C_planethunt_github_readme": {
+   "rows": null,
+   "url": "https://raw.githubusercontent.com/Kuberwastaken/planethunt/main/README.md",
+   "file": "C_planethunt_github_readme.md"
+  },
+  "C_simbad_refs_candidate_retry": {
+   "rows": null,
+   "error": "simbad https://simbad.cds.unistra.fr/simbad/sim-tap/sync -> HTTP 400",
+   "url": "https://simbad.cds.unistra.fr/simbad/sim-tap/sync?request=doQuery&lang=ADQL&format=csv&query=SELECT+ref.bibcode%2C+ref.year%2C+ref.journal%2C+ref.title+FROM+ref+JOIN+has_ref+ON+ref.oidbib+%3D+has_ref.oidbibref+JOIN+ident+ON+ident.oidref+%3D+has_ref.oidref+WHERE+ident.id+%3D+%27Gaia+DR3+2103792461826460288%27"
+  },
+  "C_simbad_refs_neighbour_retry": {
+   "rows": null,
+   "error": "simbad https://simbad.cds.unistra.fr/simbad/sim-tap/sync -> HTTP 400",
+   "url": "https://simbad.cds.unistra.fr/simbad/sim-tap/sync?request=doQuery&lang=ADQL&format=csv&query=SELECT+ref.bibcode%2C+ref.year%2C+ref.journal%2C+ref.title+FROM+ref+JOIN+has_ref+ON+ref.oidbib+%3D+has_ref.oidbibref+JOIN+ident+ON+ident.oidref+%3D+has_ref.oidref+WHERE+ident.id+%3D+%27KIC+5689116%27"
+  },
+  "exofop_TIC120686465": {
+   "url": "https://exofop.ipac.caltech.edu/tess/target.php?id=120686465&json=",
+   "tois": [],
+   "ctois": [],
+   "imaging": [],
+   "spectroscopy": [],
+   "stellar_companions": []
+  },
+  "simbad_objects_in_30arcsec": []
+ },
+ "D_stellar_planet": {
+  "inputs": {
+   "G": 16.282413,
+   "BP_RP": 2.1940956,
+   "parallax_mas": 3.4064818259534495,
+   "parallax_err_mas": 0.03973076,
+   "zero_point_L21_mas": -0.033,
+   "parallax_corrected_mas": 3.4395,
+   "parallax_err_used_mas": 0.0425,
+   "Ks_2MASS": [
+    12.969,
+    0.028
+   ],
+   "P_d": 13.769508917830883,
+   "box_depth_ppm": 1983,
+   "k": 0.046,
+   "b_fit": 0.86,
+   "duration_h": 2.0
+  },
+  "distance_pc": {
+   "median": 290.7,
+   "minus": 3.5,
+   "plus": 3.6
+  },
+  "distance_pc_simple": 290.7,
+  "abs_G_mag_noext": 8.965,
+  "abs_Ks_mag_noext": 5.651,
+  "mamajek_at_observed_colour": {
+   "Teff": 3581.543,
+   "R": 0.459,
+   "M": 0.451,
+   "M_G": 9.179,
+   "M_Ks": 5.897
+  },
+  "mamajek_at_2.10": {
+   "Teff": 3650.0,
+   "R": 0.496,
+   "M": 0.492,
+   "M_G": 8.86,
+   "M_Ks": 5.668
+  },
+  "mamajek_at_2.20": {
+   "Teff": 3578.0,
+   "R": 0.457,
+   "M": 0.449,
+   "M_G": 9.197,
+   "M_Ks": 5.911
+  },
+  "mamajek_at_2.30": {
+   "Teff": 3520.625,
+   "R": 0.435,
+   "M": 0.423,
+   "M_G": 9.456,
+   "M_Ks": 6.067
+  },
+  "mamajek_at_2.00_if_E0.2": {
+   "Teff": 3742.5,
+   "R": 0.533,
+   "M": 0.53,
+   "M_G": 8.535,
+   "M_Ks": 5.43
+  },
+  "mamajek_rows_used": [
+   {
+    "SpT": "K8V",
+    "BP_RP": 1.73,
+    "Teff": 3990.0,
+    "R": 0.615,
+    "M": 0.62,
+    "M_G": 7.74,
+    "M_Ks": 4.95
+   },
+   {
+    "SpT": "K9V",
+    "BP_RP": 1.79,
+    "Teff": 3930.0,
+    "R": 0.608,
+    "M": 0.59,
+    "M_G": 8.03,
+    "M_Ks": 5.01
+   },
+   {
+    "SpT": "M0V",
+    "BP_RP": 1.84,
+    "Teff": 3850.0,
+    "R": 0.588,
+    "M": 0.57,
+    "M_G": 8.16,
+    "M_Ks": 5.15
+   },
+   {
+    "SpT": "M0.5V",
+    "BP_RP": 1.97,
+    "Teff": 3770.0,
+    "R": 0.544,
+    "M": 0.54,
+    "M_G": 8.44,
+    "M_Ks": 5.36
+   },
+   {
+    "SpT": "M1V",
+    "BP_RP": 2.09,
+    "Teff": 3660.0,
+    "R": 0.501,
+    "M": 0.5,
+    "M_G": 8.82,
+    "M_Ks": 5.64
+   },
+   {
+    "SpT": "M1.5V",
+    "BP_RP": 2.13,
+    "Teff": 3620.0,
+    "R": 0.482,
+    "M": 0.47,
+    "M_G": 8.98,
+    "M_Ks": 5.75
+   },
+   {
+    "SpT": "M2V",
+    "BP_RP": 2.23,
+    "Teff": 3560.0,
+    "R": 0.446,
+    "M": 0.44,
+    "M_G": 9.29,
+    "M_Ks": 5.98
+   },
+   {
+    "SpT": "M2.5V",
+    "BP_RP": 2.39,
+    "Teff": 3470.0,
+    "R": 0.421,
+    "M": 0.4,
+    "M_G": 9.67,
+    "M_Ks": 6.18
+   },
+   {
+    "SpT": "M3V",
+    "BP_RP": 2.5,
+    "Teff": 3430.0,
+    "R": 0.361,
+    "M": 0.37,
+    "M_G": 10.05,
+    "M_Ks": 6.55
+   }
+  ],
+  "mann_MKs_check": {
+   "R_Mann2015_Rsun": {
+    "median": 0.504,
+    "minus": 0.016,
+    "plus": 0.016
+   },
+   "M_Mann2019_Msun": {
+    "median": 0.502,
+    "minus": 0.013,
+    "plus": 0.013
+   },
+   "M_Ks": {
+    "median": 5.617,
+    "minus": 0.044,
+    "plus": 0.044
+   }
+  },
+  "tic_v82": {
+   "Teff": "3633",
+   "Teff_e": "157",
+   "R": "0.50748",
+   "R_e": "0.0162773",
+   "M": "0.505399",
+   "M_e": "0.0211521",
+   "dist_pc": "297.992",
+   "logg": "4.73086",
+   "source": "ExoFOP target.php?id=120686465&json (None)"
+  },
+  "gaia_dr3_apsis": {
+   "teff_gspphot": "3752.7253",
+   "radius_gspphot": "0.5553",
+   "ebpminrp_gspphot": "0.2729",
+   "ag_gspphot": "0.4708",
+   "radius_flame": "0.5420065",
+   "mass_flame": "0.54462016",
+   "teff_msc1": "3823.9683",
+   "mh_msc": "-0.17627837",
+   "mh_gspphot": "-0.1537",
+   "spectraltype_esphs": "M"
+  },
+  "extinction": {
+   "SFD98_EBV_total_los": 0.1017,
+   "SF11_EBV_total_los": 0.0875,
+   "b_deg": 15.251301674042766,
+   "SF11_scaled_to_distance_h125pc": 0.04,
+   "note": "Bayestar19 (argonaut.skymaps.info) timed out from this machine; values from IRSA DUST (2-D, full line of sight)."
+  },
+  "planet_baseline_observed_colour_pm0.10": {
+   "label": "Mamajek at BP-RP 2.19 +- 0.10 (E(BP-RP) <= 0.1 assumed)",
+   "Teff_K": {
+    "median": 3582.0,
+    "minus": 57.0,
+    "plus": 74.0
+   },
+   "R_star_Rsun": {
+    "median": 0.459,
+    "minus": 0.023,
+    "plus": 0.04
+   },
+   "M_star_Msun": {
+    "median": 0.451,
+    "minus": 0.027,
+    "plus": 0.046
+   },
+   "rho_star_gcc": {
+    "median": 6.58,
+    "minus": 0.94,
+    "plus": 0.64
+   },
+   "a_AU": {
+    "median": 0.0862,
+    "minus": 0.0017,
+    "plus": 0.0028
+   },
+   "a_over_Rstar": {
+    "median": 40.4,
+    "minus": 2.0,
+    "plus": 1.3
+   },
+   "Rp_from_k_Rearth": {
+    "median": 2.3,
+    "minus": 0.11,
+    "plus": 0.2
+   },
+   "Rp_from_boxdepth_Rearth": {
+    "median": 2.23,
+    "minus": 0.11,
+    "plus": 0.19
+   },
+   "Teq_K_A0.3_full_redistribution": {
+    "median": 364.0,
+    "minus": 11.0,
+    "plus": 17.0
+   },
+   "transit_probability_Rstar_over_a": {
+    "median": 0.0248,
+    "minus": 0.0007,
+    "plus": 0.0013
+   },
+   "T14_central_h": {
+    "median": 2.72,
+    "minus": 0.08,
+    "plus": 0.14
+   },
+   "b_if_obs_dur_is_T14": {
+    "median": 0.72,
+    "minus": 0.13,
+    "plus": 0.09
+   },
+   "b_if_obs_dur_is_mean_T14_T23": {
+    "median": 0.65,
+    "minus": 0.14,
+    "plus": 0.1
+   },
+   "fraction_b_mid_undefined": 0.0,
+   "T14_for_fitted_b_h": {
+    "median": 1.55,
+    "minus": 0.05,
+    "plus": 0.08
+   }
+  },
+  "planet_alt_dereddened_minus0.2_pm0.10": {
+   "label": "Mamajek at BP-RP 1.99 +- 0.10 (if E(BP-RP) ~ 0.2)",
+   "Teff_K": {
+    "median": 3748.0,
+    "minus": 92.0,
+    "plus": 68.0
+   },
+   "R_star_Rsun": {
+    "median": 0.535,
+    "minus": 0.036,
+    "plus": 0.034
+   },
+   "M_star_Msun": {
+    "median": 0.532,
+    "minus": 0.035,
+    "plus": 0.025
+   },
+   "rho_star_gcc": {
+    "median": 4.89,
+    "minus": 0.63,
+    "plus": 0.75
+   },
+   "a_AU": {
+    "median": 0.0911,
+    "minus": 0.002,
+    "plus": 0.0014
+   },
+   "a_over_Rstar": {
+    "median": 36.6,
+    "minus": 1.6,
+    "plus": 1.8
+   },
+   "Rp_from_k_Rearth": {
+    "median": 2.69,
+    "minus": 0.18,
+    "plus": 0.17
+   },
+   "Rp_from_boxdepth_Rearth": {
+    "median": 2.6,
+    "minus": 0.18,
+    "plus": 0.16
+   },
+   "Teq_K_A0.3_full_redistribution": {
+    "median": 401.0,
+    "minus": 19.0,
+    "plus": 17.0
+   },
+   "transit_probability_Rstar_over_a": {
+    "median": 0.0273,
+    "minus": 0.0013,
+    "plus": 0.0013
+   },
+   "T14_central_h": {
+    "median": 3.01,
+    "minus": 0.14,
+    "plus": 0.14
+   },
+   "b_if_obs_dur_is_T14": {
+    "median": 0.78,
+    "minus": 0.1,
+    "plus": 0.07
+   },
+   "b_if_obs_dur_is_mean_T14_T23": {
+    "median": 0.72,
+    "minus": 0.1,
+    "plus": 0.08
+   },
+   "fraction_b_mid_undefined": 0.0,
+   "T14_for_fitted_b_h": {
+    "median": 1.71,
+    "minus": 0.08,
+    "plus": 0.08
+   }
+  },
+  "planet_mann_MKs": {
+   "label": "Mann M_Ks radius and mass, Teff 3582 +- 100",
+   "Teff_K": {
+    "median": 3582.0,
+    "minus": 100.0,
+    "plus": 99.0
+   },
+   "R_star_Rsun": {
+    "median": 0.504,
+    "minus": 0.016,
+    "plus": 0.016
+   },
+   "M_star_Msun": {
+    "median": 0.502,
+    "minus": 0.013,
+    "plus": 0.013
+   },
+   "rho_star_gcc": {
+    "median": 5.52,
+    "minus": 0.49,
+    "plus": 0.55
+   },
+   "a_AU": {
+    "median": 0.0894,
+    "minus": 0.0007,
+    "plus": 0.0007
+   },
+   "a_over_Rstar": {
+    "median": 38.1,
+    "minus": 1.2,
+    "plus": 1.2
+   },
+   "Rp_from_k_Rearth": {
+    "median": 2.53,
+    "minus": 0.08,
+    "plus": 0.08
+   },
+   "Rp_from_boxdepth_Rearth": {
+    "median": 2.45,
+    "minus": 0.08,
+    "plus": 0.08
+   },
+   "Teq_K_A0.3_full_redistribution": {
+    "median": 375.0,
+    "minus": 12.0,
+    "plus": 12.0
+   },
+   "transit_probability_Rstar_over_a": {
+    "median": 0.0262,
+    "minus": 0.0008,
+    "plus": 0.0008
+   },
+   "T14_central_h": {
+    "median": 2.89,
+    "minus": 0.09,
+    "plus": 0.09
+   },
+   "b_if_obs_dur_is_T14": {
+    "median": 0.75,
+    "minus": 0.1,
+    "plus": 0.08
+   },
+   "b_if_obs_dur_is_mean_T14_T23": {
+    "median": 0.69,
+    "minus": 0.11,
+    "plus": 0.08
+   },
+   "fraction_b_mid_undefined": 0.0,
+   "T14_for_fitted_b_h": {
+    "median": 1.64,
+    "minus": 0.05,
+    "plus": 0.05
+   }
+  }
+ }
+}
