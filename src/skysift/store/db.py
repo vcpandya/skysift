@@ -22,7 +22,11 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 from skysift import jsonutil
 from skysift.models import Signal, Target, TestResult
 
-FINAL_STATUS = {"pass": "candidate_stage1", "fail": "rejected", "undetermined": "undetermined"}
+FINAL_STATUS = {"pass": "candidate_stage1", "pass_pixels": "candidate_stage2", "fail": "rejected",
+                "undetermined": "undetermined"}
+# every final_status the engine writes; a reviewer's decision sits beside it (DECISION_STATUS) and never replaces it,
+# except that a rejection also marks the signal rejected
+ENGINE_STATUSES = ("pending", "candidate_stage1", "candidate_stage2", "undetermined", "rejected", "superseded")
 DECISION_STATUS = {"approve": "approved", "reject": "rejected", "needs_data": "review"}
 
 
@@ -86,10 +90,13 @@ class SignalRow(Base):
     n_events: Mapped[int] = mapped_column(Integer)
     extra: Mapped[dict] = mapped_column(JSON, default=dict)
     branch: Mapped[str] = mapped_column(String(16), default="planet")
-    final_status: Mapped[str] = mapped_column(String(16), default="pending")   # pending|rejected|candidate
+    final_status: Mapped[str] = mapped_column(String(16), default="pending")   # one of ENGINE_STATUSES
+    parent_signal_id: Mapped[int | None] = mapped_column(ForeignKey("signals.id"), index=True)   # a recheck's source
+    ladder_version: Mapped[str | None] = mapped_column(String(16))      # the ladder that vetted it (None: before 002)
 
 
 class TestRow(Base):
+    __test__ = False  # not a pytest test class
     __tablename__ = "tests"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     signal_id: Mapped[int] = mapped_column(ForeignKey("signals.id"), index=True)
@@ -99,6 +106,57 @@ class TestRow(Base):
     reason: Mapped[str] = mapped_column(Text, default="")
     duration_s: Mapped[float] = mapped_column(Float, default=0.0)
     created: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    recheck_id: Mapped[int | None] = mapped_column(ForeignKey("rechecks.id"))    # the recheck that wrote this row
+
+
+class RecheckRow(Base):
+    """Append-only history of the stage-2 recheck: one row per step applied to a signal. The test rows a step writes
+    point back here through ``TestRow.recheck_id``."""
+    __tablename__ = "rechecks"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    signal_id: Mapped[int] = mapped_column(ForeignKey("signals.id"), index=True)
+    step: Mapped[str] = mapped_column(String(16))              # ladder|period|catalogue|pixels
+    ladder_version: Mapped[str] = mapped_column(String(16))
+    outcome: Mapped[str] = mapped_column(String(16))           # pass|fail|undetermined|skipped|superseded
+    reason: Mapped[str] = mapped_column(Text, default="")
+    new_signal_id: Mapped[int | None] = mapped_column(ForeignKey("signals.id"))   # the P/2 signal a period step made
+    utc: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+def _get(t, key: str):
+    return t[key] if isinstance(t, dict) else getattr(t, key)
+
+
+def _latest_per_rung(tests) -> dict:
+    """The newest row (highest id) of each rung. Rows not yet stored (no id) are ordered by their list position."""
+    out: dict[str, tuple] = {}
+    for i, t in enumerate(tests):
+        rid = t.get("id") if isinstance(t, dict) else t.id
+        key = i if rid is None else rid
+        rung = _get(t, "rung")
+        if rung not in out or key > out[rung][0]:
+            out[rung] = (key, t)
+    return {rung: t for rung, (_key, t) in out.items()}
+
+
+def status_from_tests(tests: list[dict] | list[TestRow]) -> str:
+    """The engine outcome the latest row of each rung gives: "fail" if any failed, else "undetermined" if any gave
+    no verdict, else "pass"; "pending" when the signal has no test rows."""
+    statuses = {str(_get(t, "status")) for t in _latest_per_rung(tests).values()}
+    if not statuses:
+        return "pending"
+    return "fail" if "fail" in statuses else "undetermined" if "undetermined" in statuses else "pass"
+
+
+def final_status_for(outcome: str, tests) -> str:
+    """The final status an engine outcome means: a pass is a stage-2 candidate when the latest ``rung5_pixels`` row
+    passed and a stage-1 candidate otherwise; "pending" stays pending; the rest map through FINAL_STATUS."""
+    if outcome == "pending":
+        return "pending"
+    if outcome == "pass":
+        pixels = _latest_per_rung(tests).get("rung5_pixels")
+        return "candidate_stage2" if pixels is not None and str(_get(pixels, "status")) == "pass" else "candidate_stage1"
+    return FINAL_STATUS[outcome]
 
 
 class CandidateRow(Base):
@@ -245,14 +303,28 @@ class Store:
         with self.session() as s:
             r = s.get(RunRow, run_id); r.status, r.error, r.finished = status, error, utcnow()
 
-    def add_signal(self, sig: Signal, run_id: int) -> int:
+    def add_signal(self, sig: Signal, run_id: int, parent_signal_id: int | None = None,
+                   ladder_version: str | None = None) -> int:
+        """Add a signal to a run, or return the run's signal at the same period (within 1e-4 d). A recheck's
+        re-measured signal names the signal it came from (``parent_signal_id``) and the ladder that vets it."""
         with self.session() as s:
             existing = s.scalars(select(SignalRow).where(SignalRow.run_id == run_id, SignalRow.detector == sig.detector,
                                                          SignalRow.period.between(sig.period - 1e-4, sig.period + 1e-4))).first()
             if existing:
                 return existing.id
-            row = SignalRow(run_id=run_id, **sig.model_dump())
+            row = SignalRow(run_id=run_id, parent_signal_id=parent_signal_id, ladder_version=ladder_version,
+                            **sig.model_dump())
             s.add(row); s.flush(); return row.id
+
+    def signal_status(self, signal_id: int) -> str:
+        with self.session() as s:
+            return s.scalar(select(SignalRow.final_status).where(SignalRow.id == signal_id))
+
+    def children(self, signal_id: int) -> list[dict]:
+        """Signals a recheck derived from this one (``parent_signal_id``), oldest first, as dicts of their columns."""
+        with self.session() as s:
+            rows = s.scalars(select(SignalRow).where(SignalRow.parent_signal_id == signal_id).order_by(SignalRow.id))
+            return [{c.key: getattr(r, c.key) for c in SignalRow.__table__.columns} for r in rows]
 
     def set_signal_status(self, signal_id: int, final_status: str, branch: str | None = None) -> None:
         with self.session() as s:
@@ -262,8 +334,9 @@ class Store:
     def decide(self, signal_id: int, decision: str, note: str = "", who: str = "operator") -> dict:
         """Record an operator decision in one transaction: append a decisions row and move the candidate row to
         the new current state. Nothing is deleted; a later decision appends another row. A rejection needs a note
-        and marks the signal rejected; approving or asking for data after a rejection returns the signal to the
-        candidate status so the queue and the approved list agree."""
+        and marks the signal rejected; approving or asking for data after a rejection re-derives the engine's status
+        from the latest tests (as ``refresh_status`` does), so an un-rejected signal returns to the status its checks
+        give it. Any other approval or data request leaves the engine's status alone."""
         if decision not in DECISION_STATUS:
             raise ValueError(f"unknown decision {decision!r}; one of {sorted(DECISION_STATUS)}")
         note = note.strip()
@@ -281,8 +354,9 @@ class Store:
             cand.status, cand.note, cand.decided_at = DECISION_STATUS[decision], note, now
             if decision == "reject":
                 sig.final_status = "rejected"
-            elif sig.final_status == "rejected":
-                sig.final_status = "candidate_stage1"
+            elif sig.final_status == "rejected":    # an un-reject: back to what the latest tests say
+                s.flush()                       # the new decision is the latest one the derivation looks at
+                self._refresh_status(s, sig)
             return {"signal_id": signal_id, "decision": decision, "status": cand.status, "final_status": sig.final_status,
                     "note": note, "who": who, "decided_at": now.replace(tzinfo=None).isoformat()}
 
@@ -292,20 +366,88 @@ class Store:
                              .order_by(DecisionRow.id.desc()))
             return [{"decision": d.decision, "note": d.note, "who": d.who, "utc": d.utc.isoformat()} for d in rows]
 
-    def add_test(self, signal_id: int, r: TestResult, duration_s: float) -> None:
+    def add_test(self, signal_id: int, r: TestResult, duration_s: float, recheck_id: int | None = None) -> None:
         with self.session() as s:
-            self._add_test_row(s, signal_id, r, duration_s)
+            self._add_test_row(s, signal_id, r, duration_s, recheck_id)
 
-    def _add_test_row(self, s: Session, signal_id: int, r: TestResult, duration_s: float) -> None:
+    def _add_test_row(self, s: Session, signal_id: int, r: TestResult, duration_s: float,
+                      recheck_id: int | None = None) -> None:
         s.add(TestRow(signal_id=signal_id, rung=r.rung, status=r.status.value, metrics=r.metrics,
-                      artifacts=r.artifacts, reason=r.reason, duration_s=duration_s))
+                      artifacts=r.artifacts, reason=r.reason, duration_s=duration_s, recheck_id=recheck_id))
+
+    @staticmethod
+    def _latest_test_rows(s: Session, signal_ids) -> dict[int, list[dict]]:
+        """The newest test row of each rung for every signal in ``signal_ids`` (a list or a select of ids), in id
+        order, which is ladder order: a re-vet writes the whole ladder again and a single-rung retry comes last."""
+        newest = (select(func.max(TestRow.id)).where(TestRow.signal_id.in_(signal_ids))
+                  .group_by(TestRow.signal_id, TestRow.rung))
+        out: dict[int, list[dict]] = {}
+        for t in s.scalars(select(TestRow).where(TestRow.id.in_(newest)).order_by(TestRow.id)):
+            out.setdefault(t.signal_id, []).append(
+                {"id": t.id, "signal_id": t.signal_id, "rung": t.rung, "status": t.status, "metrics": t.metrics,
+                 "artifacts": t.artifacts, "reason": t.reason, "duration_s": t.duration_s, "created": t.created,
+                 "recheck_id": t.recheck_id})
+        return out
+
+    def latest_tests(self, signal_id: int) -> list[dict]:
+        with self.session() as s:
+            return self._latest_test_rows(s, [signal_id]).get(signal_id, [])
+
+    def _refresh_status(self, s: Session, sig: SignalRow) -> str:
+        """The one status derivation: a superseded signal and one whose latest reviewer decision is a rejection keep
+        their status; any other takes the status its latest test rows give."""
+        if sig.final_status == "superseded":
+            return sig.final_status
+        last = s.scalar(select(DecisionRow.decision).where(DecisionRow.signal_id == sig.id)
+                        .order_by(DecisionRow.id.desc()).limit(1))
+        if last == "reject":
+            return sig.final_status
+        tests = self._latest_test_rows(s, [sig.id]).get(sig.id, [])
+        sig.final_status = final_status_for(status_from_tests(tests), tests)
+        return sig.final_status
+
+    def refresh_status(self, signal_id: int) -> str:
+        """Re-derive a signal's final status from its latest tests (after a recheck wrote rows) and store it."""
+        with self.session() as s:
+            sig = s.get(SignalRow, signal_id)
+            if sig is None:
+                raise KeyError(signal_id)
+            return self._refresh_status(s, sig)
+
+    def add_recheck(self, signal_id: int, step: str, ladder_version: str, outcome: str, reason: str = "",
+                    new_signal_id: int | None = None) -> int:
+        with self.session() as s:
+            row = RecheckRow(signal_id=signal_id, step=step, ladder_version=ladder_version, outcome=outcome,
+                             reason=reason, new_signal_id=new_signal_id)
+            s.add(row); s.flush(); return row.id
+
+    def rechecks(self, signal_id: int) -> list[dict]:
+        """A signal's recheck history, oldest first."""
+        with self.session() as s:
+            rows = s.scalars(select(RecheckRow).where(RecheckRow.signal_id == signal_id).order_by(RecheckRow.id))
+            return [{"id": r.id, "step": r.step, "ladder_version": r.ladder_version, "outcome": r.outcome,
+                     "reason": r.reason, "new_signal_id": r.new_signal_id, "utc": r.utc.isoformat()} for r in rows]
+
+    def recheck_queue(self, detector_version: str) -> list[dict]:
+        """Signals the stage-2 recheck takes, by id: undetermined or stage-1 candidates of this search version that
+        no reviewer has decided on, each with its latest test rows."""
+        queued = (select(SignalRow.id).outerjoin(DecisionRow, DecisionRow.signal_id == SignalRow.id)
+                  .where(SignalRow.final_status.in_(("undetermined", "candidate_stage1")),
+                         SignalRow.detector_version == detector_version, DecisionRow.id.is_(None)))
+        with self.session() as s:
+            rows = s.scalars(select(SignalRow).where(SignalRow.id.in_(queued)).order_by(SignalRow.id)).all()
+            tests = self._latest_test_rows(s, queued)
+            return [{"id": r.id, "target_id": r.target_id, "final_status": r.final_status,
+                     "ladder_version": r.ladder_version, "branch": r.branch, "period": r.period, "t0": r.t0,
+                     "duration": r.duration, "depth_ppm": r.depth_ppm, "extra": r.extra,
+                     "latest_tests": tests.get(r.id, [])} for r in rows]
 
     def record_results(self, run_id: int, target_id: str, items: list[dict], queries: list[dict],
                        pin_evidence: bool, periodogram: tuple[str, int, str] | None = None) -> dict:
-        """Write one target's outcome in ONE transaction: signals with their tests and final statuses, the catalogue
-        queries the worker made, the periodogram summary's artifact row, evidence pins, the finished run and the
-        target state. Either all of it lands or none does, so an exception or crash never leaves pending signals that
-        a rerun would duplicate.
+        """Write one target's outcome in ONE transaction: signals with their tests, final statuses and the run's
+        ladder version, the catalogue queries the worker made, the periodogram summary's artifact row, evidence pins,
+        the finished run and the target state. Either all of it lands or none does, so an exception or crash never
+        leaves pending signals that a rerun would duplicate.
 
         ``items`` are the worker's signal entries ({"signal", "outcome", "tests", "timings"}); ``queries`` are the
         keyword arguments of ``log_query`` (plus an optional ISO ``utc``); ``periodogram`` is (sha256, nbytes,
@@ -314,9 +456,11 @@ class Store:
         counts = {"pass": 0, "fail": 0, "undetermined": 0}
         run_pg = None
         with self.session() as s:
+            ladder_version = s.get(RunRow, run_id).ladder_version
             for item in items:
                 sig = Signal(**item["signal"])
-                row = SignalRow(run_id=run_id, final_status=FINAL_STATUS[item["outcome"]], **sig.model_dump())
+                row = SignalRow(run_id=run_id, final_status=FINAL_STATUS[item["outcome"]], ladder_version=ladder_version,
+                                **sig.model_dump())
                 s.add(row); s.flush()
                 for r, dt in zip(item["tests"], item["timings"], strict=True):
                     self._add_test_row(s, row.id, TestResult(**r), dt)

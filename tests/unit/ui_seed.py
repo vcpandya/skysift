@@ -144,7 +144,8 @@ def _stage2_tests() -> list[TestResult]:
 def _seed_more(store: Store) -> dict:
     """The roles added for the plain-language explanations, each on its own target so the per-target assertions
     above hold: a legacy candidate, a stage-2 candidate, an approved stage-1 candidate and a pending signal with no
-    test rows."""
+    test rows. The stage-2 candidate is written the way the recheck writes it: the sweep stores the light-curve
+    rungs, then a pixel recheck row, the rung 5 row pointing at it, and the derived status."""
     specs = [("legacy", _target("gaia-dr3-2101234567890123459", gaia="2101234567890123459"), 5.4321, 16.2,
               _legacy_tests()),
              ("stage2", _target("kic-006146676", kic=6146676, gaia="2101234567890123462", gmag=16.2), 40.2899, 50.5,
@@ -156,12 +157,16 @@ def _seed_more(store: Store) -> dict:
     for role, t, period, sde, tests in specs:
         rid = store.start_run(make_job_key(t.target_id, "box_dip", VERSION, "1"), t.target_id, "box_dip", VERSION, "1")
         sig = _signal(t.target_id, period, sde, depth=2200.0 if role == "stage2" else 1800.0)
-        item = {"signal": sig.model_dump(), "outcome": "pass", "tests": [r.model_dump() for r in tests],
-                "timings": [0.01] * len(tests)}
+        swept = [r for r in tests if r.rung != "rung5_pixels"]
+        item = {"signal": sig.model_dump(), "outcome": "pass", "tests": [r.model_dump() for r in swept],
+                "timings": [0.01] * len(swept)}
         store.record_results(rid, t.target_id, [item], [], pin_evidence=False)
         with store.session() as s:
             ids[role] = s.query(SignalRow.id).filter(SignalRow.run_id == rid).scalar()
-    store.set_signal_status(ids["stage2"], "candidate_stage2")
+        for pixels in (r for r in tests if r.rung == "rung5_pixels"):
+            recheck = store.add_recheck(ids[role], "pixels", "4", pixels.status.value)
+            store.add_test(ids[role], pixels, 0.01, recheck_id=recheck)
+            store.refresh_status(ids[role])
     store.set_signal_status(ids["pending"], "pending")
     store.decide(ids["approved"], "approve", "looks real")
     return ids
