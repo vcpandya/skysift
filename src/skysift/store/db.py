@@ -204,6 +204,34 @@ class QueryRow(Base):
     target_id: Mapped[str | None] = mapped_column(String(64), index=True)
 
 
+class DossierRow(Base):
+    """One generated dossier per target (dossiers spec 5.4, 5.6): where its ``dossier_data.json`` is, the signal and
+    versions it was built from, the two probabilities with their detail, and the fingerprint of the test rows, status
+    and decision it saw (the dossier is stale when the signal's fingerprint today differs). The pack columns are
+    filled by ``skysift pack``."""
+    __tablename__ = "dossiers"
+    target_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    signal_id: Mapped[int] = mapped_column(ForeignKey("signals.id"), index=True)
+    generated: Mapped[datetime] = mapped_column(DateTime)
+    data_path: Mapped[str] = mapped_column(Text)
+    search_version: Mapped[str] = mapped_column(String(32))
+    ladder_version: Mapped[str | None] = mapped_column(String(16))
+    dossier_version: Mapped[str] = mapped_column(String(16))
+    fap: Mapped[float | None] = mapped_column(Float)
+    fpp: Mapped[float | None] = mapped_column(Float)
+    fap_detail: Mapped[dict] = mapped_column(JSON, default=dict)      # counts and versions
+    fpp_detail: Mapped[dict] = mapped_column(JSON, default=dict)      # the factor table
+    tests_fingerprint: Mapped[str] = mapped_column(String(64))
+    status_at_generation: Mapped[str] = mapped_column(String(16))
+    export_path: Mapped[str] = mapped_column(Text, default="")
+    pack_path: Mapped[str] = mapped_column(Text, default="")
+    pack_steps: Mapped[dict] = mapped_column(JSON, default=dict)      # {"1": true, ...}
+    pack_built: Mapped[datetime | None] = mapped_column(DateTime)
+
+
+DOSSIER_FIELDS = tuple(c.name for c in DossierRow.__table__.columns)
+
+
 class Store:
     def __init__(self, database_url: str):
         if database_url.startswith("sqlite"):
@@ -545,6 +573,57 @@ class Store:
         with self.session() as s:
             s.add(QueryRow(service=service, url=url, params=jsonutil.dumps(params, default=str), status=status,
                            nbytes=nbytes, sha256=sha256, error=error, target_id=target_id))
+
+    def upsert_dossier(self, **fields) -> None:
+        """Insert or update the target's dossier row with the given columns. Columns left out keep their value (a new
+        row takes the column defaults). Raises TypeError on a name that is not a column."""
+        unknown = sorted(set(fields) - set(DOSSIER_FIELDS))
+        if unknown:
+            raise TypeError(f"not a dossiers column: {', '.join(unknown)}")
+        with self.session() as s:
+            row = s.get(DossierRow, fields["target_id"])
+            if row is None:
+                s.add(DossierRow(**fields))
+                return
+            for key, value in fields.items():
+                setattr(row, key, value)
+
+    @staticmethod
+    def _dossier_dict(row: DossierRow) -> dict:
+        return {name: getattr(row, name) for name in DOSSIER_FIELDS}
+
+    def dossier(self, target_id: str) -> dict | None:
+        with self.session() as s:
+            row = s.get(DossierRow, target_id)
+            return None if row is None else self._dossier_dict(row)
+
+    def dossiers(self) -> list[dict]:
+        """Every dossier row by target id, with its signal's ``final_status`` and the latest reviewer decision on
+        that signal (``decision`` and ``decision_utc``, None when nobody has decided)."""
+        newest = (select(DecisionRow.signal_id, func.max(DecisionRow.id).label("id"))
+                  .group_by(DecisionRow.signal_id).subquery())
+        q = (select(DossierRow, SignalRow.final_status, DecisionRow.decision, DecisionRow.utc)
+             .join(SignalRow, SignalRow.id == DossierRow.signal_id)
+             .outerjoin(newest, newest.c.signal_id == DossierRow.signal_id)
+             .outerjoin(DecisionRow, DecisionRow.id == newest.c.id)
+             .order_by(DossierRow.target_id))
+        with self.session() as s:
+            return [{**self._dossier_dict(row), "final_status": status, "decision": decision, "decision_utc": utc}
+                    for row, status, decision, utc in s.execute(q)]
+
+    def set_pack(self, target_id: str, pack_path: str, built: datetime) -> None:
+        with self.session() as s:
+            row = s.get(DossierRow, target_id)
+            if row is None:
+                raise KeyError(target_id)
+            row.pack_path, row.pack_built = pack_path, built
+
+    def set_pack_steps(self, target_id: str, steps: dict) -> None:
+        with self.session() as s:
+            row = s.get(DossierRow, target_id)
+            if row is None:
+                raise KeyError(target_id)
+            row.pack_steps = dict(steps)
 
     def counts(self) -> dict:
         with self.session() as s:

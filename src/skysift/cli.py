@@ -248,6 +248,37 @@ def calibrate_report(file: str = typer.Argument(..., help="A calibrate output fi
 
 
 @app.command()
+def dossier(target: str = typer.Option(..., "--target", help="The target id, e.g. kic-006146676."),
+            signal: int | None = typer.Option(None, "--signal", help="A signal id of the target (default: its best "
+                                              "signal, stage 2 then approved then stage 1, then SDE)."),
+            export: str | None = typer.Option(None, "--export", help="Also write the standalone HTML page here."),
+            force: bool = typer.Option(False, "--force", help="Regenerate even when the dossier is current.")):
+    """Generate the target's dossier_data.json and its dossiers row (a no-op when the tests, status and decision are
+    unchanged); with --export, the standalone page too. Prints the report: a table in a terminal, JSON when piped."""
+    from skysift import dossier as ds
+    from skysift import net
+    console = _console(stderr=True)
+    s, store, blob = _ctx()
+    try:
+        rep = ds.generate(store, blob, s, target, signal_id=signal, force=force, fetch=net.fetch,
+                          log=lambda text: _plain(console, text))
+    except KeyError as e:
+        _plain(console, f"{e.args[0] if e.args else e}: nothing to build a dossier from")
+        raise typer.Exit(1) from None
+    report = rep.as_dict()
+    if export:
+        report["export_path"] = str(ds.write_export(store, rep, Path(export)))
+    if sys.stdout.isatty():
+        t = RTable(title=f"Dossier {target}", show_header=False)
+        t.add_column("field"); t.add_column("value")
+        for key, value in report.items():
+            t.add_row(key, value if isinstance(value, str) else jsonutil.dumps(value))
+        _console().print(t)
+    else:
+        _plain(_console(), jsonutil.dumps(report, indent=1))
+
+
+@app.command()
 def inject(source: str = typer.Option(...),
            limit: int = typer.Option(30, min=1, help="Inject into the N highest-priority targets (the order of run)."),
            per_star: int = typer.Option(4, min=1, help="Injections per target, cycling through the --snr values."),

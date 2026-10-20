@@ -1,0 +1,811 @@
+"""Dossier generation (dossiers spec 5.4): one ``dossier_data.json`` per target, built from stored rows and files plus
+the four Gaia queries, and the ``dossiers`` row that says which signal, versions and test rows it was built from.
+
+``generate`` picks the target's best signal (``STATUS_ORDER`` then SDE), compares the fingerprint of its latest test
+rows, status and decision with the stored row (a match is a no-op unless forced), reloads the light curve through the
+engine's loader and whitens it as the sweep did, thins the plot arrays to the sizes of the hand-built KIC 6146676 page
+(``docs/candidates/kic-006146676/prep_data.py``), reads rung 5's ``pixels.npz`` artifact when present, asks Gaia for
+the star and its neighbours (``stars``), and computes the two probabilities (``calibrate.false_alarm``,
+``fpp.compute``). It never changes a signal's status, and it reaches the network only through the injected ``fetch``.
+``export_html`` renders the JSON as one standalone file with its own level toggle and no external URL.
+
+Every sentence here is built from stored numbers by a rule (spec 5.7); the hand-written narrative of the KIC 6146676
+page stays in ``docs/candidates`` as the record."""
+from __future__ import annotations
+
+import base64
+import dataclasses
+import hashlib
+import html
+import io
+import json
+import logging
+import math
+import os
+import re
+import subprocess
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from pathlib import Path
+
+import numpy as np
+from sqlalchemy import select
+
+from skysift import calibrate as cal
+from skysift import jsonutil, net, stars
+from skysift.calibrate import FalseAlarm
+from skysift.detectors.periodogram import PeriodogramSummary
+from skysift.fpp import Fpp, FppInputs, Neighbour, compute
+from skysift.lc.loader import TARGET_FIELDS, LightCurveLoader
+from skysift.lc.ops import event_depths, event_quality, fold_phase, season_of
+from skysift.lc.transit_model import uniform_disc_flux
+from skysift.models import LightCurve, Target
+from skysift.net import ServiceUnavailable
+from skysift.priors import PIXEL_ARCSEC
+from skysift.sources.factory import make_source
+from skysift.store.db import (
+    PERIODOGRAM_URL,
+    ArtifactRow,
+    CandidateRow,
+    DecisionRow,
+    QueryRow,
+    SignalRow,
+    Store,
+    TargetRow,
+    utcnow,
+)
+from skysift.ui import explain
+from skysift.ui.plots import whitened_fnorm
+from skysift.vetting.rung1_detection import SYSTEMATIC_PERIODS
+
+log = logging.getLogger(__name__)
+
+DOSSIER_VERSION = "1"
+STATUS_ORDER = ("candidate_stage2", "approved", "candidate_stage1")
+SERIES_BIN_DAYS = 0.25
+GALLERY_HALF_HOURS = 8.0
+SPECTRUM_BINS = 1500
+FOLD_POINTS = 4000              # the fold scatter, strided; the bins use every point
+FOLD_WINDOW_DURATIONS = 4.0     # the fold, odd/even and secondary windows: +-4 durations, as lc_analysis.py
+MODEL_POINTS = 400
+ALIAS_FACTORS = (0.5, 2.0, 3.0)
+STARS_SEED = 20261021           # the seed of stars.lookup, so a dossier reproduces the lookup's draws
+SIG_FIGS = 8                    # every float in the JSON outside the plot arrays (which carry their own rounding)
+BKJD_OFFSET = 2454833.0
+SUN_ANGULAR_DEG = 0.533         # the Sun's angular diameter seen from Earth
+RSUN_AU = 0.00465047
+STATIC_DIR = Path(__file__).parent / "ui" / "static"
+DOSSIER_URL = "skysift://dossier/{target_id}"
+EXPORT_URL = "skysift://dossier-export/{target_id}"
+PIXELS_URL = "skysift://pixels/{signal_id}"
+
+# printed under each number, verbatim from spec 4.1 and 4.2
+FAP_NOT_COVERED = "This is about noise. A real dip on a neighbouring star or an eclipsing binary passes this test."
+FPP_NOT_COVERED = ("This counts the common impostors with simple priors. It is not a vespa or a Kepler DR25 "
+                   "false-positive probability, and it has no radial-velocity or imaging input.")
+SECTIONS = ("The signal", "Does it repeat", "The checks", "Which star is dimming", "The star and the planet",
+            "How it might look", "What is not yet known", "How to reproduce")
+STATUS_LABEL = {"candidate_stage1": "Candidate, stage 1", "candidate_stage2": "Candidate, stage 2",
+                "undetermined": "Undetermined", "rejected": "Rejected"}
+
+
+@dataclass
+class DossierReport:
+    target_id: str
+    signal_id: int
+    data_path: Path
+    generated: bool                 # False when the fingerprint matched and not force
+    fap: FalseAlarm | None          # None when the source has no calibration file
+    fpp: Fpp
+    stale_reason: str | None        # why the stored dossier was regenerated; None when nothing was written
+    comparison: dict = field(default_factory=dict)      # filled by Task 7's comparison tool
+
+    def as_dict(self) -> dict:
+        fap = None if self.fap is None else {"words": self.fap.words(), "fap": self.fap.fap, "k": self.fap.k,
+                                             "n": self.fap.n, "calibrated": self.fap.calibrated}
+        return jsonutil.sanitize({
+            "target_id": self.target_id, "signal_id": self.signal_id, "data_path": str(self.data_path),
+            "generated": self.generated, "stale_reason": self.stale_reason, "fap": fap,
+            "fpp": {"value": self.fpp.value, "words": self.fpp.words(), "label": self.fpp.label(),
+                    "pixels": self.fpp.pixels},
+            "comparison": self.comparison})
+
+
+# ---------------------------------------------------------------------------------------------------- small helpers
+
+def _r(x, nd: int):
+    """``x`` rounded to ``nd`` decimals, None when missing or not finite."""
+    if x is None:
+        return None
+    x = float(x)
+    return round(x, nd) if math.isfinite(x) else None
+
+
+def _sig(x: float) -> float:
+    if x == 0 or not math.isfinite(x):
+        return x
+    return round(x, SIG_FIGS - 1 - math.floor(math.log10(abs(x))))
+
+
+def _tidy(obj):
+    """Strict-JSON-ready copy with every float at ``SIG_FIGS`` significant figures (no float noise in the file)."""
+    obj = jsonutil.sanitize(obj)
+    if isinstance(obj, dict):
+        return {k: _tidy(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_tidy(v) for v in obj]
+    if isinstance(obj, float):
+        return _sig(obj)
+    return obj
+
+
+def _iso(when) -> str | None:
+    return when.isoformat() if hasattr(when, "isoformat") else (str(when) if when else None)
+
+
+def _num(m: dict, key: str) -> float | None:
+    v = m.get(key)
+    if isinstance(v, bool) or v is None:
+        return None
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        return None
+    return v if math.isfinite(v) else None
+
+
+def _rung(tests: list[dict], rung: str) -> dict | None:
+    return next((t for t in tests if t.get("rung") == rung), None)
+
+
+def _metrics(tests: list[dict], rung: str) -> dict:
+    return (_rung(tests, rung) or {}).get("metrics") or {}
+
+
+def _git_commit() -> str:
+    try:
+        return subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, timeout=5,
+                              cwd=Path(__file__).resolve().parents[2], check=False).stdout.strip() or "unknown"
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"
+
+
+def _write_atomic(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(text, encoding="utf-8", newline="\n")
+    os.replace(tmp, path)
+
+
+def target_name(target: dict) -> str:
+    if target.get("kic"):
+        return f"KIC {int(target['kic'])}"
+    if target.get("gaia_id"):
+        return f"Gaia DR3 {target['gaia_id']}"
+    return str(target.get("target_id"))
+
+
+# ---------------------------------------------------------------------------------------------------- the signal
+
+def _rank(row: dict) -> tuple:
+    statuses = {row["final_status"]} | ({"approved"} if row.get("candidate_status") in ("approved", "published")
+                                        else set())
+    order = min((STATUS_ORDER.index(s) for s in statuses if s in STATUS_ORDER), default=len(STATUS_ORDER))
+    return order, -float(row["sde"]), row["id"]
+
+
+def pick_signal(store: Store, target_id: str, signal_id: int | None = None) -> dict:
+    """The signal row (a dict of its columns plus ``candidate_status`` and the latest ``decision``) the dossier is
+    built from: ``signal_id`` when given (it must belong to the target), else the target's best signal by
+    ``STATUS_ORDER`` (an approved signal ranks as approved even when its engine status is stage 1) and then SDE.
+    Raises KeyError when there is none."""
+    with store.session() as s:
+        q = select(SignalRow).where(SignalRow.target_id == target_id)
+        if signal_id is not None:
+            q = q.where(SignalRow.id == signal_id)
+        sigs = s.scalars(q).all()
+        if not sigs:
+            raise KeyError(f"no signal {signal_id} for target {target_id}" if signal_id is not None
+                           else f"no signal for target {target_id}")
+        ids = [r.id for r in sigs]
+        cand = {c.signal_id: c.status for c in s.scalars(select(CandidateRow).where(CandidateRow.signal_id.in_(ids)))}
+        latest: dict[int, str] = {}
+        for d in s.scalars(select(DecisionRow).where(DecisionRow.signal_id.in_(ids)).order_by(DecisionRow.id)):
+            latest[d.signal_id] = d.decision
+        rows = [{**{c.name: getattr(r, c.name) for c in SignalRow.__table__.columns},
+                 "candidate_status": cand.get(r.id), "decision": latest.get(r.id)} for r in sigs]
+    return min(rows, key=_rank)
+
+
+def fingerprint(latest_tests: list[dict], final_status: str, decision: str | None) -> str:
+    """sha256 of the sorted test row ids, the final status and the latest decision: a dossier is stale when any of
+    them changed since it was written."""
+    ids = sorted(int(t["id"]) for t in latest_tests)
+    text = json.dumps({"tests": ids, "status": final_status, "decision": decision}, sort_keys=True)
+    return hashlib.sha256(text.encode()).hexdigest()
+
+
+# ---------------------------------------------------------------------------------------------------- plot arrays
+
+def _bins(x: np.ndarray, y: np.ndarray, width: float, lo: float, hi: float) -> list[list]:
+    """[centre, mean, standard error, n] of ``y`` in bins of ``width`` from ``lo`` to ``hi``, bins with at least three
+    points only (as ``lc_analysis.binned``)."""
+    n_bins = max(1, math.ceil((hi - lo) / width))
+    keep = (x >= lo) & (x < lo + n_bins * width) & np.isfinite(y)
+    idx = np.floor((x[keep] - lo) / width).astype(int)
+    yk = y[keep]
+    n = np.bincount(idx, minlength=n_bins)
+    s1 = np.bincount(idx, weights=yk, minlength=n_bins)
+    s2 = np.bincount(idx, weights=yk * yk, minlength=n_bins)
+    out = []
+    for i in np.flatnonzero(n >= 3):
+        mean = s1[i] / n[i]
+        sd = math.sqrt(max(0.0, s2[i] / n[i] - mean * mean))
+        out.append([lo + (i + 0.5) * width, mean, sd / math.sqrt(n[i]), int(n[i])])
+    return out
+
+
+def _hours_bins(x_days, y, width_days, win) -> list[list]:
+    return [[_r(c * 24, 3), _r(m, 1), _r(e, 1), k] for c, m, e, k in _bins(x_days, y, width_days, -win, win)]
+
+
+def _spectrum(periodogram: PeriodogramSummary | None) -> list[list]:
+    """The stored SDE envelope thinned to at most ``SPECTRUM_BINS`` points: the highest bin of each group."""
+    if periodogram is None:
+        return []
+    periods = periodogram.bin_periods()
+    sde = np.array([np.nan if v is None else v for v in periodogram.envelope], float)
+    group = max(1, math.ceil(sde.size / SPECTRUM_BINS))
+    out = []
+    for start in range(0, sde.size, group):
+        chunk = sde[start:start + group]
+        if np.isfinite(chunk).any():
+            j = start + int(np.nanargmax(chunk))
+            out.append([_r(periods[j], 4), _r(sde[j], 2)])
+    return out
+
+
+def plot_arrays(lc: LightCurve, fnorm: np.ndarray, signal: dict, tests: list[dict], *,
+                periodogram: PeriodogramSummary | None = None) -> dict:
+    """The arrays sections 01 and 02 draw, in ppm of the whitened flux and hours from mid-transit, thinned as the
+    hand-built page was: the full curve in ``SERIES_BIN_DAYS`` bins, the fold with its bins and model, odd and even,
+    the phase 0.5 window, every event with its depth and quality and its points within ``GALLERY_HALF_HOURS``, the
+    periodogram envelope (up to ``SPECTRUM_BINS``) and a line per quarter."""
+    period, t0, dur = float(signal["period"]), float(signal["t0"]), float(signal["duration"])
+    time = np.asarray(lc.time, float)
+    fnorm = np.asarray(fnorm, float)
+    good = np.isfinite(fnorm) & np.isfinite(time)
+    t, y, q = time[good], (fnorm[good] - 1.0) * 1e6, np.asarray(lc.quarter)[good]
+    # full series
+    series = []
+    if t.size:
+        start = math.floor(t.min())
+        idx = np.floor((t - start) / SERIES_BIN_DAYS).astype(int)
+        n = np.bincount(idx)
+        st, sy = np.bincount(idx, weights=t), np.bincount(idx, weights=y)
+        series = [[_r(st[i] / n[i], 3), _r(sy[i] / n[i], 0), int(n[i])] for i in np.flatnonzero(n >= 3)]
+    # fold, model, odd/even and the phase 0.5 window
+    win = min(FOLD_WINDOW_DURATIONS * dur, 0.5 * period)
+    ph = fold_phase(t, period, t0)
+    m = np.abs(ph) < win
+    stride = max(1, math.ceil(int(m.sum()) / FOLD_POINTS))
+    fold_points = [[_r(a * 24, 3), _r(b, 0)] for a, b in zip(ph[m][::stride], y[m][::stride], strict=True)]
+    shape = _metrics(tests, "rung2_shape")
+    k, b, a_r = (_num(shape, x) for x in ("fit_k", "fit_b", "fit_a_over_r"))
+    if shape.get("fit_ok") is True and None not in (k, b, a_r) and a_r > 0:
+        model_t = np.linspace(-win, win, MODEL_POINTS)
+        flux = uniform_disc_flux(model_t, period, k, b, a_r)
+        model = [[_r(a * 24, 3), _r((f - 1.0) * 1e6, 1)] for a, f in zip(model_t, flux, strict=True)]
+        model_kind = "fit"
+    else:
+        depth = -float(signal["depth_ppm"])
+        half_h, win_h = dur * 12.0, win * 24.0
+        model = [[_r(-win_h, 3), 0.0], [_r(-half_h, 3), 0.0], [_r(-half_h, 3), _r(depth, 1)],
+                 [_r(half_h, 3), _r(depth, 1)], [_r(half_h, 3), 0.0], [_r(win_h, 3), 0.0]]
+        model_kind = "box"
+    cyc = np.round((t - t0) / period).astype(int)
+    odd, even = m & (cyc % 2 == 1), m & (cyc % 2 == 0)
+    sec_ph = fold_phase(t, period, t0 + 0.5 * period)
+    sm = np.abs(sec_ph) < win
+    # events: depth per event, coverage and single-event statistic per expected epoch, the gallery points
+    ed = event_depths(time, fnorm, np.asarray(lc.quarter), period, t0, dur)
+    eq = event_quality(time, fnorm, period, t0, dur)
+    quality = {int(e): (c, s) for e, c, s in zip(eq.epochs, eq.coverage, eq.ses, strict=True)}
+    events, gallery = [], []
+    half_days = GALLERY_HALF_HOURS / 24.0
+    for e, quarter, d, err in zip(ed.epochs, ed.quarters, ed.depths, ed.errors, strict=True):
+        t_mid = t0 + int(e) * period
+        cov, ses = quality.get(int(e), (None, None))
+        events.append({"epoch": int(e), "t_mid": _r(t_mid, 3), "quarter": int(quarter), "depth_ppm": _r(d, 0),
+                       "err_ppm": _r(err, 0), "coverage": _r(cov, 2), "ses": _r(ses, 2)})
+        w = np.abs(t - t_mid) < half_days
+        gallery.append({"epoch": int(e), "t_mid": _r(t_mid, 3), "quarter": int(quarter), "depth_ppm": _r(d, 0),
+                        "err_ppm": _r(err, 0),
+                        "pts": [[_r((a - t_mid) * 24, 2), _r(v, 0)] for a, v in zip(t[w], y[w], strict=True)]})
+    quarters = []
+    for qq in sorted({int(v) for v in q}):
+        mq = q == qq
+        fq = fnorm[good][mq]
+        quarters.append({"q": qq, "season": int(season_of(np.array([qq]))[0]), "t_start": _r(t[mq].min(), 2),
+                         "t_end": _r(t[mq].max(), 2), "n": int(mq.sum()),
+                         "rms_ppm": _r(1.4826 * np.median(np.abs(fq - np.median(fq))) * 1e6, 0)})
+    lines = {"aliases": [round(period * a, 6) for a in ALIAS_FACTORS], "systematic_periods": list(SYSTEMATIC_PERIODS),
+             "peaks": list(periodogram.peaks) if periodogram is not None else []}
+    return {"series_binned": series, "series_bin_days": SERIES_BIN_DAYS, "window_h": _r(win * 24, 3),
+            "fold_points": fold_points, "fold_bins": _hours_bins(ph[m], y[m], dur / 8, win),
+            "model": model, "model_kind": model_kind,
+            "odd_bins": _hours_bins(ph[odd], y[odd], dur / 4, win),
+            "even_bins": _hours_bins(ph[even], y[even], dur / 4, win),
+            "secondary_bins": _hours_bins(sec_ph[sm], y[sm], dur / 4, win),
+            "event_gallery": gallery, "gallery_half_hours": GALLERY_HALF_HOURS, "events": events,
+            "spectrum": _spectrum(periodogram), "spectrum_lines": lines, "quarters": quarters}
+
+
+# ---------------------------------------------------------------------------------------------------- pixels
+
+def _pixel_seasons(metrics: dict) -> list[dict]:
+    return [s for s in metrics.get("seasons") or [] if isinstance(s, dict)]
+
+
+def centroid_offset(rung5_metrics: dict) -> tuple[float, float] | None:
+    """(offset, error) in arcsec of the season-averaged difference centroid from the target: the inverse-variance
+    mean of the seasons' ``dist_target_pix`` and its error, at ``PIXEL_ARCSEC`` per pixel. None without a usable
+    season."""
+    rows = [(d, e) for s in _pixel_seasons(rung5_metrics)
+            if (d := _num(s, "dist_target_pix")) is not None and (e := _num(s, "centroid_sigma_pix")) is not None
+            and e > 0]
+    if not rows:
+        return None
+    w = np.array([1.0 / e ** 2 for _d, e in rows])
+    d = np.array([d for d, _e in rows])
+    return float(np.sum(w * d) / np.sum(w)) * PIXEL_ARCSEC, float(1.0 / math.sqrt(np.sum(w))) * PIXEL_ARCSEC
+
+
+def _grid(a: np.ndarray, valid: np.ndarray, nd: int) -> list[list]:
+    return [[_r(x, nd) if ok else None for x, ok in zip(row, vrow, strict=True)]
+            for row, vrow in zip(a.tolist(), valid.tolist(), strict=True)]
+
+
+def pixels_section(store: Store, blob, signal_id: int, rung5_metrics: dict, lc: LightCurve | None) -> list[dict] | None:
+    """Section 04's per-season arrays from rung 5's ``pixels.npz`` artifact and its metrics, or None when the signal
+    has no such artifact (or it cannot be read). The S/N map is ``diff / sqrt(var)`` on valid pixels with a positive
+    variance, None elsewhere."""
+    with store.session() as s:
+        row = s.scalars(select(ArtifactRow).where(ArtifactRow.url == PIXELS_URL.format(signal_id=signal_id),
+                                                  ArtifactRow.deleted_at.is_(None))
+                        .order_by(ArtifactRow.created.desc())).first()
+        loc = None if row is None else row.local_path
+    if loc is None:
+        return None
+    try:
+        with np.load(io.BytesIO(blob.get(loc))) as z:
+            arrays = {k: np.asarray(z[k]) for k in ("diff", "var", "direct", "valid", "seasons", "pos_target",
+                                                    "pos_neighbour")}
+    except Exception:
+        log.warning("pixels artifact of signal %s is unreadable; the dossier goes without it", signal_id, exc_info=True)
+        return None
+    by_season = {int(s["season"]): s for s in _pixel_seasons(rung5_metrics) if s.get("season") is not None}
+    observed = sorted({int(v) for v in lc.quarter}) if lc is not None else []
+    out = []
+    for i, season in enumerate(int(v) for v in arrays["seasons"]):
+        diff, var = arrays["diff"][i].astype(float), arrays["var"][i].astype(float)
+        direct, valid = arrays["direct"][i].astype(float), arrays["valid"][i].astype(bool)
+        ok = valid & (var > 0) & np.isfinite(diff)
+        snr = np.where(ok, diff / np.sqrt(np.where(var > 0, var, 1.0)), np.nan)
+        pos_t, pos_n = arrays["pos_target"], arrays["pos_neighbour"]
+        m = by_season.get(season, {})
+        quarters = m.get("quarters") or [qq for qq in observed if qq % 4 == season]
+        out.append({"season": season, "quarters": [int(x) for x in quarters], "shape": list(diff.shape),
+                    "snr": _grid(snr, ok, 2), "direct": _grid(direct, valid, 1), "valid": valid.tolist(),
+                    "pos_target": (pos_t[i] if pos_t.ndim == 2 else pos_t).astype(float).tolist(),
+                    "pos_neighbour": (pos_n[i] if pos_n.ndim == 2 else pos_n).astype(float).tolist(),
+                    "centroid": m.get("centroid_colrow"), "centroid_sigma": m.get("centroid_sigma_pix"),
+                    "nearer": m.get("nearer"), "dist_target_pix": m.get("dist_target_pix"),
+                    "dist_neighbour_pix": m.get("dist_neighbour_pix"),
+                    "depth_target_ppm": m.get("depth_target_ppm"), "depth_neighbour_ppm": m.get("depth_neighbour_ppm")})
+    return out
+
+
+# ---------------------------------------------------------------------------------------------------- star and FPP
+
+def _star_colour(teff: float) -> str:
+    if teff < 4000: return "red"
+    if teff < 5300: return "orange"
+    if teff < 6000: return "yellow"
+    if teff < 7500: return "white"
+    return "blue-white"
+
+
+def look_numbers(star: stars.StarParams, planet: stars.PlanetParams) -> dict | None:
+    """The inputs of section 06 (the illustrated panel), or None when the star could not be characterized."""
+    if star.route == "none" or star.teff is None or star.radius is None:
+        return None
+    teff, radius = star.teff.median, star.radius.median
+    a = planet.a_au.median if planet.a_au is not None else None
+    angular = math.degrees(2 * math.atan(radius * RSUN_AU / a)) if a else None
+    return {"teff_k": teff, "radius_rsun": radius, "mass_msun": star.mass.median if star.mass else None,
+            "luminosity_lsun": radius ** 2 * (teff / stars.TSUN) ** 4, "spectral_type": star.spectral_type,
+            "star_colour": _star_colour(teff), "a_au": a,
+            "rp_rearth": planet.rp_rearth.median if planet.rp_rearth else None,
+            "teq_k": planet.teq_k.median if planet.teq_k else None,
+            "insolation_earth": planet.insolation_earth.median if planet.insolation_earth else None,
+            "hz_inner_au": planet.hz_inner_au, "hz_outer_au": planet.hz_outer_au,
+            "hz_optimistic_inner_au": planet.hz_optimistic_inner_au,
+            "hz_optimistic_outer_au": planet.hz_optimistic_outer_au,
+            "in_habitable_zone": planet.in_habitable_zone,
+            "in_optimistic_habitable_zone": planet.in_optimistic_habitable_zone,
+            "angular_size_deg": angular, "angular_size_sun": angular / SUN_ANGULAR_DEG if angular else None}
+
+
+def _depth_fraction(signal: dict, shape: dict) -> float:
+    for v in (_num(shape, "depth_ppm"), _num(signal, "depth_ppm")):
+        if v is not None and v > 0:
+            return v / 1e6
+    return float(signal["depth_ppm"]) / 1e6
+
+
+def _lookup(target: Target, signal: dict, tests: list[dict], *, fetch, store: Store):
+    """``stars.lookup`` with each query group caught: a Gaia outage on the star's own row gives route "none", one on
+    the neighbour cone gives no neighbours; either is reported in the returned error list."""
+    shape = _metrics(tests, "rung2_shape")
+    depth = _depth_fraction(signal, shape)
+    fit_k = _num(shape, "fit_k") if shape.get("fit_ok") is True else None
+    errors: list[str] = []
+    try:
+        gaia = stars.query_gaia(target, fetch=fetch, store=store)
+    except ServiceUnavailable as e:
+        gaia = None
+        errors.append(str(e))
+    cone_target = target
+    if target.gmag is None and gaia is not None and gaia.gmag is not None:
+        cone_target = target.model_copy(update={"gmag": gaia.gmag})
+    try:
+        neighbours = stars.query_neighbours(cone_target, depth, fetch=fetch, store=store)
+    except ServiceUnavailable as e:
+        neighbours = []
+        errors.append(str(e))
+    star, planet = stars.derive(gaia, float(signal["period"]), fit_k, depth, np.random.default_rng(STARS_SEED))
+    return star, planet, neighbours, gaia, errors
+
+
+def fpp_inputs(signal: dict, tests: list[dict], star: stars.StarParams, planet: stars.PlanetParams,
+               neighbours: list[Neighbour], gmag: float | None) -> FppInputs:
+    """The FPP inputs from the signal, rung 2, the star and, when a rung 5 row has usable seasons, the centroid: each
+    Gaia neighbour's ``centroid_sep_arcsec`` is then its separation less the centroid's offset from the target (the
+    nearest the centroid can sit to it, since the cone gives no position angle), floored at zero."""
+    shape = _metrics(tests, "rung2_shape")
+    fit_ok = shape.get("fit_ok") is True
+    odd, even, parity = _num(shape, "odd_ppm"), _num(shape, "even_ppm"), _num(shape, "parity_sigma")
+    odd_even_err = abs(odd - even) / parity if odd is not None and even is not None and parity else None
+    centroid = centroid_offset(_metrics(tests, "rung5_pixels")) if _rung(tests, "rung5_pixels") else None
+    if centroid is not None:
+        offset = centroid[0]
+        neighbours = [dataclasses.replace(n, centroid_sep_arcsec=max(0.0, n.sep_arcsec - offset)) for n in neighbours]
+    if gmag is None:
+        neighbours = []         # no target G: no neighbour can be judged bright enough
+    return FppInputs(
+        period=float(signal["period"]), depth=_depth_fraction(signal, shape),
+        gmag=float(gmag) if gmag is not None else float("nan"),
+        teff=star.teff.median if star.teff else None, radius=star.radius.median if star.radius else None,
+        mass=star.mass.median if star.mass else None,
+        rp_rearth=planet.rp_rearth.median if planet.rp_rearth else None,
+        fit_k=_num(shape, "fit_k") if fit_ok else None, fit_b=_num(shape, "fit_b") if fit_ok else None,
+        fit_a_over_r=_num(shape, "fit_a_over_r") if fit_ok else None,
+        secondary_ppm=_num(shape, "secondary_ppm"), secondary_err_ppm=_num(shape, "control_rms_ppm"),
+        odd_ppm=odd, even_ppm=even, odd_even_err_ppm=odd_even_err, neighbours=tuple(neighbours),
+        centroid_sigma_arcsec=centroid[1] if centroid is not None else None)
+
+
+def fpp_from_inputs(inputs: dict) -> Fpp:
+    """Recompute the FPP from a dossier's stored ``fpp.inputs``."""
+    neighbours = tuple(Neighbour(**n) for n in inputs.get("neighbours") or [])
+    values = {**inputs, "neighbours": neighbours}
+    if values.get("gmag") is None:
+        values["gmag"] = float("nan")
+    return compute(FppInputs(**values))
+
+
+# ---------------------------------------------------------------------------------------------------- caveats
+
+def caveats(data: dict) -> list[dict]:
+    """The section 07 list, [{"title", "text"}], by the rules of the plan in their order, each sentence built from
+    the stored numbers."""
+    tests = data.get("tests") or []
+    fpp, fap, star = data.get("fpp") or {}, data.get("fap") or {}, data.get("star") or {}
+    source = (data.get("target") or {}).get("source") or "this source"
+    out: list[dict] = []
+    pixels = _rung(tests, "rung5_pixels")
+    if pixels is None:
+        out.append({"title": "Which star is dimming has not been tested with pixel data",
+                    "text": "The pixel check has not run for this signal, so the dip could still come from a "
+                            "neighbouring star whose light falls in the same photometry."})
+    elif pixels.get("status") == "undetermined":
+        reason = pixels.get("reason") or ""
+        missing, nxt = explain.reason_in_words(reason)
+        out.append({"title": missing, "text": f"The pixel check gave no verdict ({reason or 'no reason stored'}). "
+                                              f"What happens next: {nxt}."})
+    if fpp.get("pixels") is False:
+        out.append({"title": "The false-positive estimate has no pixel exclusion",
+                    "text": f"Without a difference-image centroid every neighbour within one Kepler pixel "
+                            f"({PIXEL_ARCSEC} arcsec) counts in full towards the background binary term, so the "
+                            "estimate is labelled \"no pixel data yet\"."})
+    if not fap.get("calibrated"):
+        out.append({"title": "The false-alarm probability is not yet calibrated for this source",
+                    "text": f"The false-alarm probability is not yet calibrated: the null calibration for {source} "
+                            f"holds {fap.get('n', 0):,} null searches and at least {cal.MIN_NULLS} are needed. The "
+                            "pilot calibration is still running."})
+    shape = next((t.get("metrics") or {} for t in tests if t.get("rung") == "rung2_shape"), {})
+    fit_b = _num(shape, "fit_b")
+    if shape.get("fit_ok") is False or (fit_b is not None and fit_b >= 0.9):
+        text = ("The transit fit did not converge, so the shape alone cannot tell a planet from a grazing eclipse."
+                if shape.get("fit_ok") is False else
+                f"The transit fit gives an impact parameter of {fit_b:.2f}, where a grazing eclipse fits as well as a "
+                "planet.")
+        out.append({"title": "A grazing or diluted eclipsing binary is not fully excluded by photometry alone",
+                    "text": text})
+    for err in star.get("gaia_errors") or []:
+        out.append({"title": "Gaia could not be reached",
+                    "text": f"Gaia could not be reached: {err}. Generate the dossier again when the archive answers."})
+    route = star.get("route")
+    if route == "none":
+        why = "; ".join(star.get("caveats") or []) or "no Gaia row for this star"
+        out.append({"title": "The star cannot be characterized from Gaia photometry",
+                    "text": f"{why[:1].upper()}{why[1:]}. Without the star's radius the planet radius, orbit and "
+                            "temperature are not given."})
+    teff = (star.get("teff") or {}).get("median")
+    if route == "mamajek" and teff is not None and teff < 4000:
+        out.append({"title": "The radius comes from the colour table because the 2MASS Ks magnitude is missing",
+                    "text": f"Below 4,000 K (this star: {teff:,.0f} K) the Mann relations need the absolute Ks "
+                            "magnitude; the Mamajek dwarf table at the observed colour stands in, with its scatter "
+                            "doubled."})
+    note = star.get("reddening_note") or ""
+    alt = (star.get("alt_radius_e02") or {}).get("median")
+    text = "The radius ratio comes from the light curve; turning it into Earth radii needs the star's radius."
+    text += f" {note}" if note else " The star's radius is not known here."
+    if alt is not None and not note:
+        text += f" At E(BP-RP) = 0.2 the stellar radius would be {alt:.3f} Rsun."
+    out.append({"title": "No spectrum: the planet radius depends on the stellar radius from Gaia colour and parallax",
+                "text": text})
+    stab = next((t.get("metrics") or {} for t in tests if t.get("rung") == "rung3_stability"), None)
+    if stab is not None:
+        n_seasons = stab.get("n_seasons")
+        n_seasons = len(stab.get("season_depths") or {}) if n_seasons is None else int(n_seasons)
+        if n_seasons < 2:
+            out.append({"title": "The depth is measured in one season only",
+                        "text": f"Rung 3 found data in {n_seasons} season{'' if n_seasons == 1 else 's'}, so a depth "
+                                "that changes with the detector cannot be tested."})
+    out.append({"title": "This is a candidate until independent follow-up confirms it",
+                "text": "Follow-up would need ground-based transit photometry at a predicted time, a spectrum of the "
+                        "host and high-resolution imaging."})
+    return out
+
+
+# ---------------------------------------------------------------------------------------------------- generation
+
+def _target_dict(store: Store, target_id: str) -> dict:
+    with store.session() as s:
+        t = s.get(TargetRow, target_id)
+        if t is None:
+            raise KeyError(f"no target {target_id}")
+        return {c.name: getattr(t, c.name) for c in TargetRow.__table__.columns}
+
+
+def _periodogram(store: Store, blob, target_id: str) -> PeriodogramSummary | None:
+    with store.session() as s:
+        row = s.scalars(select(ArtifactRow).where(ArtifactRow.url == PERIODOGRAM_URL.format(target_id=target_id),
+                                                  ArtifactRow.deleted_at.is_(None))
+                        .order_by(ArtifactRow.created.desc())).first()
+        loc = None if row is None else row.local_path
+    if loc is None:
+        return None
+    try:
+        return PeriodogramSummary.from_npz(blob.get(loc)) if blob.exists(loc) else None
+    except Exception:
+        log.warning("periodogram summary of %s is unreadable; the dossier goes without it", target_id, exc_info=True)
+        return None
+
+
+def _source_factory(fetch):
+    """The loader's adapter factory with the KBonus adapter on the injected ``fetch``: a raw file released by
+    retention is re-fetched through it (logged), never behind the caller's back."""
+    def factory(name: str, store, blob):
+        if name == "kbonus_bkg":
+            from skysift.sources.kbonus_bkg import KBonusBkg
+            return KBonusBkg(blob, store, fetch=fetch)
+        return make_source(name, store, blob)
+    return factory
+
+
+def _provenance(store: Store, signal: dict, target: dict, calibration: Path) -> dict:
+    tid = target["target_id"]
+    with store.session() as s:
+        queries = [{"service": q.service, "url": q.url, "params": _params(q.params), "status": q.status,
+                    "nbytes": q.nbytes, "sha256": q.sha256, "error": q.error, "utc": _iso(q.utc),
+                    "target_id": q.target_id}
+                   for q in s.scalars(select(QueryRow).where(QueryRow.target_id == tid).order_by(QueryRow.id))]
+        files = [{"url": a.url, "sha256": a.sha256, "kind": a.kind, "nbytes": a.nbytes}
+                 for a in s.scalars(select(ArtifactRow).where(ArtifactRow.target_id == tid,
+                                                              ArtifactRow.deleted_at.is_(None),
+                                                              ArtifactRow.kind != "dossier")
+                                    .order_by(ArtifactRow.created))]
+    source = target.get("source") or "kbonus_bkg"
+    commands = [f"skysift vet --source {source} --target-id {tid}",
+                f"skysift calibrate --source {source}",
+                f"skysift dossier --target {tid} --signal {signal['id']} --force"]
+    return {"search_version": signal.get("detector_version"), "ladder_version": signal.get("ladder_version"),
+            "git_commit": _git_commit(), "queries": queries, "files": files,
+            "calibration_file": str(calibration) if calibration.is_file() else None, "commands": commands}
+
+
+def _params(text: str):
+    try:
+        return json.loads(text)
+    except (TypeError, ValueError):
+        return text
+
+
+def _record_artifact(store: Store, url: str, path: Path, text: str, target_id: str) -> None:
+    """The file as a pinned artifact of kind ``dossier``; earlier versions at the same url are marked deleted (the
+    file they described has been replaced)."""
+    data = text.encode("utf-8")
+    sha = hashlib.sha256(data).hexdigest()
+    store.add_artifact(sha, len(data), url, str(path), target_id, pinned=True, kind="dossier")
+    with store.session() as s:
+        for old in s.scalars(select(ArtifactRow).where(ArtifactRow.url == url, ArtifactRow.sha256 != sha,
+                                                       ArtifactRow.deleted_at.is_(None))):
+            old.deleted_at = utcnow()
+
+
+def _stored_report(old: dict, data_path: Path, signal_id: int, target_id: str) -> DossierReport:
+    data = json.loads(data_path.read_text(encoding="utf-8"))
+    f = data["fap"]
+    fap = (FalseAlarm(k=f["k"], n=f["n"], fap=f["fap"], calibrated=f["calibrated"],
+                      version_matches=f["version_matches"], versions=tuple(f["versions"]))
+           if data["provenance"].get("calibration_file") else None)
+    return DossierReport(target_id, signal_id, data_path, False, fap, fpp_from_inputs(data["fpp"]["inputs"]), None)
+
+
+def _stale_reason(old: dict | None, signal: dict, force: bool, fp: str) -> str:
+    if old is None:
+        return "no dossier yet"
+    if old["signal_id"] != signal["id"]:
+        return "another signal is now the target's best"
+    if old["tests_fingerprint"] == fp:
+        return "forced" if force else "the data file is missing"
+    if old["status_at_generation"] != signal["final_status"]:
+        return "the signal's status changed"
+    return "the test rows or the reviewer decision changed"
+
+
+def generate(store: Store, blob, settings, target_id: str, *, signal_id: int | None = None, force: bool = False,
+             fetch=net.fetch, log: Callable[[str], None] | None = None) -> DossierReport:
+    """Write ``<data_dir>/dossiers/<target_id>/dossier_data.json`` and its ``dossiers`` row (spec 5.4). A no-op
+    (``generated=False``, the file untouched) when the stored fingerprint matches and ``force`` is False. Raises
+    KeyError when the target has no signal (or not ``signal_id``)."""
+    say = log or (lambda _text: None)
+    signal = pick_signal(store, target_id, signal_id)
+    sid = signal["id"]
+    tests = store.latest_tests(sid)
+    decisions = store.decisions(sid)
+    decision = decisions[0]["decision"] if decisions else None
+    fp = fingerprint(tests, signal["final_status"], decision)
+    data_path = Path(settings.data_dir) / "dossiers" / target_id / "dossier_data.json"
+    old = store.dossier(target_id)
+    if (old is not None and not force and old["tests_fingerprint"] == fp and old["signal_id"] == sid
+            and data_path.is_file()):
+        say(f"dossier for {target_id} is current (signal {sid}); nothing to do")
+        return _stored_report(old, data_path, sid, target_id)
+    stale = _stale_reason(old, signal, force, fp)
+    target = _target_dict(store, target_id)
+    say(f"signal {sid} ({signal['final_status']}, SDE {signal['sde']:.1f}); loading the light curve")
+    lc = LightCurveLoader(store, blob, source_factory=_source_factory(fetch)).load(target, pin=True)
+    fnorm = whitened(lc, signal)
+    plots = plot_arrays(lc, fnorm, signal, tests, periodogram=_periodogram(store, blob, target_id))
+    pixels = pixels_section(store, blob, sid, _metrics(tests, "rung5_pixels"), lc)
+    say("asking Gaia for the star and its neighbours")
+    tgt = Target(**{k: target[k] for k in TARGET_FIELDS if target.get(k) is not None}, meta=target.get("meta") or {})
+    star, planet, neighbours, gaia, gaia_errors = _lookup(tgt, signal, tests, fetch=fetch, store=store)
+    gmag = target.get("gmag") if target.get("gmag") is not None else (gaia.gmag if gaia is not None else None)
+    inputs = fpp_inputs(signal, tests, star, planet, neighbours, gmag)
+    fpp = compute(inputs)
+    calibration = cal.default_path(settings.data_dir, target.get("source") or "kbonus_bkg")
+    rows = cal.read_rows(calibration) if calibration.is_file() else []
+    version = cal.search_version(cal.calibration_detector(), settings.thresholds)
+    fap = cal.false_alarm(rows, float(signal["sde"]), version)
+    data = _assemble(store, signal, target, tests, decisions, plots, pixels, star, planet, gaia_errors, fap, fpp,
+                     inputs, calibration, version)
+    data["caveats"] = caveats(data)
+    data = _tidy(data)
+    text = jsonutil.dumps(data, separators=(",", ":"))
+    _write_atomic(data_path, text)
+    _record_artifact(store, DOSSIER_URL.format(target_id=target_id), data_path, text, target_id)
+    store.upsert_dossier(target_id=target_id, signal_id=sid, generated=utcnow().replace(tzinfo=None),
+                         data_path=str(data_path), search_version=signal["detector_version"],
+                         ladder_version=signal.get("ladder_version"), dossier_version=DOSSIER_VERSION,
+                         fap=fap.fap, fpp=fpp.value, fap_detail=data["fap"], fpp_detail=data["fpp"],
+                         tests_fingerprint=fp, status_at_generation=signal["final_status"])
+    say(f"wrote {data_path}")
+    return DossierReport(target_id, sid, data_path, True, fap if calibration.is_file() else None, fpp, stale)
+
+
+def whitened(lc: LightCurve, signal: dict) -> np.ndarray:
+    """The flux the sweep searched and vetted for this signal (the dashboard's ``whitened_fnorm``)."""
+    return whitened_fnorm(lc, signal)
+
+
+def _assemble(store, signal, target, tests, decisions, plots, pixels, star, planet, gaia_errors, fap, fpp, inputs,
+              calibration, version) -> dict:
+    test_rows = [{"rung": t["rung"], "status": t["status"], "reason": t["reason"], "metrics": t["metrics"],
+                  "created": _iso(t["created"])} for t in tests]
+    verdict = explain.verdict(signal, tests, {"status": signal.get("candidate_status")} if signal.get(
+        "candidate_status") else None, decisions)
+    label = STATUS_LABEL.get(signal["final_status"], verdict.word)
+    star_d = {**dataclasses.asdict(star), "gaia_errors": list(gaia_errors)}
+    period, t0, dur = float(signal["period"]), float(signal["t0"]), float(signal["duration"])
+    return {
+        "dossier_version": DOSSIER_VERSION, "generated": utcnow().isoformat(),
+        "sections": [{"number": f"{i:02d}", "title": t} for i, t in enumerate(SECTIONS, 1)],
+        "target": {**target, "name": target_name(target)},
+        "signal": {k: v for k, v in signal.items() if k not in ("candidate_status", "decision")},
+        "status": {"final_status": signal["final_status"], "decision": decisions[0] if decisions else None,
+                   "candidate_status": signal.get("candidate_status"), "label": label,
+                   "label_text": dict(explain.STATUS_GLOSSARY).get(label), "headline": verdict.headline,
+                   "reviewer": verdict.reviewer},
+        "summary": explain.summary_sentence(signal, target, tests),
+        "ephemeris": {"period_days": period, "t0_bkjd": t0, "t0_bjd": t0 + BKJD_OFFSET, "duration_h": dur * 24,
+                      "depth_ppm": float(signal["depth_ppm"]), "sde": float(signal["sde"]),
+                      "snr": float(signal["snr"]), "n_events": int(signal["n_events"])},
+        "plots": plots, "tests": test_rows, "why": [dataclasses.asdict(w) for w in explain.why(tests)],
+        "rechecks": store.rechecks(signal["id"]), "children": store.children(signal["id"]),
+        "fap": {**dataclasses.asdict(fap), "one_in": fap.one_in(), "words": fap.words(), "sde": float(signal["sde"]),
+                "calibration_version": version, "min_nulls": cal.MIN_NULLS, "sentence_not_covered": FAP_NOT_COVERED},
+        "fpp": {**fpp.as_dict(), "inputs": dataclasses.asdict(inputs), "words": fpp.words(), "label": fpp.label(),
+                "sentence_not_covered": FPP_NOT_COVERED},
+        "pixels": pixels, "star": star_d, "planet": dataclasses.asdict(planet), "look": look_numbers(star, planet),
+        "caveats": [], "provenance": _provenance(store, signal, target, calibration),
+    }
+
+
+# ---------------------------------------------------------------------------------------------------- export
+
+_FONT_URL = re.compile(r'url\("/static/fonts/([A-Za-z0-9_.-]+\.woff2)"\)')
+
+
+def _inline_fonts(css: str, fonts: Path) -> str:
+    def data_uri(m: re.Match) -> str:
+        b64 = base64.b64encode((fonts / m.group(1)).read_bytes()).decode("ascii")
+        return f'url("data:font/woff2;base64,{b64}")'
+    return _FONT_URL.sub(data_uri, css)
+
+
+def export_html(data: dict, static_dir: Path = STATIC_DIR) -> str:
+    """One standalone file: the dashboard's stylesheet (tokens and components) with the fonts as data URIs,
+    ``dossier.css``, the JSON in ``<script id="dossier-data" type="application/json">`` (every ``/`` escaped, so no
+    ``</`` and no URL appears in the markup) and ``dossier.js``, which draws the page and its own level toggle. Nothing
+    is loaded from anywhere else."""
+    static_dir = Path(static_dir)
+    app_css = _inline_fonts((static_dir / "app.css").read_text(encoding="utf-8"), static_dir / "fonts")
+    css = (static_dir / "dossier.css").read_text(encoding="utf-8")
+    js = (static_dir / "dossier.js").read_text(encoding="utf-8")
+    payload = jsonutil.dumps(data, separators=(",", ":")).replace("/", "\\/").replace("<!--", "\\u003c!--")
+    name = html.escape(str((data.get("target") or {}).get("name") or "Dossier"))
+    return ("<!doctype html>\n"
+            '<html lang="en" data-level="normal" data-mode="simple" data-theme="system">\n<head>\n'
+            '<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n'
+            f"<title>{name} dossier</title>\n<style>\n{app_css}\n</style>\n<style>\n{css}\n</style>\n</head>\n"
+            '<body class="dossier-standalone">\n<main id="dossier" class="dossier"></main>\n'
+            "<noscript><p>This page draws itself with JavaScript; the data is in the dossier-data block.</p>"
+            "</noscript>\n"
+            f'<script id="dossier-data" type="application/json">{payload}</script>\n'
+            f"<script>\n{js}\n</script>\n</body>\n</html>\n")
+
+
+def write_export(store: Store, report: DossierReport, path: Path, static_dir: Path = STATIC_DIR) -> Path:
+    """Render the report's JSON to ``path`` (atomically), record it as a pinned ``dossier`` artifact and on the row."""
+    path = Path(path)
+    data = json.loads(report.data_path.read_text(encoding="utf-8"))
+    text = export_html(data, static_dir)
+    _write_atomic(path, text)
+    _record_artifact(store, EXPORT_URL.format(target_id=report.target_id), path, text, report.target_id)
+    store.upsert_dossier(target_id=report.target_id, export_path=str(path))
+    return path

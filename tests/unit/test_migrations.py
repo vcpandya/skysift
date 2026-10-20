@@ -1,3 +1,5 @@
+from datetime import datetime
+
 import pytest
 from sqlalchemy import Column, ForeignKey, MetaData, Table, inspect, text
 
@@ -34,7 +36,8 @@ def test_migrate_milestone1_database_in_place(tmp_path):
     assert "decisions" in insp.get_table_names() and "schema_version" in insp.get_table_names()
     with s.engine.connect() as c:
         assert c.execute(text("select kind from artifacts")).scalar() == "raw"       # existing rows get the default
-        assert [r[0] for r in c.execute(text("select step from schema_version"))] == ["001_dashboard", "002_recheck"]
+        steps = [r[0] for r in c.execute(text("select step from schema_version"))]
+        assert steps == ["001_dashboard", "002_recheck", "003_dossiers"]
 
 
 def test_migrate_is_idempotent(tmp_path):
@@ -55,12 +58,12 @@ def _plain_copy(c: Column) -> Column:
 
 @pytest.fixture
 def old_schema_engine(tmp_path):
-    """A database as the dashboard milestone left it: step 001 recorded, no rechecks table, no recheck columns, one
-    signal with one test row. Built from a copy of today's tables without the new columns, because SQLite refuses
-    to drop a column that is part of a foreign key."""
+    """A database as the dashboard milestone left it: step 001 recorded, no rechecks or dossiers table, no recheck
+    columns, one signal with one test row. Built from a copy of today's tables without the new columns, because
+    SQLite refuses to drop a column that is part of a foreign key."""
     old = MetaData()
     for t in Base.metadata.sorted_tables:
-        if t.name != "rechecks":
+        if t.name not in ("rechecks", "dossiers"):
             Table(t.name, old, *[_plain_copy(c) for c in t.columns if c.name not in RECHECK_COLUMNS.get(t.name, ())])
     engine = Store(f"sqlite:///{tmp_path.as_posix()}/old.db").engine
     old.create_all(engine)
@@ -90,7 +93,7 @@ def test_step_002_adds_recheck_columns_to_an_old_database(old_schema_engine):
 
 
 def test_step_002_keeps_old_rows_indexes_the_parent_and_serves_the_store(old_schema_engine):
-    assert migrate(old_schema_engine) == ["002_recheck"] and migrate(old_schema_engine) == []
+    assert migrate(old_schema_engine) == ["002_recheck", "003_dossiers"] and migrate(old_schema_engine) == []
     insp = inspect(old_schema_engine)
     assert "ix_signals_parent_signal_id" in {i["name"] for i in insp.get_indexes("signals")}
     store = Store(str(old_schema_engine.url)); store.init_schema()        # create_all and migrate leave it alone
@@ -99,3 +102,19 @@ def test_step_002_keeps_old_rows_indexes_the_parent_and_serves_the_store(old_sch
     rid = store.add_recheck(1, "catalogue", "4", "pass")
     store.add_test(1, TestResult(rung="rung4_novelty", status=TestStatus.PASS), 0.1, recheck_id=rid)
     assert store.refresh_status(1) == "candidate_stage1" and store.rechecks(1)[0]["outcome"] == "pass"
+
+
+def test_step_003_creates_the_dossiers_table_on_an_old_database(old_schema_engine):
+    assert "dossiers" not in inspect(old_schema_engine).get_table_names()
+    assert "003_dossiers" in migrate(old_schema_engine)
+    insp = inspect(old_schema_engine)
+    cols = {c["name"] for c in insp.get_columns("dossiers")}
+    assert {"target_id", "signal_id", "generated", "data_path", "search_version", "ladder_version", "dossier_version",
+            "fap", "fpp", "fap_detail", "fpp_detail", "tests_fingerprint", "status_at_generation", "export_path",
+            "pack_path", "pack_steps", "pack_built"} <= cols
+    assert "ix_dossiers_signal_id" in {i["name"] for i in insp.get_indexes("dossiers")}
+    store = Store(str(old_schema_engine.url)); store.init_schema()
+    store.upsert_dossier(target_id="kic-1", signal_id=1, generated=datetime(2026, 10, 21), data_path="d.json",
+                         search_version="v", ladder_version="4", dossier_version="1", fap=None, fpp=0.1,
+                         fap_detail={}, fpp_detail={}, tests_fingerprint="f" * 64, status_at_generation="undetermined")
+    assert store.dossier("kic-1")["fpp"] == 0.1 and migrate(old_schema_engine) == []

@@ -375,3 +375,33 @@ def test_record_results_derives_stage_2_from_a_rung5_pass_and_refuses_an_unknown
     with store.session() as s:
         sid = s.scalar(select(SignalRow.id).where(SignalRow.run_id == rid))
     assert store.signal_status(sid) == "candidate_stage2" == store.refresh_status(sid)   # both paths agree
+
+
+def test_dossier_rows_round_trip_and_join_status(store_with_signals):
+    from datetime import datetime
+    store, ids = store_with_signals
+    fields = {"signal_id": ids["approved"], "generated": datetime(2026, 10, 21, 9, 30), "data_path": "d/kic-4.json",
+              "search_version": VERSION, "ladder_version": "3", "dossier_version": "1", "fap": 1 / 1700, "fpp": 0.03,
+              "fap_detail": {"k": 0, "n": 1699}, "fpp_detail": {"value": 0.03}, "tests_fingerprint": "a" * 64,
+              "status_at_generation": "candidate_stage1"}
+    assert store.dossier("kic-4") is None and store.dossiers() == []
+    store.upsert_dossier(target_id="kic-4", **fields)
+    store.upsert_dossier(target_id="kic-1", **{**fields, "signal_id": ids["candidate"], "fpp": 0.2})
+    row = store.dossier("kic-4")
+    assert row["fap_detail"] == {"k": 0, "n": 1699} and row["generated"] == datetime(2026, 10, 21, 9, 30)
+    assert row["export_path"] == "" and row["pack_steps"] == {} and row["pack_built"] is None
+    store.upsert_dossier(target_id="kic-4", export_path="out.html")              # a partial update keeps the rest
+    assert store.dossier("kic-4")["export_path"] == "out.html" and store.dossier("kic-4")["fpp"] == 0.03
+    store.decide(ids["approved"], "needs_data", "deeper pixels")
+    rows = {r["target_id"]: r for r in store.dossiers()}
+    assert list(rows) == ["kic-1", "kic-4"]
+    assert rows["kic-4"]["final_status"] == "candidate_stage1" and rows["kic-4"]["decision"] == "needs_data"
+    assert rows["kic-1"]["decision"] is None and rows["kic-1"]["fpp"] == 0.2
+    store.set_pack("kic-4", "packs/kic-4.zip", datetime(2026, 10, 22))
+    store.set_pack_steps("kic-4", {"1": True, "2": False})
+    row = store.dossier("kic-4")
+    assert row["pack_path"] == "packs/kic-4.zip" and row["pack_steps"] == {"1": True, "2": False}
+    with pytest.raises(TypeError):
+        store.upsert_dossier(target_id="kic-4", colour="red")
+    with pytest.raises(KeyError):
+        store.set_pack("kic-9", "p", datetime(2026, 10, 22))
