@@ -18,18 +18,18 @@
   <li class="step{{ ' is-done' if steps.last_sweep or active else '' }}">
     <span class="step-state">{{ "Running" if active else "Done" if steps.last_sweep else "Step 2" }}</span>
     <h2 class="step-title">Run a sweep</h2>
-    <p class="step-body">{% if active %}A sweep of {{ active.request.source }} is running. <a href="/live">Watch it</a>.{% elif steps.last_sweep %}{% set s = steps.last_sweep %}The last sweep searched {{ s.n_targets | fmt }} star{{ "" if s.n_targets == 1 else "s" }} and finished {{ s.finished | ago }}. It found {{ s.candidates | fmt }} candidate{{ "" if s.candidates == 1 else "s" }}.{% else %}None yet. A sweep searches each star and vets every dip it finds.{% endif %}</p>
+    <p class="step-body">{% if active %}A sweep of {{ (active.request if active.request is mapping else {}).get("source") or "a source" }} is running. <a href="/live">Watch it</a>.{% elif steps.last_sweep %}{% set s = steps.last_sweep %}The last sweep searched {{ s.n_targets | fmt }} star{{ "" if s.n_targets == 1 else "s" }} and finished {{ s.finished | ago }}. It found {{ s.candidates | fmt }} candidate{{ "" if s.candidates == 1 else "s" }}.{% else %}None yet. A sweep searches each star and vets every dip it finds.{% endif %}</p>
   </li>
   <li class="step{{ ' is-done' if steps.decided else '' }}">
     <span class="step-state">{{ "Done" if steps.decided else "Step 3" }}</span>
     <h2 class="step-title">Review candidates</h2>
-    <p class="step-body">{{ steps.waiting | fmt }} candidate{{ "" if steps.waiting == 1 else "s" }} waiting for a look. {% if steps.decided %}{{ approved | fmt }} approved, {{ rejected | fmt }} rejected, {{ asked | fmt }} waiting on more data.{% else %}No decision yet.{% endif %} <a href="/candidates">Open the candidates</a>.</p>
+    <p class="step-body">{{ steps.waiting | fmt }} candidate{{ "" if steps.waiting == 1 else "s" }} waiting for a look. {% if steps.decided %}{{ approved | fmt }} approved, {{ rejected | fmt }} rejected, {{ asked | fmt }} waiting on more data.{% else %}No decision yet.{% endif %} <a href="/candidates?status=waiting">Open the candidates</a>.</p>
   </li>
 </ol>
 
 <section aria-labelledby="sources-title">
   <h2 id="sources-title">Data sources</h2>
-  {% if active %}<p class="status-running">A sweep of <strong>{{ active.request.source }}</strong> is running (pid {{ active.pid }}). One sweep runs at a time. <a href="/live">Watch it</a>.</p>{% endif %}
+  {% if active %}<p class="status-running">A sweep of <strong>{{ (active.request if active.request is mapping else {}).get("source") or "a source" }}</strong> is running (pid {{ active.pid }}). One sweep runs at a time. <a href="/live">Watch it</a>.</p>{% endif %}
   <div class="cards sources">
   {% for r in rows %}
     {% set live = r.info.status == "live" %}

@@ -21,12 +21,12 @@
 <section aria-labelledby="feed-title">
   <div class="section-head">
     <h2 id="feed-title">Waiting for a look</h2>
-    <a href="/candidates">See all</a>
+    <a href="/candidates?status=waiting">See all</a>
   </div>
   <div class="feed">
   {% if feed %}
     <div class="cards">
-    {% for r in feed %}{{ card(r, "status=" ~ r.final_status ~ "&sort=detected&dir=desc") }}{% endfor %}
+    {% for r in feed %}{{ card(r, "status=waiting&sort=detected&dir=desc") }}{% endfor %}
     </div>
   {% elif sweep.active is not none and sweep.progress.percent is not none %}
     {{ empty("Nothing waiting.", "The sweep is " ~ sweep.progress.percent ~ " percent through tonight's list.") }}

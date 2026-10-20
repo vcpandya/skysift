@@ -24,10 +24,11 @@ from skysift.ui import explain
 SORT_COLUMNS = {"sde": SignalRow.sde, "snr": SignalRow.snr, "period": SignalRow.period, "depth_ppm": SignalRow.depth_ppm,
                 "duration": SignalRow.duration, "n_events": SignalRow.n_events, "detected": SignalRow.id,
                 "target_id": SignalRow.target_id}
-# the Candidates page's filters, in chip order: the engine's statuses, then the reviewer's decisions, then everything
-QUEUE_STATUSES = ("candidate_stage1", "candidate_stage2", "undetermined", "rejected", "superseded", "approved",
-                  "needs_data", "all")
-ENGINE_STATUSES = QUEUE_STATUSES[:5]       # "all" is these; a pending signal is still being vetted, so in no queue
+# the Candidates page's filters, in chip order: the stage 1 and 2 candidates nobody has decided (Tonight's "waiting"),
+# the engine's statuses, then the reviewer's decisions, then everything
+QUEUE_STATUSES = ("waiting", "candidate_stage1", "candidate_stage2", "undetermined", "rejected", "superseded",
+                  "approved", "needs_data", "all")
+ENGINE_STATUSES = QUEUE_STATUSES[1:6]      # "all" is these; a pending signal is still being vetted, so in no queue
 
 
 def _iso(dt) -> str | None:
@@ -136,8 +137,11 @@ def _latest_decision_subquery():
 def _filtered(q, status: str, version: str | None, search: str, latest):
     """``q`` (selecting from SignalRow, with CandidateRow and the ``latest`` decision subquery outer-joined) kept to one
     queue status, search version and target-id substring. ``approved`` and ``needs_data`` follow the reviewer's latest
-    decision; the substring is matched case-insensitively and literally (no LIKE wildcards)."""
-    if status == "approved":
+    decision, ``waiting`` is the stage 1 and 2 candidates nobody has decided; the substring is matched
+    case-insensitively and literally (no LIKE wildcards)."""
+    if status == "waiting":
+        q = _undecided(q.where(SignalRow.final_status.in_(CANDIDATE_STATUSES)), latest)
+    elif status == "approved":
         q = q.where(CandidateRow.status == "approved")
     elif status == "needs_data":
         q = q.where(CandidateRow.status == "review", latest.c.decision == "needs_data")
@@ -254,19 +258,43 @@ def _naive_utc(dt: datetime) -> datetime:
     return dt.astimezone(UTC).replace(tzinfo=None) if dt.tzinfo else dt
 
 
-def _window(s, since: datetime | None) -> dict:
-    """The sweep window: from ``since`` (a running sweep's start) on, or else the UTC day of the most recent finished
-    run. The targets with a finished run started in it, their signals by status, and the window's first start and
-    last finish (None before the first run)."""
+SWEEP_GAP = timedelta(minutes=30)     # more than this with no run finishing, and the next run starts a new sweep
+
+
+def _latest_sweep(s, launched: tuple[datetime, datetime] | None) -> tuple[datetime | None, datetime | None]:
+    """(start, end) of the latest sweep; end None means it runs to now, start None means no finished run yet.
+    ``launched`` is the dashboard's last sweep (its history record's started and finished), used when the newest done
+    run belongs to it. Otherwise the done runs are grouped by gaps: walking back from the newest, a run that finished
+    more than SWEEP_GAP before the group's first start belongs to an earlier sweep. Only the latest sweep's rows are
+    read, not every run."""
+    latest = s.scalar(select(func.max(RunRow.started)).where(RunRow.status == "done"))
+    if latest is None:
+        return None, None
+    if launched is not None:
+        start, end = (_naive_utc(t) for t in launched)
+        if start <= latest <= end:
+            return start, end
+    start = latest
+    rows = s.execute(select(RunRow.started, RunRow.finished).where(RunRow.status == "done")
+                     .order_by(RunRow.started.desc()).execution_options(yield_per=500))
+    for started, finished in rows:
+        if start - (finished or started) > SWEEP_GAP:
+            break
+        start = min(start, started)
+    return start, None
+
+
+def _window(s, since: datetime | None, launched: tuple[datetime, datetime] | None = None) -> dict:
+    """The sweep window: from ``since`` (a running sweep's start) on, or else the latest sweep (``_latest_sweep``).
+    The targets with a finished run started in it, their signals by status, and the window's first start and last
+    finish (None before the first run)."""
     if since is not None:
         start, end = _naive_utc(since), None
     else:
-        latest = s.scalar(select(func.max(RunRow.started)).where(RunRow.status == "done"))
-        start = datetime(latest.year, latest.month, latest.day) if latest else None
-        end = start + timedelta(days=1) if start else None
+        start, end = _latest_sweep(s, launched)
     out = {"start": start, "scanned": 0, "first": None, "last": None, "found": {}}
     if start is not None:
-        window = [RunRow.status == "done", RunRow.started >= start, *([RunRow.started < end] if end else [])]
+        window = [RunRow.status == "done", RunRow.started >= start, *([RunRow.started <= end] if end else [])]
         out["scanned"], out["first"], out["last"] = s.execute(
             select(func.count(func.distinct(RunRow.target_id)), func.min(RunRow.started), func.max(RunRow.finished))
             .where(*window)).one()
@@ -274,6 +302,13 @@ def _window(s, since: datetime | None) -> dict:
                                       .join(RunRow, RunRow.id == SignalRow.run_id)
                                       .where(*window).group_by(SignalRow.final_status)).all())
     return out
+
+
+def _engine_rejected(s, version: str | None) -> int:
+    """Signals of ``version`` a check rejected: the "rejected" queue less those whose latest decision is a reject."""
+    latest = _latest_decision_subquery()
+    q = _filtered(_base(func.count(), latest=latest), "rejected", version, "", latest)
+    return s.scalar(q.where(latest.c.decision.is_(None) | (latest.c.decision != "reject")))
 
 
 def _last_sweep(w: dict) -> dict | None:
@@ -285,10 +320,11 @@ def _last_sweep(w: dict) -> dict | None:
             "candidates": sum(w["found"].get(k, 0) for k in CANDIDATE_STATUSES)}
 
 
-def last_sweep(store: Store) -> dict | None:
-    """The latest sweep as Live's idle line says it: started, finished, targets, seconds and candidates found."""
+def last_sweep(store: Store, launched: tuple[datetime, datetime] | None = None) -> dict | None:
+    """The latest sweep as Live's idle line says it: started, finished, targets, seconds and candidates found.
+    ``launched``: the dashboard's last sweep, (started, finished), as ``_latest_sweep`` takes it."""
     with store.session() as s:
-        return _last_sweep(_window(s, None))
+        return _last_sweep(_window(s, None, launched))
 
 
 def done_since(store: Store, since: datetime) -> int:
@@ -297,27 +333,28 @@ def done_since(store: Store, since: datetime) -> int:
         return _window(s, since)["scanned"]
 
 
-def tonight(store: Store, version: str | None, since: datetime | None = None) -> dict:
-    """The Tonight page's numbers. In the sweep window (``_window``): ``scanned`` targets and the ``signals`` their
+def tonight(store: Store, version: str | None, since: datetime | None = None,
+            launched: tuple[datetime, datetime] | None = None) -> dict:
+    """The Tonight page's numbers. In the sweep window (``_window``, the running sweep from ``since`` or else the
+    latest sweep, ``launched`` being the dashboard's last one): ``scanned`` targets and the ``signals`` their
     runs found. ``candidates_waiting`` (stage 1 or 2, nobody has decided), ``undetermined`` (how many signals each
     next step holds, from the latest undetermined test row of each) and ``rejected`` count every signal of
     ``version``. ``last_sweep`` describes the window, None before the first run."""
     with store.session() as s:
-        w = _window(s, since)
-        latest_dec = _latest_decision_subquery()
-        waiting = _undecided(_base(func.count(), latest=latest_dec)
-                             .where(SignalRow.final_status.in_(CANDIDATE_STATUSES)), latest_dec)
+        w = _window(s, since, launched)
         und_row = (select(TestRow.signal_id, func.max(TestRow.id).label("tid"))
                    .where(TestRow.status == "undetermined").group_by(TestRow.signal_id).subquery())
         und = (select(TestRow.reason).select_from(SignalRow)
                .outerjoin(und_row, und_row.c.signal_id == SignalRow.id).outerjoin(TestRow, TestRow.id == und_row.c.tid)
                .where(SignalRow.final_status == "undetermined"))
         if version is not None:
-            waiting = waiting.join(RunRow, RunRow.id == SignalRow.run_id).where(RunRow.detector_version == version)
             und = und.join(RunRow, RunRow.id == SignalRow.run_id).where(RunRow.detector_version == version)
         groups = Counter(explain.reason_in_words(reason or "")[1] for reason in s.scalars(und))
-        out = {"scanned": w["scanned"], "signals": sum(w["found"].values()), "candidates_waiting": s.scalar(waiting),
-               "undetermined": dict(groups.most_common()), "rejected": _count(s, "rejected", version)}
+        # the counts agree with the Candidates chips: signals as "all" (a pending one is still being vetted), waiting
+        # as "waiting", and rejected as the engine's own rejections (a reviewer's reject is a decision, not a failure)
+        out = {"scanned": w["scanned"], "signals": sum(w["found"].get(k, 0) for k in ENGINE_STATUSES),
+               "candidates_waiting": _count(s, "waiting", version), "undetermined": dict(groups.most_common()),
+               "rejected": _engine_rejected(s, version)}
     start = w["start"]
     today = since is not None or (start is not None and start.date() == datetime.now(UTC).date())   # a running sweep is tonight's
     out.update(today=today, label="Tonight" if today or start is None else f"Last run ({start.day} {start:%B %Y})",
@@ -416,19 +453,37 @@ def signal_detail(store: Store, signal_id: int) -> dict | None:
                 "candidate": cand_d, "decisions": store.decisions(signal_id)}
 
 
-def approved(store: Store, status: str = "approved") -> list[dict]:
-    """The signals whose candidate row has ``status``, newest decision first, as explained cards with the note."""
+def _decided_select(cols, status: str, version: str | None):
     latest = _latest_decision_subquery()
+    q = (select(*cols(latest)).select_from(SignalRow)
+         .join(CandidateRow, CandidateRow.signal_id == SignalRow.id)
+         .join(TargetRow, TargetRow.target_id == SignalRow.target_id)
+         .outerjoin(latest, latest.c.signal_id == SignalRow.id)
+         .where(CandidateRow.status == status))
+    if version is not None:
+        q = q.join(RunRow, RunRow.id == SignalRow.run_id).where(RunRow.detector_version == version)
+    return q
+
+
+def approved(store: Store, status: str = "approved", version: str | None = None) -> list[dict]:
+    """The signals whose candidate row has ``status``, newest decision first, as explained cards with the note; with
+    ``version``, only signals found by runs of that detector version (as the Candidates chips count them)."""
+    q = _decided_select(lambda latest: (SignalRow, TargetRow, CandidateRow, latest.c.decision), status, version)
     with store.session() as s:
-        rows = s.execute(select(SignalRow, TargetRow, CandidateRow, latest.c.decision)
-                         .join(CandidateRow, CandidateRow.signal_id == SignalRow.id)
-                         .join(TargetRow, TargetRow.target_id == SignalRow.target_id)
-                         .outerjoin(latest, latest.c.signal_id == SignalRow.id)
-                         .where(CandidateRow.status == status).order_by(CandidateRow.decided_at.desc())).all()
+        rows = s.execute(q.order_by(CandidateRow.decided_at.desc())).all()
         tests = _tests_by_signal(s, [sig.id for sig, *_rest in rows])
         return [_explained({**_queue_row(sig, t, c.status, None, None), "note": c.note,
                             "decided_at": _iso(c.decided_at), "doi": c.doi}, tests[sig.id], dec)
                 for sig, t, c, dec in rows]
+
+
+def decided_hidden_by_version(store: Store, status: str, version: str | None) -> int:
+    """How many signals of this decision status a filter on ``version`` hides on the Approved page."""
+    if version is None:
+        return 0
+    with store.session() as s:
+        n = [s.scalar(_decided_select(lambda _latest: (func.count(),), status, v)) for v in (None, version)]
+    return n[0] - n[1]
 
 
 def decision_counts(store: Store) -> dict[str, int]:

@@ -167,15 +167,25 @@
     const rows = queueRows();
     if (!rows.length) return;
     const at = rows.indexOf(selected());
-    select(rows[at < 0 ? (by > 0 ? 0 : rows.length - 1) : Math.min(rows.length - 1, Math.max(0, at + by))]);
+    const row = rows[at < 0 ? (by > 0 ? 0 : rows.length - 1) : Math.min(rows.length - 1, Math.max(0, at + by))];
+    select(row);
+    // in the split view the detail follows the selection (spec 4.3), so a, r and n act on the row j and k reached
+    if (detail && wide.matches) openRow(row);
+  };
+  // the signal a, r and n may decide in the queue: the one #detail shows, and only while it is the selected row
+  const detailMatchesSelection = () => {
+    const shown = detail && detail.querySelector("[data-signal]");
+    const row = selected();
+    return Boolean(shown && row && shown.dataset.signal === row.dataset.id);
   };
   document.addEventListener("click", (e) => {
     const row = e.target.closest("tr.row-link[data-href]");
     if (!row) return;
-    // the target id is a real link for the keyboard, middle-click and a new tab; a plain click on it at split-view
-    // width loads the detail beside the table like a click anywhere else on the row
+    // the target id is a real link for the keyboard, middle-click and a new tab; a plain mouse click on it at
+    // split-view width (e.detail > 0: Enter on the focused link reports 0 and follows the link) loads the detail
+    // beside the table like a click anywhere else on the row
     const plain = e.button === 0 && !(e.ctrlKey || e.metaKey || e.shiftKey || e.altKey);
-    if (plain && e.target.closest("a.row-name") && detail && wide.matches) { e.preventDefault(); openRow(row); return; }
+    if (plain && e.detail > 0 && e.target.closest("a.row-name") && detail && wide.matches) { e.preventDefault(); openRow(row); return; }
     if (!e.target.closest("a, button, input")) openRow(row);
   });
   if (detail && wide.matches) {             // a reload keeps the open signal
@@ -192,6 +202,8 @@
     if (e.key === "?") { toast("Keys: j next, k previous, Enter opens, a approve, r reject, n needs data, Esc closes a popup."); return; }
     if (queue && (e.key === "j" || e.key === "k")) { e.preventDefault(); step(e.key === "j" ? 1 : -1); return; }
     if (queue && e.key === "Enter" && !e.target.closest("a, button") && selected()) { e.preventDefault(); openRow(selected()); return; }
+    // in the queue a decision key waits until the detail of the selected row has arrived: never a stale signal
+    if (queue && ["a", "r", "n"].includes(e.key) && !detailMatchesSelection()) return;
     const el = KEYS[e.key] && document.getElementById(KEYS[e.key]);
     if (el) el.click();
   });
@@ -210,9 +222,15 @@
   document.body.addEventListener("htmx:beforeSwap", (e) => {
     if (e.detail.xhr.status === 400 || e.detail.xhr.status === 409) { e.detail.shouldSwap = true; e.detail.isError = false; }
   });
-  // a refused decision (r without a note) puts the cursor in the note, which the error now describes
+  // a refused decision (r without a note) puts the cursor in the note, which the error now describes; a recorded one
+  // moves focus to the decision's new state, so a keyboard user is not dropped to the top of the page by the swap
   document.body.addEventListener("htmx:afterSwap", (e) => {
-    if (e.detail.xhr.status !== 400 || !e.detail.target || e.detail.target.id !== "decision") return;
+    if (!e.detail.target || e.detail.target.id !== "decision") return;
+    if (e.detail.xhr.status !== 400) {
+      const state = e.detail.target.querySelector(".decision-state");
+      if (state) state.focus();
+      return;
+    }
     const note = e.detail.target.querySelector("textarea[name=note]");
     if (note) note.focus();
   });

@@ -119,8 +119,9 @@ def test_queue_and_neighbours_keep_to_one_search_version(tmp_path, settings):
 
 
 def test_queue_statuses_are_the_chips_in_order():
-    assert queries.QUEUE_STATUSES == ("candidate_stage1", "candidate_stage2", "undetermined", "rejected", "superseded",
-                                      "approved", "needs_data", "all")
+    assert queries.QUEUE_STATUSES == ("waiting", "candidate_stage1", "candidate_stage2", "undetermined", "rejected",
+                                      "superseded", "approved", "needs_data", "all")
+    assert queries.ENGINE_STATUSES == ("candidate_stage1", "candidate_stage2", "undetermined", "rejected", "superseded")
 
 
 def test_review_queue_rows_carry_the_verdict_in_words(tmp_path, settings):
@@ -178,8 +179,9 @@ def test_review_queue_search_and_limit(tmp_path, settings):
 def test_status_counts_follow_the_version_filter(tmp_path, settings):
     store, _blob, _ids = _env(tmp_path, settings)
     add_older_version(store)
-    assert queries.status_counts(store) == {"candidate_stage1": 4, "candidate_stage2": 1, "undetermined": 1,
-                                            "rejected": 1, "superseded": 0, "approved": 1, "needs_data": 0, "all": 7}
+    assert queries.status_counts(store) == {"waiting": 4, "candidate_stage1": 4, "candidate_stage2": 1,
+                                            "undetermined": 1, "rejected": 1, "superseded": 0, "approved": 1,
+                                            "needs_data": 0, "all": 7}
     assert queries.status_counts(store, VERSION)["candidate_stage1"] == 3
     assert queries.status_counts(store, VERSION)["all"] == 6
     assert queries.hidden_by_version(store, "approved", VERSION) == 0
@@ -204,7 +206,7 @@ def _selects(store, fn):
 def test_tonight_counts_the_latest_sweep(tmp_path, settings):
     store, _blob, ids = _env(tmp_path, settings)
     t = queries.tonight(store, VERSION)
-    assert (t["scanned"], t["signals"], t["candidates_waiting"], t["rejected"]) == (7, 7, 3, 1)
+    assert (t["scanned"], t["signals"], t["candidates_waiting"], t["rejected"]) == (7, 6, 3, 1)   # pending: no queue
     with store.session() as s:                    # "today" follows the latest run's UTC day (the seed is minutes old)
         day = s.query(RunRow).order_by(RunRow.started.desc()).first().started.date()
     assert t["undetermined"] == {"retry the catalogue": 1} and t["today"] == (day == datetime.now(UTC).date())
@@ -267,3 +269,79 @@ def test_external_sweep_is_seen_in_the_store(tmp_path, settings):
     assert queries.external_sweep(store) is None
     store.finish_run(rid, "done")                                         # a result just written
     assert queries.external_sweep(store)["running"] == 0
+
+
+def _place_runs(store, times):
+    """Give the seeded runs, in id order, these (started, finished) times (naive UTC, as the store keeps them)."""
+    with store.session() as s:
+        for run, (started, finished) in zip(s.query(RunRow).order_by(RunRow.id), times, strict=True):
+            run.started, run.finished = started, finished
+
+
+def test_a_sweep_that_crosses_midnight_utc_is_one_sweep(tmp_path, settings):
+    store, _blob, _ids = _env(tmp_path, settings)
+    start = datetime(2026, 10, 10, 23, 40)
+    _place_runs(store, [(start + timedelta(minutes=7 * i), start + timedelta(minutes=7 * i + 6)) for i in range(7)])
+    t = queries.tonight(store, VERSION)
+    assert t["scanned"] == 7 and t["last_sweep"]["n_targets"] == 7               # 23:40 to 00:28, one sweep
+    assert t["last_sweep"]["started"] == start and queries.last_sweep(store)["n_targets"] == 7
+
+
+def test_two_sweeps_on_one_utc_day_are_two_and_the_latest_is_shown(tmp_path, settings):
+    store, _blob, _ids = _env(tmp_path, settings)
+    night, day = datetime(2026, 10, 10, 2, 0), datetime(2026, 10, 10, 14, 0)
+    times = [(night + timedelta(minutes=4 * i), night + timedelta(minutes=4 * i + 3)) for i in range(3)]
+    times += [(day + timedelta(minutes=4 * i), day + timedelta(minutes=4 * i + 3)) for i in range(4)]
+    _place_runs(store, times)
+    t = queries.tonight(store, VERSION)
+    assert t["scanned"] == 4 and t["last_sweep"]["started"] == day
+    assert t["last_sweep"]["finished"] == day + timedelta(minutes=15) and queries.last_sweep(store)["n_targets"] == 4
+    # a gap of exactly SWEEP_GAP is still the same sweep; one minute more starts a new one
+    gap = queries.SWEEP_GAP
+    _place_runs(store, [*times[:3], *[(times[2][1] + gap + timedelta(minutes=4 * i),
+                                       times[2][1] + gap + timedelta(minutes=4 * i + 3)) for i in range(4)]])
+    assert queries.tonight(store, VERSION)["scanned"] == 7
+    _place_runs(store, [*times[:3], *[(times[2][1] + gap + timedelta(minutes=4 * i + 1),
+                                       times[2][1] + gap + timedelta(minutes=4 * i + 4)) for i in range(4)]])
+    assert queries.tonight(store, VERSION)["scanned"] == 4
+
+
+def test_the_dashboards_own_sweep_record_bounds_the_window(tmp_path, settings):
+    store, _blob, _ids = _env(tmp_path, settings)
+    start = datetime(2026, 10, 10, 2, 0)
+    _place_runs(store, [(start + timedelta(minutes=i), start + timedelta(minutes=i, seconds=50)) for i in range(7)])
+    # the launcher's record covers runs 4 to 7 only (the first three came from another sweep moments before)
+    launched = (datetime(2026, 10, 10, 2, 3, tzinfo=UTC), datetime(2026, 10, 10, 2, 8, tzinfo=UTC))
+    assert queries.tonight(store, VERSION, launched=launched)["scanned"] == 4
+    assert queries.last_sweep(store, launched)["n_targets"] == 4
+    # a record the newest run does not belong to (a later sweep from the command line) falls back to the gaps
+    older = (datetime(2026, 10, 9, 2, 0, tzinfo=UTC), datetime(2026, 10, 9, 3, 0, tzinfo=UTC))
+    assert queries.tonight(store, VERSION, launched=older)["scanned"] == 7
+
+
+def test_the_launcher_record_reaches_the_window_only_when_readable():
+    from skysift.ui.routes.live import launched
+
+    class Launcher:
+        def __init__(self, history):
+            self._history = history
+
+        def history(self):
+            return self._history
+
+    record = {"started": "2026-10-10T02:03:00+00:00", "finished": "2026-10-10T02:08:00+00:00"}
+    assert launched(Launcher([record])) == (datetime(2026, 10, 10, 2, 3, tzinfo=UTC),
+                                            datetime(2026, 10, 10, 2, 8, tzinfo=UTC))
+    assert launched(None) is None and launched(Launcher([])) is None
+    assert launched(Launcher([{"started": None, "finished": "2026-10-10T02:08:00+00:00"}])) is None
+
+
+def test_the_waiting_queue_rejected_tile_and_signals_agree_with_the_chips(tmp_path, settings):
+    store, _blob, ids = _env(tmp_path, settings)
+    store.decide(ids["candidate"], "reject", "a blend")            # a reviewer's reject: rejected, but no check failed
+    t, counts = queries.tonight(store, VERSION), queries.status_counts(store, VERSION)
+    waiting = queries.review_queue(store, status="waiting", version=VERSION)
+    assert t["candidates_waiting"] == counts["waiting"] == len(waiting) == 2
+    assert {r["id"] for r in waiting} == {ids["legacy"], ids["stage2"]}
+    assert t["signals"] == counts["all"] == 6                                     # pending is in no queue
+    assert counts["rejected"] == 2 and t["rejected"] == 1                         # the tile counts failed checks only

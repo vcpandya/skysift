@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "partials/pill.html" import pill %}
+{% from "partials/pill.html" import pill, reviewer_pill %}
 {% from "partials/stat.html" import stat %}
 {% block title %}SkySift · {{ d.signal.target_id }}{% endblock %}
 {% block content %}
@@ -18,9 +18,9 @@
   <h1 class="hero-name"><code>{{ s.target_id }}</code></h1>
   <p class="hero-summary">{{ summary }}</p>
   <div class="hero-verdict">
+    {%- if v.reviewer %}{{ reviewer_pill(v.reviewer) }}{% endif %}
     {{ pill(v.tone, v.word, verdict_src) }}
     {%- if v.stage %}<span class="hero-stage">{{ v.stage }}</span>{% endif %}
-    {%- if v.reviewer %}<span class="hero-reviewer">{{ v.reviewer }}</span>{% endif %}
     <button type="button" class="btn hero-copy" data-copy="{{ copy_text }}">Copy summary</button>
   </div>
   <div class="tiles hero-stats">

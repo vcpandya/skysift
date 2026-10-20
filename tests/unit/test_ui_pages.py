@@ -155,14 +155,14 @@ def test_tonight_hero_numbers_tiles_and_recheck_strip(seeded_settings):
     # only a hidden status speaks, with the final words; the visible hero, whose numbers count up, is no live region
     before_hero = html.split('<section id="hero"')[0].split("<main")[1]
     assert before_hero.count("aria-live") == 1 and '<p id="tonight-status" class="sr-only" aria-live="polite">' in before_hero
-    assert " SkySift scanned 7 stars. 3 candidates are waiting for a look.</p>" in before_hero
+    assert ">The last sweep scanned 7 stars. 3 candidates are waiting for a look.</p>" in before_hero
     assert 'data-live-for="tonight-status"' in html and "signals (dips worth checking)" in html
     assert "rejected so far" in html
     assert '<a class="chip" href="/candidates?status=undetermined">retry the catalogue' in html
     feed = html.split('class="feed')[1]
     assert feed.index("kic-006146676") < feed.index("gaia-dr3-2101234567890123459") < feed.index("kic-005689121")
     assert "Waiting for a look" in html and "discover" not in html.lower() and "—" not in html
-    assert '<a href="/candidates">See all</a>' in html
+    assert '<a href="/candidates?status=waiting">See all</a>' in html
 
 
 def test_tonight_hero_polls_only_while_a_sweep_runs(settings, tmp_path):
@@ -708,7 +708,8 @@ def test_existing_pages_render_on_the_shared_components(settings, tmp_path):
     client, _app, _ids, _launcher = make_seeded_app(settings, tmp_path)
     html = client.get("/candidates").text
     assert 'aria-current="true">stage 1 candidates <span class="chip-count">3</span></a>' in html and 'class="pill pill-' in html
-    assert '<a class="chip" href="/approved?status=approved" aria-current="true">approved</a>' in client.get("/approved").text
+    assert ('<a class="chip" href="/approved?status=approved&amp;versions=current" aria-current="true">approved</a>'
+            in client.get("/approved").text)
     live = client.get("/live").text
     assert 'class="tile stat"' in live and "data-count=" in live
     assert 'class="envinfo only-expert"' in live and 'aria-current="page"' in live
@@ -875,3 +876,90 @@ def test_sweep_form_links_the_threshold_note_and_glosses_its_terms_once(seeded_s
     assert form.count("brightness in Gaia's G band, bigger is fainter") == 1
     assert form.count("the strength of every trial period") == 1
     assert "—" not in form and "discover" not in form.lower()
+
+
+# ---- final review: the links lead to the set they count, and hostile text stays text
+
+def test_tonight_and_sources_lead_to_the_set_they_count(settings, tmp_path):
+    client, app, ids, _launcher = make_seeded_app(settings, tmp_path)
+    store = app.state.store
+    store.decide(ids["candidate"], "reject", "a blend")
+    home = client.get("/?mode=simple").text
+    assert '<a href="/candidates?status=waiting">See all</a>' in home
+    assert '<span data-count="2">2</span> candidates are waiting for a look.' in home
+    assert "found 6 signals" in home                                          # the "all" chip's set: pending is not in it
+    rejected_tile = home.split('<div class="tiles tonight-tiles">')[1].split("rejected so far")[0]
+    assert 'data-count="1"' in rejected_tile.split('<div class="tile stat">')[-1]   # the reviewer's reject is no failed check
+    waiting = client.get("/candidates?status=waiting&mode=simple").text
+    assert waiting.count('<article class="card candidate') == 2
+    assert 'aria-current="true">waiting for a decision <span class="chip-count">2</span></a>' in waiting
+    chips = client.get("/candidates?status=all").text
+    assert 'all <span class="chip-count">6</span></a>' in chips
+    sources = client.get("/sources").text
+    step = sources.split("Review candidates")[1].split("</li>")[0]
+    assert "2 candidates waiting for a look" in step and '<a href="/candidates?status=waiting">' in step
+
+
+def test_approved_page_keeps_to_the_search_version_like_its_chip(settings, tmp_path):
+    from tests.unit.ui_seed import add_older_version
+    client, app, _ids, _launcher = make_seeded_app(settings, tmp_path)
+    old = add_older_version(app.state.store)
+    app.state.store.decide(old, "approve", "older sweep")
+    current = client.get("/approved?mode=simple").text
+    assert current.count('<article class="card candidate') == 1 and "older sweep" not in current
+    assert "Current search version only (1 older hidden)" in current
+    assert 'approved <span class="chip-count">1</span>' in client.get("/candidates").text      # the chip agrees
+    every = client.get("/approved?versions=all&mode=simple").text
+    assert every.count('<article class="card candidate') == 2 and "older sweep" in every
+    assert client.get("/approved?versions=bogus").status_code == 400
+
+
+def test_sources_survives_a_lock_without_a_request(settings, tmp_path):
+    client, _app, _ids, launcher = make_seeded_app(settings, tmp_path)
+    launcher.active = lambda: {"pid": 4242, "started": "2026-10-20T01:00:00+00:00"}
+    r = client.get("/sources")
+    assert r.status_code == 200 and "A sweep of a source is running" in r.text
+    assert "A sweep of <strong>a source</strong> is running (pid 4242)" in r.text
+
+
+def test_the_tonight_feed_leaves_out_every_decided_candidate(seeded_settings):
+    client, ids = make_seeded_client(seeded_settings)
+    store = client.app.state.store
+    store.decide(ids["candidate"], "reject", "a blend")
+    store.decide(ids["legacy"], "needs_data", "more quarters")
+    feed = client.get("/").text.split('class="feed')[1].split("</section>")[0]
+    assert "kic-006146676" in feed                                            # the one nobody has decided
+    for target in ("kic-005689121", "gaia-dr3-2101234567890123459", ids["approved_target"]):
+        assert target not in feed, target
+
+
+HOSTILE = '"><script>alert(1)</script>'
+
+
+def test_hostile_text_renders_as_text_in_the_card_the_popup_and_the_copy_button(settings, tmp_path):
+    from skysift.store.db import SignalRow, make_job_key
+    from tests.unit.ui_seed import VERSION, _signal, _target, _tests
+    client, app, _ids, _launcher = make_seeded_app(settings, tmp_path)
+    store = app.state.store
+    store.upsert_targets([_target(HOSTILE, gaia="2101234567890123499")])     # a target id is data from a catalogue
+    rid = store.start_run(make_job_key(HOSTILE, "box_dip", VERSION, "1"), HOSTILE, "box_dip", VERSION, "1")
+    tests = _tests("pass")
+    store.record_results(rid, HOSTILE, [{"signal": _signal(HOSTILE, 4.2, 25.0).model_dump(), "outcome": "pass",
+                                         "tests": [t.model_dump() for t in tests], "timings": [0.01] * len(tests)}],
+                         [], pin_evidence=False)
+    with store.session() as s:
+        sid = s.query(SignalRow.id).filter(SignalRow.run_id == rid).scalar()
+    store.decide(sid, "reject", HOSTILE)
+    pages = {"card": client.get("/approved?status=rejected&mode=simple").text,
+             "table": client.get("/approved?status=rejected&mode=expert").text,
+             "queue": client.get("/candidates?status=all&mode=simple").text,
+             "popup": client.get(f"/partials/signals/{sid}/verdict").text,
+             "signal": client.get(f"/signals/{sid}").text}
+    for name, html in pages.items():
+        assert "<script>alert(1)" not in html, name
+        assert "&lt;script&gt;alert(1)&lt;/script&gt;" in html, name
+    assert '<p class="card-note"><span class="sr-only">Note: </span>&#34;&gt;&lt;script&gt;' in pages["card"]
+    copy = pages["signal"].split('data-copy="')[1].split('"')[0]                # the attribute is never broken out of
+    assert copy.startswith("&#34;&gt;&lt;script&gt;alert(1)&lt;/script&gt;") and "Details: http://127.0.0.1/" in copy
+    search = client.get("/candidates", params={"q": HOSTILE})                  # a target-id search: refused, not echoed
+    assert search.status_code == 400 and "<script>alert(1)" not in search.text

@@ -64,24 +64,36 @@ The `ui` command refuses any other `--host`. The one exception is a container, w
 allows `0.0.0.0`. To reach it from another machine, use an SSH tunnel
 (`ssh -L 8765:127.0.0.1:8765 <host>`). Each page carries a per-process CSRF token, and every POST must send it back.
 
-Pages:
+Pages, in the order of the navigation, and two modes: **simple** (the default) explains each signal in plain words,
+**expert** adds the tables, raw metrics and keys. The mode and the light or dark theme are kept in a cookie.
 
+* **Tonight**: the landing page. What the last sweep (or the running one) scanned and found, the candidates waiting
+  for a decision as cards with their folded transit, and the signals being rechecked, by what happens next. The expert
+  view adds the throughput and the rung funnel.
+* **Candidates**: the review queue, filtered by status (waiting for a decision, stage 1 and stage 2 candidates,
+  undetermined, rejected, superseded, approved, needs data, all), kept to the current search version unless asked
+  otherwise, with a target search. Simple mode shows cards; expert mode a sortable table whose rows open beside it at
+  1280 px and wider. Each verdict pill opens a popup that says why, check by check. A signal's page shows the ladder
+  with the metrics that matter per rung, the periodogram (per-band SDE envelope with threshold, aliases and systematic
+  periods), the detrended curve, the phase fold with the transit model, odd against even, the phase 0.5 window and
+  per-season depths. Approve, Reject (a note is required) and Needs data append a row to the `decisions` table.
+  Decisions are append-only, so nothing is deleted and the full history stays visible. Keys: `a`, `r`, `n`, `j` for
+  next, `k` for previous, `?` lists them.
+* **Live**: the running sweep as a progress ring with its stop controls, the last finished targets, targets per state,
+  signal outcomes, rung verdicts, throughput, cache against budget, and the sweep's log (expert). The page refreshes
+  while a sweep runs. **Stop** asks the sweep to finish the targets it has already started and then exit (the page
+  shows "finishing" until it does; nothing started is lost). **Stop now** ends the sweep process at once, and the
+  targets it was working on are redone next time. Starting the same sweep again resumes it: finished targets are
+  skipped by their job key.
 * **Sources**: the registry with yield, CPU hours and GB per 10,000 stars, and progress per live source. It also holds
   the Start sweep form (limit, period window, retention, workers, periodogram storage). The sweep runs as a child
   `python -m skysift run` process. Only one sweep runs per data directory at a time, and it can only be launched from
   this page.
-* **Live**: targets per state, signal outcomes, rung verdicts, throughput, cache against budget, and the running
-  sweep's log. The page refreshes while a sweep runs. **Stop** asks the sweep to finish the targets it has already
-  started and then exit (the page shows "finishing" until it does; nothing started is lost). **Stop now** ends the
-  sweep process at once, and the targets it was working on are redone next time. Starting the same sweep again
-  resumes it: finished targets are skipped by their job key.
-* **Candidates**: the review queue sorted by SDE. A signal's page shows the ladder with the metrics that matter per
-  rung. It also shows the periodogram (per-band SDE envelope with threshold, aliases and systematic periods), the
-  detrended curve, the phase fold with the box model, odd against even, the phase 0.5 window and per-season depths.
-  Approve, Reject (a note is required) and Needs data append a row to the `decisions` table. Decisions are append-only,
-  so nothing is deleted and the full history stays visible. Keys: `a`, `r`, `n`, `j` for next, `k` for previous.
-* **Approved**: current decisions by status. Each signal has a `review.json` download with the signal, every test,
-  every query, the artifacts and the decision history.
+* **Approved**: current decisions by status, kept to the current search version unless asked otherwise. Each signal
+  has a copyable summary and a `review.json` download with the signal, every test, every query, the artifacts and the
+  decision history.
+* **About** (`/about`, linked from the footer): how SkySift works, what the words mean, the recheck steps, the
+  thresholds in force and how to cite it.
 
 HTMX is vendored in the package. Plotly is downloaded once on the first start into `<data_dir>/ui/assets/` and its
 SHA-256 is verified. Afterwards the dashboard works offline. If Plotly cannot be fetched, the plots are disabled and

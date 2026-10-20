@@ -4,6 +4,7 @@ import pytest
 from sqlalchemy import text
 
 from skysift.ui import explain
+from skysift.ui.routes.api import sparkline_key, sparkline_paths
 from tests.unit.test_ui_pages import make_seeded_app
 from tests.unit.ui_seed import add_older_version
 
@@ -436,6 +437,19 @@ def _synthetic_curve(monkeypatch, period=13.7695, t0=136.3, duration=0.096, dept
     return lc
 
 
+def _sparkline_file(client, settings, signal_id: int):
+    """Where the route caches this signal's picture: its id and the key over its fold and rung 2 row."""
+    from sqlalchemy import func, select
+
+    from skysift.store.db import SignalRow, TestRow
+    with client.app.state.store.session() as s:
+        sig = s.get(SignalRow, signal_id)
+        rung2 = s.scalar(select(func.max(TestRow.id)).where(TestRow.signal_id == signal_id,
+                                                             TestRow.rung == "rung2_shape"))
+        key = sparkline_key(sig.period, sig.t0, sig.duration, rung2)
+    return settings.data_dir / "ui" / "sparklines" / f"{signal_id}-{key}.svg"
+
+
 def _card(html: str, signal_id: int) -> str:
     """The card of one signal, from its article tag to its end."""
     img = html.index(f'src="/api/signals/{signal_id}/sparkline.svg"')
@@ -451,14 +465,14 @@ def test_sparkline_is_svg_and_cached(seeded, settings, monkeypatch):
     assert r.headers["cache-control"] == "max-age=86400"
     assert 'viewBox="0 0 240 72"' in r.text and "<circle" in r.text and "#4fd1e8" in r.text and "#ffb454" in r.text
     assert "light curve not cached" not in r.text
-    cached = settings.data_dir / "ui" / "sparklines" / f"{ids['candidate']}.svg"
-    assert cached.exists() and cached.read_text(encoding="utf-8") == r.text
+    [cached] = sparkline_paths(settings.data_dir, ids["candidate"])
+    assert cached.read_text(encoding="utf-8") == r.text
 
 
 def test_sparkline_cache_hit_serves_the_file_without_loading(seeded, settings, monkeypatch):
     from skysift.ui import plots as plots_mod
     client, ids = seeded
-    cached = settings.data_dir / "ui" / "sparklines" / f"{ids['candidate']}.svg"
+    cached = _sparkline_file(client, settings, ids["candidate"])
     cached.parent.mkdir(parents=True, exist_ok=True)
     cached.write_text('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 72"><title>from disk</title></svg>',
                       encoding="utf-8")
@@ -473,14 +487,14 @@ def test_sparkline_without_a_cached_curve_returns_a_placeholder(seeded, settings
     r = client.get(f"/api/signals/{ids['rejected']}/sparkline.svg")        # the seed stores no raw file for it
     assert r.status_code == 200 and "light curve not cached" in r.text
     assert r.headers["content-type"].startswith("image/svg+xml") and r.headers["cache-control"] == "no-store"
-    assert not (settings.data_dir / "ui" / "sparklines" / f"{ids['rejected']}.svg").exists()   # never cached
+    assert sparkline_paths(settings.data_dir, ids["rejected"]) == []                         # never cached
 
 
 def test_sparkline_of_an_unreadable_curve_is_a_placeholder_and_unknown_ids_404(seeded, settings):
     client, ids = seeded
     r = client.get(f"/api/signals/{ids['candidate']}/sparkline.svg")      # fake bytes: the loader's IntegrityError
     assert r.status_code == 200 and "light curve not cached" in r.text and r.headers["cache-control"] == "no-store"
-    assert not (settings.data_dir / "ui" / "sparklines" / f"{ids['candidate']}.svg").exists()
+    assert sparkline_paths(settings.data_dir, ids["candidate"]) == []
     assert client.get("/api/signals/999999/sparkline.svg").status_code == 404
 
 
@@ -529,8 +543,8 @@ def test_candidates_chips_are_every_status_in_order_with_their_counts(seeded):
     html = client.get("/candidates?status=all&versions=all").text
     chips = html[html.index('class="chips"'):]
     chips = chips[:chips.index("</nav>")]
-    counts = {"candidate_stage1": 3, "candidate_stage2": 1, "undetermined": 1, "rejected": 1, "superseded": 0,
-              "approved": 1, "needs_data": 0, "all": 6}
+    counts = {"waiting": 3, "candidate_stage1": 3, "candidate_stage2": 1, "undetermined": 1, "rejected": 1,
+              "superseded": 0, "approved": 1, "needs_data": 0, "all": 6}
     positions = []
     for status, n in counts.items():
         at = chips.index(f'href="/candidates?status={status}&sort=sde&dir=desc&versions=all"')
@@ -811,3 +825,67 @@ def test_the_sky_never_sits_behind_text_and_wide_tables_show_their_edge(settings
     # the bottom sheet and the side drawer are sized by the viewport box, never 100vw (which runs under a scrollbar)
     assert ".dialog:has(.drawer) { width: 100%" in css and "min(480px, 100%)" in css and "100vw; max-width: 100vw" not in css
     assert "box-shadow: inset 0 2px 0 var(--ion)" not in css                 # hairlines on fractional nav cells
+
+
+def test_split_view_keys_act_on_the_selected_row_only(seeded):
+    """j and k carry the detail pane with them, and a, r and n click nothing until #detail shows the selected row: "j,
+    then a" can never approve the signal that was open before (served app.js, read as text: there is no JS harness)."""
+    client, ids = seeded
+    js = client.get("/static/app.js").text
+    step = js[js.index("const step = (by) =>"):]
+    step = step[:step.index("};")]
+    assert "select(row);" in step and "if (detail && wide.matches) openRow(row);" in step
+    assert step.index("select(row);") < step.index("openRow(row)")
+    guard = js[js.index("const detailMatchesSelection = () =>"):]
+    guard = guard[:guard.index("};")]
+    assert 'detail.querySelector("[data-signal]")' in guard and "shown.dataset.signal === row.dataset.id" in guard
+    keys = js[js.index('document.addEventListener("keydown"'):]
+    keys = keys[:keys.index("});")]
+    assert 'if (queue && ["a", "r", "n"].includes(e.key) && !detailMatchesSelection()) return;' in keys
+    assert keys.index("detailMatchesSelection()") < keys.index("el.click()")
+    # the detail partial names its signal, and a newer row load replaces one still in flight
+    detail = client.get(f"/partials/signals/{ids['candidate']}/detail").text
+    assert f'<article class="detail" data-signal="{ids["candidate"]}">' in detail
+    queue = client.get("/candidates?mode=expert").text
+    row = queue[queue.index('<tr class="row-link'):]
+    assert 'hx-sync="#queue:replace"' in row[:row.index(">")]
+    # Enter on a focused row link follows the link (a keyboard click reports e.detail 0); only a mouse click splits
+    handler = js[js.index('const row = e.target.closest("tr.row-link[data-href]")'):]
+    assert "plain && e.detail > 0 && e.target.closest(\"a.row-name\")" in handler[:handler.index("});")]
+
+
+def test_a_recorded_decision_moves_focus_to_its_new_state(seeded):
+    client, ids = seeded
+    r = client.post(f"/signals/{ids['candidate']}/decide",
+                    data={"decision": "approve", "note": "", "_token": token(client)}, headers={"HX-Request": "true"})
+    assert '<div class="decision-state" role="status" tabindex="-1">' in r.text
+    js = client.get("/static/app.js").text
+    after = js[js.index('"htmx:afterSwap"'):]
+    after = after[:after.index("});")]
+    assert 'querySelector(".decision-state")' in after and "state.focus()" in after
+
+
+def test_plot_marks_follow_the_spec_colours(seeded):
+    """Spec 3, "Marks": the data in ion, the faint points in the secondary text colour, the model in solar, as the
+    card's sparkline draws them."""
+    from skysift.ui import plots
+    assert plots.MARKS == {"data": "--ion", "faint": "--fg-2", "model": "--solar", "grid": "--line", "text": "--fg-2"}
+    client, ids = seeded
+    html = client.get(f"/signals/{ids['candidate']}").text
+    marks = html.split("data-marks='")[1].split("'")[0]
+    assert '"data": "--ion"' in marks and '"faint": "--fg-2"' in marks and '"model": "--solar"' in marks
+
+
+def test_a_cached_sparkline_is_keyed_by_what_it_draws(seeded, settings, monkeypatch):
+    """A picture cached for one fold never answers for another (a swapped database, a recheck at a new period)."""
+    from skysift.store.db import SignalRow
+    client, ids = seeded
+    cached = _sparkline_file(client, settings, ids["candidate"])
+    cached.parent.mkdir(parents=True, exist_ok=True)
+    cached.write_text('<svg xmlns="http://www.w3.org/2000/svg"><title>old fold</title></svg>', encoding="utf-8")
+    assert "old fold" in client.get(f"/api/signals/{ids['candidate']}/sparkline.svg").text
+    assert sparkline_paths(settings.data_dir, ids["candidate"]) == [cached]
+    with client.app.state.store.session() as s:
+        s.get(SignalRow, ids["candidate"]).period = 6.88475
+    r = client.get(f"/api/signals/{ids['candidate']}/sparkline.svg")
+    assert "old fold" not in r.text and r.headers["cache-control"] == "no-store"      # the seed's fake bytes: placeholder

@@ -7,18 +7,19 @@ from fastapi.responses import HTMLResponse
 
 from skysift.ui import queries
 from skysift.ui.app import _pref, render
-from skysift.ui.routes.live import _sweep_ctx
+from skysift.ui.routes.live import _sweep_ctx, launched
 
 router = APIRouter()
 
 
 def _hero_ctx(request: Request) -> dict:
-    """The hero's numbers: the sweep window is the running sweep when there is one, else the latest run's day."""
+    """The hero's numbers: the sweep window is the running sweep when there is one, else the latest sweep."""
     store = request.app.state.store
     sweep = _sweep_ctx(request)
     since = sweep["progress"]["since"] if sweep["progress"] else None
     version = queries.current_search_version(store)
-    return {"t": queries.tonight(store, version, since=since), "sweep": sweep, "version": version}
+    t = queries.tonight(store, version, since=since, launched=launched(request.app.state.launcher))
+    return {"t": t, "sweep": sweep, "version": version}
 
 
 @router.get("/", response_class=HTMLResponse)

@@ -7,3 +7,9 @@
 <span class="pill pill-{{ tone }}"{% if title %} title="{{ title }}"{% endif %}>{{ word }}</span>
 {%- endif -%}
 {%- endmacro %}
+{# The reviewer's decision as a pill, in the tone of the status it leaves ("Approved by reviewer", "Rejected by
+   reviewer", "Needs data"). It goes before the engine's pill wherever both appear: a person's word comes first. #}
+{% macro reviewer_pill(word) -%}
+{%- set tone = {"Approved by reviewer": "pass", "Rejected by reviewer": "fail", "Needs data": "undetermined"}.get(word, "muted") -%}
+<span class="pill pill-{{ tone }} pill-reviewer">{{ word }}</span>
+{%- endmacro %}

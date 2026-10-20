@@ -1,12 +1,11 @@
 {# The verdict popup's body, loaded into the shared dialog (base.html), whose aria-labelledby points at #dialog-title.
    The headline, one row per check with its numbers, what an undetermined check was missing and what happens next,
    any rechecks, then the status glossary and the way to the full page. #}
+{% from "partials/pill.html" import reviewer_pill %}
 <div class="dialog-body verdict">
-  <p class="verdict-target"><code>{{ target.target_id or signal.target_id }}</code></p>
+  <p class="verdict-target"><code>{{ target.target_id or signal.target_id }}</code>
+  {%- if v.reviewer and v.reviewer != v.headline %} {{ reviewer_pill(v.reviewer) }}{% endif %}</p>
   <h2 id="dialog-title" class="verdict-head pill-{{ v.tone }}" tabindex="-1" data-dialog-focus>{{ v.headline }}</h2>
-  {%- if v.reviewer %}
-  <p class="verdict-reviewer">{{ v.reviewer }}.</p>
-  {%- endif %}
   {% with show_numbers = True %}{% include "partials/why.html" %}{% endwith %}
   <footer class="verdict-foot">
     <ul class="verdict-glossary">

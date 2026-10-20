@@ -115,8 +115,8 @@ def _explained(d: dict, signal_id: int) -> dict:
 VERSIONS = ("current", "all")
 SEARCH = re.compile(r"[A-Za-z0-9 _.:-]{0,64}")
 # the chips' words, in QUEUE_STATUSES order
-CHIP_LABELS = {"candidate_stage1": "stage 1 candidates", "candidate_stage2": "stage 2 candidates",
-               "undetermined": "undetermined", "rejected": "rejected", "superseded": "superseded",
+CHIP_LABELS = {"waiting": "waiting for a decision", "candidate_stage1": "stage 1 candidates",
+               "candidate_stage2": "stage 2 candidates", "undetermined": "undetermined", "rejected": "rejected", "superseded": "superseded",
                "approved": "approved", "needs_data": "needs data", "all": "all"}
 
 

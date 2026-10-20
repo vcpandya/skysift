@@ -1,7 +1,8 @@
-{# The Tonight hero: what the latest sweep scanned and how many candidates wait for a look (the whole backlog, so a
-   separate sentence), with the numbers counting up; while a sweep writes results, its state and, for a dashboard
-   sweep, the progress ring. Only then does it poll (every 10 s, replacing itself), so an idle page stays quiet. The
-   hero is no live region: app.js copies the hidden headline into #tonight-status only when the words change. #}
+{# The Tonight hero: what the latest sweep scanned (the running one, or else the last, ``queries._latest_sweep``) and
+   how many candidates wait for a look (the whole backlog, so a separate sentence), with the numbers counting up;
+   while a sweep writes results, its state and, for a dashboard sweep, the progress ring. Only then does it poll
+   (every 10 s, replacing itself), so an idle page stays quiet. The hero is no live region: app.js copies the hidden
+   headline into #tonight-status only when the words change. #}
 {% from "partials/ring.html" import ring %}
 {% from "partials/empty.html" import empty %}
 {% from "partials/tonight_words.html" import headline %}
@@ -16,7 +17,7 @@
 {% else %}
   <div class="tonight-text">
     <p class="eyebrow">{{ t.date.day ~ " " ~ t.date.strftime("%B %Y") if t.today else t.label }}</p>
-    <h1 class="tonight-line">{{ "Tonight" if t.today else "In its last run" }} SkySift scanned <span data-count="{{ t.scanned }}">{{ t.scanned | fmt }}</span> {{ "star" if t.scanned == 1 else "stars" }}. <span data-count="{{ t.candidates_waiting }}">{{ t.candidates_waiting | fmt }}</span> {{ "candidate is" if t.candidates_waiting == 1 else "candidates are" }} waiting for a look.</h1>
+    <h1 class="tonight-line">{{ "The running sweep has" if polling else "The last sweep" }} scanned <span data-count="{{ t.scanned }}">{{ t.scanned | fmt }}</span> {{ "star" if t.scanned == 1 else "stars" }}. <span data-count="{{ t.candidates_waiting }}">{{ t.candidates_waiting | fmt }}</span> {{ "candidate is" if t.candidates_waiting == 1 else "candidates are" }} waiting for a look.</h1>
     <p class="tonight-sub">
     {%- if active and p.total -%}
       Sweep running: {{ p.done | fmt }} of {{ p.total | fmt }}{% if sweep.eta_s is not none and not sweep.finishing %}, {{ sweep.eta_s | left }}{% endif %}.

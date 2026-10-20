@@ -44,10 +44,20 @@ def _progress(store, active: dict, req: dict) -> dict:
             "since": since}
 
 
-def _idle_ctx(store) -> dict:
+def launched(launcher) -> tuple[datetime, datetime] | None:
+    """The dashboard's most recent finished sweep as (started, finished) from its history record, or None without a
+    launcher, a record, or readable times: the sweep window then falls back to grouping runs by gaps."""
+    history = launcher.history() if launcher is not None else []
+    if not history:
+        return None
+    started, finished = _started_at(history[0].get("started")), _started_at(history[0].get("finished"))
+    return (started, finished) if started is not None and finished is not None else None
+
+
+def _idle_ctx(store, launcher=None) -> dict:
     """What the idle flight deck shows: the last sweep in words and the share of listed stars searched."""
     done, total = queries.searched(store)
-    return {"last": queries.last_sweep(store), "searched": done, "listed": total,
+    return {"last": queries.last_sweep(store, launched(launcher)), "searched": done, "listed": total,
             "searched_pct": round(100 * done / total) if total else 0}
 
 
@@ -116,7 +126,7 @@ def live_page(request: Request):
     st = request.app.state
     if ctx["active"] is None: st.stop_requested = None
     st.sweep_was_active = _polling(ctx)
-    idle = _idle_ctx(st.store) if ctx["active"] is None else {}
+    idle = _idle_ctx(st.store, st.launcher) if ctx["active"] is None else {}
     return render(request, "live.html", **_cards_ctx(request, summary), **ctx, **idle, polled=False)
 
 
@@ -130,7 +140,7 @@ def live_sweep(request: Request):
     """The deck while it polls. The state line lives outside the swapped block, so that its aria-live region stays
     the same node; app.js copies the new words into it only when they changed (``data-live-for``)."""
     ctx = _sweep_ctx(request)
-    idle = _idle_ctx(request.app.state.store) if ctx["active"] is None else {}
+    idle = _idle_ctx(request.app.state.store, request.app.state.launcher) if ctx["active"] is None else {}
     resp = render(request, "partials/live_sweep.html", **ctx, **idle, polled=True)
     st = request.app.state
     now_active = _polling(ctx)

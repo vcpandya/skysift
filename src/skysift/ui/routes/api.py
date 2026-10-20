@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import tempfile
@@ -7,11 +8,12 @@ from pathlib import Path
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
+from sqlalchemy import func, select
 
 from skysift import jsonutil
 from skysift.detectors.periodogram import PeriodogramSummary
 from skysift.net import ServiceUnavailable
-from skysift.store.db import ArtifactRow, SignalRow
+from skysift.store.db import ArtifactRow, SignalRow, TestRow
 from skysift.ui import queries, sparkline
 from skysift.ui.plots import IntegrityError, LightCurveLoader, build_plots, whitened_fnorm
 
@@ -73,16 +75,35 @@ def _not_cached(source: str, store, blob):
     raise ServiceUnavailable(f"the {source} light curve is not cached; sparklines never fetch")
 
 
+def sparkline_dir(data_dir) -> Path:
+    return Path(data_dir) / "ui" / "sparklines"
+
+
+def sparkline_key(period, t0, duration, rung2_id: int | None) -> str:
+    """The first 12 hex digits of SHA-256 over what the picture is drawn from: the fold (period, t0, duration) and the
+    rung 2 row whose fit draws the model. A swapped database or a recheck that changes any of them misses the cache,
+    so a file never shows another signal's picture."""
+    return hashlib.sha256(f"{period!r}|{t0!r}|{duration!r}|{rung2_id!r}".encode()).hexdigest()[:12]
+
+
+def sparkline_paths(data_dir, signal_id: int) -> list[Path]:
+    """Every cached picture of this signal, whatever its key: what a recheck deletes, and what tests look for."""
+    return sorted(sparkline_dir(data_dir).glob(f"{signal_id}-*.svg"))
+
+
 @router.get("/api/signals/{signal_id}/sparkline.svg")
 def sparkline_svg(request: Request, signal_id: int):
-    """The card's folded-transit picture, cached on disk per signal. Without a readable raw file on disk the answer is
-    a placeholder that is never cached, so the real picture appears once the curve is."""
+    """The card's folded-transit picture, cached on disk per signal and key (``sparkline_key``). Without a readable
+    raw file on disk the answer is a placeholder that is never cached, so the real picture appears once the curve is."""
     st = request.app.state
     with st.store.session() as s:                            # a leftover file never answers for an unknown signal
-        known = s.get(SignalRow, signal_id) is not None
-    if not known:
-        return JSONResponse({"error": "not found", "detail": f"no signal {signal_id}"}, status_code=404)
-    path = Path(st.settings.data_dir) / "ui" / "sparklines" / f"{signal_id}.svg"
+        sig = s.get(SignalRow, signal_id)
+        if sig is None:
+            return JSONResponse({"error": "not found", "detail": f"no signal {signal_id}"}, status_code=404)
+        rung2 = s.scalar(select(func.max(TestRow.id)).where(TestRow.signal_id == signal_id,
+                                                             TestRow.rung == "rung2_shape"))
+        key = sparkline_key(sig.period, sig.t0, sig.duration, rung2)
+    path = sparkline_dir(st.settings.data_dir) / f"{signal_id}-{key}.svg"
     if path.is_file():
         return Response(path.read_bytes(), media_type=SVG, headers={"Cache-Control": SPARKLINE_MAX_AGE})
     d = queries.signal_detail(st.store, signal_id)

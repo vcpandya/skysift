@@ -3,7 +3,8 @@ undetermined check was missing and what happens next. The single source for the 
 the About page (spec sections 4.1, 4.2 and 5.4). Pure: no store, no network, no templates.
 
 Thresholds are not stored on the test rows and a sweep may override them, so a sentence that has no limit in its reason
-string quotes the default (``config.Thresholds``) as "the usual" limit, never as the one the run used."""
+string quotes the configured thresholds (``configure``, called by ``create_app`` with ``settings.thresholds``; the
+defaults until then) as "the usual" limit, never as the one the run used."""
 from __future__ import annotations
 
 import math
@@ -83,6 +84,12 @@ REASONS: list[tuple[re.Pattern, str, str]] = [(re.compile(p), w, n) for p, w, n 
     (r"^the dip is on a neighbouring star(?P<detail>.*)", "The pixels put the dip on a neighbouring star", FAILED),
 ]]
 _TH = Thresholds()
+
+
+def configure(thresholds: Thresholds) -> None:
+    """Quote ``thresholds`` (the dashboard's settings, the ones the About page shows) as the usual limits."""
+    global _TH
+    _TH = thresholds
 
 
 def _f(x: float) -> str:
@@ -172,8 +179,12 @@ def _join(parts: list[str | None], sep: str = ", ") -> str:
 
 def _detection(m: dict) -> tuple[str, str]:
     sde, snr, n, ratio = (_num(m, k) for k in ("sde", "snr", "n_events", "duration_ratio"))
-    sentence = (f"SDE {sde:.1f}, above the usual minimum of {_f(_TH.sde_min)}" if sde is not None
-                else "The detection strength was not recorded")
+    if sde is None:
+        sentence = "The detection strength was not recorded"
+    elif sde < _TH.sde_min:      # passed under an older, lower threshold: the configured one would mislead
+        sentence = f"SDE {sde:.1f}, above the threshold that run used"
+    else:
+        sentence = f"SDE {sde:.1f}, above the usual minimum of {_f(_TH.sde_min)}"
     return sentence, _join([sde is not None and f"SDE {sde:.1f}", snr is not None and f"SNR {snr:.1f}",
                             n is not None and f"{n:.0f} transits",
                             ratio is not None and f"duration {ratio:.2f} of expected"])
@@ -397,7 +408,7 @@ def copy_summary(signal: dict, target: dict, v: Verdict, url: str) -> str:
     name = target.get("target_id") or signal.get("target_id") or "?"
     if target.get("kic"):
         name += f" (KIC {target['kic']})"
-    status = _join([v.headline + ".", v.reviewer and v.reviewer + "."], " ")
+    status = _join([v.reviewer and v.reviewer != v.headline and v.reviewer + ".", v.headline + "."], " ")
     return f"{name}. {_facts(signal, target, _num(signal, 'depth_ppm'), ppm=True)} {status} Details: {url}"
 
 

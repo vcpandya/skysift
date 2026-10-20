@@ -376,7 +376,6 @@ kbd { padding: 0 4px; font-size: var(--fs-12); border: 1px solid currentColor; b
 .hero-summary { max-width: 60ch; margin-bottom: 12px; font-size: var(--fs-20); line-height: 1.4; }
 .hero-verdict { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-bottom: 16px; }
 .hero-stage { font-weight: 600; }
-.hero-reviewer { color: var(--fg-2); }
 .hero-copy { margin-left: auto; }
 .hero-stats { margin-bottom: 12px; }
 .hero-facts { margin: 0; font-size: var(--fs-13); overflow-wrap: anywhere; }
@@ -414,7 +413,7 @@ kbd { padding: 0 4px; font-size: var(--fs-12); border: 1px solid currentColor; b
 .why-history { margin: 8px 0 0; padding-left: 18px; }
 .verdict-target { margin: 0 0 4px; color: var(--fg-2); font-size: var(--fs-13); }
 .verdict-head { margin: 0 0 16px; padding-right: 32px; font: 500 var(--fs-20)/1.3 var(--font-display); }
-.verdict-reviewer { margin: -8px 0 16px; font-weight: 600; }
+.verdict-target .pill { margin-left: 8px; vertical-align: middle; }
 .verdict-foot { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--line); }
 .verdict-glossary { margin: 0 0 12px; padding-left: 18px; color: var(--fg-2); font-size: var(--fs-13); }
 .verdict-glossary li + li { margin-top: 4px; }
@@ -439,7 +438,6 @@ kbd { padding: 0 4px; font-size: var(--fs-12); border: 1px solid currentColor; b
 .card-facts dd { margin: 0; font: 500 var(--fs-13)/1.4 var(--font-mono); font-variant-numeric: tabular-nums; }
 .card-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
 .card-foot .pill { position: relative; z-index: 1; }
-.card-reviewer { color: var(--fg-2); font-size: var(--fs-13); font-weight: 600; }
 .queue-tools { display: flex; flex-wrap: wrap; align-items: end; gap: 12px 16px; margin: 0 0 12px; }
 .queue-search { flex: 1 1 220px; max-width: 320px; }
 .queue-clear { align-self: center; font-size: var(--fs-13); }

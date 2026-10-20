@@ -7,6 +7,7 @@ from pydantic import ValidationError
 from skysift.sources.base import load_registry
 from skysift.ui import queries
 from skysift.ui.app import render, require_token
+from skysift.ui.routes.live import launched
 from skysift.ui.sweeps import SweepActive, SweepRequest
 
 router = APIRouter()
@@ -21,10 +22,10 @@ def _registry_rows(progress: dict) -> list[dict]:
     return rows
 
 
-def _steps(store, progress: dict) -> dict:
+def _steps(store, progress: dict, launcher=None) -> dict:
     """The state of the three steps: targets known (pick), the latest sweep (run), candidates waiting and the
     decisions people made (review). Waiting and the last sweep are Tonight's numbers, so the two pages agree."""
-    t = queries.tonight(store, queries.current_search_version(store))
+    t = queries.tonight(store, queries.current_search_version(store), launched=launched(launcher))
     return {"known": sum(p["total"] for p in progress.values()), "last_sweep": t["last_sweep"],
             "waiting": t["candidates_waiting"], "decided": queries.decision_counts(store)}
 
@@ -41,7 +42,7 @@ def _page(request: Request, form: dict | None = None, status_code: int = 200) ->
     progress = queries.source_progress(st.store)
     active = st.launcher.active() if st.launcher else None
     return render(request, "sources.html", status_code=status_code, rows=_registry_rows(progress), active=active,
-                  steps=_steps(st.store, progress), form=form, **(form or {}))
+                  steps=_steps(st.store, progress, st.launcher), form=form, **(form or {}))
 
 
 @router.get("/sources", response_class=HTMLResponse)

@@ -36,7 +36,7 @@ LAYOUT = {"paper_bgcolor": "rgba(0,0,0,0)", "plot_bgcolor": "rgba(0,0,0,0)", "sh
           "margin": {"l": 56, "r": 12, "t": 32, "b": 44},
           "xaxis": {"gridwidth": 1, "zeroline": False, "linewidth": 1, "ticks": "outside", "ticklen": 4},
           "yaxis": {"gridwidth": 1, "zeroline": False, "linewidth": 1, "ticks": "outside", "ticklen": 4}}
-MARKS = {"data": "--fg", "faint": "--muted", "model": "--ion", "grid": "--line", "text": "--fg-2"}
+MARKS = {"data": "--ion", "faint": "--fg-2", "model": "--solar", "grid": "--line", "text": "--fg-2"}   # spec 3, "Marks"
 # one plain caption under each panel, keyed by the panel id plots.js gives it
 CAPTIONS = {
     "plot-fold": ("Every transit stacked on top of each other, zoomed on the dip. The dip should be the same shape "

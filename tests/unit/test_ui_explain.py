@@ -84,6 +84,28 @@ def test_why_sentences_carry_the_deciding_numbers(seed_detail):
     assert "4 of 4 seasons" in rows["rung5_pixels"].sentence and rows["rung5_pixels"].status == "pass"
 
 
+def _detection_row(sde):
+    return [{"rung": "rung1_detection", "status": "pass", "reason": "", "metrics": {"sde": sde}}]
+
+
+def test_the_detection_sentence_quotes_the_configured_minimum():
+    from skysift.config import Thresholds
+    explain.configure(Thresholds(sde_min=9.0))
+    assert explain.why(_detection_row(9.6))[0].sentence == "SDE 9.6, above the usual minimum of 9"
+    # a legacy row that passed under an older, lower threshold quotes no number it never had to clear
+    explain.configure(Thresholds())
+    assert explain.why(_detection_row(9.6))[0].sentence == "SDE 9.6, above the threshold that run used"
+    assert explain.why(_detection_row(14.0))[0].sentence == "SDE 14.0, above the usual minimum of 11"
+
+
+def test_create_app_points_explain_at_the_settings_thresholds(settings, monkeypatch):
+    from skysift.config import load_settings
+    from tests.unit.test_ui_pages import make_client
+    monkeypatch.setenv("SKYSIFT_THRESHOLDS__SDE_MIN", "9")
+    make_client(load_settings())
+    assert "minimum of 9" in explain.why(_detection_row(9.6))[0].sentence
+
+
 def test_verdict_words_and_stages(seed_detail):
     assert explain.verdict(**_args(seed_detail("candidate"))).word == "Candidate"
     assert explain.verdict(**_args(seed_detail("candidate"))).stage == "stage 1"
@@ -98,9 +120,26 @@ def test_verdict_with_no_tests_is_not_vetted(seed_detail):
     assert v.word == "Not vetted yet" and v.tone == "muted"
 
 
-def test_verdict_puts_the_reviewer_decision_first(seed_detail):
-    v = explain.verdict(**_args(seed_detail("approved")))
+def test_verdict_puts_the_reviewer_decision_first(settings, tmp_path):
+    from tests.unit.test_ui_pages import make_seeded_app
+    client, app, ids, _launcher = make_seeded_app(settings, tmp_path)
+    v = explain.verdict(**_args(queries.signal_detail(app.state.store, ids["approved"])))
     assert v.reviewer == "Approved by reviewer" and v.word == "Candidate"
+    reviewer = '<span class="pill pill-pass pill-reviewer">Approved by reviewer</span>'
+    card = client.get("/approved?mode=simple").text
+    card = card[card.index('<article class="card candidate'):]
+    hero = client.get(f"/signals/{ids['approved']}").text
+    detail = client.get(f"/partials/signals/{ids['approved']}/detail").text
+    for html in (card, hero, detail):                                       # the person's word, then the engine's
+        assert html.index(reviewer) < html.index(">Candidate</button>")
+    popup = client.get(f"/partials/signals/{ids['approved']}/verdict").text
+    assert popup.index(reviewer) < popup.index("Candidate, stage 1: every light-curve check passed")
+    # a reviewer rejection is the headline itself: the popup says it once, the clipboard too
+    app.state.store.decide(ids["candidate"], "reject", "a blend")
+    popup = client.get(f"/partials/signals/{ids['candidate']}/verdict").text
+    assert popup.split('class="verdict-foot"')[0].count("Rejected by reviewer") == 1
+    copy = client.get(f"/signals/{ids['candidate']}").text.split('data-copy="')[1].split('"')[0]
+    assert copy.count("Rejected by reviewer") == 1
 
 
 def test_verdict_needs_data_comes_from_the_latest_decision(seed_detail):

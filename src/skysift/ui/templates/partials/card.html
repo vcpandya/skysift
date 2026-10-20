@@ -2,7 +2,7 @@
    is the link to the signal page (its hit area covers the card); the pill is a separate control that opens the popup.
    qs: the queue view, so the signal page keeps the list's order. Called with {% call %}, the caller's block is added
    at the foot above the link's hit area (the Approved page's note and buttons). #}
-{% from "partials/pill.html" import pill %}
+{% from "partials/pill.html" import pill, reviewer_pill %}
 {% macro card(r, qs) -%}
 <article class="card candidate tone-{{ r.verdict_tone }}">
   <header class="card-head">
@@ -19,10 +19,10 @@
     <div><dt>transits</dt><dd>{{ r.n_events | fmt }}</dd></div>
   </dl>
   <div class="card-foot">
-    {{ pill(r.verdict_tone, r.verdict_word, "/partials/signals/" ~ r.id ~ "/verdict") }}
     {%- if r.reviewer %}
-    <span class="card-reviewer">{{ r.reviewer }}</span>
+    {{ reviewer_pill(r.reviewer) }}
     {%- endif %}
+    {{ pill(r.verdict_tone, r.verdict_word, "/partials/signals/" ~ r.id ~ "/verdict") }}
   </div>
   {%- if caller is defined %}
   <div class="card-extra">{{ caller() }}</div>

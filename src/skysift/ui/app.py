@@ -137,6 +137,7 @@ def create_app(settings: Settings, store: Store | None = None, blob: Blob | None
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost", "[::1]"])
     st = app.state
     st.settings = settings
+    explain.configure(settings.thresholds)     # the Why sentences quote the limits the About page shows
     st.store = store if store is not None else Store(settings.database_url)
     if store is None: st.store.init_schema()
     st.blob = blob if blob is not None else blob_from_url(settings.blob_url)
