@@ -1,0 +1,2 @@
+source_id,ra,dec,phot_g_mean_mag,bp_rp,parallax,parallax_error,ruwe,radial_velocity,teff_gspphot,phot_variable_flag,non_single_star
+2073896190925687296,297.86455769716946,41.454902381705566,12.806441,0.80157375,1.1176897323745458,0.012318562,1.0264473,-11.658783,5799.634,NOT_AVAILABLE,0

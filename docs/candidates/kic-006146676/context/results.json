@@ -1,0 +1,2065 @@
+{
+ "target": {
+  "name": "KIC 6146676",
+  "gaia_dr3": "2073896294004902272",
+  "tic": "169822650",
+  "ra": 297.868708651717,
+  "dec": 41.45556694086529
+ },
+ "ephemeris": {
+  "P_d": 40.29109,
+  "t0_bkjd": 135.788,
+  "dur_h": 3.0
+ },
+ "summary": {
+  "neighbour_KIC6146666_pdcsap_depth_ppm": [
+   -10.5,
+   9.4
+  ],
+  "neighbour_KIC6146666_sap_depth_ppm": [
+   -8.9,
+   12.4
+  ],
+  "neighbour_expected_leak_case_ppm_max": 89.8,
+  "neighbour_expected_on_target_case_ppm_min": 2165,
+  "candidate_psf_depth_ppm": [
+   2330.4,
+   102.7
+  ],
+  "candidate_sap_depth_ppm": [
+   1720.9,
+   92.7
+  ],
+  "candidate_sap_over_psf": [
+   0.738,
+   0.051
+  ],
+  "gaia_neighbours_30arcsec": 17,
+  "gaia_neighbours_able_to_mimic_by_magnitude": 15,
+  "stellar_baseline": {
+   "Teff_K": {
+    "median": 3653.0,
+    "minus": 73.0,
+    "plus": 91.0
+   },
+   "R_star_Rsun": {
+    "median": 0.498,
+    "minus": 0.04,
+    "plus": 0.036
+   },
+   "M_star_Msun": {
+    "median": 0.495,
+    "minus": 0.045,
+    "plus": 0.036
+   }
+  },
+  "distance_pc": {
+   "median": 303.0,
+   "minus": 3.5,
+   "plus": 3.6
+  },
+  "planet_baseline": {
+   "Rp_from_k_Rearth": {
+    "median": 2.61,
+    "minus": 0.21,
+    "plus": 0.19
+   },
+   "Rp_from_boxdepth_Rearth": {
+    "median": 2.53,
+    "minus": 0.2,
+    "plus": 0.18
+   },
+   "a_AU": {
+    "median": 0.1819,
+    "minus": 0.0057,
+    "plus": 0.0043
+   },
+   "a_over_Rstar": {
+    "median": 78.6,
+    "minus": 3.6,
+    "plus": 4.2
+   },
+   "Teq_K_A0.3_full_redistribution": {
+    "median": 267.0,
+    "minus": 12.0,
+    "plus": 13.0
+   },
+   "transit_probability_Rstar_over_a": {
+    "median": 0.0127,
+    "minus": 0.0006,
+    "plus": 0.0006
+   },
+   "T14_central_h": {
+    "median": 4.1,
+    "minus": 0.21,
+    "plus": 0.2
+   },
+   "b_if_3h_is_T14": {
+    "median": 0.72,
+    "minus": 0.09,
+    "plus": 0.07
+   },
+   "b_if_3h_is_mean_T14_T23": {
+    "median": 0.64,
+    "minus": 0.1,
+    "plus": 0.08
+   },
+   "T14_for_fitted_b0.89_h": {
+    "median": 2.17,
+    "minus": 0.11,
+    "plus": 0.1
+   }
+  },
+  "archives_any_match": false
+ },
+ "A_leak_test": {
+  "ephemeris": {
+   "P_d": 40.29109,
+   "t0_bkjd": 135.788,
+   "dur_h": 3.0
+  },
+  "method": "A.2 Neighbour leak test and candidate SAP-vs-PSF depth.\nBox depth in a 3.0 h window at P=40.29109 d, t0=135.788 BKJD, after a 2-day running median (transits masked) per quarter.\ndepth = mean(out) - mean(in); out = 1..3 durations from mid-transit; formal error = std(out)*sqrt(1/N_in+1/N_out);\ninflated by the scatter of 100 control phases (phase 0.03..0.97).",
+  "neighbour_KIC6146666": {
+   "quarters": {
+    "0": {
+     "CROWDSAP": 0.9984,
+     "FLFRCSAP": 0.9228,
+     "file": "kplr006146666-2009131105131_llc.fits"
+    },
+    "1": {
+     "CROWDSAP": 0.9991,
+     "FLFRCSAP": 0.884,
+     "file": "kplr006146666-2009166043257_llc.fits"
+    },
+    "2": {
+     "CROWDSAP": 0.9963,
+     "FLFRCSAP": 0.9523,
+     "file": "kplr006146666-2009259160929_llc.fits"
+    },
+    "3": {
+     "CROWDSAP": 0.9947,
+     "FLFRCSAP": 0.9455,
+     "file": "kplr006146666-2009350155506_llc.fits"
+    },
+    "4": {
+     "CROWDSAP": 0.9951,
+     "FLFRCSAP": 0.9318,
+     "file": "kplr006146666-2010078095331_llc.fits"
+    },
+    "5": {
+     "CROWDSAP": 0.9988,
+     "FLFRCSAP": 0.9238,
+     "file": "kplr006146666-2010174085026_llc.fits"
+    },
+    "6": {
+     "CROWDSAP": 0.9952,
+     "FLFRCSAP": 0.968,
+     "file": "kplr006146666-2010265121752_llc.fits"
+    },
+    "7": {
+     "CROWDSAP": 0.9917,
+     "FLFRCSAP": 0.9667,
+     "file": "kplr006146666-2010355172524_llc.fits"
+    },
+    "8": {
+     "CROWDSAP": 0.9952,
+     "FLFRCSAP": 0.9317,
+     "file": "kplr006146666-2011073133259_llc.fits"
+    },
+    "9": {
+     "CROWDSAP": 0.9976,
+     "FLFRCSAP": 0.9322,
+     "file": "kplr006146666-2011177032512_llc.fits"
+    },
+    "10": {
+     "CROWDSAP": 0.9951,
+     "FLFRCSAP": 0.968,
+     "file": "kplr006146666-2011271113734_llc.fits"
+    },
+    "11": {
+     "CROWDSAP": 0.9923,
+     "FLFRCSAP": 0.9574,
+     "file": "kplr006146666-2012004120508_llc.fits"
+    },
+    "12": {
+     "CROWDSAP": 0.9948,
+     "FLFRCSAP": 0.9185,
+     "file": "kplr006146666-2012088054726_llc.fits"
+    },
+    "13": {
+     "CROWDSAP": 0.9987,
+     "FLFRCSAP": 0.9231,
+     "file": "kplr006146666-2012179063303_llc.fits"
+    },
+    "14": {
+     "CROWDSAP": 0.9951,
+     "FLFRCSAP": 0.968,
+     "file": "kplr006146666-2012277125453_llc.fits"
+    },
+    "15": {
+     "CROWDSAP": 0.9965,
+     "FLFRCSAP": 0.9377,
+     "file": "kplr006146666-2013011073258_llc.fits"
+    },
+    "16": {
+     "CROWDSAP": 0.9989,
+     "FLFRCSAP": 0.8875,
+     "file": "kplr006146666-2013098041711_llc.fits"
+    },
+    "17": {
+     "CROWDSAP": 0.999,
+     "FLFRCSAP": 0.9045,
+     "file": "kplr006146666-2013131215648_llc.fits"
+    }
+   },
+   "n_cadences": 55792,
+   "pdcsap": {
+    "label": "KIC 6146666 PDCSAP",
+    "depth_ppm": -10.5,
+    "formal_err_ppm": 9.3,
+    "control_scatter_ppm": 9.7,
+    "control_mean_ppm": -0.1,
+    "inflation": 1.011,
+    "err_ppm": 9.4,
+    "snr": -1.12,
+    "n_in": 188,
+    "n_out": 755,
+    "n_events_with_data": 35,
+    "n_control_phases": 100,
+    "rms_ppm_per_cadence": 113.0
+   },
+   "sap": {
+    "label": "KIC 6146666 SAP",
+    "depth_ppm": -8.9,
+    "formal_err_ppm": 10.1,
+    "control_scatter_ppm": 12.7,
+    "control_mean_ppm": -0.2,
+    "inflation": 1.231,
+    "err_ppm": 12.4,
+    "snr": -0.72,
+    "n_in": 188,
+    "n_out": 755,
+    "n_events_with_data": 35,
+    "n_control_phases": 100,
+    "rms_ppm_per_cadence": 138.1
+   }
+  },
+  "neighbour_expectation": {
+   "flux_ratio_target_over_candidate": 23.12,
+   "leak_case_max_depth_on_target_ppm": 89.8,
+   "leak_case_max_depth_on_target_ppm_simple": 93.6,
+   "on_target_case_min_depth_ppm": 2165.0,
+   "note": "Leak case: candidate light fully mixed into the target aperture gives at most D*Fc/(Fc+Ft); in reality the target's optimal aperture holds only part of the candidate's light 11.5 arcsec (2.9 px) away, so less. On-target case: a target dip D_t leaking a fraction e of the target flux into the candidate photometry gives D_c = D_t*e*Ft/(Fc+e*Ft) < D_t, so D_t > 2165 ppm."
+  },
+  "candidate_KIC6146676": {
+   "psf": {
+    "label": "KIC 6146676 KBonus PSF",
+    "depth_ppm": 2330.4,
+    "formal_err_ppm": 86.5,
+    "control_scatter_ppm": 103.2,
+    "control_mean_ppm": 6.2,
+    "inflation": 1.188,
+    "err_ppm": 102.7,
+    "snr": 22.7,
+    "n_in": 188,
+    "n_out": 755,
+    "n_events_with_data": 35,
+    "n_control_phases": 100,
+    "rms_ppm_per_cadence": 1054.5
+   },
+   "sap": {
+    "label": "KIC 6146676 KBonus SAP",
+    "depth_ppm": 1720.9,
+    "formal_err_ppm": 72.4,
+    "control_scatter_ppm": 98.0,
+    "control_mean_ppm": 13.2,
+    "inflation": 1.28,
+    "err_ppm": 92.7,
+    "snr": 18.57,
+    "n_in": 188,
+    "n_out": 755,
+    "n_events_with_data": 35,
+    "n_control_phases": 100,
+    "rms_ppm_per_cadence": 1014.7
+   },
+   "sap_over_psf": 0.738,
+   "sap_over_psf_err": 0.051,
+   "kbonus_crowdsap_median": 0.9227,
+   "kbonus_crowdsap_range": [
+    0.8565,
+    1.0
+   ],
+   "per_quarter_header": {
+    "0": {
+     "CROWDSAP": 0.9269837773,
+     "FLFRCSAP": 0.8796515602,
+     "NPIXSAP": 7,
+     "PSFFRAC": 0.9410590252677986,
+     "SEASON": 3
+    },
+    "1": {
+     "CROWDSAP": 0.9811565797,
+     "FLFRCSAP": 0.8232756867,
+     "NPIXSAP": 4,
+     "PSFFRAC": 0.8059502043483459,
+     "SEASON": 3
+    },
+    "2": {
+     "CROWDSAP": 0.9108659698,
+     "FLFRCSAP": 0.856895862,
+     "NPIXSAP": 6,
+     "PSFFRAC": 0.8308869601267733,
+     "SEASON": 0
+    },
+    "3": {
+     "CROWDSAP": 0.874292718,
+     "FLFRCSAP": 0.9261949109,
+     "NPIXSAP": 8,
+     "PSFFRAC": 0.8643740748842726,
+     "SEASON": 1
+    },
+    "4": {
+     "CROWDSAP": 1.0,
+     "FLFRCSAP": 0.8258127309,
+     "NPIXSAP": 5,
+     "PSFFRAC": 0.8559698749966531,
+     "SEASON": 2
+    },
+    "5": {
+     "CROWDSAP": 0.9798118823,
+     "FLFRCSAP": 0.8415957593,
+     "NPIXSAP": 4,
+     "PSFFRAC": 0.8183754867302894,
+     "SEASON": 3
+    },
+    "6": {
+     "CROWDSAP": 0.9236714129,
+     "FLFRCSAP": 0.8604892016,
+     "NPIXSAP": 6,
+     "PSFFRAC": 0.815452649233654,
+     "SEASON": 0
+    },
+    "7": {
+     "CROWDSAP": 0.8773595596,
+     "FLFRCSAP": 0.9235795769,
+     "NPIXSAP": 8,
+     "PSFFRAC": 0.8558829738577107,
+     "SEASON": 1
+    },
+    "8": {
+     "CROWDSAP": 0.8934676681,
+     "FLFRCSAP": 0.9341252398,
+     "NPIXSAP": 7,
+     "PSFFRAC": 0.8555275239306596,
+     "SEASON": 2
+    },
+    "9": {
+     "CROWDSAP": 0.9816440268,
+     "FLFRCSAP": 0.8351780391,
+     "NPIXSAP": 4,
+     "PSFFRAC": 0.8257589084293152,
+     "SEASON": 3
+    },
+    "10": {
+     "CROWDSAP": 0.9250933696,
+     "FLFRCSAP": 0.858519761,
+     "NPIXSAP": 6,
+     "PSFFRAC": 0.8135097206959087,
+     "SEASON": 0
+    },
+    "11": {
+     "CROWDSAP": 0.8696564956,
+     "FLFRCSAP": 0.9223507403,
+     "NPIXSAP": 8,
+     "PSFFRAC": 0.8531458043558168,
+     "SEASON": 1
+    },
+    "12": {
+     "CROWDSAP": 0.8569301083,
+     "FLFRCSAP": 0.9467818205,
+     "NPIXSAP": 8,
+     "PSFFRAC": 0.8767917723378847,
+     "SEASON": 2
+    },
+    "13": {
+     "CROWDSAP": 0.9814044593,
+     "FLFRCSAP": 0.8359732654,
+     "NPIXSAP": 4,
+     "PSFFRAC": 0.8234621319831187,
+     "SEASON": 3
+    },
+    "14": {
+     "CROWDSAP": 0.9266617972,
+     "FLFRCSAP": 0.8544158901,
+     "NPIXSAP": 6,
+     "PSFFRAC": 0.8126964714449777,
+     "SEASON": 0
+    },
+    "15": {
+     "CROWDSAP": 0.9217343361,
+     "FLFRCSAP": 0.8688647388,
+     "NPIXSAP": 7,
+     "PSFFRAC": 0.8524241554068246,
+     "SEASON": 1
+    },
+    "16": {
+     "CROWDSAP": 0.911277671,
+     "FLFRCSAP": 0.9274650726,
+     "NPIXSAP": 7,
+     "PSFFRAC": 0.8479687086566333,
+     "SEASON": 2
+    },
+    "17": {
+     "CROWDSAP": 0.8565074825,
+     "FLFRCSAP": 0.9342931537,
+     "NPIXSAP": 7,
+     "PSFFRAC": 0.7988079102014821,
+     "SEASON": 3
+    }
+   },
+   "per_season": {
+    "0": {
+     "quarters": [
+      2,
+      6,
+      10,
+      14
+     ],
+     "psf": {
+      "label": "PSF season 0",
+      "depth_ppm": 2435.5,
+      "formal_err_ppm": 148.6,
+      "control_scatter_ppm": 182.7,
+      "control_mean_ppm": 9.0,
+      "inflation": 1.204,
+      "err_ppm": 178.9,
+      "snr": 13.61,
+      "n_in": 50,
+      "n_out": 206,
+      "n_events_with_data": 9,
+      "n_control_phases": 100,
+      "rms_ppm_per_cadence": 987.7
+     },
+     "sap": {
+      "label": "SAP season 0",
+      "depth_ppm": 2306.7,
+      "formal_err_ppm": 140.5,
+      "control_scatter_ppm": 183.6,
+      "control_mean_ppm": 17.5,
+      "inflation": 1.218,
+      "err_ppm": 171.1,
+      "snr": 13.48,
+      "n_in": 50,
+      "n_out": 206,
+      "n_events_with_data": 9,
+      "n_control_phases": 100,
+      "rms_ppm_per_cadence": 1015.5
+     },
+     "mean_crowdsap": 0.9216
+    },
+    "1": {
+     "quarters": [
+      3,
+      7,
+      11,
+      15
+     ],
+     "psf": {
+      "label": "PSF season 1",
+      "depth_ppm": 2299.8,
+      "formal_err_ppm": 174.5,
+      "control_scatter_ppm": 202.4,
+      "control_mean_ppm": -23.0,
+      "inflation": 1.061,
+      "err_ppm": 185.2,
+      "snr": 12.42,
+      "n_in": 43,
+      "n_out": 180,
+      "n_events_with_data": 9,
+      "n_control_phases": 100,
+      "rms_ppm_per_cadence": 1132.0
+     },
+     "sap": {
+      "label": "SAP season 1",
+      "depth_ppm": 1253.8,
+      "formal_err_ppm": 135.8,
+      "control_scatter_ppm": 220.2,
+      "control_mean_ppm": 0.6,
+      "inflation": 1.502,
+      "err_ppm": 204.0,
+      "snr": 6.15,
+      "n_in": 43,
+      "n_out": 180,
+      "n_events_with_data": 9,
+      "n_control_phases": 100,
+      "rms_ppm_per_cadence": 1031.3
+     },
+     "mean_crowdsap": 0.8858
+    },
+    "2": {
+     "quarters": [
+      4,
+      8,
+      12,
+      16
+     ],
+     "psf": {
+      "label": "PSF season 2",
+      "depth_ppm": 2256.1,
+      "formal_err_ppm": 190.2,
+      "control_scatter_ppm": 213.3,
+      "control_mean_ppm": -8.8,
+      "inflation": 1.201,
+      "err_ppm": 228.5,
+      "snr": 9.88,
+      "n_in": 43,
+      "n_out": 166,
+      "n_events_with_data": 8,
+      "n_control_phases": 100,
+      "rms_ppm_per_cadence": 1050.9
+     },
+     "sap": {
+      "label": "SAP season 2",
+      "depth_ppm": 1271.0,
+      "formal_err_ppm": 141.1,
+      "control_scatter_ppm": 219.1,
+      "control_mean_ppm": -0.7,
+      "inflation": 1.597,
+      "err_ppm": 225.3,
+      "snr": 5.64,
+      "n_in": 43,
+      "n_out": 166,
+      "n_events_with_data": 8,
+      "n_control_phases": 100,
+      "rms_ppm_per_cadence": 1074.2
+     },
+     "mean_crowdsap": 0.9154
+    },
+    "3": {
+     "quarters": [
+      0,
+      1,
+      5,
+      9,
+      13,
+      17
+     ],
+     "psf": {
+      "label": "PSF season 3",
+      "depth_ppm": 2306.1,
+      "formal_err_ppm": 177.9,
+      "control_scatter_ppm": 180.5,
+      "control_mean_ppm": 39.6,
+      "inflation": 1.048,
+      "err_ppm": 186.4,
+      "snr": 12.37,
+      "n_in": 52,
+      "n_out": 203,
+      "n_events_with_data": 9,
+      "n_control_phases": 100,
+      "rms_ppm_per_cadence": 1053.7
+     },
+     "sap": {
+      "label": "SAP season 3",
+      "depth_ppm": 1903.7,
+      "formal_err_ppm": 153.0,
+      "control_scatter_ppm": 160.8,
+      "control_mean_ppm": 35.7,
+      "inflation": 1.045,
+      "err_ppm": 159.9,
+      "snr": 11.91,
+      "n_in": 52,
+      "n_out": 203,
+      "n_events_with_data": 9,
+      "n_control_phases": 100,
+      "rms_ppm_per_cadence": 943.3
+     },
+     "mean_crowdsap": 0.9513
+    }
+   }
+  }
+ },
+ "A3_neighbour_own_lightcurves": [
+  {
+   "source_id": "2073896294004902144",
+   "sep_arcsec": 7.14,
+   "G": 19.771944,
+   "kic": null
+  },
+  {
+   "source_id": "2073896289692192128",
+   "sep_arcsec": 10.94,
+   "G": 17.895601,
+   "kic": 6146682,
+   "kbonus_quarters_with_flux": [
+    0,
+    1,
+    2,
+    4,
+    5,
+    8,
+    9,
+    12,
+    13,
+    16,
+    17
+   ],
+   "kbonus_psf": {
+    "label": "KBonus PSF kic-006146682",
+    "depth_ppm": -3668.6,
+    "formal_err_ppm": 5742.9,
+    "control_scatter_ppm": 9055.8,
+    "control_mean_ppm": -750.0,
+    "inflation": 1.149,
+    "err_ppm": 6601.0,
+    "snr": -0.56,
+    "n_in": 111,
+    "n_out": 439,
+    "n_events_with_data": 20,
+    "n_control_phases": 100,
+    "rms_ppm_per_cadence": 74046.2
+   },
+   "kepler_llc_files": 0
+  },
+  {
+   "source_id": "2073896190925687296",
+   "sep_arcsec": 11.45,
+   "G": 12.806441,
+   "kic": 6146666,
+   "kbonus_quarters_with_flux": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17
+   ],
+   "kbonus_psf": {
+    "label": "KBonus PSF kic-006146666",
+    "depth_ppm": -28.0,
+    "formal_err_ppm": 23.7,
+    "control_scatter_ppm": 38.3,
+    "control_mean_ppm": 1.9,
+    "inflation": 2.097,
+    "err_ppm": 49.6,
+    "snr": -0.56,
+    "n_in": 188,
+    "n_out": 755,
+    "n_events_with_data": 35,
+    "n_control_phases": 100,
+    "rms_ppm_per_cadence": 315.5
+   }
+  },
+  {
+   "source_id": "2073896190926955520",
+   "sep_arcsec": 12.97,
+   "G": 19.735788,
+   "kic": null
+  },
+  {
+   "source_id": "2073896190921609600",
+   "sep_arcsec": 13.51,
+   "G": 19.379517,
+   "kic": 6146662,
+   "kepler_llc_files": 0
+  },
+  {
+   "source_id": "2073896289692177024",
+   "sep_arcsec": 18.62,
+   "G": 18.883438,
+   "kic": 6146700,
+   "kepler_llc_files": 0
+  },
+  {
+   "source_id": "2073896293999229696",
+   "sep_arcsec": 21.0,
+   "G": 20.478468,
+   "kic": null
+  },
+  {
+   "source_id": "2073896293999228800",
+   "sep_arcsec": 22.62,
+   "G": 20.28409,
+   "kic": null
+  },
+  {
+   "source_id": "2073896186612950272",
+   "sep_arcsec": 23.31,
+   "G": 18.415176,
+   "kic": 6146659,
+   "kbonus_quarters_with_flux": [
+    0,
+    4,
+    7,
+    11,
+    12,
+    15
+   ],
+   "kbonus_psf": {
+    "label": "KBonus PSF kic-006146659",
+    "depth_ppm": -8472.3,
+    "formal_err_ppm": 6834.3,
+    "control_scatter_ppm": 6821.9,
+    "control_mean_ppm": -559.0,
+    "inflation": 1.03,
+    "err_ppm": 7036.8,
+    "snr": -1.2,
+    "n_in": 53,
+    "n_out": 220,
+    "n_events_with_data": 11,
+    "n_control_phases": 100,
+    "rms_ppm_per_cadence": 43401.0
+   },
+   "kepler_llc_files": 0
+  },
+  {
+   "source_id": "2073896293999233024",
+   "sep_arcsec": 24.32,
+   "G": 20.42367,
+   "kic": 6146706,
+   "kepler_llc_files": 0
+  },
+  {
+   "source_id": "2073896190925362816",
+   "sep_arcsec": 25.29,
+   "G": 15.1000595,
+   "kic": 6146651,
+   "kbonus_quarters_with_flux": [
+    0,
+    2,
+    6,
+    7,
+    10,
+    14
+   ],
+   "kbonus_psf": {
+    "label": "KBonus PSF kic-006146651",
+    "depth_ppm": 521.4,
+    "formal_err_ppm": 1658.4,
+    "control_scatter_ppm": 1682.6,
+    "control_mean_ppm": 327.7,
+    "inflation": 1.302,
+    "err_ppm": 2158.9,
+    "snr": 0.24,
+    "n_in": 58,
+    "n_out": 249,
+    "n_events_with_data": 11,
+    "n_control_phases": 100,
+    "rms_ppm_per_cadence": 10289.3
+   },
+   "kepler_llc_files": 0
+  },
+  {
+   "source_id": "2073896190926870400",
+   "sep_arcsec": 25.53,
+   "G": 20.541859,
+   "kic": null
+  },
+  {
+   "source_id": "2073896289692204928",
+   "sep_arcsec": 25.91,
+   "G": 18.806002,
+   "kic": 6146670,
+   "kepler_llc_files": 0
+  },
+  {
+   "source_id": "2073896294000822656",
+   "sep_arcsec": 26.61,
+   "G": 19.665071,
+   "kic": null
+  },
+  {
+   "source_id": "2073896293999228160",
+   "sep_arcsec": 27.05,
+   "G": 20.152798,
+   "kic": null
+  },
+  {
+   "source_id": "2073896225279754240",
+   "sep_arcsec": 27.25,
+   "G": 19.932875,
+   "kic": null
+  },
+  {
+   "source_id": "2073896293999215744",
+   "sep_arcsec": 29.58,
+   "G": 20.49915,
+   "kic": null
+  }
+ ],
+ "A4_centroid_test_INVALID": {
+  "method": "A.4 (extension): in-transit centroid shift of the candidate from the per-quarter CENTROID_COLUMN / CENTROID_ROW\ncolumns of its KBonus file (read-only cache). Per quarter: subtract a 2-day running median (transits masked),\ntake mean(in) - mean(out) with the same 3.0 h / 1-3 duration windows as the depth test. Quarters of one season share the\nCCD orientation, so they are averaged per season (inverse-variance). Implied offset of the dip source from the\nout-of-transit centroid = -shift / depth (depth = SAP depth of that season), in pixels and arcsec (3.98 arcsec/px).",
+  "VALID": false,
+  "verdict": "NOT USABLE: the KBonus CENTROID_COLUMN/ROW of the candidate and of KIC 6146666 move identically (difference scatter ~1e-6 px, correlation 1.0), i.e. they are the PSF-model positions (catalogue position plus a common pointing model), not flux-weighted centroids. They cannot respond to a dip, so the near-zero shifts below carry no information about the location of the dip source.",
+  "diagnostic_vs_KIC6146666": {
+   "LIGHTCURVE_Q0": {
+    "std_candidate_px": 0.001663304441525906,
+    "std_of_difference_px": 5.1712187601293526e-08,
+    "corr": 0.9999999996439499
+   },
+   "LIGHTCURVE_Q1": {
+    "std_candidate_px": 0.005450171199120835,
+    "std_of_difference_px": 8.901052003558813e-07,
+    "corr": 0.9999999986991494
+   },
+   "LIGHTCURVE_Q2": {
+    "std_candidate_px": 0.04902680764239582,
+    "std_of_difference_px": 2.0430331066747708e-06,
+    "corr": 0.9999999998493173
+   },
+   "LIGHTCURVE_Q3": {
+    "std_candidate_px": 0.02030667113634851,
+    "std_of_difference_px": 4.50736557677303e-07,
+    "corr": 0.9999999997805123
+   },
+   "LIGHTCURVE_Q4": {
+    "std_candidate_px": 0.047338502918614155,
+    "std_of_difference_px": 2.7221275173533452e-06,
+    "corr": 0.9999999999966047
+   },
+   "LIGHTCURVE_Q5": {
+    "std_candidate_px": 0.013633543495437368,
+    "std_of_difference_px": 8.614372368430148e-07,
+    "corr": 0.9999999991634356
+   },
+   "LIGHTCURVE_Q6": {
+    "std_candidate_px": 0.04519298298479693,
+    "std_of_difference_px": 2.311935452339415e-06,
+    "corr": 0.9999999999970474
+   },
+   "LIGHTCURVE_Q7": {
+    "std_candidate_px": 0.018420036616011992,
+    "std_of_difference_px": 4.550165242308138e-07,
+    "corr": 0.9999999997156515
+   },
+   "LIGHTCURVE_Q8": {
+    "std_candidate_px": 0.03438572775579241,
+    "std_of_difference_px": 2.088497341891673e-06,
+    "corr": 0.9999999999966146
+   },
+   "LIGHTCURVE_Q9": {
+    "std_candidate_px": 0.017438199085669667,
+    "std_of_difference_px": 8.938290177706449e-07,
+    "corr": 0.9999999989352604
+   },
+   "LIGHTCURVE_Q10": {
+    "std_candidate_px": 0.04772166663637553,
+    "std_of_difference_px": 2.4456762659297554e-06,
+    "corr": 0.9999999999970315
+   },
+   "LIGHTCURVE_Q11": {
+    "std_candidate_px": 0.021428802329409333,
+    "std_of_difference_px": 5.282966350614583e-07,
+    "corr": 0.9999999997469408
+   },
+   "LIGHTCURVE_Q12": {
+    "std_candidate_px": 0.042119228856669,
+    "std_of_difference_px": 2.210561788998157e-06,
+    "corr": 0.9999999999852859
+   },
+   "LIGHTCURVE_Q13": {
+    "std_candidate_px": 0.015340206260545436,
+    "std_of_difference_px": 8.555799138174343e-07,
+    "corr": 0.9999999984942007
+   },
+   "LIGHTCURVE_Q14": {
+    "std_candidate_px": 0.05016052947559428,
+    "std_of_difference_px": 2.5741025298246702e-06,
+    "corr": 0.999999999997253
+   },
+   "LIGHTCURVE_Q15": {
+    "std_candidate_px": 0.02278078337396949,
+    "std_of_difference_px": 4.842386512910439e-07,
+    "corr": 0.9999999998028172
+   },
+   "LIGHTCURVE_Q16": {
+    "std_candidate_px": 0.03895420966844286,
+    "std_of_difference_px": 2.342251740081583e-06,
+    "corr": 0.9999999999967893
+   },
+   "LIGHTCURVE_Q17": {
+    "std_candidate_px": 0.0024028745492858275,
+    "std_of_difference_px": 3.6145812523190617e-07,
+    "corr": 0.9999999996183802
+   }
+  },
+  "per_quarter": {
+   "0": {
+    "season": 3,
+    "dcol_px": NaN,
+    "dcol_err": NaN,
+    "drow_px": NaN,
+    "drow_err": NaN,
+    "inflation": 2.5305204774067915,
+    "centroid_rms_px": 0.0006775680401991182
+   },
+   "1": {
+    "season": 3,
+    "dcol_px": 1.603313791141166e-05,
+    "dcol_err": 0.000499774750306879,
+    "drow_px": 0.0001333198624911347,
+    "drow_err": 0.0005124283945773664,
+    "inflation": 2.1024049161373224,
+    "centroid_rms_px": 0.0006812336142936771
+   },
+   "2": {
+    "season": 0,
+    "dcol_px": -0.00014183769248522334,
+    "dcol_err": 0.00040844558903702354,
+    "drow_px": -8.507026468456433e-06,
+    "drow_err": 0.0006299787182273671,
+    "inflation": 3.0516053314582896,
+    "centroid_rms_px": 0.0006250690800883107
+   },
+   "3": {
+    "season": 1,
+    "dcol_px": -5.9657715787809085e-05,
+    "dcol_err": 0.0001931663270653342,
+    "drow_px": 0.00015282105420011752,
+    "drow_err": 0.00020480554526865967,
+    "inflation": 1.8667234907701304,
+    "centroid_rms_px": 0.0003765652456700292
+   },
+   "4": {
+    "season": 2,
+    "dcol_px": -0.00015980096674239554,
+    "dcol_err": 0.0001352079971853452,
+    "drow_px": 0.00026811333099342337,
+    "drow_err": 0.00023022770498474428,
+    "inflation": 1.2771179356142939,
+    "centroid_rms_px": 0.0003573203184531143
+   },
+   "5": {
+    "season": 3,
+    "dcol_px": 1.4838348624658648e-05,
+    "dcol_err": 0.00025602197827465464,
+    "drow_px": 0.00024065681554379245,
+    "drow_err": 0.0002078710028647234,
+    "inflation": 1.4215485680699773,
+    "centroid_rms_px": 0.000497233457656455
+   },
+   "6": {
+    "season": 0,
+    "dcol_px": 5.9182150390604e-05,
+    "dcol_err": 0.00043276331673590586,
+    "drow_px": -9.808466804565668e-05,
+    "drow_err": 0.0004526254812922567,
+    "inflation": 2.979692355740473,
+    "centroid_rms_px": 0.0005167504060197962
+   },
+   "7": {
+    "season": 1,
+    "dcol_px": 0.00016009044877968558,
+    "dcol_err": 0.00019622343914582526,
+    "drow_px": 9.633104778473343e-05,
+    "drow_err": 0.00021852076841825995,
+    "inflation": 1.3364086154077564,
+    "centroid_rms_px": 0.0003611451709388936
+   },
+   "8": {
+    "season": 2,
+    "dcol_px": 0.0001561967770181869,
+    "dcol_err": 0.0004002199571528168,
+    "drow_px": 0.00022894170029453748,
+    "drow_err": 0.0004565901947172809,
+    "inflation": 2.0655626442863073,
+    "centroid_rms_px": 0.0004529639682691637
+   },
+   "9": {
+    "season": 3,
+    "dcol_px": -0.0002627657247122392,
+    "dcol_err": 0.00013924000478424462,
+    "drow_px": -0.00014845746582591222,
+    "drow_err": 0.00014484196524236243,
+    "inflation": 1.3335382702328884,
+    "centroid_rms_px": 0.0004559257400859698
+   },
+   "10": {
+    "season": 0,
+    "dcol_px": 0.0001693883344269366,
+    "dcol_err": 0.0005175218628377085,
+    "drow_px": 0.0001355274738159551,
+    "drow_err": 0.0006073650406002619,
+    "inflation": 3.710056259033131,
+    "centroid_rms_px": 0.0005965866593158435
+   },
+   "11": {
+    "season": 1,
+    "dcol_px": -0.0002357605788233741,
+    "dcol_err": 0.00012807421819475726,
+    "drow_px": -0.0001351045597486614,
+    "drow_err": 0.00023118704105298387,
+    "inflation": 1.4350605135611771,
+    "centroid_rms_px": 0.0003821144440870118
+   },
+   "12": {
+    "season": 2,
+    "dcol_px": -5.7445046106100305e-05,
+    "dcol_err": 0.0002104935509572775,
+    "drow_px": 0.00032920152582554304,
+    "drow_err": 0.00023802637789537955,
+    "inflation": 1.380609099902791,
+    "centroid_rms_px": 0.00052844816393033
+   },
+   "13": {
+    "season": 3,
+    "dcol_px": 9.130549814862036e-05,
+    "dcol_err": 0.00034441903389772794,
+    "drow_px": 4.019388800719127e-05,
+    "drow_err": 0.00027402333035852014,
+    "inflation": 1.2736326725427467,
+    "centroid_rms_px": 0.0005366976383755697
+   },
+   "14": {
+    "season": 0,
+    "dcol_px": 0.00033872262629301985,
+    "dcol_err": 0.0003914296752089285,
+    "drow_px": -0.000124008013722474,
+    "drow_err": 0.0005137248986654714,
+    "inflation": 2.549839306157357,
+    "centroid_rms_px": 0.0007652430354408907
+   },
+   "15": {
+    "season": 1,
+    "dcol_px": -9.154699259549394e-05,
+    "dcol_err": 0.000137268990987489,
+    "drow_px": 4.401847857983975e-05,
+    "drow_err": 0.0001524015315344636,
+    "inflation": 1.2878183439050952,
+    "centroid_rms_px": 0.00048099899391300366
+   },
+   "16": {
+    "season": 2,
+    "dcol_px": 8.561040840251937e-05,
+    "dcol_err": 0.00018666503791495942,
+    "drow_px": -0.00012550698662607828,
+    "drow_err": 0.00024929266510992126,
+    "inflation": 1.603137868013836,
+    "centroid_rms_px": 0.00037668934176457095
+   },
+   "17": {
+    "season": 3,
+    "dcol_px": NaN,
+    "dcol_err": NaN,
+    "drow_px": NaN,
+    "drow_err": NaN,
+    "inflation": 1.3278767003222394,
+    "centroid_rms_px": 0.00014162934075105129
+   }
+  },
+  "per_season": {
+   "0": {
+    "quarters": [
+     2,
+     6,
+     10,
+     14
+    ],
+    "dcol_px": 0.00010692657542507383,
+    "dcol_err": 0.00021519514932507368,
+    "drow_px": -4.335670115748295e-05,
+    "drow_err": 0.00026821329968759457,
+    "shift_sig": 0.5225154296061166,
+    "sap_depth_used": 0.0023066999999999996,
+    "implied_offset_px": 0.05002054477373042,
+    "implied_offset_err_px": 0.09686796320121757,
+    "implied_offset_arcsec": 0.19908176819944706,
+    "implied_offset_err_arcsec": 0.38553449354084596,
+    "offset_3sigma_upper_arcsec": 1.3556852488219848
+   },
+   "1": {
+    "quarters": [
+     3,
+     7,
+     11,
+     15
+    ],
+    "dcol_px": -9.995098027471412e-05,
+    "dcol_err": 7.742710201970735e-05,
+    "drow_px": 4.7191249513157466e-05,
+    "drow_err": 9.687887959385626e-05,
+    "shift_sig": 1.379752124760062,
+    "sap_depth_used": 0.0012537999999999998,
+    "implied_offset_px": 0.088157202092031,
+    "implied_offset_err_px": 0.06485913330334361,
+    "implied_offset_arcsec": 0.35086566432628336,
+    "implied_offset_err_arcsec": 0.2581393505473076,
+    "offset_3sigma_upper_arcsec": 1.125283715968206
+   },
+   "2": {
+    "quarters": [
+     4,
+     8,
+     12,
+     16
+    ],
+    "dcol_px": -5.886697921319174e-05,
+    "dcol_err": 9.440133898687888e-05,
+    "drow_px": 0.00017328748748773664,
+    "drow_err": 0.00013198620910708826,
+    "shift_sig": 1.4534842768309366,
+    "sap_depth_used": 0.001271,
+    "implied_offset_px": 0.14399159558570118,
+    "implied_offset_err_px": 0.10118651439805472,
+    "implied_offset_arcsec": 0.5730865504310907,
+    "implied_offset_err_arcsec": 0.4027223273042578,
+    "offset_3sigma_upper_arcsec": 1.781253532343864
+   },
+   "3": {
+    "quarters": [
+     0,
+     1,
+     5,
+     9,
+     13,
+     17
+    ],
+    "dcol_px": -0.00015760200535131546,
+    "dcol_err": 0.00011231799475954351,
+    "drow_px": -5.276404006750813e-06,
+    "drow_err": 0.00010663989339344045,
+    "shift_sig": 1.4040488939194944,
+    "sap_depth_used": 0.0019037,
+    "implied_offset_px": 0.08283359024942583,
+    "implied_offset_err_px": 0.05899658456215936,
+    "implied_offset_arcsec": 0.3296776891927148,
+    "implied_offset_err_arcsec": 0.23480640655739424,
+    "offset_3sigma_upper_arcsec": 1.0340969088648975
+   }
+  }
+ },
+ "B_gaia_neighbourhood": {
+  "candidate_gaia_source": {
+   "source_id": "2073896294004902272",
+   "parallax": "3.268646086037338",
+   "parallax_error": "0.035821058",
+   "ruwe": "0.9448721",
+   "radial_velocity": "",
+   "radial_velocity_error": "",
+   "phot_variable_flag": "NOT_AVAILABLE",
+   "non_single_star": "0",
+   "ipd_frac_multi_peak": "0",
+   "ipd_gof_harmonic_amplitude": "0.01694199",
+   "astrometric_excess_noise": "0.0",
+   "phot_bp_rp_excess_factor": "1.3569324",
+   "has_rvs": "false",
+   "pmra": "-12.347176702639374",
+   "pmdec": "-25.13205980394338"
+  },
+  "n_neighbours_30arcsec": 17,
+  "neighbours": [
+   {
+    "source_id": "2073896294004902144",
+    "ra": 297.8703550660706,
+    "dec": 41.45712049161481,
+    "sep_arcsec": 7.14,
+    "sep_kepler_px": 1.79,
+    "G": 19.772,
+    "bp_rp": 1.814,
+    "parallax": 0.165,
+    "parallax_over_error": 0.49,
+    "pmra": -3.59,
+    "pmdec": -5.37,
+    "ruwe": 1.129,
+    "dG_vs_candidate": 3.535,
+    "required_eclipse_depth_frac": 0.0562,
+    "can_mimic_by_magnitude": true,
+    "note": "co-moving? no"
+   },
+   {
+    "source_id": "2073896289692192128",
+    "ra": 297.8696512726424,
+    "dec": 41.45852292631243,
+    "sep_arcsec": 10.94,
+    "sep_kepler_px": 2.75,
+    "G": 17.896,
+    "bp_rp": 1.664,
+    "parallax": 0.158,
+    "parallax_over_error": 1.83,
+    "pmra": -3.4,
+    "pmdec": -8.72,
+    "ruwe": 0.996,
+    "dG_vs_candidate": 1.659,
+    "required_eclipse_depth_frac": 0.01,
+    "can_mimic_by_magnitude": true,
+    "note": "co-moving? no"
+   },
+   {
+    "source_id": "2073896190925687296",
+    "ra": 297.86455769716946,
+    "dec": 41.454902381705566,
+    "sep_arcsec": 11.45,
+    "sep_kepler_px": 2.88,
+    "G": 12.806,
+    "bp_rp": 0.802,
+    "parallax": 1.118,
+    "parallax_over_error": 90.73,
+    "pmra": 4.9,
+    "pmdec": -9.53,
+    "ruwe": 1.026,
+    "dG_vs_candidate": -3.43,
+    "required_eclipse_depth_frac": null,
+    "can_mimic_by_magnitude": false,
+    "note": "brighter than the candidate; tested directly in check A (own Kepler light curve)"
+   },
+   {
+    "source_id": "2073896190926955520",
+    "ra": 297.86413868460005,
+    "dec": 41.45668072308227,
+    "sep_arcsec": 12.97,
+    "sep_kepler_px": 3.26,
+    "G": 19.736,
+    "bp_rp": null,
+    "parallax": 1.237,
+    "parallax_over_error": 3.23,
+    "pmra": 11.82,
+    "pmdec": 4.47,
+    "ruwe": 1.07,
+    "dG_vs_candidate": 3.499,
+    "required_eclipse_depth_frac": 0.0543,
+    "can_mimic_by_magnitude": true,
+    "note": "co-moving? no"
+   },
+   {
+    "source_id": "2073896190921609600",
+    "ra": 297.8638360317627,
+    "dec": 41.4564355623778,
+    "sep_arcsec": 13.51,
+    "sep_kepler_px": 3.4,
+    "G": 19.38,
+    "bp_rp": 1.533,
+    "parallax": 0.007,
+    "parallax_over_error": 0.03,
+    "pmra": -2.66,
+    "pmdec": -3.28,
+    "ruwe": 1.071,
+    "dG_vs_candidate": 3.143,
+    "required_eclipse_depth_frac": 0.0391,
+    "can_mimic_by_magnitude": true,
+    "note": "co-moving? no"
+   },
+   {
+    "source_id": "2073896289692177024",
+    "ra": 297.8753872660504,
+    "dec": 41.45425872700858,
+    "sep_arcsec": 18.62,
+    "sep_kepler_px": 4.68,
+    "G": 18.883,
+    "bp_rp": 2.623,
+    "parallax": 2.498,
+    "parallax_over_error": 15.62,
+    "pmra": 9.36,
+    "pmdec": -11.08,
+    "ruwe": 0.997,
+    "dG_vs_candidate": 2.647,
+    "required_eclipse_depth_frac": 0.0248,
+    "can_mimic_by_magnitude": true,
+    "note": "co-moving? no"
+   },
+   {
+    "source_id": "2073896293999229696",
+    "ra": 297.8761077915296,
+    "dec": 41.457381481829955,
+    "sep_arcsec": 21.0,
+    "sep_kepler_px": 5.28,
+    "G": 20.478,
+    "bp_rp": 1.777,
+    "parallax": 0.271,
+    "parallax_over_error": 0.44,
+    "pmra": -5.18,
+    "pmdec": -6.81,
+    "ruwe": 0.996,
+    "dG_vs_candidate": 4.242,
+    "required_eclipse_depth_frac": 0.1077,
+    "can_mimic_by_magnitude": true,
+    "note": "co-moving? no"
+   },
+   {
+    "source_id": "2073896293999228800",
+    "ra": 297.87179752901704,
+    "dec": 41.46140879274813,
+    "sep_arcsec": 22.62,
+    "sep_kepler_px": 5.68,
+    "G": 20.284,
+    "bp_rp": 1.145,
+    "parallax": -0.679,
+    "parallax_over_error": -1.29,
+    "pmra": -1.43,
+    "pmdec": -3.54,
+    "ruwe": 1.015,
+    "dG_vs_candidate": 4.047,
+    "required_eclipse_depth_frac": 0.09,
+    "can_mimic_by_magnitude": true,
+    "note": "co-moving? no"
+   },
+   {
+    "source_id": "2073896186612950272",
+    "ra": 297.8632499608769,
+    "dec": 41.45054697767155,
+    "sep_arcsec": 23.31,
+    "sep_kepler_px": 5.86,
+    "G": 18.415,
+    "bp_rp": 2.126,
+    "parallax": 0.066,
+    "parallax_over_error": 0.55,
+    "pmra": -1.49,
+    "pmdec": -1.97,
+    "ruwe": 0.991,
+    "dG_vs_candidate": 2.179,
+    "required_eclipse_depth_frac": 0.0161,
+    "can_mimic_by_magnitude": true,
+    "note": "co-moving? no"
+   },
+   {
+    "source_id": "2073896293999233024",
+    "ra": 297.87717758875255,
+    "dec": 41.45788350835011,
+    "sep_arcsec": 24.32,
+    "sep_kepler_px": 6.11,
+    "G": 20.424,
+    "bp_rp": 1.949,
+    "parallax": -0.544,
+    "parallax_over_error": -0.9,
+    "pmra": -4.46,
+    "pmdec": -9.58,
+    "ruwe": 0.994,
+    "dG_vs_candidate": 4.187,
+    "required_eclipse_depth_frac": 0.1024,
+    "can_mimic_by_magnitude": true,
+    "note": "co-moving? no"
+   },
+   {
+    "source_id": "2073896190925362816",
+    "ra": 297.8601824650512,
+    "dec": 41.45848291624346,
+    "sep_arcsec": 25.29,
+    "sep_kepler_px": 6.35,
+    "G": 15.1,
+    "bp_rp": 2.046,
+    "parallax": 0.254,
+    "parallax_over_error": 12.45,
+    "pmra": -1.56,
+    "pmdec": -5.68,
+    "ruwe": 1.0,
+    "dG_vs_candidate": -1.137,
+    "required_eclipse_depth_frac": null,
+    "can_mimic_by_magnitude": false,
+    "note": "brighter than the candidate; tested directly in check A (own Kepler light curve)"
+   },
+   {
+    "source_id": "2073896190926870400",
+    "ra": 297.8605381529182,
+    "dec": 41.4591426741284,
+    "sep_arcsec": 25.53,
+    "sep_kepler_px": 6.41,
+    "G": 20.542,
+    "bp_rp": 1.897,
+    "parallax": 0.033,
+    "parallax_over_error": 0.04,
+    "pmra": -7.59,
+    "pmdec": -7.9,
+    "ruwe": 1.074,
+    "dG_vs_candidate": 4.305,
+    "required_eclipse_depth_frac": 0.1142,
+    "can_mimic_by_magnitude": true,
+    "note": "co-moving? no"
+   },
+   {
+    "source_id": "2073896289692204928",
+    "ra": 297.86609784960706,
+    "dec": 41.46249215324021,
+    "sep_arcsec": 25.91,
+    "sep_kepler_px": 6.51,
+    "G": 18.806,
+    "bp_rp": 1.686,
+    "parallax": 0.19,
+    "parallax_over_error": 1.24,
+    "pmra": 0.89,
+    "pmdec": 0.04,
+    "ruwe": 0.995,
+    "dG_vs_candidate": 2.569,
+    "required_eclipse_depth_frac": 0.0231,
+    "can_mimic_by_magnitude": true,
+    "note": "co-moving? no"
+   },
+   {
+    "source_id": "2073896294000822656",
+    "ra": 297.87640536637156,
+    "dec": 41.4601887938409,
+    "sep_arcsec": 26.61,
+    "sep_kepler_px": 6.69,
+    "G": 19.665,
+    "bp_rp": 1.863,
+    "parallax": 0.815,
+    "parallax_over_error": 3.02,
+    "pmra": 2.82,
+    "pmdec": -5.25,
+    "ruwe": 0.978,
+    "dG_vs_candidate": 3.428,
+    "required_eclipse_depth_frac": 0.0509,
+    "can_mimic_by_magnitude": true,
+    "note": "co-moving? no"
+   },
+   {
+    "source_id": "2073896293999228160",
+    "ra": 297.8703831099014,
+    "dec": 41.46297406777734,
+    "sep_arcsec": 27.05,
+    "sep_kepler_px": 6.8,
+    "G": 20.153,
+    "bp_rp": 1.351,
+    "parallax": 0.628,
+    "parallax_over_error": 1.29,
+    "pmra": -2.45,
+    "pmdec": -3.27,
+    "ruwe": 1.066,
+    "dG_vs_candidate": 3.916,
+    "required_eclipse_depth_frac": 0.0798,
+    "can_mimic_by_magnitude": true,
+    "note": "co-moving? no"
+   },
+   {
+    "source_id": "2073896225279754240",
+    "ra": 297.8787355950364,
+    "dec": 41.454651004065184,
+    "sep_arcsec": 27.25,
+    "sep_kepler_px": 6.85,
+    "G": 19.933,
+    "bp_rp": 1.862,
+    "parallax": 0.065,
+    "parallax_over_error": 0.19,
+    "pmra": 0.78,
+    "pmdec": -3.04,
+    "ruwe": 0.957,
+    "dG_vs_candidate": 3.696,
+    "required_eclipse_depth_frac": 0.0652,
+    "can_mimic_by_magnitude": true,
+    "note": "co-moving? no"
+   },
+   {
+    "source_id": "2073896293999215744",
+    "ra": 297.8639200081338,
+    "dec": 41.46295754048652,
+    "sep_arcsec": 29.58,
+    "sep_kepler_px": 7.43,
+    "G": 20.499,
+    "bp_rp": 1.687,
+    "parallax": -0.241,
+    "parallax_over_error": -0.4,
+    "pmra": -2.29,
+    "pmdec": -6.21,
+    "ruwe": 1.049,
+    "dG_vs_candidate": 4.262,
+    "required_eclipse_depth_frac": 0.1098,
+    "can_mimic_by_magnitude": true,
+    "note": "co-moving? no"
+   }
+  ],
+  "neighbours_able_to_mimic_by_magnitude": [
+   "2073896294004902144",
+   "2073896289692192128",
+   "2073896190926955520",
+   "2073896190921609600",
+   "2073896289692177024",
+   "2073896293999229696",
+   "2073896293999228800",
+   "2073896186612950272",
+   "2073896293999233024",
+   "2073896190926870400",
+   "2073896289692204928",
+   "2073896294000822656",
+   "2073896293999228160",
+   "2073896225279754240",
+   "2073896293999215744"
+  ],
+  "max_required_depth_frac": 0.1142,
+  "kic_only_source": {
+   "KIC": 6146680,
+   "sep_arcsec": 3.99,
+   "Kp": 18.852,
+   "gmag": 18.542,
+   "rmag": 18.786,
+   "imag": 18.985,
+   "required_eclipse_depth_frac": 0.0236,
+   "note": "KIC source with no 2MASS and no Gaia DR3 counterpart within 3 arcsec; the nearest Gaia source (2073896294004902144, G 19.77) lies 3.2 arcsec from the KIC position. Probably the same object with poor KIC astrometry/photometry, or a spurious KIC entry; Gaia should resolve a G~19 star 4 arcsec from a G 16.2 star."
+  },
+  "gaia_variability_and_nss": {
+   "vari_summary_cone30": {
+    "rows": 0,
+    "verbatim": [
+     "source_id"
+    ]
+   },
+   "vari_classifier_result_cone30": {
+    "rows": 0,
+    "verbatim": [
+     "source_id"
+    ]
+   },
+   "nss_two_body_orbit_cone30": {
+    "rows": 0,
+    "verbatim": [
+     "source_id"
+    ]
+   },
+   "vari_eclipsing_binary_cone30": {
+    "rows": 0,
+    "verbatim": [
+     "source_id"
+    ]
+   },
+   "nss_non_linear_spectro_cone30": {
+    "rows": 0,
+    "verbatim": [
+     "source_id"
+    ]
+   },
+   "nss_acceleration_astro_cone30": {
+    "rows": 0,
+    "verbatim": [
+     "source_id"
+    ]
+   },
+   "vari_summary_candidate": {
+    "rows": 0
+   },
+   "vari_classifier_result_candidate": {
+    "rows": 0
+   },
+   "nss_two_body_orbit_candidate": {
+    "rows": 0
+   },
+   "vari_eclipsing_binary_candidate": {
+    "rows": 0
+   }
+  }
+ },
+ "C_archives": {
+  "C_nea_cumulative_box": {
+   "rows": 0,
+   "url": "https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query=select+kepid%2Ckepoi_name%2Ckepler_name%2Ckoi_disposition%2Ckoi_pdisposition%2Ckoi_period%2Ckoi_time0bk%2Ckoi_depth%2Ckoi_duration%2Cra%2Cdec+from+cumulative+where+ra+between+297.857589+and+297.879829+and+dec+between+41.447234+and+41.463900&format=csv",
+   "file": "C_nea_cumulative_box.csv"
+  },
+  "C_nea_cumulative_kepid": {
+   "rows": 0,
+   "url": "https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query=select+kepid%2Ckepoi_name%2Ckepler_name%2Ckoi_disposition%2Ckoi_period%2Ckoi_depth%2Cra%2Cdec+from+cumulative+where+kepid+in+%286146666%2C6146676%29&format=csv",
+   "file": "C_nea_cumulative_kepid.csv"
+  },
+  "C_nea_dr25tce_box": {
+   "rows": 0,
+   "url": "https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query=select+%2A+from+q1_q17_dr25_tce+where+ra+between+297.857589+and+297.879829+and+dec+between+41.447234+and+41.463900&format=csv",
+   "file": "C_nea_dr25tce_box.csv"
+  },
+  "C_nea_dr25tce_kepid": {
+   "rows": 0,
+   "url": "https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query=select+%2A+from+q1_q17_dr25_tce+where+kepid+in+%286146666%2C6146676%29&format=csv",
+   "file": "C_nea_dr25tce_kepid.csv"
+  },
+  "C_nea_dr24tce_kepid": {
+   "rows": 0,
+   "url": "https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query=select+%2A+from+q1_q17_dr24_tce+where+kepid+in+%286146666%2C6146676%29&format=csv",
+   "file": "C_nea_dr24tce_kepid.csv"
+  },
+  "C_nea_toi_box": {
+   "rows": 0,
+   "url": "https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query=select+%2A+from+toi+where+ra+between+297.857589+and+297.879829+and+dec+between+41.447234+and+41.463900&format=csv",
+   "file": "C_nea_toi_box.csv"
+  },
+  "C_nea_dr25stellar_kepid": {
+   "rows": null,
+   "error": "nasa-exoplanet-archive https://exoplanetarchive.ipac.caltech.edu/TAP/sync -> HTTP 400",
+   "url": "https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query=select+%2A+from+q1_q17_dr25_stellar+where+kepid+in+%286146666%2C6146676%29&format=csv"
+  },
+  "C_nea_keplerstellar_kepid": {
+   "rows": 5,
+   "url": "https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query=select+kepid%2Cteff%2Clogg%2Cradius%2Cmass%2Ckepmag%2Cra%2Cdec+from+keplerstellar+where+kepid+in+%286146666%2C6146676%29&format=csv",
+   "file": "C_nea_keplerstellar_kepid.csv"
+  },
+  "C_vizier_keplerEB_kirk2016": {
+   "rows": 0,
+   "url": "https://vizier.cds.unistra.fr/viz-bin/asu-tsv?-source=J%2FAJ%2F151%2F68%2Fcatalog&-c=297.868708651717+%2B41.45556694086529&-c.rs=30&-out.all=&-out.add=_r&-sort=_r",
+   "file": "C_vizier_keplerEB_kirk2016.tsv"
+  },
+  "C_vizier_KIC": {
+   "rows": 10,
+   "url": "https://vizier.cds.unistra.fr/viz-bin/asu-tsv?-source=V%2F133%2Fkic&-c=297.868708651717+%2B41.45556694086529&-c.rs=30&-out.all=&-out.add=_r&-sort=_r",
+   "file": "C_vizier_KIC.tsv"
+  },
+  "C_vizier_TICv82": {
+   "rows": 18,
+   "url": "https://vizier.cds.unistra.fr/viz-bin/asu-tsv?-source=IV%2F39%2Ftic82&-c=297.868708651717+%2B41.45556694086529&-c.rs=30&-out.all=&-out.add=_r&-sort=_r",
+   "file": "C_vizier_TICv82.tsv"
+  },
+  "C_vizier_planethunters_schwamb2013": {
+   "rows": null,
+   "error": "Error=Table or Catalog not found: J/ApJ/776/10",
+   "url": "https://vizier.cds.unistra.fr/viz-bin/asu-tsv?-source=J%2FApJ%2F776%2F10&-c=297.868708651717+%2B41.45556694086529&-c.rs=30&-out.all=&-out.add=_r&-sort=_r"
+  },
+  "C_vizier_planethunters_schmitt2014": {
+   "rows": 0,
+   "url": "https://vizier.cds.unistra.fr/viz-bin/asu-tsv?-source=J%2FApJ%2F795%2F167&-c=297.868708651717+%2B41.45556694086529&-c.rs=30&-out.all=&-out.add=_r&-sort=_r",
+   "file": "C_vizier_planethunters_schmitt2014.tsv"
+  },
+  "C_vizier_kepler_fpp_morton2016": {
+   "rows": 0,
+   "url": "https://vizier.cds.unistra.fr/viz-bin/asu-tsv?-source=J%2FApJ%2F822%2F86&-c=297.868708651717+%2B41.45556694086529&-c.rs=30&-out.all=&-out.add=_r&-sort=_r",
+   "file": "C_vizier_kepler_fpp_morton2016.tsv"
+  },
+  "C_simbad_cone30": {
+   "rows": null,
+   "url": "https://simbad.cds.unistra.fr/simbad/sim-coo?Coord=297.868708651717+%2B41.45556694086529&Radius=30&Radius.unit=arcsec&output.format=ASCII&list.idsel=on",
+   "file": "C_simbad_cone30.txt"
+  },
+  "C_nea_dr25stellar_kepid_retry": {
+   "rows": null,
+   "error": "nasa-exoplanet-archive https://exoplanetarchive.ipac.caltech.edu/TAP/sync -> HTTP 400",
+   "url": "https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query=select+kepid%2Cteff%2Clogg%2Cradius%2Cmass%2Ckepmag+from+q1_q17_dr25_stellar+where+kepid+in+%286146666%2C6146676%29&format=csv"
+  },
+  "C_nea_q1q16tce_kepid": {
+   "rows": 0,
+   "url": "https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query=select+kepid%2Ctce_plnt_num%2Ctce_period%2Ctce_depth+from+q1_q16_tce+where+kepid+in+%286146666%2C6146676%29&format=csv",
+   "file": "C_nea_q1q16tce_kepid.csv"
+  },
+  "C_nea_q1q12tce_kepid": {
+   "rows": 0,
+   "url": "https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query=select+kepid%2Ctce_plnt_num%2Ctce_period%2Ctce_depth+from+q1_q12_tce+where+kepid+in+%286146666%2C6146676%29&format=csv",
+   "file": "C_nea_q1q12tce_kepid.csv"
+  },
+  "C_nea_fpwg_kepid": {
+   "rows": null,
+   "error": "nasa-exoplanet-archive https://exoplanetarchive.ipac.caltech.edu/TAP/sync -> HTTP 400",
+   "url": "https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query=select+kepid%2Ckepoi_name%2Cfpwg_disp_status+from+fpwg+where+kepid+in+%286146666%2C6146676%29&format=csv"
+  },
+  "exofop_TIC169822650": {
+   "url": "https://exofop.ipac.caltech.edu/tess/target.php?id=169822650&json=",
+   "tois": [],
+   "ctois": [],
+   "imaging": [],
+   "spectroscopy": [],
+   "stellar_companions": []
+  },
+  "simbad_objects_in_30arcsec": [
+   "2MASS J19512748+4127178"
+  ]
+ },
+ "D_stellar_planet": {
+  "inputs": {
+   "G": 16.236654,
+   "BP_RP": 2.0971918,
+   "parallax_mas": 3.268646086037338,
+   "parallax_err_mas": 0.035821058,
+   "zero_point_L21_mas": -0.0317,
+   "parallax_corrected_mas": 3.3004,
+   "parallax_err_used_mas": 0.0388,
+   "Ks_2MASS": [
+    13.055,
+    0.026
+   ],
+   "P_d": 40.29109,
+   "box_depth_ppm": 2165,
+   "k": 0.048,
+   "b_fit": 0.89,
+   "duration_h": 3.0
+  },
+  "distance_pc": {
+   "median": 303.0,
+   "minus": 3.5,
+   "plus": 3.6
+  },
+  "distance_pc_simple": 303.0,
+  "abs_G_mag_noext": 8.829,
+  "abs_Ks_mag_noext": 5.648,
+  "mamajek_at_2.10": {
+   "Teff": 3650.0,
+   "R": 0.496,
+   "M": 0.492,
+   "M_G": 8.86,
+   "M_Ks": 5.668
+  },
+  "mamajek_at_2.00": {
+   "Teff": 3742.5,
+   "R": 0.533,
+   "M": 0.53,
+   "M_G": 8.535,
+   "M_Ks": 5.43
+  },
+  "mamajek_at_2.20": {
+   "Teff": 3578.0,
+   "R": 0.457,
+   "M": 0.449,
+   "M_G": 9.197,
+   "M_Ks": 5.911
+  },
+  "mamajek_at_1.90_if_E0.2": {
+   "Teff": 3813.077,
+   "R": 0.568,
+   "M": 0.556,
+   "M_G": 8.289,
+   "M_Ks": 5.247
+  },
+  "mamajek_rows_used": [
+   {
+    "SpT": "K7V",
+    "BP_RP": 1.7,
+    "Teff": 4100.0,
+    "R": 0.63,
+    "M": 0.64,
+    "M_G": 7.57,
+    "M_Ks": 4.81
+   },
+   {
+    "SpT": "K8V",
+    "BP_RP": 1.73,
+    "Teff": 3990.0,
+    "R": 0.615,
+    "M": 0.62,
+    "M_G": 7.74,
+    "M_Ks": 4.95
+   },
+   {
+    "SpT": "K9V",
+    "BP_RP": 1.79,
+    "Teff": 3930.0,
+    "R": 0.608,
+    "M": 0.59,
+    "M_G": 8.03,
+    "M_Ks": 5.01
+   },
+   {
+    "SpT": "M0V",
+    "BP_RP": 1.84,
+    "Teff": 3850.0,
+    "R": 0.588,
+    "M": 0.57,
+    "M_G": 8.16,
+    "M_Ks": 5.15
+   },
+   {
+    "SpT": "M0.5V",
+    "BP_RP": 1.97,
+    "Teff": 3770.0,
+    "R": 0.544,
+    "M": 0.54,
+    "M_G": 8.44,
+    "M_Ks": 5.36
+   },
+   {
+    "SpT": "M1V",
+    "BP_RP": 2.09,
+    "Teff": 3660.0,
+    "R": 0.501,
+    "M": 0.5,
+    "M_G": 8.82,
+    "M_Ks": 5.64
+   },
+   {
+    "SpT": "M1.5V",
+    "BP_RP": 2.13,
+    "Teff": 3620.0,
+    "R": 0.482,
+    "M": 0.47,
+    "M_G": 8.98,
+    "M_Ks": 5.75
+   },
+   {
+    "SpT": "M2V",
+    "BP_RP": 2.23,
+    "Teff": 3560.0,
+    "R": 0.446,
+    "M": 0.44,
+    "M_G": 9.29,
+    "M_Ks": 5.98
+   },
+   {
+    "SpT": "M2.5V",
+    "BP_RP": 2.39,
+    "Teff": 3470.0,
+    "R": 0.421,
+    "M": 0.4,
+    "M_G": 9.67,
+    "M_Ks": 6.18
+   }
+  ],
+  "mann_MKs_check": {
+   "R_Mann2015_Rsun": {
+    "median": 0.505,
+    "minus": 0.016,
+    "plus": 0.016
+   },
+   "M_Mann2019_Msun": {
+    "median": 0.503,
+    "minus": 0.012,
+    "plus": 0.013
+   },
+   "M_Ks": {
+    "median": 5.613,
+    "minus": 0.042,
+    "plus": 0.042
+   }
+  },
+  "tic_v82": {
+   "Teff": "3694",
+   "Teff_e": "157",
+   "R": "0.493686",
+   "R_e": "0.0156562",
+   "M": "0.491781",
+   "M_e": "0.0210118",
+   "dist_pc": "298.144",
+   "logg": "4.74294",
+   "source": "ExoFOP target.php?id=169822650&json (TIC v8.2)"
+  },
+  "gaia_dr3_apsis": {
+   "teff_gspphot": "3855.0415",
+   "radius_gspphot": "0.5468",
+   "ebpminrp_gspphot": "0.27",
+   "ag_gspphot": "0.4764",
+   "radius_flame": "0.53941935",
+   "mass_flame": "0.55954725",
+   "teff_msc1": "3833.9824",
+   "mh_msc": "-0.68268913",
+   "mh_gspphot": "-0.022",
+   "spectraltype_esphs": "M"
+  },
+  "extinction": {
+   "SFD98_EBV_total_los": 0.7839,
+   "SF11_EBV_total_los": 0.6741,
+   "b_deg": 7.4197877341307255,
+   "SF11_scaled_to_distance_h125pc": 0.181,
+   "note": "Bayestar19 (argonaut.skymaps.info) timed out from this machine; values from IRSA DUST (2-D, full line of sight)."
+  },
+  "planet_baseline_colour_2.10pm0.10": {
+   "label": "Mamajek at BP-RP 2.10 +- 0.10 (E(BP-RP) <= 0.1 assumed)",
+   "Teff_K": {
+    "median": 3653.0,
+    "minus": 73.0,
+    "plus": 91.0
+   },
+   "R_star_Rsun": {
+    "median": 0.498,
+    "minus": 0.04,
+    "plus": 0.036
+   },
+   "M_star_Msun": {
+    "median": 0.495,
+    "minus": 0.045,
+    "plus": 0.036
+   },
+   "rho_star_gcc": {
+    "median": 5.66,
+    "minus": 0.75,
+    "plus": 0.95
+   },
+   "a_AU": {
+    "median": 0.1819,
+    "minus": 0.0057,
+    "plus": 0.0043
+   },
+   "a_over_Rstar": {
+    "median": 78.6,
+    "minus": 3.6,
+    "plus": 4.2
+   },
+   "Rp_from_k_Rearth": {
+    "median": 2.61,
+    "minus": 0.21,
+    "plus": 0.19
+   },
+   "Rp_from_boxdepth_Rearth": {
+    "median": 2.53,
+    "minus": 0.2,
+    "plus": 0.18
+   },
+   "Teq_K_A0.3_full_redistribution": {
+    "median": 267.0,
+    "minus": 12.0,
+    "plus": 13.0
+   },
+   "transit_probability_Rstar_over_a": {
+    "median": 0.0127,
+    "minus": 0.0006,
+    "plus": 0.0006
+   },
+   "T14_central_h": {
+    "median": 4.1,
+    "minus": 0.21,
+    "plus": 0.2
+   },
+   "b_if_3h_is_T14": {
+    "median": 0.72,
+    "minus": 0.09,
+    "plus": 0.07
+   },
+   "b_if_3h_is_mean_T14_T23": {
+    "median": 0.64,
+    "minus": 0.1,
+    "plus": 0.08
+   },
+   "fraction_b_mid_undefined": 0.0,
+   "T14_for_fitted_b0.89_h": {
+    "median": 2.17,
+    "minus": 0.11,
+    "plus": 0.1
+   }
+  },
+  "planet_alt_dereddened_1.90pm0.10": {
+   "label": "Mamajek at BP-RP 1.90 +- 0.10 (if E(BP-RP) ~ 0.2)",
+   "Teff_K": {
+    "median": 3813.0,
+    "minus": 70.0,
+    "plus": 100.0
+   },
+   "R_star_Rsun": {
+    "median": 0.568,
+    "minus": 0.034,
+    "plus": 0.036
+   },
+   "M_star_Msun": {
+    "median": 0.556,
+    "minus": 0.026,
+    "plus": 0.03
+   },
+   "rho_star_gcc": {
+    "median": 4.29,
+    "minus": 0.53,
+    "plus": 0.64
+   },
+   "a_AU": {
+    "median": 0.1892,
+    "minus": 0.003,
+    "plus": 0.0033
+   },
+   "a_over_Rstar": {
+    "median": 71.7,
+    "minus": 3.1,
+    "plus": 3.4
+   },
+   "Rp_from_k_Rearth": {
+    "median": 2.97,
+    "minus": 0.18,
+    "plus": 0.19
+   },
+   "Rp_from_boxdepth_Rearth": {
+    "median": 2.88,
+    "minus": 0.17,
+    "plus": 0.18
+   },
+   "Teq_K_A0.3_full_redistribution": {
+    "median": 291.0,
+    "minus": 12.0,
+    "plus": 14.0
+   },
+   "transit_probability_Rstar_over_a": {
+    "median": 0.014,
+    "minus": 0.0006,
+    "plus": 0.0006
+   },
+   "T14_central_h": {
+    "median": 4.5,
+    "minus": 0.2,
+    "plus": 0.2
+   },
+   "b_if_3h_is_T14": {
+    "median": 0.78,
+    "minus": 0.06,
+    "plus": 0.05
+   },
+   "b_if_3h_is_mean_T14_T23": {
+    "median": 0.71,
+    "minus": 0.07,
+    "plus": 0.06
+   },
+   "fraction_b_mid_undefined": 0.0,
+   "T14_for_fitted_b0.89_h": {
+    "median": 2.38,
+    "minus": 0.11,
+    "plus": 0.11
+   }
+  },
+  "planet_mann_MKs": {
+   "label": "Mann M_Ks radius and mass, Teff 3650 +- 100",
+   "Teff_K": {
+    "median": 3650.0,
+    "minus": 100.0,
+    "plus": 99.0
+   },
+   "R_star_Rsun": {
+    "median": 0.505,
+    "minus": 0.016,
+    "plus": 0.016
+   },
+   "M_star_Msun": {
+    "median": 0.503,
+    "minus": 0.012,
+    "plus": 0.013
+   },
+   "rho_star_gcc": {
+    "median": 5.51,
+    "minus": 0.48,
+    "plus": 0.54
+   },
+   "a_AU": {
+    "median": 0.1829,
+    "minus": 0.0015,
+    "plus": 0.0015
+   },
+   "a_over_Rstar": {
+    "median": 77.9,
+    "minus": 2.3,
+    "plus": 2.5
+   },
+   "Rp_from_k_Rearth": {
+    "median": 2.64,
+    "minus": 0.08,
+    "plus": 0.08
+   },
+   "Rp_from_boxdepth_Rearth": {
+    "median": 2.56,
+    "minus": 0.08,
+    "plus": 0.08
+   },
+   "Teq_K_A0.3_full_redistribution": {
+    "median": 267.0,
+    "minus": 8.0,
+    "plus": 8.0
+   },
+   "transit_probability_Rstar_over_a": {
+    "median": 0.0128,
+    "minus": 0.0004,
+    "plus": 0.0004
+   },
+   "T14_central_h": {
+    "median": 4.14,
+    "minus": 0.13,
+    "plus": 0.13
+   },
+   "b_if_3h_is_T14": {
+    "median": 0.72,
+    "minus": 0.08,
+    "plus": 0.06
+   },
+   "b_if_3h_is_mean_T14_T23": {
+    "median": 0.65,
+    "minus": 0.09,
+    "plus": 0.07
+   },
+   "fraction_b_mid_undefined": 0.0,
+   "T14_for_fitted_b0.89_h": {
+    "median": 2.19,
+    "minus": 0.07,
+    "plus": 0.07
+   }
+  }
+ }
+}

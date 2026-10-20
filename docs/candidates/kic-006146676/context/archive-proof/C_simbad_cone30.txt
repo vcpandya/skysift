@@ -1,0 +1,38 @@
+C.D.S.  -  SIMBAD4 rel 1.8  -  2026.10.20CEST08:22:46
+
+coord 297.868708651717 +41.45556694086529 (ICRS, J2000, 2000.0), radius: 30 arcsec
+----------------------------------------------------------------------------------
+
+Object 2MASS J19512748+4127178  ---  *  ---  OID=@12447077   (@@-1,255)  ---  coobox=20319
+
+Coordinates(ICRS,ep=J2000,eq=2000): 19 51 27.4868705232  +41 27 17.801115624 (Opt ) A [0.0095 0.0124 90] 2020yCat.1350....0G
+Coordinates(FK4,ep=B1950,eq=1950): 19 49 45.8384928504  +41 19 33.177825818
+Coordinates(Gal,ep=J2000,eq=2000): 076.0423032116055  +07.4221960389077
+hierarchy counts: #parents=0, #children=0, #siblings=0
+Proper motions: 4.902 -9.534 [0.013 0.016 90] A 2020yCat.1350....0G
+Parallax: 1.1177 [0.0123] A 2020yCat.1350....0G
+Radial Velocity: -13.3 [15.8] E 2016A&A...594A..39F
+Redshift: -0.000044 [0.000053] E 2016A&A...594A..39F
+cz: -13.30 [15.80] E 2016A&A...594A..39F
+Flux G : 12.806441 [0.002761] C 2020yCat.1350....0G
+Flux J : 11.753 [0.022] C 2003yCat.2246....0C
+Flux H : 11.489 [0.022] C 2003yCat.2246....0C
+Flux K : 11.435 [0.018] C 2003yCat.2246....0C
+Spectral type: F6V C 2016A&A...594A..39F
+Morphological type: ~ ~ ~
+Angular size:     ~     ~   ~ (~)  ~ ~
+
+Identifiers (5):
+   TIC 169822655                        Gaia DR3 2073896190925687296         2MASS J19512748+4127178            
+   KIC 6146666                          Gaia DR2 2073896190925687296                                            
+
+Bibcodes  1850-2026 () (2):
+  2021AJ....161..170S  2016A&A...594A..39F                        
+
+Measures (distance:2  Fe_H:1  MK:1  PLX:2  PM:2  velocities:1  ):
+distance:2Fe_H:1MK:1PLX:2PM:2velocities:1
+
+Notes (0) :
+
+================================================================================
+

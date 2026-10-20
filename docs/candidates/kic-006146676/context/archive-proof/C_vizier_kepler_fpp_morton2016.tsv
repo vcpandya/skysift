@@ -1,0 +1,68 @@
+#
+#   VizieR Astronomical Server vizier.cds.unistra.fr
+#    Date: 2026-10-20T06:22:44 [V7.6.1]
+#   In case of problem, please report to:	cds-question@unistra.fr
+#
+#
+#Coosys	J2000:	eq_FK5 J2000
+#INFO	service_protocol=ASU	  IVOID of the protocol through which the data was retrieved
+#INFO	request_date=2026-10-20T06:22:45	  Query execution date
+#INFO	request=https://vizier.cds.unistra.fr/viz-bin/asu-tsv?-source=J%2FApJ%2F822%2F86&-c=297.868708651717+%2B41.45556694086529&-c.rs=30&-out.all=&-out.add=_r&-sort=_r	  Full request URL
+#INFO	contact=cds-question@unistra.fr	  Email or URL to contact publisher
+#INFO	server_software=VizieR/7.6.1	  Software version
+#INFO	publisher=CDS	  Data centre that produced the VOTable
+#INFO	MaxTuples=50000	
+#INFO	-c=297.868709+41.455567,rs=30.	
+#Constraint -sort=_r
+
+#RESOURCE=yCat_18220086
+#Name: J/ApJ/822/86
+#Title: False positive probabilities for Q1-Q17 DR24 KOIs (Morton+, 2016)
+#INFO	ivoid=ivo://cds.vizier/j/apj/822/86	    IVOID of underlying data collection
+#INFO	data_ivoid=ivo://cds.vizier/j/apj/822/86	    IVOID of underlying data collection
+#INFO	creator=Morton T.D.	    First author or institution
+#INFO	cites=bibcode:2016ApJ...822...86M	    Article or Data origin sources
+#INFO	journal=ApJ	    Journal name
+#INFO	original_date=2016	    Year of the article publication
+#INFO	reference_url=https://cdsarc.cds.unistra.fr/viz-bin/cat/J/ApJ/822/86	    Dataset landing page
+#INFO	citation=doi:10.26093/cds/vizier.18220086	    Dataset identifier that can be used for citation
+#INFO	publication_date=2017-10-16	    Date of first publication in the data centre
+#INFO	rights_uri=https://cds.unistra.fr/vizier-org/licences_vizier.html	    Licence URI
+#Coosys	J2000_2000.000:	eq_FK5 J2000
+#Table	J_ApJ_822_86_table3:
+#Name: J/ApJ/822/86/table3
+#Title: *Newly validated planets in the optimistic habitable zone
+#Column	_r	(F5.2)	Distance from center (297.86871+41.45557)[FK5/J2000], at Epoch=J2000.0	[ucd=pos.angDistance]
+#Column	KOI	(F7.2)	KOI number	[ucd=meta.id;meta.main]
+#Column	Kepler	(A13)	Kepler name	[ucd=meta.id]
+#Column	Per	(F7.3)	[18.4/259.4] Period	[ucd=time.period]
+#Column	Rp	(F5.2)	[1/2] Planetary radius	[ucd=phys.size.radius]
+#Column	Fp	(F5.2)	[0.2/1.5] Insolation flux received by planet (in Earth flux)	[ucd=phot.flux;arith.ratio]
+#Column	Teff	(I4)	[3387/5906] Stellar effective temperature	[ucd=phys.temperature.effective]
+#Column	logg	(F5.2)	[4.4/5] Log stellar surface gravity	[ucd=phys.gravity]
+#Column	R*	(F5.2)	[0.3/0.9] Stellar radius	[ucd=phys.size.radius]
+#Column	M*	(F5.2)	[0.3/0.9] Stellar mass	[ucd=phys.mass]
+#Column	Simbad	(a6)	Simbad column added by the CDS	[ucd=meta.ref.url]
+#Column	_RA	(F9.5)	Right Ascension (J2000) from SIMBAD (not part of the original data)	[ucd=pos.eq.ra;meta.main]
+#Column	_DE	(F9.5)	Declination (J2000) from SIMBAD (not part of the original data)	[ucd=pos.eq.dec;meta.main]
+#Table	J_ApJ_822_86_table5:
+#Name: J/ApJ/822/86/table5
+#Title: Stellar properties
+#Column	_r	(F5.2)	Distance from center (297.86871+41.45557)[FK5/J2000]	[ucd=pos.angDistance]
+#Column	KIC	(I8)	KIC star number	[ucd=meta.id]
+#Column	KOI	(A4)	Kepler Object of Interest identifier	[ucd=meta.id;meta.main]
+#Column	Np	(I1)	Number of planet candidates (table 6)	[ucd=meta.ref.url]
+#Column	M*	(F5.2)	[0.1/2.6] Stellar mass	[ucd=phys.mass]
+#Column	R*	(F6.2)	[0.1/204.2] Stellar radius	[ucd=phys.size.radius]
+#Column	Teff	(I5)	[3050/12405] Stellar effective temperature	[ucd=phys.temperature.effective]
+#Column	logg	(F5.2)	[0.1/5.3] Log stellar surface gravity	[ucd=phys.gravity]
+#Column	[Fe/H]	(F5.2)	[-2.5/0.5] Stellar metallicity	[ucd=phys.abund.Z]
+#Column	logAge	(F5.2)	[9/10.2] Log stellar age	[ucd=time.age]
+#Column	Dist	(I4)	[17/2999] Stellar distance	[ucd=pos.distance;pos.heliocentric]
+#Column	Av	(F5.2)	[0/2] Extinction in the V band	[ucd=phys.absorption;em.opt.V]
+#Column	piTeff	(I4)	[3068/7945]? Hypothesis prior Teff	[ucd=stat.param]
+#Column	pilogg	(F5.2)	[0.3/5.1]? Hypothesis prior logg	[ucd=stat.param]
+#Column	pi[Fe/H]	(F5.2)	[-0.7/0.5]? Hypothesis prior [Fe/H]	[ucd=stat.param]
+#Column	Simbad	(a6)	Simbad column added by the CDS	[ucd=meta.ref.url]
+#Column	_RA	(F9.5)	Position from exoplanet archive (right ascension part)	[ucd=pos.eq.ra;meta.main]
+#Column	_DE	(F9.5)	Position from exoplanet archive (declination part)	[ucd=pos.eq.dec;meta.main]

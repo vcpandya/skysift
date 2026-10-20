@@ -1,0 +1,105 @@
+Q 0: no usable events
+Q 1 s3 ev=1 cen=(3.94,3.03) dC=3.20 dT=0.88 sig=0.62(noise-MC) nearer=target snrcen=(0.86,3.05) bright=[3, 4] ratio=-1.09 maxSNR=3.7@[3, 1] fracdepth C=600 T=-54 fit C=2018+-428 T=-9+-181
+Q 2 s0 ev=3 cen=(2.88,4.03) dC=2.38 dT=0.84 sig=0.84(noise-MC) nearer=target snrcen=(0.34,4.06) bright=[4, 3] ratio=-1.20 maxSNR=6.4@[4, 0] fracdepth C=889 T=-95 fit C=2698+-349 T=-112+-159
+Q 3 s1 ev=2 cen=(3.95,1.49) dC=3.42 dT=0.81 sig=0.89(noise-MC) nearer=target snrcen=(1.01,3.07) bright=[2, 4] ratio=-44.21 maxSNR=6.7@[3, 1] fracdepth C=1229 T=-2 fit C=2236+-288 T=-51+-82
+Q 4 s2 ev=2 cen=(3.98,1.94) dC=3.27 dT=0.39 sig=1.01(bootstrap) nearer=target snrcen=(1.01,3.18) bright=[2, 4] ratio=2.24 maxSNR=6.0@[3, 1] fracdepth C=965 T=44 fit C=1674+-244 T=85+-118
+Q 5 s3 ev=2 cen=(3.96,2.03) dC=3.40 dT=0.51 sig=0.79(noise-MC) nearer=target snrcen=(0.86,3.00) bright=[2, 4] ratio=1.24 maxSNR=4.9@[3, 1] fracdepth C=645 T=55 fit C=2059+-371 T=82+-137
+Q 6 s0 ev=2 cen=(3.11,2.87) dC=2.91 dT=0.45 sig=0.87(noise-MC) nearer=target snrcen=(0.24,4.05) bright=[3, 3] ratio=4.24 maxSNR=6.4@[4, 0] fracdepth C=1922 T=21 fit C=2777+-436 T=-9+-169
+Q 7 s1 ev=2 cen=(1.02,2.80) dC=0.30 dT=2.73 sig=1.07(noise-MC) nearer=candidate snrcen=(1.02,2.80) bright=[3, 1] ratio=-4.88 maxSNR=6.4@[3, 1] fracdepth C=1471 T=-26 fit C=2551+-340 T=-63+-107
+Q 8 s2 ev=2 cen=(3.40,2.79) dC=2.52 dT=0.67 sig=0.60(noise-MC) nearer=target snrcen=(1.12,3.06) bright=[3, 4] ratio=6.28 maxSNR=5.9@[3, 1] fracdepth C=1125 T=18 fit C=2044+-306 T=-38+-147
+Q 9 s3 ev=3 cen=(3.57,3.08) dC=2.81 dT=0.85 sig=0.60(noise-MC) nearer=target snrcen=(0.86,3.13) bright=[3, 4] ratio=3.49 maxSNR=6.3@[3, 1] fracdepth C=727 T=22 fit C=2383+-321 T=2+-68
+Q10 s0 ev=2 cen=(3.26,2.90) dC=3.03 dT=0.38 sig=0.94(bootstrap) nearer=target snrcen=(0.32,4.06) bright=[3, 3] ratio=4.12 maxSNR=6.0@[4, 0] fracdepth C=2282 T=26 fit C=3150+-400 T=-61+-120
+Q11 s1 ev=2 cen=(4.06,1.91) dC=3.35 dT=0.52 sig=1.12(noise-MC) nearer=target snrcen=(0.93,2.96) bright=[2, 4] ratio=1.66 maxSNR=8.1@[3, 1] fracdepth C=720 T=39 fit C=2280+-277 T=-64+-73
+Q12 s2 ev=2 cen=(1.06,2.94) dC=0.14 dT=2.76 sig=0.96(noise-MC) nearer=candidate snrcen=(1.06,2.94) bright=[3, 1] ratio=-4.54 maxSNR=8.6@[3, 1] fracdepth C=860 T=-20 fit C=1924+-208 T=15+-165
+Q13 s3 ev=3 cen=(1.02,2.92) dC=0.30 dT=2.60 sig=0.96(bootstrap) nearer=candidate snrcen=(1.02,2.92) bright=[3, 1] ratio=-2.58 maxSNR=7.4@[3, 1] fracdepth C=1073 T=-43 fit C=2605+-313 T=-71+-77
+Q14 s0 ev=2 cen=(3.10,4.02) dC=2.62 dT=0.75 sig=0.99(noise-MC) nearer=target snrcen=(0.31,4.00) bright=[4, 3] ratio=-3.81 maxSNR=4.5@[4, 0] fracdepth C=2312 T=-28 fit C=2869+-446 T=170+-138
+Q15 s1 ev=3 cen=(0.97,2.77) dC=0.31 dT=2.78 sig=1.05(noise-MC) nearer=candidate snrcen=(0.97,2.77) bright=[3, 1] ratio=-3.28 maxSNR=5.7@[3, 1] fracdepth C=1050 T=-28 fit C=2247+-326 T=17+-81
+Q16 s2 ev=2 cen=(0.87,2.95) dC=0.06 dT=2.95 sig=1.31(bootstrap) nearer=candidate snrcen=(0.87,2.95) bright=[3, 1] ratio=-1.68 maxSNR=4.4@[3, 1] fracdepth C=1012 T=-58 fit C=1699+-281 T=-47+-74
+Q17: no usable events
+season 0: Q[2, 6, 10, 14] ev=9 cen=(0.30,4.03) C=(0.49,4.11) T=(3.27,3.29) dC=0.20+-1.23 dT=3.05+-1.41 nearer=candidate ratio=-3.01 maxSNR=11.7@[4, 0] fracdepth C=2058+-160 T=-32+-132 fit C=2868+-201 T=12+-71
+season 1: Q[3, 7, 11, 15] ev=9 cen=(0.96,2.91) C=(0.92,3.09) T=(3.71,2.27) dC=0.19+-0.68 dT=2.82+-1.40 nearer=candidate ratio=-9.94 maxSNR=13.6@[3, 1] fracdepth C=1100+-108 T=-10+-42 fit C=2321+-152 T=-37+-42
+season 2: Q[4, 8, 12, 16] ev=8 cen=(0.99,3.03) C=(0.91,2.97) T=(3.69,2.15) dC=0.10+-0.96 dT=2.83+-1.30 nearer=candidate ratio=-3.11 maxSNR=12.7@[3, 1] fracdepth C=980+-103 T=-32+-61 fit C=1837+-126 T=-17+-55
+season 3: Q[1, 5, 9, 13] ev=9 cen=(0.89,3.08) C=(0.74,3.05) T=(3.52,2.23) dC=0.16+-1.42 dT=2.76+-1.38 nearer=candidate ratio=631.07 maxSNR=11.4@[3, 1] fracdepth C=832+-91 T=0+-71 fit C=2323+-175 T=-20+-46
+{
+ "n_quarters_total": 18,
+ "n_quarters_usable": 16,
+ "unusable_quarters": [
+  0,
+  17
+ ],
+ "n_events_used": 35,
+ "n_events_rejected": 0,
+ "n_quarters_centroid_nearer_candidate": 5,
+ "n_quarters_brightest_diff_pixel_nearer_candidate": 5,
+ "n_quarters_max_snr_pixel_nearer_candidate": 16,
+ "n_quarters_snrbox_centroid_nearer_candidate": 16,
+ "n_quarters_box3_frac_depth_candidate_gt_target_3sigma": 12,
+ "two_source_fit_depth_ppm_candidate_weighted_mean": [
+  2212.665080816463,
+  78.14270591623271
+ ],
+ "two_source_fit_depth_ppm_target_weighted_mean": [
+  -21.163134760021652,
+  25.165886070237516
+ ],
+ "n_quarters_box3_ratio_gt1": 7,
+ "median_diff_centroid_dist_to_candidate_pix": 2.7155208033585385,
+ "median_diff_centroid_dist_to_candidate_arcsec": 10.807772797366983,
+ "median_diff_centroid_dist_to_target_pix": 0.8262827481991067,
+ "median_diff_centroid_dist_to_target_arcsec": 3.2886053378324447,
+ "median_direct_centroid_minus_target_pix": 0.1382869753133194,
+ "multi_quarter_mean_offset": {
+  "candidate": {
+   "offset_EN_arcsec": [
+    -6.009042936633338,
+    -0.43483026310280515
+   ],
+   "sigma_EN_arcsec": [
+    0.9050771701962361,
+    0.13971961179715667
+   ],
+   "offset_arcsec": 6.024755129630836,
+   "offset_significance_sigma": 7.682873730987358
+  },
+  "target": {
+   "offset_EN_arcsec": [
+    5.213409829637934,
+    1.9133106338362356
+   ],
+   "sigma_EN_arcsec": [
+    0.9050771701962361,
+    0.13971961179715667
+   ],
+   "offset_arcsec": 5.553413331755187,
+   "offset_significance_sigma": 16.440709237966953
+  }
+ },
+ "seasons_nearer": {
+  "0": "candidate",
+  "1": "candidate",
+  "2": "candidate",
+  "3": "candidate"
+ },
+ "seasons_snrbox_centroid_dist_to_candidate_pix": {
+  "0": 0.19716829459382526,
+  "1": 0.18763315051341037,
+  "2": 0.10449824844902024,
+  "3": 0.16084455879423482
+ },
+ "seasons_snrbox_centroid_dist_to_target_pix": {
+  "0": 3.0533061086943705,
+  "1": 2.817730359426082,
+  "2": 2.8341234361742873,
+  "3": 2.7568708748924773
+ },
+ "seasons_max_snr": {
+  "0": 11.715182111317855,
+  "1": 13.56501191458918,
+  "2": 12.701745030074733,
+  "3": 11.409299438005549
+ },
+ "notes": [
+  "diff_centroid_* is the specified estimator (3x3 box around the brightest difference pixel by flux). Per quarter the brightest pixel is often a noise excursion in the target's core (its S/N is listed as brightest_diff_pixel_snr), so this estimator is bimodal; its bootstrap/MC covariance and the multi_quarter_mean_offset built from it are not reliable. snrbox_* uses the same 3x3 flux-weighted centroid boxed on the highest-S/N difference pixel.",
+  "two_source_fit uses a Gaussian PSF (not the Kepler PRF) with both stars at their Gaia/WCS positions; it is an approximate check, implied depth = fitted difference amplitude / fitted direct amplitude of the same star."
+ ]
+}

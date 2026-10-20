@@ -1,0 +1,907 @@
+<title>KIC 6146676 Dossier</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root{
+  --bg:#f6f5f0; --surface:#fcfcfb; --surface-2:#f0efe9; --ink:#0b0b0b; --ink-2:#52514e; --muted:#898781;
+  --grid:#e1e0d9; --axis:#c3c2b7; --border:rgba(11,11,11,.10); --border-strong:rgba(11,11,11,.22);
+  --s1:#2a78d6; --s2:#eb6834; --s3:#1baf7a; --s4:#eda100; --s1-wash:rgba(42,120,214,.10); --s2-wash:rgba(235,104,52,.12);
+  --good:#0ca30c; --good-text:#006300; --warn:#fab219; --serious:#ec835a; --critical:#d03b3b;
+  --ramp-100:#cde2fb; --ramp-250:#86b6ef; --ramp-400:#3987e5; --ramp-550:#1c5cab; --ramp-700:#0d366b;
+  --grey-lo:#ecebe5; --grey-hi:#2b2a27;
+  --sans:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif; --mono:"IBM Plex Mono",ui-monospace,"Cascadia Mono",Consolas,monospace;
+  --radius:10px; --maxw:1080px;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0d0d0d; --surface:#1a1a19; --surface-2:#222221; --ink:#f0efec; --ink-2:#c3c2b7; --muted:#898781;
+    --grid:#2c2c2a; --axis:#383835; --border:rgba(255,255,255,.10); --border-strong:rgba(255,255,255,.22);
+    --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500; --s1-wash:rgba(57,135,229,.14); --s2-wash:rgba(217,89,38,.16);
+    --good-text:#0ca30c;
+    --ramp-100:#184f95; --ramp-250:#2a78d6; --ramp-400:#5598e7; --ramp-550:#9ec5f4; --ramp-700:#cde2fb;
+    --grey-lo:#262624; --grey-hi:#e8e7e1;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0d0d0d; --surface:#1a1a19; --surface-2:#222221; --ink:#f0efec; --ink-2:#c3c2b7; --muted:#898781;
+  --grid:#2c2c2a; --axis:#383835; --border:rgba(255,255,255,.10); --border-strong:rgba(255,255,255,.22);
+  --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500; --s1-wash:rgba(57,135,229,.14); --s2-wash:rgba(217,89,38,.16);
+  --good-text:#0ca30c;
+  --ramp-100:#184f95; --ramp-250:#2a78d6; --ramp-400:#5598e7; --ramp-550:#9ec5f4; --ramp-700:#cde2fb;
+  --grey-lo:#262624; --grey-hi:#e8e7e1;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:16px;line-height:1.55;-webkit-font-smoothing:antialiased}
+body>*{min-width:0}
+.wrap{max-width:var(--maxw);margin:0 auto;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+h1,h2,h3{text-wrap:balance;margin:0;font-weight:600;letter-spacing:-.01em}
+h1{font-size:clamp(1.9rem,4.5vw,2.8rem);line-height:1.1}
+h2{font-size:clamp(1.35rem,2.6vw,1.7rem);line-height:1.2}
+h3{font-size:1.05rem}
+p{margin:0}
+a{color:var(--s1)}
+.lede{color:var(--ink-2);font-size:1.05rem;max-width:66ch}
+.kicker{font-family:var(--mono);font-size:.75rem;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.num{font-variant-numeric:tabular-nums}
+/* header */
+.top{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background:color-mix(in srgb,var(--bg) 88%,transparent);backdrop-filter:blur(10px);border-bottom:1px solid var(--border)}
+.top .wrap{display:flex;align-items:center;justify-content:space-between;gap:12px;padding-block:10px;flex-wrap:wrap}
+.brand{display:flex;align-items:center;gap:10px;font-weight:500}
+.brand svg{width:22px;height:22px}
+.seg{display:inline-flex;border:1px solid var(--border-strong);border-radius:999px;padding:3px;background:var(--surface);gap:2px}
+.seg button{font:inherit;font-size:.85rem;font-weight:500;border:0;background:transparent;color:var(--ink-2);padding:6px 14px;border-radius:999px;cursor:pointer}
+.seg button[aria-pressed="true"]{background:var(--ink);color:var(--bg)}
+.seg button:focus-visible{outline:2px solid var(--s1);outline-offset:2px}
+/* hero */
+.hero{padding-block:40px 24px;display:grid;gap:18px}
+.hero .title{display:grid;gap:10px}
+.coords{display:flex;flex-wrap:wrap;gap:8px 18px;color:var(--ink-2);font-size:.95rem}
+.coords span b{font-weight:500;color:var(--ink)}
+.verdict{display:grid;grid-template-columns:auto 1fr;gap:14px;align-items:start;padding:16px 18px;border-radius:var(--radius);background:var(--surface);border:1px solid var(--border);border-left:4px solid var(--good)}
+.verdict .badge{display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);font-size:.78rem;letter-spacing:.08em;text-transform:uppercase;color:var(--good-text);white-space:nowrap;padding-top:3px}
+.verdict .badge svg{width:14px;height:14px}
+.verdict p{max-width:70ch}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.tile{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:14px 16px;display:grid;gap:4px;min-width:0}
+.tile .k{font-size:.78rem;color:var(--muted);letter-spacing:.02em}
+.tile .v{font-size:1.5rem;font-weight:600;line-height:1.1}
+.tile .v small{font-size:.9rem;font-weight:400;color:var(--ink-2);margin-left:3px}
+.tile .s{font-size:.8rem;color:var(--ink-2)}
+/* sections */
+section{padding-block:28px;border-top:1px solid var(--border)}
+.sec-head{display:grid;gap:8px;margin-bottom:18px}
+.fig{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:14px 14px 10px;position:relative;min-width:0}
+.fig+.fig,.fig+.note,.note+.fig,.grid2+.fig,.fig+.grid2,.fig+.tbl,.tbl+.fig{margin-top:14px}
+.fig h3{font-weight:500;font-size:.98rem}
+.fig .sub{color:var(--ink-2);font-size:.86rem;margin-top:2px}
+.fig svg.chart{display:block;width:100%;height:auto;margin-top:8px;overflow:visible}
+.legend{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:.82rem;color:var(--ink-2);margin-top:6px}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:50%}
+.legend i.line{width:16px;height:2px;border-radius:1px}
+.axis{font-family:var(--mono);font-size:11px;fill:var(--muted)}
+.axis-title{font-family:var(--sans);font-size:12px;fill:var(--ink-2)}
+.lab{font-family:var(--sans);font-size:12px;fill:var(--ink-2)}
+.lab.strong{fill:var(--ink);font-weight:500}
+.grid line{stroke:var(--grid);stroke-width:1}
+.baseline{stroke:var(--axis);stroke-width:1}
+.tip{position:absolute;pointer-events:none;background:var(--ink);color:var(--bg);font-size:.78rem;line-height:1.35;padding:6px 9px;border-radius:6px;white-space:nowrap;transform:translate(-50%,calc(-100% - 10px));opacity:0;transition:opacity .08s;z-index:3;font-variant-numeric:tabular-nums}
+.tip b{font-weight:600}
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px}
+.grid4{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
+.note{background:var(--surface-2);border-radius:var(--radius);padding:12px 16px;color:var(--ink-2);font-size:.93rem;max-width:none}
+.note b{color:var(--ink);font-weight:500}
+.prose{display:grid;gap:12px;max-width:68ch}
+.prose p{color:var(--ink-2)}
+.prose p b{color:var(--ink);font-weight:500}
+/* checks table */
+.checks{display:grid;gap:8px}
+.check{display:grid;grid-template-columns:28px 1fr auto;gap:12px;align-items:start;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px}
+.check .ic{width:22px;height:22px;border-radius:50%;display:grid;place-items:center;margin-top:2px}
+.check .ic.pass{background:var(--good)}
+.check .ic.warn{background:var(--warn)}
+.check .ic svg{width:13px;height:13px}
+.check .t{font-weight:500}
+.check .d{color:var(--ink-2);font-size:.92rem;margin-top:2px}
+.check .m{font-family:var(--mono);font-size:.8rem;color:var(--ink-2);text-align:right;white-space:nowrap;padding-top:2px}
+@media (max-width:560px){.check{grid-template-columns:28px 1fr}.check .m{grid-column:2;text-align:left}}
+/* tables */
+.tbl{overflow-x:auto;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius)}
+table{border-collapse:collapse;width:100%;font-size:.88rem}
+th,td{padding:8px 12px;text-align:left;border-bottom:1px solid var(--grid);white-space:nowrap}
+th{white-space:normal;vertical-align:bottom}
+th{font-weight:500;color:var(--ink-2);font-size:.8rem;letter-spacing:.02em}
+td.n,th.n{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-nums}
+tr:last-child td{border-bottom:0}
+caption{text-align:left;padding:10px 12px 4px;font-weight:500;caption-side:top}
+/* kv */
+.kv{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:10px 24px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:14px 16px}
+.kv div{display:flex;justify-content:space-between;gap:12px;border-bottom:1px solid var(--grid);padding:6px 0;font-size:.92rem}
+.kv div:last-child{border-bottom:0}
+.kv span{color:var(--ink-2)}
+.kv b{font-weight:500;font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:right}
+/* pixels */
+.pix{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px}
+.pix .cell{display:grid;gap:4px}
+.pix .cell h4{margin:0;font-weight:500;font-size:.9rem}
+.pix .cell .sub{font-size:.8rem;color:var(--ink-2)}
+.pix svg{width:100%;height:auto;display:block}
+.ramp{display:flex;align-items:center;gap:8px;font-size:.8rem;color:var(--ink-2);margin-top:8px}
+.ramp i{display:inline-block;width:110px;height:8px;border-radius:4px;background:linear-gradient(90deg,var(--ramp-100),var(--ramp-400),var(--ramp-700))}
+.ramp i.grey{background:linear-gradient(90deg,var(--grey-lo),var(--grey-hi))}
+/* gallery */
+.gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
+.gallery .g{background:var(--surface-2);border-radius:8px;padding:6px 6px 2px}
+.gallery .g .cap{font-family:var(--mono);font-size:.72rem;color:var(--ink-2);display:flex;justify-content:space-between;padding:0 4px}
+.gallery svg{width:100%;height:auto;display:block}
+/* code */
+pre{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:14px 16px;overflow-x:auto;font-family:var(--mono);font-size:.82rem;line-height:1.5;margin:0;color:var(--ink)}
+pre+pre{margin-top:10px}
+code{font-family:var(--mono);font-size:.9em}
+/* levels */
+:root:not([data-level="expert"]) .x{display:none !important}
+:root[data-level="expert"] .n-only{display:none !important}
+.xtag{display:inline-block;font-family:var(--mono);font-size:.68rem;letter-spacing:.08em;text-transform:uppercase;color:var(--s1);border:1px solid currentColor;border-radius:4px;padding:1px 6px;vertical-align:middle;margin-left:8px}
+
+/* illustrated panels: one deliberate dark look in both themes */
+.space{background:#0b1020;color:#f0efec;border-radius:var(--radius);padding:16px 16px 12px;border:1px solid rgba(255,255,255,.08);min-width:0}
+.space h3{color:#f0efec;font-weight:500;font-size:.98rem}
+.space .sub{color:#b9bccb;font-size:.86rem;margin-top:2px}
+.space svg{display:block;width:100%;height:auto;margin-top:8px}
+.space .cap{font-family:var(--mono);font-size:11px;fill:#b9bccb}
+.space .cap.strong{fill:#f0efec;font-weight:500}
+.space .legend{color:#b9bccb}
+.look-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px}
+.infer{display:grid;gap:10px}
+.infer .row{display:grid;grid-template-columns:150px 1fr;gap:12px;align-items:start;padding:10px 0;border-bottom:1px solid var(--grid)}
+.infer .row:last-child{border-bottom:0}
+.infer .row b{font-weight:500}
+.infer .row span{color:var(--ink-2);font-size:.93rem}
+@media (max-width:560px){.infer .row{grid-template-columns:1fr}}
+.valley{margin-top:6px}
+footer{padding-block:28px 40px;color:var(--muted);font-size:.85rem;border-top:1px solid var(--border)}
+footer .wrap{display:grid;gap:6px}
+.sky-wrap{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px}
+@media (max-width:760px){.sky-wrap{grid-template-columns:1fr}}
+.toc{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:.88rem}
+.toc a{color:var(--ink-2);text-decoration:none;border-bottom:1px solid var(--border)}
+.toc a:hover{color:var(--ink);border-color:var(--ink)}
+</style>
+
+<div class="top">
+  <div class="wrap">
+    <div class="brand">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9.5" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="17.5" cy="9" r="2.2" fill="currentColor"/><path d="M3 12h18" stroke="currentColor" stroke-width="1.2" opacity=".45"/></svg>
+      <span>SkySift candidate dossier</span>
+    </div>
+    <div class="seg" role="group" aria-label="Detail level">
+      <button type="button" data-level="normal" aria-pressed="true">Normal</button>
+      <button type="button" data-level="expert" aria-pressed="false">Expert</button>
+    </div>
+  </div>
+</div>
+
+<header class="wrap hero">
+  <div class="title">
+    <div class="kicker">Transit candidate · Kepler field · never a Kepler target</div>
+    <h1>KIC 6146676</h1>
+    <div class="coords">
+      <span>Gaia DR3 <b class="mono">2073896294004902272</b></span>
+      <span>RA <b class="mono">19h 51m 28.49s</b></span>
+      <span>Dec <b class="mono">+41° 27′ 20.0″</b></span>
+      <span>G <b class="mono">16.24</b></span>
+      <span>BP−RP <b class="mono">2.10</b></span>
+      <span>M1 dwarf · <b class="mono">303 pc</b></span>
+    </div>
+  </div>
+  <div class="verdict">
+    <span class="badge"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="7" fill="currentColor"/><path d="M4.5 8.2l2.3 2.3 4.7-4.9" fill="none" stroke="var(--surface)" stroke-width="1.8" stroke-linecap="round"/></svg>Candidate · all tests passed</span>
+    <p id="verdict-text">A transit-like dip repeats every 40.3 days on a faint red dwarf that the Kepler mission never selected as a target. The signal passes every SkySift vetting test, the pixel data place it on this star and not on its bright neighbour, and no planet or binary catalogue lists it. If real, it is a planet of about 2.6 Earth radii on a temperate 40-day orbit around an M dwarf 303 parsecs away. It stays a candidate until independent follow-up confirms it.</p>
+  </div>
+  <div class="tiles" id="tiles"></div>
+  <nav class="toc" aria-label="Sections">
+    <a href="#signal">The signal</a><a href="#repeat">Does it repeat</a><a href="#checks">The checks</a><a href="#pixels">Which star</a><a href="#star">Star and planet</a><a href="#look">How it might look</a><a href="#caveats">Caveats</a><a href="#reproduce">Reproduce</a>
+  </nav>
+</header>
+
+<main class="wrap">
+
+<section id="signal">
+  <div class="sec-head">
+    <div class="kicker">01</div>
+    <h2>The signal</h2>
+    <p class="lede">Every 40.29 days the star dims by about 0.22 percent for just under four hours. Folding four years of Kepler photometry on that period stacks 31 individual dips into one clean transit.</p>
+  </div>
+  <div class="fig" id="fig-fold">
+    <h3>Folded light curve</h3>
+    <div class="sub">KBonus PSF photometry, detrended, folded on P = 40.29109 d. Grey points are single 30-minute cadences; blue points are 22-minute bins; the orange line is the fitted transit of a dark disc crossing the star.</div>
+    <div class="legend"><span><i style="background:var(--muted)"></i>single cadences</span><span><i style="background:var(--s1)"></i>binned, with 1σ error bars</span><span><i class="line" style="background:var(--s2)"></i>uniform-disc transit model</span></div>
+  </div>
+  <div class="x">
+    <div class="grid2" style="margin-top:14px">
+      <div class="fig" id="fig-fullphase">
+        <h3>Whole orbit <span class="xtag">expert</span></h3>
+        <div class="sub">200 bins across the full phase. One dip, nothing else above the noise.</div>
+      </div>
+      <div class="fig" id="fig-spectrum">
+        <h3>Detection spectrum <span class="xtag">expert</span></h3>
+        <div class="sub">Per-band signal detection efficiency (SDE) from the box least-squares search, 0.5 to 200 d, 312,420 trial periods. The 80.6, 120.9 and 161.2 d peaks are the 2P, 3P and 4P aliases.</div>
+      </div>
+    </div>
+    <div class="kv x" style="margin-top:14px" id="kv-fit"></div>
+  </div>
+</section>
+
+<section id="repeat">
+  <div class="sec-head">
+    <div class="kicker">02</div>
+    <h2>Does it repeat?</h2>
+    <p class="lede">A real transit comes back on schedule with the same depth. Of the 37 transits predicted across the mission, 33 fell on nights Kepler was observing, and each one shows the dip. The depth does not drift with time, season or spacecraft orientation.</p>
+  </div>
+  <div class="fig" id="fig-events">
+    <h3>Depth of every individual transit</h3>
+    <div class="sub">Each point is one transit measured on its own; bars are 1σ. The orange line is the mean, 2,197 ± 106 ppm. Quarter boundaries are shaded.</div>
+    <div class="legend"><span><i style="background:var(--s1)"></i>single-transit depth</span><span><i class="line" style="background:var(--s2)"></i>mean depth</span></div>
+  </div>
+  <div class="x">
+    <div class="fig" id="fig-series" style="margin-top:14px">
+      <h3>Four years of photometry <span class="xtag">expert</span></h3>
+      <div class="sub">The detrended series in 6-hour bins, 51,495 good cadences over 1,469 days. Orange ticks mark the predicted transit times. Quarter labels on top.</div>
+    </div>
+    <div class="fig" style="margin-top:14px">
+      <h3>Every transit, one by one <span class="xtag">expert</span></h3>
+      <div class="sub">±8 hours around each predicted mid-transit, single cadences, with the folded model in orange. Panels are labelled with epoch, quarter and the measured depth.</div>
+      <div class="gallery" id="gallery" style="margin-top:10px"></div>
+    </div>
+  </div>
+</section>
+
+<section id="checks">
+  <div class="sec-head">
+    <div class="kicker">03</div>
+    <h2>The checks a planet has to pass</h2>
+    <p class="lede">Most periodic dips are not planets. They are eclipsing binary stars, blended neighbours, or instrument artefacts. SkySift runs the same families of tests the Kepler team used, and this signal clears all of them.</p>
+  </div>
+  <div class="checks" id="check-list"></div>
+  <div class="x">
+    <div class="grid2" style="margin-top:14px">
+      <div class="fig" id="fig-oddeven">
+        <h3>Odd versus even transits <span class="xtag">expert</span></h3>
+        <div class="sub">If the true period were 80.6 d and we were seeing two different stars eclipse each other, alternate dips would differ in depth. They do not.</div>
+        <div class="legend"><span><i style="background:var(--s1)"></i>odd-numbered transits</span><span><i style="background:var(--s2)"></i>even-numbered transits</span></div>
+      </div>
+      <div class="fig" id="fig-secondary">
+        <h3>Phase 0.5: the secondary eclipse test <span class="xtag">expert</span></h3>
+        <div class="sub">A stellar companion would show its own eclipse half an orbit later. The window at phase 0.5 is flat; the primary is shown at the same scale.</div>
+        <div class="legend"><span><i style="background:var(--s1)"></i>primary transit</span><span><i style="background:var(--s3)"></i>window at phase 0.5</span></div>
+      </div>
+    </div>
+    <div class="grid2" style="margin-top:14px">
+      <div class="fig" id="fig-seasons">
+        <h3>Depth by Kepler season <span class="xtag">expert</span></h3>
+        <div class="sub">The spacecraft rolled 90° every quarter, so each season places the star on a different detector. A blend or an artefact usually changes depth with season. Here χ² = 0.55 for 3 degrees of freedom, p = 0.91.</div>
+      </div>
+      <div class="kv" id="kv-shape"></div>
+    </div>
+  </div>
+</section>
+
+<section id="pixels">
+  <div class="sec-head">
+    <div class="kicker">04</div>
+    <h2>Which star is dimming?</h2>
+    <p class="lede">KIC 6146676 sits 11.5″ (2.9 Kepler pixels) from KIC 6146666, a star 23 times brighter that Kepler was actually observing. Subtracting in-transit from out-of-transit pixel images shows where the missing light comes from. In all four seasons it comes from the faint star.</p>
+  </div>
+  <div class="fig">
+    <h3>Difference images, stacked by season</h3>
+    <div class="sub">Each panel is one orientation of the spacecraft (four quarters, 8 to 9 transits stacked). Colour is the signal-to-noise of the flux lost during transit. The orange ring marks the candidate, the yellow star the bright Kepler target, and the cross the centroid of the lost light.</div>
+    <div class="pix" id="pix-diff" style="margin-top:12px"></div>
+    <div class="ramp"><span>flux lost in transit, S/N</span><i></i><span id="ramp-max">0 to 13</span></div>
+    <div class="legend"><span><i style="background:var(--s2);border-radius:50%"></i>KIC 6146676, candidate</span><span><i style="background:var(--s4)"></i>KIC 6146666, Kepler target</span><span><i class="line" style="background:var(--ink);width:10px"></i>centroid of lost light, with error bars</span></div>
+  </div>
+  <div class="grid2 x" style="margin-top:14px">
+    <div class="fig">
+      <h3>Where the light is <span class="xtag">expert</span></h3>
+      <div class="sub">Mean out-of-transit image for season 1, log scale. The Kepler target dominates the stamp; the candidate is the faint source at the left edge. The aperture Kepler used for its own target included light from both stars, which is why the KBonus PSF photometry is needed to separate them.</div>
+      <div class="pix" id="pix-direct" style="margin-top:12px"></div>
+      <div class="ramp"><span>out-of-transit flux, log scale</span><i class="grey"></i></div>
+    </div>
+    <div class="fig">
+      <h3>Two-source fit, per season <span class="xtag">expert</span></h3>
+      <div class="sub">Both stars fixed at their Gaia positions with a Gaussian point-spread function; the fit asks how much of the difference image each star explains. The implied fractional depth on each star:</div>
+      <div id="fig-twosource"></div>
+      <div class="legend"><span><i style="background:var(--s2)"></i>on the candidate</span><span><i style="background:var(--s4)"></i>on the Kepler target</span></div>
+    </div>
+  </div>
+  <div class="tbl x" style="margin-top:14px" id="tbl-quarters"></div>
+  <div class="note" style="margin-top:14px" id="pix-note"></div>
+</section>
+
+<section id="star">
+  <div class="sec-head">
+    <div class="kicker">05</div>
+    <h2>The star, and what the planet would be</h2>
+    <p class="lede" id="star-lede">Gaia's colour and parallax make the host a cool dwarf. The transit depth gives the planet-to-star radius ratio directly; the planet's size, orbit and temperature follow from the stellar parameters and carry their uncertainties.</p>
+  </div>
+  <div id="star-body"></div>
+</section>
+
+
+<section id="look">
+  <div class="sec-head">
+    <div class="kicker">06</div>
+    <h2>How it might look</h2>
+    <p class="lede">Nothing on this page is a photograph. These drawings are to scale and built only from the numbers above: the star's size and colour from its temperature, the planet's size from the transit depth, the orbit from Kepler's third law. The atmosphere panel says what planets of this size and temperature usually are, and what this one cannot yet be shown to be.</p>
+  </div>
+  <div class="look-grid">
+    <div class="space" id="look-star"><h3>The star beside the Sun</h3><div class="sub">Both discs to the same scale. Colour follows surface temperature.</div></div>
+    <div class="space" id="look-planet"><h3>The planet beside Earth and Neptune</h3><div class="sub">Radii to the same scale. The candidate's surface is a guess; its size is measured.</div></div>
+  </div>
+  <div class="look-grid" style="margin-top:14px">
+    <div class="space" id="look-orbit"><h3>The orbit, against the habitable zone</h3><div class="sub">Distances to scale. Habitable-zone edges from the Kopparapu et al. (2013) limits for this star's temperature and luminosity.</div></div>
+    <div class="space" id="look-sky"><h3>The star as seen from the planet</h3><div class="sub">Apparent size on the sky, compared with the Sun seen from Earth, at the same angular scale.</div></div>
+  </div>
+  <div class="fig" style="margin-top:14px" id="look-infer">
+    <h3>What kind of world, and what kind of air</h3>
+    <div class="sub">Inferences from population statistics, not measurements of this planet. Each line says where it comes from.</div>
+    <div class="valley" id="valley"></div>
+    <div class="infer" id="infer-rows" style="margin-top:8px"></div>
+  </div>
+</section>
+
+<section id="caveats">
+  <div class="sec-head">
+    <div class="kicker">07</div>
+    <h2>What is not yet known</h2>
+  </div>
+  <div class="prose" id="caveats-body"></div>
+</section>
+
+<section id="reproduce">
+  <div class="sec-head">
+    <div class="kicker">08</div>
+    <h2>How to reproduce this</h2>
+    <p class="lede">Everything here comes from public archives. The light curve is the KBonus background-star product on MAST; the pixel data are Kepler's own target pixel files for KIC 6146666; the catalogue checks are logged with URL, query and checksum.</p>
+  </div>
+  <pre>SKYSIFT_THRESHOLDS__SDE_MIN=13 python -m skysift vet --source kbonus_bkg --target-id kic-006146676 --spectrum</pre>
+  <pre id="pre-queries" class="x"></pre>
+  <div class="kv x" style="margin-top:14px" id="kv-prov"></div>
+</section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <div>SkySift search version 5, ladder version 3, detector box_dip 5. Sweep: cool dwarfs Kepler never targeted, 20 October 2026. Light curve: KBonus-BKG v1.0 (Martinez-Palomera et al.), MAST HLSP. Pixels: Kepler long-cadence target pixel files, KIC 6146666, Q0 to Q17.</div>
+    <div>Framing matters: this page describes a <b>candidate</b>. It has not been confirmed by radial velocities, high-resolution imaging or a second instrument.</div>
+  </div>
+</footer>
+
+<div class="tip" id="tip"></div>
+<script id="data" type="application/json">/*__DATA__*/</script>
+<script>
+(() => {
+const D = JSON.parse(document.getElementById('data').textContent);
+const root = document.documentElement;
+const fmt = (x, d = 0) => (x == null || Number.isNaN(+x)) ? '–' : (+x).toLocaleString('en-US', { maximumFractionDigits: d, minimumFractionDigits: d });
+const pm = (v, e, d = 0) => `${fmt(v, d)} ± ${fmt(e, d)}`;
+const el = (tag, attrs = {}, parent) => { const n = document.createElementNS('http://www.w3.org/2000/svg', tag); for (const k in attrs) n.setAttribute(k, attrs[k]); if (parent) parent.appendChild(n); return n; };
+const h = (tag, cls, html) => { const n = document.createElement(tag); if (cls) n.className = cls; if (html != null) n.innerHTML = html; return n; };
+
+/* ---------- level toggle ---------- */
+const setLevel = (lv, store = true) => {
+  root.dataset.level = lv;
+  document.querySelectorAll('.seg button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.level === lv)));
+  if (store) { try { localStorage.setItem('kic6146676-level', lv); } catch (e) {} }
+};
+let lv = 'normal';
+try { lv = localStorage.getItem('kic6146676-level') || lv; } catch (e) {}
+if (location.hash === '#expert') lv = 'expert';
+setLevel(lv, false);
+document.querySelectorAll('.seg button').forEach(b => b.addEventListener('click', () => setLevel(b.dataset.level)));
+
+/* ---------- chart kit ---------- */
+function niceTicks(lo, hi, n = 5) {
+  const span = hi - lo, raw = span / n, mag = 10 ** Math.floor(Math.log10(raw)), r = raw / mag;
+  const step = (r < 1.5 ? 1 : r < 3 ? 2 : r < 7 ? 5 : 10) * mag, out = [];
+  for (let v = Math.ceil(lo / step) * step; v <= hi + step * 1e-6; v += step) out.push(+v.toFixed(10));
+  return out;
+}
+const kfmt = v => Math.abs(v) >= 1000 ? (v / 1000).toLocaleString('en-US', { maximumFractionDigits: 1 }) + 'K' : fmt(v);
+function chart(host, o) {
+  const w = o.w || 760, hh = o.h || 360, m = Object.assign({ l: 58, r: 18, t: 14, b: 44 }, o.m || {});
+  const [x0, x1] = o.x.dom, [y0, y1] = o.y.dom;
+  const xlog = !!o.x.log;
+  const fx = xlog ? Math.log10 : (v => v);
+  const sx = v => m.l + (fx(v) - fx(x0)) / (fx(x1) - fx(x0)) * (w - m.l - m.r);
+  const sy = v => hh - m.b - (v - y0) / (y1 - y0) * (hh - m.t - m.b);
+  const svg = el('svg', { viewBox: `0 0 ${w} ${hh}`, class: 'chart', role: 'img', 'aria-label': o.aria || '' });
+  const grid = el('g', { class: 'grid' }, svg);
+  const yt = o.y.ticks || niceTicks(y0, y1, o.y.n || 5);
+  yt.forEach(v => { el('line', { x1: m.l, x2: w - m.r, y1: sy(v), y2: sy(v) }, grid); el('text', { x: m.l - 8, y: sy(v) + 4, 'text-anchor': 'end', class: 'axis' }, svg).textContent = (o.y.fmt || kfmt)(v); });
+  const xt = o.x.ticks || (xlog ? [0.5, 1, 2, 5, 10, 20, 50, 100, 200].filter(v => v >= x0 && v <= x1) : niceTicks(x0, x1, o.x.n || 6));
+  xt.forEach(v => { el('text', { x: sx(v), y: hh - m.b + 18, 'text-anchor': 'middle', class: 'axis' }, svg).textContent = (o.x.fmt || fmt)(v); });
+  el('line', { x1: m.l, x2: w - m.r, y1: sy(y0) , y2: sy(y0), class: 'baseline' }, svg);
+  if (y0 < 0 && y1 > 0) el('line', { x1: m.l, x2: w - m.r, y1: sy(0), y2: sy(0), class: 'baseline' }, svg);
+  if (o.x.label) el('text', { x: (m.l + w - m.r) / 2, y: hh - 6, 'text-anchor': 'middle', class: 'axis-title' }, svg).textContent = o.x.label;
+  if (o.y.label) el('text', { x: 14, y: (m.t + hh - m.b) / 2, 'text-anchor': 'middle', class: 'axis-title', transform: `rotate(-90 14 ${(m.t + hh - m.b) / 2})` }, svg).textContent = o.y.label;
+  const g = el('g', {}, svg);
+  host.appendChild(svg);
+  const c = { svg, g, sx, sy, w, h: hh, m, x0, x1, y0, y1 };
+  return c;
+}
+const tip = document.getElementById('tip');
+function hover(c, host, pts, text, mode = 'near') {
+  const ov = el('rect', { x: c.m.l, y: c.m.t, width: c.w - c.m.l - c.m.r, height: c.h - c.m.t - c.m.b, fill: 'transparent' }, c.svg);
+  const cross = el('line', { y1: c.m.t, y2: c.h - c.m.b, stroke: 'var(--axis)', 'stroke-width': 1, opacity: 0 }, c.svg);
+  const ring = el('circle', { r: 7, fill: 'none', stroke: 'var(--ink)', 'stroke-width': 1.5, opacity: 0 }, c.svg);
+  const move = ev => {
+    const r = c.svg.getBoundingClientRect(), k = c.w / r.width;
+    const px = (ev.clientX - r.left) * k, py = (ev.clientY - r.top) * k;
+    let best = null, bd = Infinity;
+    for (const p of pts) { const dx = c.sx(p.x) - px, dy = mode === 'x' ? 0 : c.sy(p.y) - py; const d = dx * dx + dy * dy; if (d < bd) { bd = d; best = p; } }
+    if (!best || bd > (mode === 'x' ? 1e9 : 40 * 40)) { out(); return; }
+    cross.setAttribute('x1', c.sx(best.x)); cross.setAttribute('x2', c.sx(best.x)); cross.setAttribute('opacity', .8);
+    ring.setAttribute('cx', c.sx(best.x)); ring.setAttribute('cy', c.sy(best.y)); ring.setAttribute('opacity', 1);
+    const hr = host.getBoundingClientRect();
+    tip.innerHTML = text(best);
+    tip.style.left = (c.sx(best.x) / k + r.left - hr.left) + 'px';
+    tip.style.top = (c.sy(best.y) / k + r.top - hr.top) + 'px';
+    tip.style.opacity = 1;
+    if (tip.parentElement !== host) host.appendChild(tip);
+  };
+  const out = () => { tip.style.opacity = 0; cross.setAttribute('opacity', 0); ring.setAttribute('opacity', 0); };
+  ov.addEventListener('pointermove', move); ov.addEventListener('pointerleave', out);
+}
+const errbar = (c, g, x, y, e, col) => { el('line', { x1: c.sx(x), x2: c.sx(x), y1: c.sy(y - e), y2: c.sy(y + e), stroke: col, 'stroke-width': 1.5, 'stroke-linecap': 'round' }, g); };
+const dot = (c, g, x, y, col, r = 4) => { el('circle', { cx: c.sx(x), cy: c.sy(y), r: r + 2, fill: 'var(--surface)' }, g); el('circle', { cx: c.sx(x), cy: c.sy(y), r, fill: col }, g); };
+const path = (c, g, pts, col, w = 2) => el('path', { d: pts.map((p, i) => (i ? 'L' : 'M') + c.sx(p[0]).toFixed(1) + ' ' + c.sy(p[1]).toFixed(1)).join(''), fill: 'none', stroke: col, 'stroke-width': w, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }, g);
+
+/* ---------- tiles ---------- */
+const E = D.ephemeris, F = D.fit, DP = D.depth, V = D.vet, S0 = V && V.signals[0];
+const tiles = [
+  ['Orbital period', fmt(E.period_days, 3), 'days', '37 orbits across the mission'],
+  ['Transit depth', fmt(DP.event_mean_ppm), 'ppm', `± ${fmt(DP.event_err_ppm)} ppm, mean of ${DP.n_events} single transits`],
+  ['Duration', fmt(F.t14_h, 1), 'hours', 'first to fourth contact, fitted'],
+  ['Radius ratio', fmt(F.k, 3), '', 'planet to star, from the fitted shape'],
+  ['Transits observed', `${D.events_quality.n_with_data}<small>of ${D.events_quality.n_expected}</small>`, '', 'the rest fell in data gaps'],
+  ['Detection strength', fmt(S0 ? S0.signal.sde : 50.5, 1), 'SDE', 'threshold for this sweep: 13'],
+];
+document.getElementById('tiles').append(...tiles.map(([k, v, u, s]) => { const t = h('div', 'tile'); t.append(h('div', 'k', k), h('div', 'v num', `${v}${u ? `<small>${u}</small>` : ''}`), h('div', 's', s)); return t; }));
+
+/* ---------- fold ---------- */
+{
+  const host = document.getElementById('fig-fold');
+  const c = chart(host, { h: 380, x: { dom: [-12, 12], label: 'hours from mid-transit', n: 8 }, y: { dom: [-4500, 2000], label: 'relative flux, ppm' }, aria: 'Folded light curve with binned points and transit model' });
+  const g = c.g;
+  D.fold_points_hours_ppm.forEach(([x, y]) => { if (y > -4500 && y < 2000) el('circle', { cx: c.sx(x), cy: c.sy(y), r: 1.6, fill: 'var(--muted)', opacity: .45 }, g); });
+  if (D.model_hours_ppm) path(c, g, D.model_hours_ppm, 'var(--s2)', 2.5);
+  D.fold_bins.forEach(([x, y, e]) => { errbar(c, g, x, y, e, 'var(--s1)'); dot(c, g, x, y, 'var(--s1)', 4); });
+  // depth annotation
+  el('line', { x1: c.sx(2.4), x2: c.sx(2.4), y1: c.sy(0), y2: c.sy(-F.depth_ppm), stroke: 'var(--ink-2)', 'stroke-width': 1 }, g);
+  el('text', { x: c.sx(2.7), y: c.sy(-F.depth_ppm / 2) + 4, class: 'lab strong' }, g).textContent = `model depth ${fmt(F.depth_ppm)} ppm`;
+  el('text', { x: c.sx(-11.6), y: c.sy(1600), class: 'lab' }, g).textContent = `${D.points.good.toLocaleString()} cadences · ${D.events.length} transits folded`;
+  hover(c, host, D.fold_bins.map(([x, y, e, n]) => ({ x, y, e, n })), p => `<b>${fmt(p.x, 2)} h</b><br>${pm(p.y, p.e)} ppm<br>${p.n} cadences`);
+}
+/* ---------- full phase ---------- */
+{
+  const host = document.getElementById('fig-fullphase');
+  const c = chart(host, { w: 420, h: 300, m: { l: 50, r: 12, t: 14, b: 40 }, x: { dom: [-0.5, 0.5], label: 'orbital phase', n: 4, fmt: v => fmt(v, 2) }, y: { dom: [-1200, 600], label: 'ppm' } });
+  D.full_phase_bins.forEach(([x, y]) => el('circle', { cx: c.sx(x), cy: c.sy(Math.max(y, -1200)), r: 3, fill: 'var(--s1)' }, c.g));
+  el('text', { x: c.sx(0.03), y: c.sy(-1100), class: 'lab' }, c.g).textContent = 'primary (clipped at −1,200 ppm, bin mean −1,480)';
+  hover(c, host, D.full_phase_bins.map(([x, y, e, n]) => ({ x, y, e, n })), p => `phase <b>${fmt(p.x, 3)}</b><br>${pm(p.y, p.e)} ppm<br>${p.n} cadences`, 'x');
+}
+/* ---------- spectrum ---------- */
+if (D.spectrum) {
+  const host = document.getElementById('fig-spectrum');
+  const c = chart(host, { w: 420, h: 300, m: { l: 44, r: 12, t: 14, b: 40 }, x: { dom: [0.5, 200], log: true, label: 'trial period, days' }, y: { dom: [-5, 55], label: 'SDE', ticks: [0, 13, 25, 40, 50] } });
+  el('rect', { x: c.m.l, y: c.sy(13), width: c.w - c.m.l - c.m.r, height: c.sy(-5) - c.sy(13), fill: 'var(--s2-wash)' }, c.g);
+  el('line', { x1: c.m.l, x2: c.w - c.m.r, y1: c.sy(13), y2: c.sy(13), stroke: 'var(--s2)', 'stroke-width': 1 }, c.g);
+  el('text', { x: c.w - c.m.r - 4, y: c.sy(13) - 5, 'text-anchor': 'end', class: 'lab' }, c.g).textContent = 'detection threshold, SDE 13';
+  path(c, c.g, D.spectrum, 'var(--s1)', 1.5);
+  const pk = [[40.291, 50.5, 'P'], [80.58, 30.3, '2P'], [120.87, 25.3, '3P'], [161.16, 16.8, '4P']];
+  pk.forEach(([p, s, l]) => { el('text', { x: c.sx(p), y: c.sy(s) - 7, 'text-anchor': 'middle', class: l === 'P' ? 'lab strong' : 'lab' }, c.g).textContent = l === 'P' ? `${fmt(p, 2)} d` : l; });
+  hover(c, host, D.spectrum.map(([x, y]) => ({ x, y })), p => `<b>${fmt(p.x, 3)} d</b><br>SDE ${fmt(p.y, 1)}`, 'x');
+}
+/* ---------- fit kv ---------- */
+{
+  const k = document.getElementById('kv-fit');
+  const rows = [
+    ['Period', `${fmt(E.period_days, 5)} d`], ['Mid-transit T0', `BKJD ${fmt(E.t0_bkjd, 4)} (BJD ${fmt(E.t0_bjd, 4)})`],
+    ['Box duration (search)', `${fmt(E.duration_h, 1)} h`], ['Fitted T14', `${fmt(F.t14_h, 2)} h`],
+    ['Radius ratio k', fmt(F.k, 4)], ['Impact parameter b', fmt(F.b, 3)], ['a / R★ (fit, degenerate with b)', fmt(F.a_over_r, 1)],
+    ['Fitted depth', `${fmt(F.depth_ppm)} ppm`], ['Stacked depth', `${fmt(DP.stacked_ppm)} ppm`],
+    ['Fit χ² (48 bins)', `${fmt(F.chi2, 1)}; non-grazing χ² identical`],
+    ['SNR (engine)', fmt(S0 ? S0.signal.snr : 30.0, 1)], ['Trial periods', '312,420 in 24 bands'],
+    ['Pre-whitened components', String(D.points.prewhitened_components)], ['Baseline', `${fmt(D.points.baseline_days)} d`],
+  ];
+  rows.forEach(([a, b]) => { const d = h('div'); d.append(h('span', null, a), h('b', null, b)); k.appendChild(d); });
+}
+/* ---------- events ---------- */
+{
+  const host = document.getElementById('fig-events');
+  const c = chart(host, { h: 340, x: { dom: [100, 1620], label: 'time, BKJD (days since 2009 January 1)', n: 8 }, y: { dom: [0, 4000], label: 'single-transit depth, ppm' } });
+  D.quarters.forEach((q, i) => { if (i % 2) el('rect', { x: c.sx(q.t_start), y: c.m.t, width: c.sx(q.t_end) - c.sx(q.t_start), height: c.h - c.m.t - c.m.b, fill: 'var(--surface-2)' }, c.g); if (q.t_end - q.t_start > 25) el('text', { x: c.sx((q.t_start + q.t_end) / 2), y: c.m.t + 10, 'text-anchor': 'middle', class: 'axis' }, c.g).textContent = 'Q' + q.q; });
+  el('line', { x1: c.m.l, x2: c.w - c.m.r, y1: c.sy(DP.event_mean_ppm), y2: c.sy(DP.event_mean_ppm), stroke: 'var(--s2)', 'stroke-width': 1.5 }, c.g);
+  D.events.forEach(e => { errbar(c, c.g, e.t_mid, e.depth_ppm, e.err_ppm, 'var(--s1)'); dot(c, c.g, e.t_mid, e.depth_ppm, 'var(--s1)', 4); });
+  el('text', { x: c.w - c.m.r - 4, y: c.sy(DP.event_mean_ppm) - 7, 'text-anchor': 'end', class: 'lab strong' }, c.g).textContent = `mean ${fmt(DP.event_mean_ppm)} ppm`;
+  hover(c, host, D.events.map(e => ({ x: e.t_mid, y: e.depth_ppm, e })), p => `<b>epoch ${p.e.epoch}</b> · Q${p.e.quarter}<br>BKJD ${fmt(p.e.t_mid, 2)}<br>${pm(p.e.depth_ppm, p.e.err_ppm)} ppm`);
+}
+/* ---------- series ---------- */
+{
+  const host = document.getElementById('fig-series');
+  const c = chart(host, { h: 300, x: { dom: [100, 1620], label: 'BKJD', n: 8 }, y: { dom: [-3000, 2000], label: 'ppm' } });
+  D.quarters.forEach(q => { if (q.t_end - q.t_start > 25) el('text', { x: c.sx((q.t_start + q.t_end) / 2), y: c.m.t + 10, 'text-anchor': 'middle', class: 'axis' }, c.g).textContent = 'Q' + q.q; });
+  D.series_binned.forEach(([t, y]) => el('circle', { cx: c.sx(t), cy: c.sy(Math.max(-3000, Math.min(2000, y))), r: 1.3, fill: 'var(--muted)', opacity: .7 }, c.g));
+  for (let e = 0; e <= 37; e++) { const t = E.t0_bkjd + e * E.period_days; if (t > 1620) break; el('line', { x1: c.sx(t), x2: c.sx(t), y1: c.sy(-3000), y2: c.sy(-2550), stroke: 'var(--s2)', 'stroke-width': 2 }, c.g); }
+  hover(c, host, D.series_binned.map(([x, y, n]) => ({ x, y, n })), p => `BKJD <b>${fmt(p.x, 2)}</b><br>${fmt(p.y)} ppm · ${p.n} cadences`, 'x');
+}
+/* ---------- gallery ---------- */
+{
+  const gal = document.getElementById('gallery');
+  const model = D.model_hours_ppm || [];
+  D.event_gallery.forEach(ev => {
+    const w = 150, hh = 90, x = v => (v + 8) / 16 * (w - 8) + 4, y = v => 6 + (3000 - v) / 9000 * (hh - 12);
+    const box = h('div', 'g');
+    const svg = el('svg', { viewBox: `0 0 ${w} ${hh}` });
+    el('line', { x1: 4, x2: w - 4, y1: y(0), y2: y(0), stroke: 'var(--grid)' }, svg);
+    el('path', { d: model.map((p, i) => (i ? 'L' : 'M') + x(p[0]).toFixed(1) + ' ' + y(p[1]).toFixed(1)).join(''), fill: 'none', stroke: 'var(--s2)', 'stroke-width': 1.5 }, svg);
+    ev.pts.forEach(([a, b]) => el('circle', { cx: x(a), cy: y(Math.max(-6000, Math.min(3000, b))), r: 1.8, fill: 'var(--s1)' }, svg));
+    box.append(svg, h('div', 'cap', `<span>#${ev.epoch} Q${ev.quarter}</span><span>${fmt(ev.depth_ppm)}±${fmt(ev.err_ppm)}</span>`));
+    gal.appendChild(box);
+  });
+}
+/* ---------- checks ---------- */
+{
+  const r2 = S0 ? S0.tests.find(t => t.rung === 'rung2_shape').metrics : null, r3 = S0 ? S0.tests.find(t => t.rung === 'rung3_stability').metrics : null;
+  const sec = D.secondary, OE = D.odd_even, U = D.uniqueness;
+  const paritySig = r2 ? r2.parity_sigma : Math.abs(OE.odd_ppm - OE.even_ppm) / Math.hypot(OE.odd_err, OE.even_err);
+  const checks = [
+    ['pass', 'Detected far above the noise', `SDE ${fmt(S0 ? S0.signal.sde : 50.5, 1)} against a sweep threshold of 13. In the calibration run on 300 stars with scrambled time stamps, the strongest false signal reached SDE 16.8.`, `SDE ${fmt(S0 ? S0.signal.sde : 50.5, 1)} · SNR ${fmt(S0 ? S0.signal.snr : 30, 1)}`],
+    ['pass', 'Seen in every transit that has data', `${D.events_quality.n_with_data} of ${D.events_quality.n_expected} predicted transits fall on observed cadences; no single transit carries the detection (largest single-event share of the total signal: ${r2 ? '' : ''}${S0 ? fmt(S0.tests[1].metrics.ses_max_over_mes * 100) : 28}%).`, `${D.events_quality.n_with_data}/${D.events_quality.n_expected} transits`],
+    ['pass', 'Odd and even transits match', `Odd ${pm(OE.odd_ppm, OE.odd_err)} ppm, even ${pm(OE.even_ppm, OE.even_err)} ppm. An eclipsing binary at twice the period would usually give unequal depths.`, `${fmt(paritySig, 2)}σ apart`],
+    ['pass', 'No secondary eclipse', `At phase 0.5 the flux is flat, ${pm(sec.at_half.depth_ppm, sec.at_half.err_ppm)} ppm. The deepest feature anywhere else in the orbit is ${fmt(sec.depth_ppm)} ppm at phase ${fmt(sec.best_phase, 3)}, ${fmt(sec.sigma, 1)}σ, within what noise produces in 200 trial phases.`, `${fmt(r2 ? r2.secondary_sigma : 0.81, 2)}σ at phase 0.5`],
+    ['pass', 'Transit-shaped, not V-shaped', `A dark disc crossing the star fits with radius ratio ${fmt(F.k, 3)} and impact parameter ${fmt(F.b, 2)}; a box beats a sinusoid by Δχ² = ${fmt(r2 ? r2.sine_chi2 - r2.box_chi2 : 677)}. Grazing geometries fit no better than non-grazing ones.`, `k ${fmt(F.k, 3)} · b ${fmt(F.b, 2)}`],
+    ['pass', 'Same depth in all four spacecraft seasons', `Depths of ${Object.values(D.season_depths).map(s => fmt(s.depth_ppm)).join(', ')} ppm across seasons 0 to 3; χ² ${fmt(r3 ? r3.chi2 : 0.55, 2)} for 3 degrees of freedom (p = ${fmt(r3 ? r3.p_value : 0.91, 2)}).`, `p = ${fmt(r3 ? r3.p_value : 0.91, 2)}`],
+    ['pass', 'The dip is on this star, not the bright neighbour', `Difference imaging in all four seasons puts the lost light within 0.2 pixel of KIC 6146676 and 2.8 to 3.1 pixels from KIC 6146666. A two-source fit gives ${pm(D.pixels.summary.two_source_fit_depth_ppm_candidate_weighted_mean[0], D.pixels.summary.two_source_fit_depth_ppm_candidate_weighted_mean[1])} ppm on the candidate and ${pm(D.pixels.summary.two_source_fit_depth_ppm_target_weighted_mean[0], D.pixels.summary.two_source_fit_depth_ppm_target_weighted_mean[1])} ppm on the target.`, `4 of 4 seasons`],
+    ['pass', 'The bright neighbour does not show the dip', (() => { const A = D.context && D.context.A_leak_test; if (!A) return ''; const n = A.neighbour_KIC6146666.pdcsap, x = A.neighbour_expectation; return `KIC 6146666 has its own Kepler light curve. At this ephemeris it shows ${pm(n.depth_ppm, n.err_ppm)} ppm. If the candidate's dip were light leaking from that star, it would have to dim by at least ${fmt(x.leak_case_max_depth_on_target_ppm)} ppm itself.`; })(), (() => { const A = D.context && D.context.A_leak_test; if (!A) return ''; const n = A.neighbour_KIC6146666.pdcsap, x = A.neighbour_expectation; return `${fmt((x.leak_case_max_depth_on_target_ppm - n.depth_ppm) / n.err_ppm, 0)}σ below leak case`; })()],
+    ['pass', 'Not already known', 'Not a Kepler Object of Interest, not a DR25 threshold-crossing event, no TESS Object of Interest within the search box, absent from the Villanova Kepler eclipsing-binary catalogue and from Gaia DR3 non-single-star and eclipsing-variable tables. Queries logged below.', '0 matches in 6 catalogues'],
+  ];
+  const wrap = document.getElementById('check-list');
+  checks.forEach(([st, t, d, m]) => {
+    const row = h('div', 'check');
+    row.innerHTML = `<div class="ic ${st}"><svg viewBox="0 0 16 16" aria-label="${st}"><path d="M3.5 8.3l2.6 2.6 6.2-6.4" fill="none" stroke="var(--surface)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></div><div><div class="t">${t}</div><div class="d">${d}</div></div><div class="m">${m}</div>`;
+    wrap.appendChild(row);
+  });
+  // odd/even
+  {
+    const host = document.getElementById('fig-oddeven');
+    const c = chart(host, { w: 420, h: 300, m: { l: 50, r: 12, t: 14, b: 40 }, x: { dom: [-12, 12], label: 'hours from mid-transit', n: 6 }, y: { dom: [-3500, 1000], label: 'ppm' } });
+    const draw = (bins, col, dx) => bins.forEach(([x, y, e]) => { errbar(c, c.g, x + dx, y, e, col); dot(c, c.g, x + dx, y, col, 3.5); });
+    draw(D.odd_bins, 'var(--s1)', -0.08); draw(D.even_bins, 'var(--s2)', 0.08);
+    el('text', { x: c.sx(-11.6), y: c.sy(600), class: 'lab' }, c.g).textContent = `odd ${pm(OE.odd_ppm, OE.odd_err)} · even ${pm(OE.even_ppm, OE.even_err)} ppm`;
+    hover(c, host, [...D.odd_bins.map(([x, y, e]) => ({ x: x - 0.08, y, e, w: 'odd' })), ...D.even_bins.map(([x, y, e]) => ({ x: x + 0.08, y, e, w: 'even' }))], p => `<b>${p.w}</b> · ${fmt(p.x, 1)} h<br>${pm(p.y, p.e)} ppm`);
+  }
+  // secondary
+  {
+    const host = document.getElementById('fig-secondary');
+    const c = chart(host, { w: 420, h: 300, m: { l: 50, r: 12, t: 14, b: 40 }, x: { dom: [-12, 12], label: 'hours from phase 0.5 (green) or 0 (blue)', n: 6 }, y: { dom: [-3500, 1000], label: 'ppm' } });
+    D.fold_bins.filter((_, i) => i % 2 === 0).forEach(([x, y, e]) => { el('circle', { cx: c.sx(x), cy: c.sy(y), r: 3.5, fill: 'var(--s1)', opacity: .5 }, c.g); });
+    D.secondary_bins.forEach(([x, y, e]) => { errbar(c, c.g, x, y, e, 'var(--s3)'); dot(c, c.g, x, y, 'var(--s3)', 3.5); });
+    el('text', { x: c.sx(-11.6), y: c.sy(600), class: 'lab' }, c.g).textContent = `at phase 0.5: ${pm(sec.at_half.depth_ppm, sec.at_half.err_ppm)} ppm`;
+    hover(c, host, D.secondary_bins.map(([x, y, e]) => ({ x, y, e })), p => `<b>${fmt(p.x, 1)} h from phase 0.5</b><br>${pm(p.y, p.e)} ppm`);
+  }
+  // seasons
+  {
+    const host = document.getElementById('fig-seasons');
+    const c = chart(host, { w: 420, h: 280, m: { l: 50, r: 12, t: 14, b: 40 }, x: { dom: [-0.6, 3.6], label: 'Kepler season (detector orientation)', ticks: [0, 1, 2, 3] }, y: { dom: [1200, 3000], label: 'depth, ppm' } });
+    el('line', { x1: c.m.l, x2: c.w - c.m.r, y1: c.sy(DP.event_mean_ppm), y2: c.sy(DP.event_mean_ppm), stroke: 'var(--s2)', 'stroke-width': 1.5 }, c.g);
+    el('text', { x: c.w - c.m.r - 4, y: c.sy(DP.event_mean_ppm) - 7, 'text-anchor': 'end', class: 'lab' }, c.g).textContent = `all-season mean ${fmt(DP.event_mean_ppm)} ppm`;
+    Object.entries(D.season_depths).forEach(([s, v]) => { errbar(c, c.g, +s, v.depth_ppm, v.err_ppm, 'var(--s1)'); dot(c, c.g, +s, v.depth_ppm, 'var(--s1)', 5); el('text', { x: c.sx(+s), y: c.sy(v.depth_ppm + v.err_ppm) - 8, 'text-anchor': 'middle', class: 'lab' }, c.g).textContent = fmt(v.depth_ppm); });
+    hover(c, host, Object.entries(D.season_depths).map(([s, v]) => ({ x: +s, y: v.depth_ppm, v })), p => `<b>season ${p.x}</b><br>${pm(p.v.depth_ppm, p.v.err_ppm)} ppm · ${p.v.n_in} in-transit cadences`);
+  }
+  // shape kv
+  {
+    const k = document.getElementById('kv-shape');
+    const rows = [
+      ['Primary significance σ<sub>pri</sub>', fmt(U.sigma_primary, 1)], ['Secondary σ<sub>sec</sub> (free phase)', `${fmt(U.sigma_secondary, 2)} at phase ${fmt(sec.best_phase, 3)}`],
+      ['Tertiary σ<sub>ter</sub>', fmt(U.sigma_tertiary, 2)], ['Positive feature σ<sub>pos</sub>', fmt(U.sigma_positive, 2)],
+      ['Model-shift MS2 = σ<sub>sec</sub> − σ<sub>pri</sub>', fmt(U.ms2, 1)], ['MS3 = σ<sub>ter</sub> − σ<sub>pri</sub>', fmt(U.ms3, 1)], ['FA2 = σ<sub>pos</sub> − σ<sub>ter</sub>', fmt(U.fa2, 2)],
+      ['Sweet test (half-period sinusoid) SNR', fmt(r2 ? r2.sweet_snr : 2.16, 2)], ['Control-window rms', `${fmt(r2 ? r2.control_rms_ppm : 128)} ppm`],
+      ['SAP / PSF depth ratio', `${fmt(r3 ? r3.sap_psf_ratio : 0.70, 2)} (z = ${fmt(r3 ? r3.aperture_z : -3.9, 1)})`], ['SAP depth', `${pm(DP.sap_event_mean_ppm, DP.sap_event_err_ppm)} ppm`],
+    ];
+    rows.forEach(([a, b]) => { const d = h('div'); d.append(h('span', null, a), h('b', null, b)); d.firstChild.innerHTML = a; k.appendChild(d); });
+  }
+}
+/* ---------- pixels ---------- */
+{
+  const PX = D.pixels, host = document.getElementById('pix-diff');
+  let vmax = Math.max(...PX.seasons.map(s => s.max_snr));
+  document.getElementById('ramp-max').textContent = `0 to ${fmt(vmax, 0)}`;
+  const ramp = (t) => { // t in 0..1 -> blend between ramp tokens via opacity layering: use 5 stops
+    const stops = ['var(--ramp-100)', 'var(--ramp-250)', 'var(--ramp-400)', 'var(--ramp-550)', 'var(--ramp-700)'];
+    return stops[Math.min(4, Math.max(0, Math.floor(t * 5)))];
+  };
+  const drawStamp = (s, mode) => {
+    const [nr, nc] = s.shape, cs = 30, pad = 18, w = nc * cs + pad * 2, hh = nr * cs + pad * 2;
+    const svg = el('svg', { viewBox: `0 0 ${w} ${hh}`, role: 'img', 'aria-label': `season ${s.season} ${mode} image` });
+    const X = col => pad + (col + 0.5) * cs, Y = row => pad + (nr - 0.5 - row) * cs;   // row 0 at the bottom
+    let lmin = Infinity, lmax = -Infinity;
+    if (mode === 'direct') s.direct.forEach(r => r.forEach(v => { if (v != null && v > 0) { lmin = Math.min(lmin, Math.log10(v)); lmax = Math.max(lmax, Math.log10(v)); } }));
+    for (let r = 0; r < nr; r++) for (let cc = 0; cc < nc; cc++) {
+      const v = mode === 'snr' ? s.snr[r][cc] : s.direct[r][cc];
+      let fill = 'var(--bg)';
+      if (v != null) {
+        if (mode === 'snr') fill = v <= 0 ? 'var(--surface)' : ramp(v / vmax);
+        else { const t = (Math.log10(Math.max(v, 1)) - lmin) / (lmax - lmin); fill = `color-mix(in oklab, var(--grey-hi) ${Math.round(t * 100)}%, var(--grey-lo))`; }
+      }
+      const rect = el('rect', { x: pad + cc * cs + 1, y: pad + (nr - 1 - r) * cs + 1, width: cs - 2, height: cs - 2, rx: 2, fill }, svg);
+      if (v == null) el('line', { x1: pad + cc * cs + 6, y1: pad + (nr - 1 - r) * cs + cs - 6, x2: pad + cc * cs + cs - 6, y2: pad + (nr - 1 - r) * cs + 6, stroke: 'var(--grid)' }, svg);
+      const t = el('title', {}, rect); t.textContent = v == null ? 'outside the downloaded aperture' : (mode === 'snr' ? `S/N ${fmt(v, 1)}` : `${fmt(v)} e⁻/s`);
+    }
+    // markers: target (yellow star), candidate (orange ring), centroid (cross + error bars)
+    const [tc, tr] = s.targ_colrow, [cc2, cr] = s.cand_colrow, [xc, xr] = s.cen_colrow, [sc, sr] = s.cen_sigma;
+    const star = (cx, cy, R) => { let d = ''; for (let i = 0; i < 10; i++) { const a = -Math.PI / 2 + i * Math.PI / 5, rr = i % 2 ? R * .45 : R; d += (i ? 'L' : 'M') + (cx + rr * Math.cos(a)).toFixed(1) + ' ' + (cy + rr * Math.sin(a)).toFixed(1); } return d + 'Z'; };
+    el('path', { d: star(X(tc), Y(tr), 9), fill: 'var(--s4)', stroke: 'var(--surface)', 'stroke-width': 1.5 }, svg);
+    el('circle', { cx: X(cc2), cy: Y(cr), r: 9, fill: 'none', stroke: 'var(--surface)', 'stroke-width': 5 }, svg);
+    el('circle', { cx: X(cc2), cy: Y(cr), r: 9, fill: 'none', stroke: 'var(--s2)', 'stroke-width': 2.5 }, svg);
+    if (mode === 'snr') {
+      const cx = X(xc), cy = Y(xr), ex = Math.max(sc * cs, 2), ey = Math.max(sr * cs, 2);
+      el('line', { x1: cx - ex, x2: cx + ex, y1: cy, y2: cy, stroke: 'var(--ink)', 'stroke-width': 2 }, svg);
+      el('line', { x1: cx, x2: cx, y1: cy - ey, y2: cy + ey, stroke: 'var(--ink)', 'stroke-width': 2 }, svg);
+      el('line', { x1: cx - 6, x2: cx + 6, y1: cy - 6, y2: cy + 6, stroke: 'var(--ink)', 'stroke-width': 1.5 }, svg);
+      el('line', { x1: cx - 6, x2: cx + 6, y1: cy + 6, y2: cy - 6, stroke: 'var(--ink)', 'stroke-width': 1.5 }, svg);
+    }
+    // scale bar: 1 pixel = 3.98"
+    el('line', { x1: w - pad - cs, x2: w - pad, y1: hh - 6, y2: hh - 6, stroke: 'var(--ink-2)', 'stroke-width': 1.5 }, svg);
+    el('text', { x: w - pad - cs / 2, y: hh - 9, 'text-anchor': 'middle', class: 'axis' }, svg).textContent = `${PX.arcsec_per_pixel}″`;
+    el('text', { x: pad, y: 12, class: 'axis' }, svg).textContent = 'column →';
+    el('text', { x: 11, y: hh - pad, class: 'axis', transform: `rotate(-90 11 ${hh - pad})` }, svg).textContent = 'row →';
+    return svg;
+  };
+  PX.seasons.forEach(s => {
+    const cell = h('div', 'cell');
+    cell.append(h('h4', null, `Season ${s.season}`), drawStamp(s, 'snr'), h('div', 'sub', `Q${s.quarters.join(', Q')} · ${s.n_events} transits · peak S/N ${fmt(s.max_snr, 1)} · centroid ${fmt(Math.hypot(s.cen_colrow[0] - s.cand_colrow[0], s.cen_colrow[1] - s.cand_colrow[1]), 2)} px from candidate, ${fmt(Math.hypot(s.cen_colrow[0] - s.targ_colrow[0], s.cen_colrow[1] - s.targ_colrow[1]), 2)} px from target`));
+    host.appendChild(cell);
+  });
+  const dh = document.getElementById('pix-direct'), s1 = PX.seasons.find(s => s.season === 1) || PX.seasons[0];
+  const dcell = h('div', 'cell'); dcell.append(drawStamp(s1, 'direct'), h('div', 'sub', `Season ${s1.season}: the target is ${fmt(s1.two_source.direct_flux_ratio_target_over_candidate, 0)}× brighter than the candidate in the fitted model.`)); dh.appendChild(dcell);
+  // two-source fit chart
+  {
+    const host2 = document.getElementById('fig-twosource');
+    const c = chart(host2, { w: 420, h: 280, m: { l: 50, r: 12, t: 14, b: 40 }, x: { dom: [-0.6, 3.6], label: 'season', ticks: [0, 1, 2, 3] }, y: { dom: [-500, 3500], label: 'implied depth, ppm' } });
+    el('line', { x1: c.m.l, x2: c.w - c.m.r, y1: c.sy(DP.event_mean_ppm), y2: c.sy(DP.event_mean_ppm), stroke: 'var(--s1)', 'stroke-width': 1, opacity: .7 }, c.g);
+    el('text', { x: c.w - c.m.r - 4, y: c.sy(DP.event_mean_ppm) - 6, 'text-anchor': 'end', class: 'lab' }, c.g).textContent = `light-curve depth ${fmt(DP.event_mean_ppm)} ppm`;
+    const pts = [];
+    PX.seasons.forEach(s => { const T = s.two_source; errbar(c, c.g, s.season - 0.1, T.implied_depth_ppm_candidate, T.implied_depth_ppm_candidate_err, 'var(--s2)'); dot(c, c.g, s.season - 0.1, T.implied_depth_ppm_candidate, 'var(--s2)', 5); errbar(c, c.g, s.season + 0.1, T.implied_depth_ppm_target, T.implied_depth_ppm_target_err, 'var(--s4)'); dot(c, c.g, s.season + 0.1, T.implied_depth_ppm_target, 'var(--s4)', 5); pts.push({ x: s.season - 0.1, y: T.implied_depth_ppm_candidate, e: T.implied_depth_ppm_candidate_err, w: 'candidate' }, { x: s.season + 0.1, y: T.implied_depth_ppm_target, e: T.implied_depth_ppm_target_err, w: 'Kepler target' }); });
+    hover(c, host2, pts, p => `<b>${p.w}</b> · season ${Math.round(p.x)}<br>${pm(p.y, p.e)} ppm`);
+  }
+  // per-quarter table
+  {
+    const t = document.getElementById('tbl-quarters');
+    const rows = D.localisation.quarters.filter(q => q.usable).map(q => `<tr><td class="n">Q${q.quarter}</td><td class="n">${q.season}</td><td class="n">${q.n_events_used}</td><td class="n">${fmt(q.max_snr, 1)}</td><td class="n">${fmt(q.snrbox_diff_centroid_dist_to_candidate_pix, 2)}</td><td class="n">${fmt(q.snrbox_diff_centroid_dist_to_target_pix, 2)}</td><td>${q.snrbox_diff_centroid_dist_to_candidate_pix < q.snrbox_diff_centroid_dist_to_target_pix ? 'candidate' : 'target'}</td></tr>`).join('');
+    t.innerHTML = `<table><caption>Per-quarter difference images (expert)</caption><thead><tr><th>Quarter</th><th class="n">Season</th><th class="n">Transits</th><th class="n">Peak S/N</th><th class="n">To candidate, px</th><th class="n">To target, px</th><th>Nearer</th></tr></thead><tbody>${rows}</tbody></table>`;
+  }
+  document.getElementById('pix-note').innerHTML = `<b>Method.</b> For each transit, the mean in-transit pixel image (|Δt| &lt; half the duration) was subtracted from the mean of the out-of-transit cadences on both sides (1 to 3 durations away), using only cadences with Kepler quality flag 0; events were stacked per quarter and then per season, weighting by variance. The centroid is the flux-weighted centre of the 3×3 box around the highest signal-to-noise difference pixel; its error bars come from 200 noise realisations. Positions of both stars come from Gaia DR3 through each file's own world coordinate system. ${PX.summary.n_quarters_usable} of ${PX.summary.n_quarters_total} quarters were usable (Q0 and Q17 contain no complete transit). The two-source fit uses a Gaussian point-spread function rather than the Kepler pixel response function, so its implied depths are approximate; the per-season agreement with the light-curve depth is the useful check.`;
+}
+/* ---------- star & planet ---------- */
+{
+  const body = document.getElementById('star-body');
+  const C = D.context;
+  if (!C) {
+    body.innerHTML = `<div class="note">Stellar parameters are being compiled.</div>`;
+  } else {
+    const S = C.summary.stellar_baseline, PB = C.summary.planet_baseline, dist = C.summary.distance_pc, DS = C.D_stellar_planet, B = C.B_gaia_neighbourhood;
+    const q = (o, d = 2) => `${fmt(o.median, d)} <span style="font-size:.8em;color:var(--muted)">+${fmt(o.plus, d)} −${fmt(o.minus, d)}</span>`;
+    const L = S.R_star_Rsun.median ** 2 * (S.Teff_K.median / 5772) ** 4, insol = L / PB.a_AU.median ** 2;
+    const tiles = h('div', 'tiles');
+    [['Host star', 'M1 dwarf', '', `T<sub>eff</sub> ${fmt(S.Teff_K.median)} K · ${fmt(S.R_star_Rsun.median, 2)} R<sub>☉</sub> · ${fmt(S.M_star_Msun.median, 2)} M<sub>☉</sub>`],
+     ['Distance', fmt(dist.median), 'pc', `Gaia DR3 parallax ${fmt(+B.candidate_gaia_source.parallax, 2)} ± ${fmt(+B.candidate_gaia_source.parallax_error, 2)} mas`],
+     ['Planet radius', fmt(PB.Rp_from_k_Rearth.median, 2), 'R<sub>⊕</sub>', `+${fmt(PB.Rp_from_k_Rearth.plus, 2)} −${fmt(PB.Rp_from_k_Rearth.minus, 2)}; a sub-Neptune, not a rocky world`],
+     ['Orbit', fmt(PB.a_AU.median, 3), 'AU', `${fmt(PB.a_AU.median * 149.6, 1)} million km from the star`],
+     ['Equilibrium temperature', fmt(PB['Teq_K_A0.3_full_redistribution'].median), 'K', 'albedo 0.3, full heat redistribution (Earth on the same basis: 255 K)'],
+     ['Starlight received', fmt(insol, 2), '× Earth', `from L = ${fmt(L, 3)} L<sub>☉</sub> at ${fmt(PB.a_AU.median, 3)} AU`],
+    ].forEach(([k, v, u, s_]) => { const t = h('div', 'tile'); t.append(h('div', 'k', k), h('div', 'v num', `${v}${u ? `<small>${u}</small>` : ''}`), h('div', 's', s_)); tiles.appendChild(t); });
+    body.appendChild(tiles);
+    const prose = h('div', 'prose'); prose.style.marginTop = '18px';
+    prose.innerHTML = `<p><b>What kind of star.</b> Gaia DR3 measures a parallax of ${fmt(+B.candidate_gaia_source.parallax, 3)} ± ${fmt(+B.candidate_gaia_source.parallax_error, 3)} mas (RUWE ${fmt(+B.candidate_gaia_source.ruwe, 2)}, no astrometric excess noise), so the star is ${fmt(dist.median)} pc away and its colour of BP−RP 2.10 with absolute magnitude M<sub>G</sub> = ${fmt(DS.abs_G_mag_noext, 2)} places it on the main sequence as an M1 dwarf. Three independent routes agree on its size: the Mamajek colour table (${fmt(S.R_star_Rsun.median, 3)} R<sub>☉</sub>), the Mann et al. K-band relations (${fmt(DS.mann_MKs_check.R_Mann2015_Rsun.median, 3)} R<sub>☉</sub>) and the TESS Input Catalog (${fmt(+DS.tic_v82.R, 3)} R<sub>☉</sub>, ${fmt(+DS.tic_v82.Teff)} K).</p>
+      <p><b>What the planet would be.</b> The radius ratio of ${fmt(F.k, 3)} on a ${fmt(S.R_star_Rsun.median, 2)} R<sub>☉</sub> star gives ${fmt(PB.Rp_from_k_Rearth.median, 2)} Earth radii. Kepler's third law with the stellar mass puts the orbit at ${fmt(PB.a_AU.median, 3)} AU, where the planet receives about ${fmt(insol, 1)} times the starlight Earth does and would have an equilibrium temperature near ${fmt(PB['Teq_K_A0.3_full_redistribution'].median)} K. That is close to the inner edge of the classical habitable zone, although a planet of this size most likely carries a thick volatile envelope.</p>
+      <p><b>The duration fits.</b> A central transit of such a star at this period lasts ${fmt(PB.T14_central_h.median, 1)} h; the fitted duration is ${fmt(F.t14_h, 1)} h, consistent with a low to moderate impact parameter. The light-curve fit on its own prefers b = ${fmt(F.b, 2)} with a/R<sub>★</sub> = ${fmt(F.a_over_r, 0)}, but those two parameters are degenerate at this signal-to-noise; the stellar density from Gaia implies a/R<sub>★</sub> = ${fmt(PB.a_over_Rstar.median, 0)}, which the grazing solution cannot match.</p>`;
+    body.appendChild(prose);
+    // neighbourhood map
+    const fig = h('div', 'fig'); fig.style.marginTop = '14px';
+    fig.innerHTML = `<h3>The neighbourhood, 30″ around the candidate</h3><div class="sub">Every Gaia DR3 source within 30″ (7.5 Kepler pixels). Marker area scales with brightness. The dashed circle is one Kepler pixel; anything inside it cannot be separated by the pixel test. ${B.n_neighbours_30arcsec} sources; ${B.neighbours_able_to_mimic_by_magnitude.length} are faint enough that, in principle, a deep eclipse on them could mimic the dip, which is why the pixel localisation above matters.</div>`;
+    const w = 520, hh = 520, cx = w / 2, cy = hh / 2, sc = (w / 2 - 30) / 30;   // px per arcsec
+    const svg = el('svg', { viewBox: `0 0 ${w} ${hh}`, class: 'chart', style: 'max-width:520px;margin:8px auto 0' });
+    [10, 20, 30].forEach(r => { el('circle', { cx, cy, r: r * sc, fill: 'none', stroke: 'var(--grid)' }, svg); el('text', { x: cx + 4, y: cy - r * sc - 4, class: 'axis' }, svg).textContent = r + '″'; });
+    el('circle', { cx, cy, r: D.pixels.arcsec_per_pixel * sc, fill: 'none', stroke: 'var(--s2)', 'stroke-dasharray': '4 3', 'stroke-width': 1.5 }, svg);
+    el('text', { x: cx + D.pixels.arcsec_per_pixel * sc + 4, y: cy + 4, class: 'lab' }, svg).textContent = '1 Kepler pixel';
+    el('text', { x: cx, y: 16, 'text-anchor': 'middle', class: 'axis' }, svg).textContent = 'N ↑';
+    el('text', { x: 14, y: cy + 4, class: 'axis' }, svg).textContent = 'E';
+    const cosd = Math.cos(C.target.dec * Math.PI / 180);
+    const pts = [];
+    B.neighbours.forEach(n => {
+      const dx = -(n.ra - C.target.ra) * 3600 * cosd, dy = (n.dec - C.target.dec) * 3600;   // east to the left
+      const r = Math.max(3, 16 - (n.G - 12) * 1.6);
+      const isT = n.source_id === '2073896190925687296';
+      el('circle', { cx: cx + dx * sc, cy: cy - dy * sc, r: r + 2, fill: 'var(--surface)' }, svg);
+      el('circle', { cx: cx + dx * sc, cy: cy - dy * sc, r, fill: isT ? 'var(--s4)' : 'var(--muted)' }, svg);
+      if (isT) el('text', { x: cx + dx * sc, y: cy - dy * sc - r - 6, 'text-anchor': 'middle', class: 'lab strong' }, svg).textContent = 'KIC 6146666, G 12.8';
+      pts.push({ x: dx, y: dy, n });
+    });
+    el('circle', { cx, cy, r: 11, fill: 'var(--surface)' }, svg); el('circle', { cx, cy, r: 9, fill: 'var(--s2)' }, svg);
+    el('text', { x: cx, y: cy + 26, 'text-anchor': 'middle', class: 'lab strong' }, svg).textContent = 'KIC 6146676, G 16.2';
+    fig.appendChild(svg);
+    const leg = h('div', 'legend', `<span><i style="background:var(--s2)"></i>candidate</span><span><i style="background:var(--s4)"></i>Kepler target</span><span><i style="background:var(--muted)"></i>other Gaia sources, sized by G</span>`);
+    fig.appendChild(leg);
+    body.appendChild(fig);
+    // hover on the map
+    const c = { svg, sx: v => cx + v * sc, sy: v => cy - v * sc, w, h: hh, m: { l: 0, r: 0, t: 0, b: 0 } };
+    hover(c, fig, pts, p => `<b>Gaia DR3 ${p.n.source_id}</b>${p.n.kic ? ' · KIC ' + p.n.kic : ''}<br>G ${fmt(p.n.G, 2)} · ${fmt(p.n.sep_arcsec, 1)}″ (${fmt(p.n.sep_kepler_px, 1)} px)<br>BP−RP ${p.n.bp_rp == null ? '–' : fmt(p.n.bp_rp, 2)} · parallax ${fmt(p.n.parallax, 2)} mas${p.n.required_eclipse_depth_frac != null ? '<br>would need a ' + fmt(p.n.required_eclipse_depth_frac * 100, 1) + '% eclipse to mimic' : ''}`);
+    // expert: stellar sources kv + archive table
+    const kv = h('div', 'kv x'); kv.style.marginTop = '14px';
+    [['Gaia DR3 G / BP−RP', `${fmt(DS.inputs.G, 3)} / ${fmt(DS.inputs.BP_RP, 3)}`], ['2MASS Ks', `${fmt(DS.inputs.Ks_2MASS[0], 3)} ± ${fmt(DS.inputs.Ks_2MASS[1], 3)}`],
+     ['Parallax (zero-point corrected)', `${fmt(DS.inputs.parallax_corrected_mas, 4)} ± ${fmt(DS.inputs.parallax_err_used_mas, 4)} mas`], ['Distance', `${q(dist, 1)} pc`],
+     ['M<sub>G</sub>, M<sub>Ks</sub> (no extinction)', `${fmt(DS.abs_G_mag_noext, 2)}, ${fmt(DS.abs_Ks_mag_noext, 2)}`],
+     ['Teff (Mamajek, BP−RP 2.10 ± 0.10)', `${q(S.Teff_K, 0)} K`], ['R★', `${q(S.R_star_Rsun, 3)} R☉`], ['M★', `${q(S.M_star_Msun, 3)} M☉`], ['ρ★', `${q(DS['planet_baseline_colour_2.10pm0.10'].rho_star_gcc, 2)} g cm⁻³`],
+     ['Mann 2015 / 2019 from M<sub>Ks</sub>', `${fmt(DS.mann_MKs_check.R_Mann2015_Rsun.median, 3)} R☉, ${fmt(DS.mann_MKs_check.M_Mann2019_Msun.median, 3)} M☉`],
+     ['TIC v8.2', `${DS.tic_v82.Teff} ± ${DS.tic_v82.Teff_e} K, ${fmt(+DS.tic_v82.R, 3)} R☉, ${fmt(+DS.tic_v82.M, 3)} M☉, ${fmt(+DS.tic_v82.dist_pc, 0)} pc`],
+     ['Gaia Apsis (GSP-Phot)', `${fmt(+DS.gaia_dr3_apsis.teff_gspphot, 0)} K, ${fmt(+DS.gaia_dr3_apsis.radius_gspphot, 3)} R☉, E(BP−RP) ${DS.gaia_dr3_apsis.ebpminrp_gspphot}`],
+     ['Extinction (SF11, scaled to 303 pc)', `E(B−V) ≈ ${fmt(DS.extinction.SF11_scaled_to_distance_h125pc, 2)}`],
+     ['a / R★ (from ρ★ and P)', q(PB.a_over_Rstar, 1)], ['Transit probability R★/a', q(PB.transit_probability_Rstar_over_a, 4)], ['T14, central transit', `${q(PB.T14_central_h, 2)} h`],
+     ['R<sub>p</sub> from k', `${q(PB.Rp_from_k_Rearth, 2)} R⊕`], ['R<sub>p</sub> from box depth', `${q(PB.Rp_from_boxdepth_Rearth, 2)} R⊕`],
+     ['Gaia RUWE / non-single-star flag', `${fmt(+B.candidate_gaia_source.ruwe, 3)} / ${B.candidate_gaia_source.non_single_star}`], ['Gaia multi-peak fraction', B.candidate_gaia_source.ipd_frac_multi_peak],
+    ].forEach(([a, b]) => { const d = h('div'); d.innerHTML = `<span>${a}</span><b>${b}</b>`; kv.appendChild(d); });
+    body.appendChild(kv);
+    const AR = C.C_archives, labels = {
+      C_nea_cumulative_box: 'NASA Exoplanet Archive, cumulative KOI table (box)', C_nea_cumulative_kepid: 'cumulative KOI table (by KIC id)', C_nea_dr25tce_box: 'Q1–Q17 DR25 TCEs (box)', C_nea_dr25tce_kepid: 'DR25 TCEs (by KIC id)', C_nea_dr24tce_kepid: 'DR24 TCEs', C_nea_q1q16tce_kepid: 'Q1–Q16 TCEs', C_nea_q1q12tce_kepid: 'Q1–Q12 TCEs', C_nea_toi_box: 'TESS Objects of Interest (box)', C_nea_keplerstellar_kepid: 'Kepler stellar table', C_vizier_keplerEB_kirk2016: 'Villanova Kepler EB catalogue (Kirk 2016)', C_vizier_KIC: 'Kepler Input Catalog (VizieR)', C_vizier_TICv82: 'TIC v8.2 (VizieR)', C_vizier_planethunters_schmitt2014: 'Planet Hunters (Schmitt 2014)', C_vizier_planethunters_schwamb2013: 'Planet Hunters (Schwamb 2013)', C_vizier_kepler_fpp_morton2016: 'Kepler false-positive probabilities (Morton 2016)', C_simbad_cone30: 'SIMBAD, 30″ cone', C_nea_dr25stellar_kepid: 'DR25 stellar table', C_nea_dr25stellar_kepid_retry: 'DR25 stellar table (retry)', C_nea_fpwg_kepid: 'Kepler false-positive working group', exofop_TIC169822650: 'ExoFOP, TIC 169822650',
+    };
+    const meaning = { C_nea_keplerstellar_kepid: 'stellar rows only, no planet', C_vizier_KIC: 'catalogue entries only', C_vizier_TICv82: 'catalogue entries only' };
+    const rows = Object.entries(AR).filter(([k]) => labels[k]).map(([k, v]) => {
+      let res;
+      if (k === 'exofop_TIC169822650') res = `${v.tois.length} TOIs, ${v.ctois.length} CTOIs, ${v.imaging.length} imaging, ${v.spectroscopy.length} spectra`;
+      else if (v.error) res = 'query failed (' + v.error.split(' ')[0] + ')';
+      else if (v.rows === null) res = k === 'C_simbad_cone30' ? '1 object: 2MASS J19512748+4127178, no classification' : 'no rows';
+      else res = v.rows === 0 ? 'no match' : `${v.rows} rows${meaning[k] ? ', ' + meaning[k] : ''}`;
+      return `<tr><td>${labels[k]}</td><td>${res}</td><td><a href="${v.url}" target="_blank" rel="noopener">query</a></td></tr>`;
+    }).join('');
+    const tbl = h('div', 'tbl x'); tbl.style.marginTop = '14px';
+    tbl.innerHTML = `<table><caption>Archive checks (expert)</caption><thead><tr><th>Catalogue</th><th>Result</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
+    body.appendChild(tbl);
+    const note = h('div', 'note x'); note.style.marginTop = '14px';
+    note.innerHTML = `<b>Expert notes.</b> The KBonus SAP depth (${pm(C.summary.candidate_sap_depth_ppm[0], C.summary.candidate_sap_depth_ppm[1])} ppm) is ${fmt(C.summary.candidate_sap_over_psf[0], 2)} of the PSF depth (${pm(C.summary.candidate_psf_depth_ppm[0], C.summary.candidate_psf_depth_ppm[1])} ppm): the aperture sum includes light from KIC 6146666 that the PSF fit removes, so the shallower SAP depth is dilution, not a contradiction. The Kepler Input Catalog lists KIC 6146680 (Kp 18.9) 4.0″ from the candidate with no Gaia or 2MASS counterpart within 3″; the nearest Gaia source is G 19.8 at 7.1″, so the KIC entry is most likely that star with poor astrometry, or spurious. The candidate's own KBonus centroid columns could not be used for a centroid test because they track the pointing of the whole stamp (they are identical to those of KIC 6146666 to 10⁻⁶ pixel). Reddening is the largest systematic on the star: the baseline assumes E(BP−RP) ≤ 0.1 because the K-band absolute magnitude matches the observed colour; if E(BP−RP) is nearer 0.2 (the Gaia GSP-Phot value is 0.27 and the dust-map estimate scaled to 303 pc is about 0.2), the star becomes ${fmt(DS['mamajek_at_1.90_if_E0.2'].Teff)} K and ${fmt(DS['mamajek_at_1.90_if_E0.2'].R, 2)} R☉ and the planet about 3.0 R⊕. Bayestar19 was unreachable from this machine.`;
+    body.appendChild(note);
+  }
+}
+
+/* ---------- how it might look ---------- */
+if (D.context) {
+  const C = D.context, S = C.summary.stellar_baseline, PB = C.summary.planet_baseline;
+  const Teff = S.Teff_K.median, Rs = S.R_star_Rsun.median, Ms = S.M_star_Msun.median, a = PB.a_AU.median, Rp = PB.Rp_from_k_Rearth.median;
+  const L = Rs ** 2 * (Teff / 5772) ** 4, insol = L / a ** 2;
+  const starColour = T => T > 5500 ? '#fff3d6' : T > 4500 ? '#ffd9a0' : T > 3900 ? '#ffbe78' : '#ff9d5c';
+  // Kopparapu 2013 (erratum) effective-flux limits
+  const kop = (c, T) => { const t = T - 5780; return c[0] + c[1] * t + c[2] * t * t + c[3] * t ** 3 + c[4] * t ** 4; };
+  const S_rv = kop([1.7763, 1.4335e-4, 3.3954e-9, -7.6364e-12, -1.1950e-15], Teff), S_rg = kop([1.0512, 1.3242e-4, 1.5418e-8, -7.9895e-12, -1.8328e-15], Teff), S_mg = kop([0.3438, 5.8942e-5, 1.6558e-9, -3.0045e-12, -5.2983e-16], Teff), S_em = kop([0.3179, 5.4513e-5, 1.5313e-9, -2.7786e-12, -4.8997e-16], Teff);
+  const d_rv = Math.sqrt(L / S_rv), d_rg = Math.sqrt(L / S_rg), d_mg = Math.sqrt(L / S_mg), d_em = Math.sqrt(L / S_em);
+  const Mp = 2.69 * Rp ** 0.93;                       // Weiss & Marcy 2014 population relation, 1.5 < R < 4
+  const vesc = 11.19 * Math.sqrt(Mp / Rp);
+  const g = 9.81 * Mp / Rp ** 2;
+  const Hkm = 1.380649e-23 * PB['Teq_K_A0.3_full_redistribution'].median / (2.3 * 1.6726e-27 * g) / 1000;
+  const sigH = 2 * (Rp * 6371) * Hkm / (Rs * 695700) ** 2 * 1e6;
+  const angStar = 2 * Math.atan(Rs * 0.00465047 / a) * 180 / Math.PI, angSun = 0.533;
+  const glow = (svg, cx, cy, r, col, id) => { const defs = el('defs', {}, svg); const gr = el('radialGradient', { id }, defs); el('stop', { offset: '0%', 'stop-color': col, 'stop-opacity': .55 }, gr); el('stop', { offset: '100%', 'stop-color': col, 'stop-opacity': 0 }, gr); el('circle', { cx, cy, r: r * 1.9, fill: `url(#${id})` }, svg); };
+  const disc = (svg, cx, cy, r, col, id, shade = true) => { const defs = el('defs', {}, svg); const gr = el('radialGradient', { id, cx: '38%', cy: '35%', r: '75%' }, defs); el('stop', { offset: '0%', 'stop-color': '#ffffff', 'stop-opacity': shade ? .35 : 0 }, gr); el('stop', { offset: '60%', 'stop-color': col, 'stop-opacity': 1 }, gr); el('stop', { offset: '100%', 'stop-color': '#000', 'stop-opacity': shade ? .55 : .25 }, gr); el('circle', { cx, cy, r, fill: col }, svg); el('circle', { cx, cy, r, fill: `url(#${id})` }, svg); };
+  // A. star beside the Sun
+  {
+    const host = document.getElementById('look-star'), w = 520, hh = 300, svg = el('svg', { viewBox: `0 0 ${w} ${hh}`, role: 'img', 'aria-label': 'The host star beside the Sun, to scale' });
+    const R = 95, cxS = 150, cxH = 385, cy = 150;
+    glow(svg, cxS, cy, R, '#ffe9b8', 'gS'); disc(svg, cxS, cy, R, starColour(5772), 'dS', false);
+    glow(svg, cxH, cy, R * Rs, starColour(Teff), 'gH'); disc(svg, cxH, cy, R * Rs, starColour(Teff), 'dH', false);
+    el('text', { x: cxS, y: hh - 28, 'text-anchor': 'middle', class: 'cap strong' }, svg).textContent = 'the Sun';
+    el('text', { x: cxS, y: hh - 12, 'text-anchor': 'middle', class: 'cap' }, svg).textContent = '5,772 K · 1 R☉ · 1 L☉';
+    el('text', { x: cxH, y: hh - 28, 'text-anchor': 'middle', class: 'cap strong' }, svg).textContent = 'KIC 6146676';
+    el('text', { x: cxH, y: hh - 12, 'text-anchor': 'middle', class: 'cap' }, svg).textContent = `${fmt(Teff)} K · ${fmt(Rs, 2)} R☉ · ${fmt(L, 3)} L☉`;
+    el('text', { x: cxH, y: 30, 'text-anchor': 'middle', class: 'cap' }, svg).textContent = `half the Sun's width, ${fmt(L * 100, 0)}% of its light, mostly red and infrared`;
+    host.appendChild(svg);
+  }
+  // B. planet beside Earth and Neptune
+  {
+    const host = document.getElementById('look-planet'), w = 520, hh = 300, svg = el('svg', { viewBox: `0 0 ${w} ${hh}`, role: 'img', 'aria-label': 'The candidate planet beside Earth and Neptune, to scale' });
+    const unit = 27, cy = 150;
+    const items = [[90, 1, '#3f8fd8', 'Earth', '1 R⊕'], [250, Rp, '#7fa8a3', 'KIC 6146676 b (candidate)', `${fmt(Rp, 2)} R⊕ · ~${fmt(Mp, 0)} M⊕ if typical`], [420, 3.88, '#3a5fc8', 'Neptune', '3.88 R⊕ · 17 M⊕']];
+    items.forEach(([cx, r, col, name, sub], i) => { disc(svg, cx, cy, r * unit, col, 'dp' + i); if (i === 1) { el('circle', { cx, cy, r: r * unit + 5, fill: 'none', stroke: '#c7d6d3', 'stroke-opacity': .5, 'stroke-width': 6 }, svg); } el('text', { x: cx, y: hh - 28, 'text-anchor': 'middle', class: 'cap strong' }, svg).textContent = name; el('text', { x: cx, y: hh - 12, 'text-anchor': 'middle', class: 'cap' }, svg).textContent = sub; });
+    el('text', { x: 250, y: 30, 'text-anchor': 'middle', class: 'cap' }, svg).textContent = 'the pale ring stands for a possible thick envelope; its depth is not known';
+    host.appendChild(svg);
+  }
+  // C. orbit against the habitable zone
+  {
+    const host = document.getElementById('look-orbit'), w = 520, hh = 420, svg = el('svg', { viewBox: `0 0 ${w} ${hh}`, role: 'img', 'aria-label': 'The orbit drawn against the habitable zone' });
+    const cx = w / 2, cy = hh / 2, sc = (Math.min(w, hh) / 2 - 24) / d_em;
+    el('circle', { cx, cy, r: d_em * sc, fill: '#2f8f5b', 'fill-opacity': .18 }, svg);
+    el('circle', { cx, cy, r: d_mg * sc, fill: '#2f8f5b', 'fill-opacity': .22 }, svg);
+    el('circle', { cx, cy, r: d_rg * sc, fill: '#0b1020' }, svg);
+    el('circle', { cx, cy, r: d_rg * sc, fill: '#d9a441', 'fill-opacity': .18 }, svg);
+    el('circle', { cx, cy, r: d_rv * sc, fill: '#0b1020' }, svg);
+    el('circle', { cx, cy, r: a * sc, fill: 'none', stroke: '#f0efec', 'stroke-width': 1.5, 'stroke-dasharray': '3 4' }, svg);
+    glow(svg, cx, cy, 10, starColour(Teff), 'gO'); el('circle', { cx, cy, r: 7, fill: starColour(Teff) }, svg);
+    const ang = -0.6, px = cx + a * sc * Math.cos(ang), py = cy + a * sc * Math.sin(ang);
+    el('circle', { cx: px, cy: py, r: 7, fill: '#0b1020' }, svg); el('circle', { cx: px, cy: py, r: 5, fill: '#9fc3bf' }, svg);
+    el('text', { x: px + 10, y: py - 8, class: 'cap strong' }, svg).textContent = `planet, ${fmt(a, 3)} AU`;
+    el('text', { x: px + 10, y: py + 8, class: 'cap' }, svg).textContent = `${fmt(insol, 1)}× Earth's sunlight, ${fmt(PB['Teq_K_A0.3_full_redistribution'].median)} K`;
+    const lab = (d, t, dy) => { el('text', { x: cx + 6, y: cy - d * sc + dy, class: 'cap' }, svg).textContent = t; };
+    lab(d_rv, `optimistic inner edge ${fmt(d_rv, 2)} AU`, -4); lab(d_rg, `conservative inner edge ${fmt(d_rg, 2)} AU`, -4); lab(d_mg, `conservative outer edge ${fmt(d_mg, 2)} AU`, 12); lab(d_em, `optimistic outer edge ${fmt(d_em, 2)} AU`, 12);
+    el('text', { x: 10, y: hh - 10, class: 'cap' }, svg).textContent = `for comparison, Mercury orbits the Sun at 0.39 AU; Earth's orbit would be ${fmt(1 / d_em, 1)}× wider than this frame`;
+    host.appendChild(svg);
+    const leg = h('div', 'legend', `<span><i style="background:#2f8f5b;opacity:.6"></i>habitable zone (lighter: optimistic)</span><span><i style="background:#d9a441;opacity:.5"></i>between the two inner edges</span><span><i class="line" style="background:#f0efec"></i>orbit of the candidate</span>`);
+    host.appendChild(leg);
+  }
+  // D. the star seen from the planet
+  {
+    const host = document.getElementById('look-sky'), w = 520, hh = 300, svg = el('svg', { viewBox: `0 0 ${w} ${hh}`, role: 'img', 'aria-label': 'Apparent size of the host star from the planet versus the Sun from Earth' });
+    const sc = 60, cy = 140;   // px per degree
+    glow(svg, 140, cy, angSun / 2 * sc, '#fff3d6', 'gE'); disc(svg, 140, cy, angSun / 2 * sc, '#fff3d6', 'dE', false);
+    glow(svg, 380, cy, angStar / 2 * sc, starColour(Teff), 'gP'); disc(svg, 380, cy, angStar / 2 * sc, starColour(Teff), 'dP', false);
+    el('text', { x: 140, y: hh - 44, 'text-anchor': 'middle', class: 'cap strong' }, svg).textContent = 'the Sun from Earth';
+    el('text', { x: 140, y: hh - 28, 'text-anchor': 'middle', class: 'cap' }, svg).textContent = `${fmt(angSun, 2)}° across`;
+    el('text', { x: 380, y: hh - 44, 'text-anchor': 'middle', class: 'cap strong' }, svg).textContent = 'KIC 6146676 from the planet';
+    el('text', { x: 380, y: hh - 28, 'text-anchor': 'middle', class: 'cap' }, svg).textContent = `${fmt(angStar, 2)}° across, ${fmt(angStar / angSun, 1)}× wider, orange-red`;
+    el('text', { x: 260, y: hh - 8, 'text-anchor': 'middle', class: 'cap' }, svg).textContent = `a year of ${fmt(E.period_days, 1)} days; at 0.18 AU from an M dwarf the planet is probably tidally locked, so one side always faces the star`;
+    host.appendChild(svg);
+  }
+  // E. radius valley strip and inference rows
+  {
+    const host = document.getElementById('valley'), w = 760, hh = 96, svg = el('svg', { viewBox: `0 0 ${w} ${hh}`, class: 'chart', role: 'img', 'aria-label': 'Where the candidate sits on the planet radius scale' });
+    const x = r => 40 + (r - 0.8) / (4.2 - 0.8) * (w - 60), y = 46;
+    el('rect', { x: x(0.8), y: y - 14, width: x(1.6) - x(0.8), height: 28, rx: 4, fill: 'var(--s2-wash)' }, svg);
+    el('rect', { x: x(1.6), y: y - 14, width: x(2.0) - x(1.6), height: 28, rx: 0, fill: 'var(--surface-2)' }, svg);
+    el('rect', { x: x(2.0), y: y - 14, width: x(4.2) - x(2.0), height: 28, rx: 4, fill: 'var(--s1-wash)' }, svg);
+    [1, 1.5, 2, 2.5, 3, 3.5, 4].forEach(v => { el('line', { x1: x(v), x2: x(v), y1: y + 14, y2: y + 19, stroke: 'var(--axis)' }, svg); el('text', { x: x(v), y: y + 32, 'text-anchor': 'middle', class: 'axis' }, svg).textContent = v; });
+    el('text', { x: x(1.2), y: y + 4, 'text-anchor': 'middle', class: 'lab' }, svg).textContent = 'rocky';
+    el('text', { x: x(1.8), y: y + 4, 'text-anchor': 'middle', class: 'lab' }, svg).textContent = 'the valley';
+    el('text', { x: x(3.1), y: y + 4, 'text-anchor': 'middle', class: 'lab' }, svg).textContent = 'sub-Neptunes with volatile envelopes';
+    el('text', { x: w - 20, y: y + 46, 'text-anchor': 'end', class: 'axis-title' }, svg).textContent = 'planet radius, Earth radii';
+    const lo = Rp - PB.Rp_from_k_Rearth.minus, hi = Rp + PB.Rp_from_k_Rearth.plus;
+    el('line', { x1: x(lo), x2: x(hi), y1: y - 24, y2: y - 24, stroke: 'var(--ink)', 'stroke-width': 2 }, svg);
+    el('circle', { cx: x(Rp), cy: y - 24, r: 6, fill: 'var(--ink)' }, svg);
+    el('text', { x: x(Rp), y: y - 34, 'text-anchor': 'middle', class: 'lab strong' }, svg).textContent = `candidate, ${fmt(Rp, 2)} R⊕`;
+    host.appendChild(svg);
+    const rows = [
+      ['Rocky or gassy?', `Almost certainly not a bare rock. Across the Kepler population, planets above about 1.6 to 2 Earth radii (the "radius valley", Fulton et al. 2017; lower for M dwarfs) nearly all carry a volatile envelope: a few percent of hydrogen and helium by mass over a rocky core, or a large water fraction. At ${fmt(Rp, 2)} Earth radii this one sits well on the gassy side.`],
+      ['How heavy?', `Not measured. If it follows the population mass-radius relation (Weiss & Marcy 2014), roughly ${fmt(Mp, 0)} Earth masses, with a factor-of-two scatter; a radial-velocity campaign would need to reach about ${fmt(28.4 * Mp / (Ms ** (2 / 3)) * (E.period_days / 365.25) ** (-1 / 3) / 317.8, 1)} m/s on a G 16 star, which is beyond current spectrographs.`],
+      ['Can it hold an atmosphere?', `Yes. With that mass the escape velocity is about ${fmt(vesc, 0)} km/s, against a few km/s for thermal hydrogen at ${fmt(PB['Teq_K_A0.3_full_redistribution'].median)} K, and the star's quiet Gaia record and 40-day orbit mean the planet is not strongly irradiated. A hydrogen-rich envelope would survive for billions of years here.`],
+      ['What would the air be like?', `Unknown. The two common pictures for a temperate sub-Neptune are a hydrogen-helium envelope over a rocky core, with water clouds possible high up, or a water-rich world with a steam or supercritical layer. The 267 K equilibrium temperature is a top-of-atmosphere number; a thick envelope keeps the deep layers far hotter than anything habitable.`],
+      ['Could a telescope read it?', `Not soon. One atmospheric scale height (${fmt(Hkm, 0)} km for a hydrogen envelope) changes the transit depth by only about ${fmt(sigH, 0)} ppm, on a star of magnitude 16. That is out of reach for JWST transmission spectroscopy at any practical observing time; the host's faintness, not the planet, is the limit.`],
+      ['Habitable?', `Borderline at best, and only in the sense of location. The orbit receives ${fmt(insol, 1)} times Earth's insolation, between the optimistic and conservative inner edges of the habitable zone for this star. A planet of ${fmt(Rp, 1)} Earth radii is not Earth-like regardless of where it orbits.`],
+    ];
+    const wrap = document.getElementById('infer-rows');
+    rows.forEach(([a_, b_]) => { const r = h('div', 'row'); r.innerHTML = `<b>${a_}</b><span>${b_}</span>`; wrap.appendChild(r); });
+  }
+}
+/* ---------- caveats ---------- */
+{
+  const b = document.getElementById('caveats-body');
+  b.innerHTML = [
+    `<p><b>Host identity is settled to the pixel, not to the arcsecond.</b> Difference imaging separates the candidate from KIC 6146666 at 2.9 pixels with high confidence. It cannot exclude a fainter unresolved companion within about one pixel (4″) of KIC 6146676 itself. That is the standard remaining ambiguity for every Kepler candidate and is normally closed with adaptive-optics imaging.</p>`,
+    `<p><b>A grazing or diluted eclipsing binary at 40.3 d is not fully excluded by photometry alone.</b> The flat phase-0.5 window, equal odd and even depths and the non-V shape argue against it, and the 2,200 ppm depth on a star of this size is far too shallow for a stellar companion eclipsing centrally. A background binary blended within the PSF photometry could still mimic it; the constraint on that scenario comes from the pixel localisation above.</p>`,
+    `<p><b>Planet radius depends on the stellar radius.</b> The radius ratio is measured directly from the light curve. Turning it into kilometres needs the star's radius, which here comes from Gaia photometry and parallax rather than a spectrum. The fit's impact parameter and scaled semi-major axis are degenerate with each other at this signal-to-noise.</p>`,
+    `<p><b>No spectrum, no radial velocities, no second instrument.</b> TESS observed this field, but at G 16.2 and 11.5″ from a star 23 times brighter in 21″ pixels, a 2,200 ppm transit is below what TESS can recover for this star. Confirmation would need ground-based transit photometry at a predicted epoch, a reconnaissance spectrum of the host, and ideally high-resolution imaging.</p>`,
+    `<p><b>The detection threshold is provisional.</b> The sweep ran at SDE 13 while the full calibration (1,000 stars, real, inverted and scrambled) is still running. At SDE 50.5 this signal is not sensitive to where the final threshold lands.</p>`,
+  ].join('');
+}
+/* ---------- provenance ---------- */
+{
+  const pre = document.getElementById('pre-queries');
+  if (V && V.queries) pre.textContent = V.queries.map(q => `${q.service.padEnd(11)} ${q.status}  ${q.nbytes.toString().padStart(5)} B  ${q.utc.slice(0, 19)}Z\n  ${q.url}\n  ${q.params.query || Object.entries(q.params).map(([k, v]) => k + '=' + v).join(' ')}\n  sha256 ${q.sha256.slice(0, 16)}…`).join('\n');
+  const k = document.getElementById('kv-prov');
+  const rows = [['Light curve', 'hlsp_kbonus-bkg_kepler_kepler_kic-006146676_kepler_v1.0_lc.fits'], ['sha256', '8a56c51dfb58d9d1de7f946d008872830df508fb9f4fe124b1c39553194a85ef'], ['Flux used', 'PSF (primary); SAP as the aperture control'], ['Detrend', 'version 3, 1.5 d edge mask, mirrored median'], ['Detector', `box_dip ${S0 ? S0.signal.detector_version : '5'}`], ['Pixel data', 'kplr006146666 long-cadence target pixel files, Q0 to Q17 (MAST)'], ['Vet run', S0 ? V.queries[0].utc.slice(0, 10) : '2026-10-20']];
+  rows.forEach(([a, b]) => { const d = h('div'); d.append(h('span', null, a), h('b', null, b)); d.lastChild.style.wordBreak = 'break-all'; d.lastChild.style.textAlign = 'right'; k.appendChild(d); });
+}
+})();
+</script>

@@ -1,0 +1,92 @@
+[
+ {
+  "url": "https://archive.stsci.edu/missions/kepler/lightcurves/0061/006146666/kplr006146666-2009131105131_llc.fits",
+  "bytes": 77760,
+  "sha256": "afb93d8c6249abf39c0a5b910a887824e1c5420c4ff6b00ff6ce76305735bff7"
+ },
+ {
+  "url": "https://archive.stsci.edu/missions/kepler/lightcurves/0061/006146666/kplr006146666-2009166043257_llc.fits",
+  "bytes": 192960,
+  "sha256": "600c00b4be919a628579861676a8551ab576f606d65b85f3ef42bfe702fba9fd"
+ },
+ {
+  "url": "https://archive.stsci.edu/missions/kepler/lightcurves/0061/006146666/kplr006146666-2009259160929_llc.fits",
+  "bytes": 466560,
+  "sha256": "aa368f674e5d688f9adf0b7ef64e330b8041c33f1ae55658a5880835f0a64f8d"
+ },
+ {
+  "url": "https://archive.stsci.edu/missions/kepler/lightcurves/0061/006146666/kplr006146666-2009350155506_llc.fits",
+  "bytes": 466560,
+  "sha256": "14e47f549b823bdc449774ddb3f7e24c4a51c9e1de689305de5125b4f9fa5809"
+ },
+ {
+  "url": "https://archive.stsci.edu/missions/kepler/lightcurves/0061/006146666/kplr006146666-2010078095331_llc.fits",
+  "bytes": 469440,
+  "sha256": "410e969ab856f4f19eaeb0392058ceff476f8ffe514d766f27667e7614e57036"
+ },
+ {
+  "url": "https://archive.stsci.edu/missions/kepler/lightcurves/0061/006146666/kplr006146666-2010174085026_llc.fits",
+  "bytes": 492480,
+  "sha256": "2b9367998e1e8d8a69f56ec6ca616435486292774476e96d08c4580814cf6c98"
+ },
+ {
+  "url": "https://archive.stsci.edu/missions/kepler/lightcurves/0061/006146666/kplr006146666-2010265121752_llc.fits",
+  "bytes": 469440,
+  "sha256": "60df0e770ffa2f438c458de7da790d98f5b9520054289e2ee42c6c3813a5baa1"
+ },
+ {
+  "url": "https://archive.stsci.edu/missions/kepler/lightcurves/0061/006146666/kplr006146666-2010355172524_llc.fits",
+  "bytes": 466560,
+  "sha256": "de8b04fdf3f6dceaee6894a10774ad076f53c4ab5cfaf47a55e8bf22631b03a6"
+ },
+ {
+  "url": "https://archive.stsci.edu/missions/kepler/lightcurves/0061/006146666/kplr006146666-2011073133259_llc.fits",
+  "bytes": 357120,
+  "sha256": "40119e0b873a5c9faf867fbe5b84f11e3ccfc5d837829838ae75e9bc52ab976b"
+ },
+ {
+  "url": "https://archive.stsci.edu/missions/kepler/lightcurves/0061/006146666/kplr006146666-2011177032512_llc.fits",
+  "bytes": 506880,
+  "sha256": "97e6579666cc0ed5d6051f890c4b414a84202b8b803fa5f28a362fdb01b8d513"
+ },
+ {
+  "url": "https://archive.stsci.edu/missions/kepler/lightcurves/0061/006146666/kplr006146666-2011271113734_llc.fits",
+  "bytes": 486720,
+  "sha256": "d37f592676b59eeaceb2dd1d91cd201395b821ac4961d0ed48f7422207c628c0"
+ },
+ {
+  "url": "https://archive.stsci.edu/missions/kepler/lightcurves/0061/006146666/kplr006146666-2012004120508_llc.fits",
+  "bytes": 506880,
+  "sha256": "768900f30b6d398d85415aabb706fc433f841383075082dbba71a435cb6318f5"
+ },
+ {
+  "url": "https://archive.stsci.edu/missions/kepler/lightcurves/0061/006146666/kplr006146666-2012088054726_llc.fits",
+  "bytes": 434880,
+  "sha256": "d0e28a0337c86fdb9b645852a04f27ca098f6ef5e1bd3101484594ab842267ad"
+ },
+ {
+  "url": "https://archive.stsci.edu/missions/kepler/lightcurves/0061/006146666/kplr006146666-2012179063303_llc.fits",
+  "bytes": 472320,
+  "sha256": "4e8949638177c7254043abd2dc5ab0994adc4ae4d8d1533ed563f472936f2d38"
+ },
+ {
+  "url": "https://archive.stsci.edu/missions/kepler/lightcurves/0061/006146666/kplr006146666-2012277125453_llc.fits",
+  "bytes": 506880,
+  "sha256": "a8ed41a4b992ea6ba2f4f6aef055d8bacd16a00d2fea58ed694acd0bb71ffa1f"
+ },
+ {
+  "url": "https://archive.stsci.edu/missions/kepler/lightcurves/0061/006146666/kplr006146666-2013011073258_llc.fits",
+  "bytes": 506880,
+  "sha256": "0948b45371c65fadc740559d87be2f8070c7977f40d5ed049bdd14e99a28d2b5"
+ },
+ {
+  "url": "https://archive.stsci.edu/missions/kepler/lightcurves/0061/006146666/kplr006146666-2013098041711_llc.fits",
+  "bytes": 449280,
+  "sha256": "b0a6b8fd4f40e41d195c69590fe94da9ec18aec13cd110e46a8490607dba8b2f"
+ },
+ {
+  "url": "https://archive.stsci.edu/missions/kepler/lightcurves/0061/006146666/kplr006146666-2013131215648_llc.fits",
+  "bytes": 187200,
+  "sha256": "fbd977b04f16e8a60f56823da398dd209b2f2d236a5223af56f22c9b70e212b1"
+ }
+]

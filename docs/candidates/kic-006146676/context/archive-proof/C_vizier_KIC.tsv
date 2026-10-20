@@ -1,0 +1,61 @@
+#
+#   VizieR Astronomical Server vizier.cds.unistra.fr
+#    Date: 2026-10-20T06:22:38 [V7.6.1]
+#   In case of problem, please report to:	cds-question@unistra.fr
+#
+#
+#Coosys	J2000:	eq_FK5 J2000
+#INFO	service_protocol=ASU	  IVOID of the protocol through which the data was retrieved
+#INFO	request_date=2026-10-20T06:22:38	  Query execution date
+#INFO	request=https://vizier.cds.unistra.fr/viz-bin/asu-tsv?-source=V%2F133%2Fkic&-c=297.868708651717+%2B41.45556694086529&-c.rs=30&-out.all=&-out.add=_r&-sort=_r	  Full request URL
+#INFO	contact=cds-question@unistra.fr	  Email or URL to contact publisher
+#INFO	server_software=VizieR/7.6.1	  Software version
+#INFO	publisher=CDS	  Data centre that produced the VOTable
+#INFO	MaxTuples=50000	
+#INFO	-c=297.868709+41.455567,rs=30.	
+#Constraint -sort=_r
+
+#RESOURCE=yCat_5133
+#Name: V/133
+#Title: Kepler Input Catalog (Kepler Mission Team, 2009)
+#INFO	ivoid=ivo://cds.vizier/v/133	    IVOID of underlying data collection
+#INFO	data_ivoid=ivo://cds.vizier/v/133	    IVOID of underlying data collection
+#INFO	creator=Kepler Mission Team	    First author or institution
+#INFO	cites=bibcode:2009yCat.5133....0K	    Bibcode of the dataset
+#INFO	journal=yCat	    Journal name
+#INFO	original_date=2009	    Year of the article publication
+#INFO	reference_url=https://cdsarc.cds.unistra.fr/viz-bin/cat/V/133	    Dataset landing page
+#INFO	publication_date=2024-09-25	    Date of first publication in the data centre
+#INFO	rights_uri=https://cds.unistra.fr/vizier-org/licences_vizier.html	    Licence URI
+#Table	V_133_kic:
+#Name: V/133/kic
+#Title: the Kepler Input Catalog
+#Column	_r	(F6.3)	Distance from center (297.868709+41.455567)[FK5/J2000]	[ucd=pos.angDistance]
+#Column	KIC	(I8)	[1,13161029] KIC identifier (running number)	[ucd=meta.id;meta.main]
+#Column	RAJ2000	(F10.6)	Right Ascension (J2000)	[ucd=pos.eq.ra;meta.main]
+#Column	DEJ2000	(F10.6)	Declination (J2000)	[ucd=pos.eq.dec;meta.main]
+#Column	umag	(F6.3)	? Estimated magnitude in SDSS-u band (2)	[ucd=phot.mag;em.opt.U]
+#Column	gmag	(F6.3)	? Estimated magnitude in SDSS-g band (2)	[ucd=phot.mag;em.opt.B]
+#Column	rmag	(F6.3)	? Estimated magnitude in SDSS-r band (2)	[ucd=phot.mag;em.opt.R]
+#Column	imag	(F6.3)	? Estimated magnitude in SDSS-i band (2)	[ucd=phot.mag;em.opt.I]
+#Column	Jmag	(F6.3)	? Magnitude in 2MASS J band	[ucd=phot.mag;em.IR.J]
+#Column	Kmag	(F6.3)	? Magnitude in 2MASS K band	[ucd=phot.mag;em.IR.K]
+#Column	kepmag	(F6.3)	? Estimated magnitude in Kepler band	[ucd=phot.mag;em.opt]
+#Column	sg	(I1)	[0,1] flags galaxy(1)/star(0) class	[ucd=src.class.starGalaxy]
+#Column	v	(I1)	[0,1] flag variable (1)	[ucd=meta.code;src.var]
+#Column	aq	(I1)	[0,6] Number of astrophysical parameters	[ucd=meta.number]
+#Column	fv	(I1)	[0,2] outside (0) or inside (1,2) Kepler field of view (2 = Kepler Target)	[ucd=meta.note]
+_r	KIC	RAJ2000	DEJ2000	umag	gmag	rmag	imag	Jmag	Kmag	kepmag	sg	v	aq	fv
+arcsec	 	deg	deg	mag	mag	mag	mag	mag	mag	mag	 	 	 	
+------	--------	----------	----------	------	------	------	------	------	------	------	-	-	-	-
+ 0.464	 6146676	297.868650	+41.455688	      	17.605	16.265	15.676	13.928	13.055	16.257	0	0	0	1
+ 3.987	 6146680	297.869570	+41.456467	      	18.542	18.786	18.985	      	      	18.852	0	0	0	1
+11.193	 6146682	297.869690	+41.458588	      	18.984	17.773	17.246	15.813	15.220	17.769	0	0	0	1
+11.493	 6146666	297.864530	+41.454948	      	13.235	12.806	12.679	11.753	11.435	12.846	0	0	6	2
+13.549	 6146662	297.863830	+41.456459	      	      	      	      	16.254	13.987	      	0	0	0	1
+18.110	 6146700	297.875240	+41.454407	      	20.786	19.614	19.101	16.123	15.262	19.609	0	0	0	1
+22.884	 6146706	297.876590	+41.457916	      	      	19.110	      	      	      	19.110	0	0	0	1
+23.019	 6146659	297.863250	+41.450653	      	20.038	18.684	18.080	15.667	14.696	18.670	0	0	0	1
+25.285	 6146651	297.860200	+41.458511	      	16.728	15.211	14.541	12.490	11.502	15.197	0	0	6	1
+26.100	 6146670	297.866060	+41.462540	      	20.017	18.860	18.358	16.626	16.913	18.858	0	0	0	1
+
