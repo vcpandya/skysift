@@ -191,6 +191,12 @@ def verdict_popup(request: Request, signal_id: int):
                   **_explained(d, signal_id))
 
 
+# the toast a recorded decision sends (app.js shows HX-Trigger "toast" events), in the tone of the new status
+DECIDED = {"approve": ("Approved. It moves to the Approved page.", "pass"),
+           "reject": ("Rejected. The note is kept.", "fail"),
+           "needs_data": ("Marked as waiting for data.", "undetermined")}
+
+
 @router.post("/signals/{signal_id}/decide", dependencies=[Depends(require_token)], response_class=HTMLResponse)
 def decide(request: Request, signal_id: int, decision: str = Form(...), note: str = Form("")):
     st = request.app.state
@@ -202,4 +208,7 @@ def decide(request: Request, signal_id: int, decision: str = Form(...), note: st
         d = queries.signal_detail(st.store, signal_id)
         return render(request, "partials/decision_bar.html", status_code=400, d=d, signal_id=signal_id, error=str(e))
     d = queries.signal_detail(st.store, signal_id)
-    return render(request, "partials/decision_bar.html", d=d, signal_id=signal_id, error=None)
+    resp = render(request, "partials/decision_bar.html", d=d, signal_id=signal_id, error=None)
+    message, tone = DECIDED[decision]
+    resp.headers["HX-Trigger"] = jsonutil.dumps({"toast": {"message": message, "tone": tone}})
+    return resp

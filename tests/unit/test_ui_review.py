@@ -393,3 +393,27 @@ def test_reject_requires_a_note_in_simple_mode(seeded):
     client, ids = seeded
     r = client.post(f"/signals/{ids['candidate']}/decide", data={"decision": "reject", "note": "", "_token": token(client)})
     assert r.status_code == 400 and "note" in r.text.lower()
+
+
+def test_a_recorded_decision_sends_a_toast(seeded):
+    client, ids = seeded
+    r = client.post(f"/signals/{ids['candidate']}/decide", data={"decision": "approve", "note": "", "_token": token(client)})
+    assert r.status_code == 200
+    assert json.loads(r.headers["HX-Trigger"]) == {"toast": {"message": "Approved. It moves to the Approved page.",
+                                                             "tone": "pass"}}
+    r = client.post(f"/signals/{ids['candidate']}/decide", data={"decision": "reject", "note": "", "_token": token(client)})
+    assert r.status_code == 400 and "HX-Trigger" not in r.headers                       # nothing recorded, no toast
+
+
+def test_simple_why_shows_the_numbers_and_hides_the_engine_notes(seeded):
+    client, ids = seeded
+    pw = {"n": 1, "components": [{"frequency": 15.0479, "amplitude_ppm": 1100.0}], "restored": [{"frequency": 0.1}]}
+    extra = json.dumps({"baseline_days": 1400.0, "prewhitening": pw, "alias_resolved": {"from_period": 6.88475}})
+    with client.app.state.store.session() as s:
+        s.execute(text("update signals set extra = :e where id = :i"), {"e": extra, "i": ids["candidate"]}); s.commit()
+    html = client.get(f"/signals/{ids['candidate']}?mode=simple").text
+    why = html.split('id="why"')[1].split('id="plots"')[0]
+    assert "SDE 14.0, SNR 18.0, 99 transits" in why and 'class="why-numbers' in why
+    notes = html[html.index('<span class="only-expert"> · whitened: 1 wave removed'):]
+    notes = notes[:notes.index("</span>")]          # the engine notes sit in one expert-only span
+    assert "put back at the detection" in notes and "period multiplied by 2 from 6.88475 d" in notes

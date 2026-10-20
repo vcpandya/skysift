@@ -18,6 +18,7 @@
     const p = document.createElement("p"); p.className = "muted"; p.textContent = text;
     if (retry) { const a = document.createElement("a"); a.href = ""; a.textContent = " Retry"; p.appendChild(a); }
     foldSlot.replaceChildren(p);
+    if (root !== foldSlot) root.replaceChildren(p.cloneNode(true));   // the light-curve section says it too
   };
   const colours = () => {
     const css = getComputedStyle(document.documentElement);

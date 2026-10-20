@@ -39,8 +39,10 @@ LAYOUT = {"paper_bgcolor": "rgba(0,0,0,0)", "plot_bgcolor": "rgba(0,0,0,0)", "sh
 MARKS = {"data": "--fg", "faint": "--muted", "model": "--ion", "grid": "--line", "text": "--fg-2"}
 # one plain caption under each panel, keyed by the panel id plots.js gives it
 CAPTIONS = {
-    "plot-fold": "Every transit stacked on top of each other. The dip should be the same shape each time.",
-    "plot-full": "The whole light curve with the star's slow changes removed. The ticks mark each predicted transit.",
+    "plot-fold": ("Every transit stacked on top of each other, zoomed on the dip. The dip should be the same shape "
+                  "each time."),
+    "plot-full": ("The whole light curve with the star's slow changes removed. The ticks mark each predicted transit. "
+                  "BKJD: days since the Kepler reference date."),
     "plot-oddeven": "The odd and the even transits measured apart. A planet makes them equally deep.",
     "plot-secondary": ("Half an orbit after the dip, on the same scale. A second dip here is the mark of two stars "
                        "eclipsing each other."),
