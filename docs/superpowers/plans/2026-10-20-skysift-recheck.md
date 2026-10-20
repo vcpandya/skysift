@@ -517,7 +517,12 @@ class Rung5Pixels:
         # when kic == target.kic: UNDETERMINED "pixels: no neighbour to test against"
         # localise per TPF set; leak test on the neighbour's SAP_FLUX summed over the aperture of the TPF (APERTURE bitmask)
         # pass/fail/undetermined from Localisation.verdict; reasons: fail "the dip is on a neighbouring star (<k> sigma, <n>/<m> seasons)",
-        # metrics = Localisation.metrics() + {"leak_depth_ppm": [d, e], "tpf_manifest": [names], "n_tpf": n}
+        # metrics = Localisation.metrics() + {"leak_depth_ppm": [d, e], "tpf_manifest": [names], "n_tpf": n,
+        #                                     "pixels_sha256": sha}
+        # and the arrays the dossier draws are stored once as a `pixels.npz` artifact (kind "pixels", pinned with the
+        # signal, url "skysift://pixels/<signal id>"): per-season diff, var, direct, valid (stacked 3-D arrays), the
+        # season ids, pos_target and pos_neighbour (col, row); written through DataBundle.store when it is a Store
+        # (the recheck runs in-process), skipped with a logged warning inside a worker recorder
         # ServiceUnavailable -> UNDETERMINED "outage:mast: <e>"
 ```
 `build_ladder("4", with_pixels=True)` appends `Rung5Pixels()`; the sweep keeps `with_pixels=False`. `step_pixels(ctx, sig)` runs when the signal's status after steps 1 to 3 is `candidate_stage1`, or `undetermined` with a latest undetermined reason starting with one of `PIXEL_REASON_PREFIXES`; it runs `Rung5Pixels` alone through the bundle from `revet`'s construction, writes the row with the recheck id and refreshes the status.
