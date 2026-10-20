@@ -153,9 +153,16 @@
     window.htmx.trigger(row, "split");      // the selection and the URL follow only a detail that arrived (below)
   };
   if (queue) {
+    // hx-sync replaces a detail load still in flight, and htmx reports the aborted one as an unsuccessful
+    // afterRequest: only the latest load may toast, select its row or change the URL
+    let latestLoad = null;
+    queue.addEventListener("htmx:beforeRequest", (e) => {
+      if (e.detail.target === detail) latestLoad = e.detail.xhr;
+    });
     queue.addEventListener("htmx:afterRequest", (e) => {
       const row = e.detail.elt && e.detail.elt.closest && e.detail.elt.closest("tr.row-link[data-id]");
       if (!row || e.detail.target !== detail) return;
+      if (e.detail.xhr !== latestLoad) return;             // superseded by a newer j, k or click: not a failure
       if (!e.detail.successful) { toast("Could not load the details. Try again.", "fail"); return; }
       select(row);
       const url = new URL(window.location.href);
@@ -185,7 +192,9 @@
     // split-view width (e.detail > 0: Enter on the focused link reports 0 and follows the link) loads the detail
     // beside the table like a click anywhere else on the row
     const plain = e.button === 0 && !(e.ctrlKey || e.metaKey || e.shiftKey || e.altKey);
-    if (plain && e.detail > 0 && e.target.closest("a.row-name") && detail && wide.matches) { e.preventDefault(); openRow(row); return; }
+    if (plain && e.detail > 0 && e.target.closest("a.row-name") && detail && wide.matches) {
+      e.preventDefault(); openRow(row); return;
+    }
     if (!e.target.closest("a, button, input")) openRow(row);
   });
   if (detail && wide.matches) {             // a reload keeps the open signal

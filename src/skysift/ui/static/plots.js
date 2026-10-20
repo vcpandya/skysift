@@ -2,7 +2,8 @@
 // full curve, odd versus even and the phase 0.5 window, and in expert mode (data-mode) the periodogram and the season
 // depths. Each panel is a <figure> with its caption from data-captions. data-layout is the figure template (plots.LAYOUT)
 // merged into every layout; data-marks names the CSS custom properties that colour the marks, read again when the
-// theme changes. Colour never carries status here: data in the text colour, faint points muted, the model in ion.
+// theme changes. Colour never carries status here: data in ion, faint points in the secondary text colour, the model
+// in solar, titles and labels in the text colour (spec 3, "Marks").
 (() => {
   const root = document.getElementById("plots");
   if (!root) return;
@@ -29,7 +30,7 @@
     return {
       ...template, ...rest,
       font: { ...template.font, color: c.text },
-      title: { ...template.title, text: title, font: { ...(template.title || {}).font, color: c.data } },
+      title: { ...template.title, text: title, font: { ...(template.title || {}).font, color: c.text } },
       xaxis: { ...template.xaxis, ...axis, ...xaxis },
       yaxis: { ...template.yaxis, ...axis, ...yaxis },
     };

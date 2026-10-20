@@ -634,7 +634,7 @@ def test_queue_rows_link_to_the_signal_page_and_load_the_detail(seeded):
 
 def test_a_leftover_sparkline_file_never_answers_for_an_unknown_signal(seeded, settings):
     client, _ids = seeded
-    stray = settings.data_dir / "ui" / "sparklines" / "999999.svg"
+    stray = settings.data_dir / "ui" / "sparklines" / "999999-deadbeef0000.svg"     # the shape the route reads
     stray.parent.mkdir(parents=True, exist_ok=True)
     stray.write_text("<svg/>", encoding="utf-8")
     assert client.get("/api/signals/999999/sparkline.svg").status_code == 404
@@ -888,4 +888,26 @@ def test_a_cached_sparkline_is_keyed_by_what_it_draws(seeded, settings, monkeypa
     with client.app.state.store.session() as s:
         s.get(SignalRow, ids["candidate"]).period = 6.88475
     r = client.get(f"/api/signals/{ids['candidate']}/sparkline.svg")
-    assert "old fold" not in r.text and r.headers["cache-control"] == "no-store"      # the seed's fake bytes: placeholder
+    # the seed's raw bytes are fake, so a miss answers with the placeholder
+    assert "old fold" not in r.text and r.headers["cache-control"] == "no-store"
+
+
+def test_an_aborted_detail_load_is_no_failure(seeded):
+    """hx-sync aborts a detail load a newer j, k or click replaced, and htmx 2 reports the abort as an unsuccessful
+    afterRequest: only the latest load may toast, select its row or change the URL."""
+    client, _ids = seeded
+    js = client.get("/static/app.js").text
+    queue = js[js.index("let latestLoad = null;"):]
+    queue = queue[:queue.index("const step = (by) =>")]
+    assert 'addEventListener("htmx:beforeRequest"' in queue and "latestLoad = e.detail.xhr" in queue
+    after = queue[queue.index('"htmx:afterRequest"'):]
+    assert "if (e.detail.xhr !== latestLoad) return;" in after
+    assert after.index("e.detail.xhr !== latestLoad") < after.index("Could not load the details")
+    assert after.index("e.detail.xhr !== latestLoad") < after.index("select(row)")
+
+
+def test_chart_titles_use_the_text_colour(seeded):
+    client, _ids = seeded
+    js = client.get("/static/plots.js").text
+    title = js[js.index("title: { ...template.title"):].split("\n")[0]
+    assert "color: c.text" in title and "c.data" not in title

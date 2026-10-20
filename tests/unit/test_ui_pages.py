@@ -887,9 +887,10 @@ def test_tonight_and_sources_lead_to_the_set_they_count(settings, tmp_path):
     home = client.get("/?mode=simple").text
     assert '<a href="/candidates?status=waiting">See all</a>' in home
     assert '<span data-count="2">2</span> candidates are waiting for a look.' in home
-    assert "found 6 signals" in home                                          # the "all" chip's set: pending is not in it
+    assert "found 6 signals" in home                    # the "all" chip's set: a pending signal is in no queue
     rejected_tile = home.split('<div class="tiles tonight-tiles">')[1].split("rejected so far")[0]
-    assert 'data-count="1"' in rejected_tile.split('<div class="tile stat">')[-1]   # the reviewer's reject is no failed check
+    # the reviewer's reject is a decision, not a failed check: the tile still counts 1
+    assert 'data-count="1"' in rejected_tile.split('<div class="tile stat">')[-1]
     waiting = client.get("/candidates?status=waiting&mode=simple").text
     assert waiting.count('<article class="card candidate') == 2
     assert 'aria-current="true">waiting for a decision <span class="chip-count">2</span></a>' in waiting
