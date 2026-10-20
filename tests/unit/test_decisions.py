@@ -87,12 +87,14 @@ def test_un_reject_returns_to_the_engine_status_derived_from_tests(store_stage2_
     assert store.signal_status(sid) == "candidate_stage2"
 
 
-def test_un_reject_keeps_an_engine_failure_and_plain_decisions_keep_the_status(store_stage2_signal):
+def test_every_non_reject_decision_rederives_the_engine_status(store_stage2_signal):
     store, sid = store_stage2_signal
     store.set_signal_status(sid, "superseded")
     assert store.decide(sid, "needs_data", "see the P/2 signal")["final_status"] == "superseded"
     store.set_signal_status(sid, "candidate_stage2")
     store.add_test(sid, TestResult(rung="rung2_shape", status=TestStatus.FAIL, reason="odd_even 4 sigma"), 0.01)
-    assert store.decide(sid, "approve")["final_status"] == "candidate_stage2"     # no rejection to undo: untouched
+    assert store.decide(sid, "approve")["final_status"] == "rejected"           # the engine's own failure stands
     store.decide(sid, "reject", "eclipsing binary")
-    assert store.decide(sid, "approve", "I disagree")["final_status"] == "rejected"  # the engine's own failure stands
+    assert store.decide(sid, "approve", "I disagree")["final_status"] == "rejected"
+    with store.session() as ses:
+        assert ses.query(CandidateRow).one().status == "approved"               # the reviewer's word sits beside it

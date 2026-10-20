@@ -1,5 +1,5 @@
 import pytest
-from sqlalchemy import MetaData, Table, inspect, text
+from sqlalchemy import Column, ForeignKey, MetaData, Table, inspect, text
 
 from skysift.models import TestResult, TestStatus
 from skysift.store import migrations
@@ -46,6 +46,13 @@ def test_migrate_is_idempotent(tmp_path):
 RECHECK_COLUMNS = {"signals": {"parent_signal_id", "ladder_version"}, "tests": {"recheck_id"}}
 
 
+def _plain_copy(c: Column) -> Column:
+    """A column with the same name, type, keys and index, through public API only."""
+    fks = [ForeignKey(fk.target_fullname) for fk in c.foreign_keys]
+    return Column(c.name, c.type, *fks, primary_key=c.primary_key, nullable=c.nullable, index=c.index,
+                  unique=c.unique)
+
+
 @pytest.fixture
 def old_schema_engine(tmp_path):
     """A database as the dashboard milestone left it: step 001 recorded, no rechecks table, no recheck columns, one
@@ -54,19 +61,22 @@ def old_schema_engine(tmp_path):
     old = MetaData()
     for t in Base.metadata.sorted_tables:
         if t.name != "rechecks":
-            Table(t.name, old, *[c._copy() for c in t.columns if c.name not in RECHECK_COLUMNS.get(t.name, ())])
+            Table(t.name, old, *[_plain_copy(c) for c in t.columns if c.name not in RECHECK_COLUMNS.get(t.name, ())])
     engine = Store(f"sqlite:///{tmp_path.as_posix()}/old.db").engine
     old.create_all(engine)
     with engine.begin() as c:
         c.execute(text("CREATE TABLE schema_version (step VARCHAR(64) PRIMARY KEY, applied TIMESTAMP)"))
         c.execute(text("INSERT INTO schema_version VALUES ('001_dashboard', '2026-10-19 00:00:00')"))
-        c.execute(text("INSERT INTO runs (id, job_key, target_id, detector, detector_version, ladder_version, started, "
-                       "status, error) VALUES (1, 'k', 'kic-1', 'box_dip', 'v', '3', '2026-10-19 00:00:00', 'done', '')"))
+        c.execute(text("INSERT INTO runs (id, job_key, target_id, detector, detector_version, ladder_version, "
+                       "started, status, error) "
+                       "VALUES (1, 'k', 'kic-1', 'box_dip', 'v', '3', '2026-10-19 00:00:00', 'done', '')"))
         c.execute(text("INSERT INTO signals (id, run_id, target_id, detector, detector_version, period, t0, duration, "
                        "depth_ppm, snr, sde, n_events, extra, branch, final_status) "
-                       "VALUES (1, 1, 'kic-1', 'box_dip', 'v', 3.0, 1.0, 0.1, 800, 12, 11, 9, '{}', 'planet', 'undetermined')"))
+                       "VALUES (1, 1, 'kic-1', 'box_dip', 'v', 3.0, 1.0, 0.1, 800, 12, 11, 9, '{}', 'planet', "
+                       "'undetermined')"))
         c.execute(text("INSERT INTO tests (signal_id, rung, status, metrics, artifacts, reason, duration_s, created) "
-                       "VALUES (1, 'rung4_novelty', 'undetermined', '{}', '[]', 'outage:x', 0.1, '2026-10-19 00:00:00')"))
+                       "VALUES (1, 'rung4_novelty', 'undetermined', '{}', '[]', 'outage:x', 0.1, "
+                       "'2026-10-19 00:00:00')"))
     return engine
 
 

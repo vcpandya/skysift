@@ -232,7 +232,8 @@ def test_status_from_tests_uses_the_latest_row_per_rung():
 
 
 def test_status_from_tests_precedence_and_orm_rows():
-    rows = [TestRow(id=1, rung="rung2_shape", status="fail"), TestRow(id=2, rung="rung4_novelty", status="undetermined")]
+    rows = [TestRow(id=1, rung="rung2_shape", status="fail"),
+            TestRow(id=2, rung="rung4_novelty", status="undetermined")]
     assert status_from_tests(rows) == "fail"                                   # a failure outranks no verdict
     assert status_from_tests(list(reversed(rows))) == "fail"
     later_pass = TestRow(id=3, rung="rung2_shape", status="pass")
@@ -245,11 +246,12 @@ def test_status_from_tests_precedence_and_orm_rows():
 
 
 def test_recheck_rows_and_latest_tests(store_with_signal):
-    store, sid = store_with_signal                       # one signal with rung1..rung4 rows, rung4 undetermined (outage)
+    store, sid = store_with_signal          # one signal with rung1..rung4 rows, rung4 undetermined (outage)
     rid = store.add_recheck(sid, "catalogue", "4", "pass", "retried exoarchive")
     store.add_test(sid, TestResult(rung="rung4_novelty", status=TestStatus.PASS), 0.1, recheck_id=rid)
     latest = store.latest_tests(sid)
-    assert [t["rung"] for t in latest] == ["rung1_detection", "rung1_events", "rung2_shape", "rung3_stability", "rung4_novelty"]
+    assert [t["rung"] for t in latest] == ["rung1_detection", "rung1_events", "rung2_shape", "rung3_stability",
+                                           "rung4_novelty"]
     assert latest[-1]["status"] == "pass" and latest[-1]["recheck_id"] == rid
     assert store.refresh_status(sid) == "candidate_stage1"
     assert store.rechecks(sid)[0]["step"] == "catalogue"
@@ -269,8 +271,12 @@ def test_recheck_history_is_append_only_and_refresh_persists(store_with_signal):
     assert store.signal_status(sid) == "undetermined"                         # add_test alone changes no status
     assert store.refresh_status(sid) == "candidate_stage2" and store.signal_status(sid) == "candidate_stage2"
     assert [t["rung"] for t in store.latest_tests(sid)][-1] == "rung5_pixels"
+    store.add_test(sid, TestResult(rung="rung2_shape", status=TestStatus.PASS), 0.1, recheck_id=second)
+    latest = store.latest_tests(sid)                                            # a late rung 2 retry keeps its place
+    assert [t["rung"] for t in latest] == [*LC_RUNGS, "rung5_pixels"]
+    assert latest[2]["recheck_id"] == second and latest[2]["id"] == max(t["id"] for t in latest)
     with store.session() as s:                                                  # the old rung 4 row is kept
-        assert s.scalar(select(func.count()).select_from(TestRow).where(TestRow.signal_id == sid)) == 7
+        assert s.scalar(select(func.count()).select_from(TestRow).where(TestRow.signal_id == sid)) == 8
 
 
 def test_record_results_writes_ladder_version_and_add_signal_links_children(store_with_signal):
@@ -292,7 +298,7 @@ def test_record_results_writes_ladder_version_and_add_signal_links_children(stor
 
 
 def test_recheck_queue_filters_status_version_and_decisions(store_with_signals):
-    store, ids = store_with_signals     # candidate, undetermined, rejected, candidate with an approve decision, other version
+    store, ids = store_with_signals  # candidate, undetermined, rejected, approved candidate, other version
     q = [r["id"] for r in store.recheck_queue("v+abc")]
     assert ids["candidate"] in q and ids["undetermined"] in q
     assert ids["rejected"] not in q and ids["approved"] not in q and ids["other_version"] not in q
@@ -339,3 +345,33 @@ def test_ui_seed_stage2_signal_carries_its_pixel_recheck(tmp_path):
     assert latest[-1]["rung"] == "rung5_pixels" and latest[-1]["recheck_id"] == h["id"]
     assert all(t["recheck_id"] is None for t in latest[:-1])                  # the sweep's own rows
     assert store.signal_status(ids["stage2"]) == "candidate_stage2"
+
+
+def test_superseded_recheck_survives_a_reject_and_an_approve(store_with_signals):
+    store, ids = store_with_signals
+    sid = ids["candidate"]
+    store.add_recheck(sid, "period", "4", "superseded", "P/2 settles it")
+    assert store.refresh_status(sid) == "superseded"
+    store.decide(sid, "reject", "looked like an EB")
+    assert store.signal_status(sid) == "rejected" and store.refresh_status(sid) == "rejected"
+    assert store.decide(sid, "approve", "it was the P/2 one")["final_status"] == "superseded"
+    assert store.refresh_status(sid) == "superseded"
+
+
+def test_record_results_derives_stage_2_from_a_rung5_pass_and_refuses_an_unknown_run(tmp_path):
+    store = make_store(tmp_path)
+    store.upsert_target(Target(source="kbonus_bkg", target_id="kic-9", ra=0, dec=0))
+    rid = store.start_run(make_job_key("kic-9", "box_dip", VERSION, "4"), "kic-9", "box_dip", VERSION, "4")
+    sig = Signal(target_id="kic-9", detector="box_dip", detector_version=VERSION, period=40.29, t0=1.0,
+                 duration=0.2, depth_ppm=2200, snr=60, sde=50, n_events=34)
+    tests = [*_lc_tests("pass"), TestResult(rung="rung5_pixels", status=TestStatus.PASS)]
+    item = {"signal": sig.model_dump(), "outcome": "pass", "tests": [t.model_dump() for t in tests],
+            "timings": [0.01] * len(tests)}
+    with pytest.raises(KeyError):
+        store.record_results(rid + 99, "kic-9", [item], [], pin_evidence=False)
+    assert store.counts()["signals"] == 0                                       # nothing landed
+    assert store.record_results(rid, "kic-9", [item], [], pin_evidence=False) == {"pass": 1, "fail": 0,
+                                                                                    "undetermined": 0}
+    with store.session() as s:
+        sid = s.scalar(select(SignalRow.id).where(SignalRow.run_id == rid))
+    assert store.signal_status(sid) == "candidate_stage2" == store.refresh_status(sid)   # both paths agree
