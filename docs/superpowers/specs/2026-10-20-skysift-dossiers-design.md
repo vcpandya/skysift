@@ -128,6 +128,24 @@ Staleness: a dossier is stale when the signal has newer test rows than its finge
 - Artifacts: `dossier_data.json` and the export are recorded as artifacts of kind `dossier`, pinned.
 - Fonts in the export come from the dashboard's vendored woff2 files as data URIs (about 130 KB).
 
+### 5.9 The submission pack (`skysift pack`)
+
+There is no NASA portal that accepts a new Kepler candidate from outside a mission: the NASA Exoplanet Archive ingests planets from the refereed literature and adds candidates only when a mission delivers them; ExoFOP (NExScI) is the community follow-up site, where registered users upload files, notes and parameters, and Kepler and K2 follow-up data there now sits in ExoFOP-TESS under TIC identifiers; a community TOI needs TESS evidence. The routes a candidate can take are therefore: a Research Note of the AAS or a journal paper (the archive picks it up); an ExoFOP-TESS upload of the dossier, the ephemeris and a note under the star's TIC id; a Zenodo deposit for a citable DOI and a frozen record; and a help-desk note to the archive once published.
+
+`skysift pack --target <id> [--out <dir>] [--zenodo]` builds one folder (and a zip) with everything those routes need, from the dossier's stored data:
+
+- `README.md`: the step-by-step instructions, in order: 1 freeze the record (Zenodo), 2 upload to ExoFOP-TESS (TIC id from the Gaia or KIC cross-match, which files to attach, what the note should say, the password-protection choice), 3 write up (the Research Note draft below, the AAS submission steps, arXiv endorsement), 4 tell the archive (the help-desk address and the one-paragraph template), 5 what to answer when asked for follow-up. Each step names the account the person needs and says plainly that the engine cannot do it for them, except step 1.
+- `note/`: an AASTeX Research Note draft (under 1,000 words, one figure) filled from the dossier: title, abstract, the detection and vetting paragraph with the ladder numbers, the pixel localisation paragraph, the star and planet table, the caveats, the data-availability statement with the Zenodo DOI placeholder, the citations the dossier used.
+- `data/`: the detrended light curve (CSV: time BKJD, flux, error, quarter), the ephemeris and parameters (CSV and JSON with errors), the per-event depths, the periodogram summary, the rung metrics (JSON).
+- `figures/`: the folded transit, the odd and even fold, the periodogram, the per-season centroid figure, as PNG and SVG.
+- `dossier.html`: the standalone export.
+- `provenance/`: search and ladder versions, the git commit, the query log for this target (every catalogue and data request with URL, time, status and SHA-256), the file hashes, the calibration counts behind the FAP.
+- `exofop/`: the files renamed to ExoFOP's convention (`<TIC>_<UTC date>_<observer tag>_<content>.<ext>`) and `note.txt` with the upload text.
+
+With `--zenodo` and `SKYSIFT_ZENODO_TOKEN` in the environment, the command creates a Zenodo deposition through the API (sandbox by default, `--zenodo-live` for the real site), uploads the pack, fills the metadata (title, creators from `CITATION.cff`, description from the dossier summary, keywords, related identifiers) and stops before publishing: publishing is a click the person makes on Zenodo after reading the record, and the command prints the draft URL. The candidate row then gets `pack_path` and, after the person publishes, `doi` through the dashboard's existing decision flow ("published" with the DOI pasted in). The engine never posts to ExoFOP, arXiv or a journal.
+
+The Dossiers page gets a "Build submission pack" button on approved candidates (the same background-job pattern) and a link to the pack once built; the dossier page shows the pack's step list with a tick for the steps the person has marked done (stored in the `dossiers` row as `pack_steps`).
+
 ## 6. Behaviour that does not change
 
 The engine's search version, the ladder, the recheck, the candidate queue, decisions. A dossier never changes a status; a reviewer's decision on the dossier page is the same append-only decision.
