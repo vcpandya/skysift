@@ -48,20 +48,28 @@ RUWE_MAX = 1.4
 DWARF_MG_TOLERANCE = 1.0         # mag between the absolute G and the dwarf sequence before a caveat
 SELF_MATCH_ARCSEC = 1.0          # without a Gaia id, the nearest cone row within this is the target itself
 KOPPARAPU_TEFF = (2600.0, 7200.0)
-# Kopparapu et al. 2013 (erratum) effective-flux coefficients, as in the hand-built template; t = Teff - 5780
+# Kopparapu et al. 2013, erratum 2013 ApJ 770 82: effective-flux coefficients, t = Teff - 5780. The hand-built template
+# carried the pre-erratum recent-Venus set; the other three are unchanged by the erratum.
 KOPPARAPU = {
-    "recent_venus": (1.7763, 1.4335e-4, 3.3954e-9, -7.6364e-12, -1.1950e-15),
+    "recent_venus": (1.7753, 1.4316e-4, 2.9875e-9, -7.5702e-12, -1.1635e-15),
     "runaway_greenhouse": (1.0512, 1.3242e-4, 1.5418e-8, -7.9895e-12, -1.8328e-15),
     "maximum_greenhouse": (0.3438, 5.8942e-5, 1.6558e-9, -3.0045e-12, -5.2983e-16),
     "early_mars": (0.3179, 5.4513e-5, 1.5313e-9, -2.7786e-12, -4.8997e-16),
 }
 G_SI, MSUN, RSUN, AU, REARTH = 6.674e-11, 1.98892e30, 6.957e8, 1.495978707e11, 6.3781e6   # as d_stellar_planet.py
 
-NO_STAR = "no Gaia parallax or colour: the star cannot be characterised from photometry"
+NO_STAR = "no Gaia parallax or colour: the star cannot be characterized from photometry"
 KS_MISSING = "Ks missing: Mamajek radius with doubled scatter"
 ZERO_POINT_FALLBACK = ("Gaia parallax zero point: the global offset of -0.017 mas was used because the "
                        "gaiadr3-zeropoint package is not installed")
+ZERO_POINT_MISSING = ("Gaia parallax zero point: the global offset of -0.017 mas was used because the inputs of the "
+                      "Lindegren et al. 2021 correction (G, colour, ecliptic latitude, a 5p or 6p solution) are "
+                      "missing")
+ZP_PACKAGE, ZP_GLOBAL, ZP_MISSING = "gaiadr3-zeropoint", "global offset -0.017 mas", "none: missing inputs"
+PARALLAX_DROP_MAX = 0.01         # fraction of non-positive parallax draws before the bias caveat
 
+SOURCE_COLUMNS = ("source_id", "ra", "dec", "parallax", "parallax_error", "phot_g_mean_mag", "bp_rp")
+CONE_COLUMNS = ("phot_g_mean_mag", "sep_arcsec", "source_id")
 Q_SOURCE = ("SELECT source_id, ra, dec, parallax, parallax_error, phot_g_mean_mag, bp_rp, ruwe, "
             "nu_eff_used_in_astrometry, pseudocolour, ecl_lat, astrometric_params_solved, teff_gspphot, radius_flame, "
             "mass_flame FROM gaiadr3.gaia_source WHERE source_id = {id}")
@@ -82,6 +90,7 @@ class GaiaRow:                               # None where Gaia has no value
     parallax: float | None
     parallax_error: float | None
     zero_point: float | None                 # mas, Lindegren et al. 2021; subtract from the parallax
+    zero_point_source: str                   # ZP_PACKAGE | ZP_GLOBAL | ZP_MISSING
     gmag: float | None
     bp_rp: float | None
     ruwe: float | None
@@ -164,13 +173,22 @@ def _numeric_id(gaia_id) -> str | None:
     return gid if re.fullmatch(r"[0-9]+", gid) else None
 
 
-def _adql(query: str, *, fetch, store, target: Target) -> list[dict]:
+def _adql(query: str, label: str, required: tuple[str, ...], *, fetch, store, target: Target) -> list[dict]:
+    """The rows of one logged ADQL query. As rung 4 does, an error document, an empty body (no header) or a header
+    without a ``required`` column is an outage or a schema change, never "no data": ``ServiceUnavailable``. A header
+    with no rows is a genuine "no row"."""
     params = {"request": "doQuery", "lang": "ADQL", "format": "csv", "query": query}
     data = fetch(GAIA_TAP, params=params, service="gaia", store=store, target_id=target.target_id)
     err = looks_like_error_document(data)
     if err:  # HTTP 200 carrying an error document is an outage, never an empty result
-        raise ServiceUnavailable(f"gaia: {err}")
-    return _csv_rows(data)[1]
+        raise ServiceUnavailable(f"gaia {label}: {err}")
+    header, rows = _csv_rows(data)
+    if header is None:
+        raise ServiceUnavailable(f"gaia {label}: empty response")
+    missing = [c for c in required if c not in header]
+    if missing:
+        raise ServiceUnavailable(f"gaia {label}: missing column {', '.join(missing)}")
+    return rows
 
 
 # ---------------------------------------------------------------------------------------------------- Gaia zero point
@@ -210,8 +228,8 @@ def zero_point(gmag, nu_eff, pseudocolour, ecl_lat, params_solved) -> float:
     if zpt is None:
         return ZERO_POINT_GLOBAL
     nan = float("nan")
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
+    with warnings.catch_warnings():  # the package's out-of-range notices (it clamps); nothing else is silenced
+        warnings.filterwarnings("ignore", category=UserWarning, module=r"zero_point\.zpt")
         # arrays, not scalars: the package's scalar path calls np.can_cast on Python floats, which numpy 2 rejects
         value = zpt.get_zpt(np.array([float(gmag)]), np.array([nan if nu_eff is None else float(nu_eff)]),
                             np.array([nan if pseudocolour is None else float(pseudocolour)]),
@@ -263,24 +281,28 @@ def query_gaia(target: Target, *, fetch, store) -> GaiaRow | None:
     gid = _numeric_id(target.gaia_id)
     if gid is None:
         return None
-    src = _adql(Q_SOURCE.format(id=gid), fetch=fetch, store=store, target=target)
+    src = _adql(Q_SOURCE.format(id=gid), "gaia_source", SOURCE_COLUMNS, fetch=fetch, store=store, target=target)
     if not src:
         return None
     s = src[0]
-    dist = _adql(Q_DISTANCE.format(id=gid), fetch=fetch, store=store, target=target)
-    tmass = _adql(Q_TMASS.format(id=gid), fetch=fetch, store=store, target=target)
+    dist = _adql(Q_DISTANCE.format(id=gid), "gaiaedr3_distance", ("r_med_geo",), fetch=fetch, store=store,
+                 target=target)
+    tmass = _adql(Q_TMASS.format(id=gid), "2MASS cross-match", ("ks_m",), fetch=fetch, store=store, target=target)
     d, t = (dist[0] if dist else {}), (tmass[0] if tmass else {})
     gmag, nu_eff = _num(s.get("phot_g_mean_mag")), _num(s.get("nu_eff_used_in_astrometry"))
     pc = _num(s.get("pseudocolour"))
     ecl_lat, aps = _num(s.get("ecl_lat")), _int(s.get("astrometric_params_solved"))
     try:
         zp = zero_point(gmag, nu_eff, pc, ecl_lat, aps)
+        zp_source = ZP_PACKAGE if zero_point_available() else ZP_GLOBAL
     except ValueError:
-        zp = None
+        zp, zp_source = ZERO_POINT_GLOBAL, ZP_MISSING
+    ra, dec = _num(s.get("ra")), _num(s.get("dec"))
     return GaiaRow(
-        source_id=str(s.get("source_id") or gid), ra=_num(s.get("ra")) or target.ra,
-        dec=_num(s.get("dec")) or target.dec,
+        source_id=str(s.get("source_id") or gid), ra=target.ra if ra is None else ra,
+        dec=target.dec if dec is None else dec,
         parallax=_num(s.get("parallax")), parallax_error=_num(s.get("parallax_error")), zero_point=zp,
+        zero_point_source=zp_source,
         gmag=gmag, bp_rp=_num(s.get("bp_rp")), ruwe=_num(s.get("ruwe")), nu_eff=nu_eff, pseudocolour=pc,
         ecl_lat=ecl_lat, params_solved=aps, teff_gspphot=_num(s.get("teff_gspphot")),
         radius_flame=_num(s.get("radius_flame")), mass_flame=_num(s.get("mass_flame")),
@@ -297,7 +319,7 @@ def query_neighbours(target: Target, depth: float, *, fetch, store, radius_arcse
     query = Q_CONE.format(ra=target.ra, dec=target.dec, radius_deg=radius_arcsec / 3600.0)
     if gid is not None:
         query += f" AND source_id != {gid}"
-    rows = _adql(query, fetch=fetch, store=store, target=target)
+    rows = _adql(query, "neighbour cone", CONE_COLUMNS, fetch=fetch, store=store, target=target)
     found = []
     for r in rows:
         g, sep = _num(r.get("phot_g_mean_mag")), _num(r.get("sep_arcsec"))
@@ -315,8 +337,13 @@ def query_neighbours(target: Target, depth: float, *, fetch, store, radius_arcse
 
 # ---------------------------------------------------------------------------------------------------- derivation
 
-def _value(draws, nd: int, source: str) -> Value:
-    lo, med, hi = np.nanpercentile(draws, [16, 50, 84])
+def _value(draws, nd: int, source: str) -> Value | None:
+    """16th, 50th and 84th percentiles over the finite draws; None when no draw is finite (never inf or NaN)."""
+    draws = np.asarray(draws, dtype=float)
+    draws = draws[np.isfinite(draws)]
+    if draws.size == 0:
+        return None
+    lo, med, hi = np.percentile(draws, [16, 50, 84])
     return Value(median=round(float(med), nd), minus=round(float(med - lo), nd), plus=round(float(hi - med), nd),
                  source=source)
 
@@ -356,11 +383,12 @@ def _cross_check(gaia: GaiaRow | None, teff: Value | None, radius: Value | None,
             "distance_bailer_jones_pc": gaia.r_med_geo, "note": note}
 
 
-def _unknown(gaia: GaiaRow | None, extra: tuple[str, ...] = ()) -> tuple[StarParams, PlanetParams]:
+def _unknown(gaia: GaiaRow | None, extra: tuple[str, ...] = (), lead: str | None = NO_STAR,
+             ) -> tuple[StarParams, PlanetParams]:
     star = StarParams(route="none", spectral_type=None, teff=None, radius=None, mass=None, density_gcc=None,
                       distance_pc=None, abs_g=None, abs_ks=None,
                       gaia_cross_check=_cross_check(gaia, None, None, None, None), reddening_note="",
-                      alt_radius_e02=None, caveats=(NO_STAR, *extra))
+                      alt_radius_e02=None, caveats=(lead, *extra) if lead else tuple(extra))
     planet = PlanetParams(rp_rearth=None, a_au=None, a_over_r=None, teq_k=None, insolation_earth=None,
                           transit_probability=None, hz_inner_au=None, hz_outer_au=None, in_habitable_zone=None)
     return star, planet
@@ -375,32 +403,42 @@ def _hz_distance(teff: float, lum: float, coeffs) -> float:
 def derive(gaia: GaiaRow | None, period: float, fit_k: float | None, depth: float,
            rng: np.random.Generator) -> tuple[StarParams, PlanetParams]:
     """The star and planet of spec 5.3 from one Gaia row, the period (days), the fitted radius ratio (None without a
-    fit: the depth is used) and the depth (fraction). Every draw comes from ``rng``."""
+    fit: the depth is used) and the depth (fraction). Every draw comes from ``rng``.
+
+    The Mann relations are used only for a dwarf inside their calibration: an M-type colour with Ks, the median M_Ks
+    inside ``MANN_MKS_RANGE`` and the absolute G within ``DWARF_MG_TOLERANCE`` of the dwarf sequence. Otherwise the
+    dwarf-table radius and mass at the colour, with a caveat saying why, or no star when the colour is off the table
+    too."""
     if gaia is None or gaia.parallax is None or gaia.parallax_error is None or gaia.bp_rp is None:
         return _unknown(gaia)
     caveats: list[str] = []
-    zp = gaia.zero_point
+    zp, zp_source = gaia.zero_point, gaia.zero_point_source
     if zp is None:
-        caveats.append("no Lindegren et al. 2021 zero point for this astrometric solution: the parallax is uncorrected")
-        zp = 0.0
-    elif not zero_point_available():
+        zp, zp_source = ZERO_POINT_GLOBAL, ZP_MISSING
+    if zp_source == ZP_GLOBAL:
         caveats.append(ZERO_POINT_FALLBACK)
+    elif zp_source == ZP_MISSING:
+        caveats.append(ZERO_POINT_MISSING)
     plx, eplx = gaia.parallax - zp, math.hypot(gaia.parallax_error, ZERO_POINT_SYSTEMATIC)
     if plx <= 0:
-        return _unknown(gaia, (f"corrected parallax {plx:.3f} mas is not positive",))
+        return _unknown(gaia, (*caveats, f"corrected parallax {plx:.3f} mas is not positive"))
     if plx / eplx < 5:
         caveats.append(f"parallax over error {plx / eplx:.1f}: the distance and radius are loose")
     if gaia.ruwe is not None and gaia.ruwe > RUWE_MAX:
         caveats.append(f"RUWE {gaia.ruwe:.2f} above {RUWE_MAX}: the astrometry may be disturbed by a companion")
     bp_rp, tab = gaia.bp_rp, mamajek_table()
-    if not tab[0, 0] <= bp_rp <= tab[-1, 0]:
+    in_table = bool(tab[0, 0] <= bp_rp <= tab[-1, 0])
+    if not in_table:
         caveats.append(f"BP-RP {bp_rp:.2f} is outside the dwarf table ({tab[0, 0]:.2f} to {tab[-1, 0]:.2f}): "
                        "values are held at the table edge")
 
     # the draws, in a fixed order so a seed always gives the same numbers
     colour = rng.normal(bp_rp, COLOUR_SIGMA, N_DRAWS)
     plx_s = rng.normal(plx, eplx, N_DRAWS)
+    dropped = float(np.mean(plx_s <= 0))
     plx_s[plx_s <= 0] = np.nan
+    if dropped > PARALLAX_DROP_MAX:
+        caveats.append(f"the distance is biased by dropping {100 * dropped:.0f} percent of non-positive parallax draws")
     dist_s = 1000.0 / plx_s
     dm_s = 5 * np.log10(dist_s) - 5
     teff_s = _interp(colour, 1)
@@ -409,42 +447,66 @@ def derive(gaia: GaiaRow | None, period: float, fit_k: float | None, depth: floa
     abs_g = round(gaia.gmag - dm0, 3) if gaia.gmag is not None else None
     abs_ks = round(gaia.ks - dm0, 3) if gaia.ks is not None else None
     mg_dwarf = float(_interp(bp_rp, 4))
-    if abs_g is not None and abs(abs_g - mg_dwarf) > DWARF_MG_TOLERANCE:
+    off_dwarf = abs_g is not None and abs(abs_g - mg_dwarf) > DWARF_MG_TOLERANCE
+    if off_dwarf:
         caveats.append(f"absolute G {abs_g:.2f} is more than {DWARF_MG_TOLERANCE:.0f} mag from the dwarf sequence "
                        f"({mg_dwarf:.2f}) at this colour: the star may be evolved, an unresolved binary or reddened")
     cool = float(_interp(bp_rp, 1)) < M_TEFF_MAX
     table_src = f"Mamajek dwarf table at BP-RP {bp_rp:.3f} +- {COLOUR_SIGMA:.2f} ({CITATIONS['DWARF_SEQUENCE']})"
 
+    route = None
     if cool and gaia.ks is not None:
-        route = "mann"
         ks_s = rng.normal(gaia.ks, gaia.ks_err or KS_ERR_DEFAULT, N_DRAWS)
         mks = ks_s - dm_s - rng.uniform(0.0, A_KS_MAX, N_DRAWS)
-        radius_s = (1.9515 - 0.3520 * mks + 0.01680 * mks ** 2) * rng.normal(1, MANN_R_SCATTER, N_DRAWS)
-        x = mks - 7.5
-        log_m = -0.642 - 0.208 * x - 8.43e-4 * x ** 2 + 7.87e-3 * x ** 3 + 1.42e-4 * x ** 4 - 2.13e-4 * x ** 5
-        mass_s = 10 ** log_m * rng.normal(1, MANN_M_SCATTER, N_DRAWS)
         mks_med = float(np.nanmedian(mks))
+        why = None
         if not MANN_MKS_RANGE[0] <= mks_med <= MANN_MKS_RANGE[1]:
-            caveats.append(f"M_Ks {mks_med:.2f} is outside the Mann et al. calibration ({MANN_MKS_RANGE[0]} to "
-                           f"{MANN_MKS_RANGE[1]}): the star may not be a dwarf")
-        ks_src = f"2MASS Ks {gaia.ks:.3f}, A_Ks 0 to {A_KS_MAX}, Gaia parallax"
-        r_src = f"Mann et al. 2015 R(M_Ks) ({CITATIONS['M_DWARF_RADIUS']}), {ks_src}"
-        m_src = f"Mann et al. 2019 M(M_Ks) ({CITATIONS['M_DWARF_MASS']}), {ks_src}"
-    else:
+            why = (f"M_Ks {mks_med:.2f} is outside their calibration ({MANN_MKS_RANGE[0]} to {MANN_MKS_RANGE[1]}), "
+                   "so the star may not be a dwarf")
+        elif off_dwarf:
+            why = "the absolute G is off the dwarf sequence"
+        else:
+            with np.errstate(over="ignore", invalid="ignore"):
+                radius_s = (1.9515 - 0.3520 * mks + 0.01680 * mks ** 2) * rng.normal(1, MANN_R_SCATTER, N_DRAWS)
+                x = mks - 7.5
+                log_m = -0.642 - 0.208 * x - 8.43e-4 * x ** 2 + 7.87e-3 * x ** 3 + 1.42e-4 * x ** 4 - 2.13e-4 * x ** 5
+                mass_s = 10 ** log_m * rng.normal(1, MANN_M_SCATTER, N_DRAWS)
+                good = np.isfinite(radius_s) & np.isfinite(mass_s) & (radius_s > 0) & (mass_s > 0)
+            bad = np.isfinite(mks) & ~good
+            if bad.mean() > 0.5:
+                why = "most of their draws gave no finite radius or mass"
+            else:
+                route = "mann"
+                if bad.any():
+                    radius_s[bad], mass_s[bad] = np.nan, np.nan
+                    caveats.append(f"{100 * bad.mean():.1f} percent of the Mann draws gave no finite radius or mass "
+                                   "and were dropped")
+                ks_src = f"2MASS Ks {gaia.ks:.3f}, A_Ks 0 to {A_KS_MAX}, Gaia parallax"
+                r_src = f"Mann et al. 2015 R(M_Ks) ({CITATIONS['M_DWARF_RADIUS']}), {ks_src}"
+                m_src = f"Mann et al. 2019 M(M_Ks) ({CITATIONS['M_DWARF_MASS']}), {ks_src}"
+        if why is not None:
+            if not in_table:
+                last = (f"Mann relations not used: {why}; the colour is off the dwarf table too, so the star cannot be "
+                        "characterized from photometry")
+                return _unknown(gaia, (*caveats, last), lead=None)
+            caveats.append(f"Mann relations not used: {why}; the dwarf-table radius and mass at the colour are shown")
+
+    if route is None:
         route = "mamajek"
+        no_ks = cool and gaia.ks is None
         rm_colour = colour
-        if cool:  # an M dwarf without Ks: the colour radius, with the colour scatter doubled
+        if no_ks:  # an M dwarf without Ks: the colour radius, with the colour scatter doubled
             rm_colour = bp_rp + 2.0 * (colour - bp_rp)
             caveats.append(KS_MISSING)
         radius_s, mass_s = _interp(rm_colour, 2), _interp(rm_colour, 3)
-        width = 2 * COLOUR_SIGMA if cool else COLOUR_SIGMA
+        width = 2 * COLOUR_SIGMA if no_ks else COLOUR_SIGMA
         r_src = m_src = f"Mamajek dwarf table at BP-RP {bp_rp:.3f} +- {width:.2f} ({CITATIONS['DWARF_SEQUENCE']})"
 
     density_s = mass_s * MSUN / (4 / 3 * np.pi * (radius_s * RSUN) ** 3) / 1000.0
     teff = _value(teff_s, 0, table_src + ", E(BP-RP) <= 0.1 assumed")
     radius, mass = _value(radius_s, 3, r_src), _value(mass_s, 3, m_src)
-    distance = _value(dist_s, 1, f"1000 / Gaia DR3 parallax, zero point {zp:+.4f} mas "
-                                 f"({CITATIONS['GAIA_PARALLAX_ZERO_POINT']}), +- {eplx:.4f} mas")
+    distance = _value(dist_s, 1, f"1000 / Gaia DR3 parallax, zero point {zp:+.4f} mas ({zp_source}; "
+                                 f"{CITATIONS['GAIA_PARALLAX_ZERO_POINT']}), +- {eplx:.4f} mas")
     alt = _value(_interp(colour - REDDENING_ALT, 2), 3,
                  f"Mamajek dwarf table at BP-RP {bp_rp - REDDENING_ALT:.3f} +- {COLOUR_SIGMA:.2f} (if E(BP-RP) = 0.2)")
     reddening_note = (f"Teff and spectral type assume E(BP-RP) at or below 0.1 at the observed BP-RP {bp_rp:.2f}; "
@@ -478,7 +540,7 @@ def _planet(teff_s, radius_s, mass_s, period: float, fit_k: float | None, depth:
     teq = _value(teff_s * np.sqrt(1 / (2 * a_r)) * (1 - BOND_ALBEDO) ** 0.25, 0,
                  f"Teff (R*/2a)^0.5 at Bond albedo {BOND_ALBEDO}, full redistribution")
     teff_med, lum_med = float(np.nanmedian(teff_s)), float(np.nanmedian(lum_s))
-    if KOPPARAPU_TEFF[0] <= teff_med <= KOPPARAPU_TEFF[1]:
+    if a is not None and KOPPARAPU_TEFF[0] <= teff_med <= KOPPARAPU_TEFF[1]:
         hz = {name: _hz_distance(teff_med, lum_med, c) for name, c in KOPPARAPU.items()}
         in_hz = hz["runaway_greenhouse"] <= a.median <= hz["maximum_greenhouse"]
         in_opt = hz["recent_venus"] <= a.median <= hz["early_mars"]

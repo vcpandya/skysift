@@ -1,6 +1,8 @@
 import hashlib
 import importlib.resources
+import math
 import sys
+import warnings
 from dataclasses import replace
 
 import numpy as np
@@ -8,6 +10,7 @@ import pytest
 
 from skysift import stars
 from skysift.models import Target
+from skysift.net import ServiceUnavailable
 from skysift.stars import derive, lookup, mamajek_table, query_gaia, query_neighbours, zero_point
 from skysift.store.db import Store
 
@@ -33,6 +36,7 @@ def fake_fetch(responses=None, calls=None):
     responses = RESPONSES if responses is None else responses
 
     def fetch(url, *, params=None, service, store=None, target_id=None, **_kw):
+        assert service == "gaia" and target_id == "kic-006146676"
         query = params["query"]
         if calls is not None: calls.append(query)
         data = next(body for key, body in responses.items() if key in query)
@@ -72,6 +76,46 @@ def test_query_gaia_parses_the_three_tables_and_logs_each(store):
     assert row.pseudocolour is None and row.params_solved == 31
     assert row.zero_point == zero_point(16.236654, 1.3330975, None, 60.5697568, 31)
     assert store.counts()["queries"] == 3
+
+
+def test_query_gaia_without_zero_point_inputs_uses_the_global_offset():
+    two_p = GAIA_CSV.replace(b",60.5697568,31,", b",60.5697568,3,")
+    fetch = fake_fetch({**RESPONSES, "gaia_source WHERE source_id": two_p})
+    row = query_gaia(target_6146676(), fetch=fetch, store=None)
+    assert row.zero_point == -0.017 and row.zero_point_source == "none: missing inputs"
+    star, _ = derive(row, 40.29109, 0.048, 2165e-6, np.random.default_rng(1))
+    assert star.caveats == (stars.ZERO_POINT_MISSING,)
+
+
+def test_a_zero_row_answer_is_no_row_but_an_empty_body_is_an_outage(store):
+    header_only = GAIA_CSV.split(b"\n")[0] + b"\n"
+    assert query_gaia(target_6146676(), fetch=fake_fetch({"gaia_source WHERE source_id": header_only}),
+                      store=store) is None
+    with pytest.raises(ServiceUnavailable, match="gaia_source: empty response"):
+        query_gaia(target_6146676(), fetch=fake_fetch({"gaia_source WHERE source_id": b""}), store=store)
+    with pytest.raises(ServiceUnavailable, match="2MASS cross-match: missing column ks_m"):
+        query_gaia(target_6146676(), fetch=fake_fetch({**RESPONSES, "tmass": b"ks,ks_msigcom\n13.0,0.03\n"}),
+                   store=store)
+
+
+def test_a_cone_answer_without_its_separation_column_is_a_schema_change(store):
+    no_sep = CONE_CSV.replace(b",sep_arcsec\n", b",separation\n")
+    with pytest.raises(ServiceUnavailable, match="neighbour cone: missing column sep_arcsec"):
+        query_neighbours(target_6146676(), 2165e-6, fetch=fake_fetch({"CONTAINS": no_sep}), store=store)
+
+
+def test_an_error_document_or_a_failed_fetch_is_an_outage(store):
+    vot = (b'<?xml version="1.0"?><VOTABLE><RESOURCE><INFO name="QUERY_STATUS" value="ERROR">UsageFault: bad'
+           b"</INFO></RESOURCE></VOTABLE>")
+    with pytest.raises(ServiceUnavailable, match="UsageFault"):
+        query_gaia(target_6146676(), fetch=fake_fetch({"gaia_source WHERE source_id": vot}), store=store)
+    down = ServiceUnavailable("gaia https://gea.esac.esa.int -> HTTP 503")
+
+    def failing(*_a, **_kw):
+        raise down
+    with pytest.raises(ServiceUnavailable) as caught:
+        query_neighbours(target_6146676(), 2165e-6, fetch=failing, store=store)
+    assert caught.value is down
 
 
 def test_query_gaia_without_a_numeric_id_returns_none_and_asks_nothing(store):
@@ -152,6 +196,12 @@ def test_derive_reproduces_the_hand_built_dossier_within_its_errors():
     assert star.teff.as_dict()["source"] == star.teff.source
 
 
+def test_derive_fixed_seed_regression():
+    star, _ = derive(gaia_row_6146676(), 40.29109, 0.048, 2165e-6, np.random.default_rng(1))
+    assert star.radius.median == pytest.approx(0.509, abs=0.002) and star.mass.median == pytest.approx(0.507, abs=0.002)
+    assert star.distance_pc.median == pytest.approx(303.0, abs=0.3) and star.caveats == ()
+
+
 def test_derive_is_seeded_by_the_rng():
     a = derive(gaia_row_6146676(), 40.29109, 0.048, 2165e-6, np.random.default_rng(7))
     b = derive(gaia_row_6146676(), 40.29109, 0.048, 2165e-6, np.random.default_rng(7))
@@ -165,13 +215,39 @@ def test_derive_without_a_fit_uses_the_depth_and_says_so():
 
 def test_derive_without_ks_uses_mamajek_with_a_caveat():
     star, _ = derive(replace(gaia_row_6146676(), ks=None, ks_err=None), 40.29, 0.048, 2165e-6, np.random.default_rng(1))
-    assert star.route == "mamajek" and any("Ks" in c for c in star.caveats)
+    assert star.route == "mamajek" and star.caveats == ("Ks missing: Mamajek radius with doubled scatter",)
+    mann, _ = derive(gaia_row_6146676(), 40.29, 0.048, 2165e-6, np.random.default_rng(1))
+    assert star.radius.minus > 2 * mann.radius.minus and "+- 0.20" in star.radius.source
+
+
+def test_a_distant_star_is_off_the_mann_calibration_and_takes_the_table_route():
+    far = replace(gaia_row_6146676(), parallax=0.6, parallax_error=0.05)
+    star, planet = derive(far, 40.29109, 0.048, 2165e-6, np.random.default_rng(1))
+    assert star.route == "mamajek" and "Mann" not in star.radius.source
+    assert any(c.startswith("Mann relations not used: M_Ks") for c in star.caveats)
+    assert any(c.startswith("absolute G") for c in star.caveats) and planet.a_au is not None
+
+
+def test_a_parallax_near_zero_gives_finite_values_and_no_runtime_warning():
+    faint = replace(gaia_row_6146676(), parallax=0.15, parallax_error=0.10)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        star, planet = derive(faint, 40.29109, 0.048, 2165e-6, np.random.default_rng(1))
+    assert [w for w in caught if issubclass(w.category, RuntimeWarning)] == []
+    assert star.route in ("mamajek", "none")
+    values = [star.teff, star.radius, star.mass, star.density_gcc, star.distance_pc, star.alt_radius_e02,
+              planet.rp_rearth, planet.a_au, planet.a_over_r, planet.teq_k, planet.insolation_earth,
+              planet.transit_probability]
+    for v in values:
+        assert v is None or all(math.isfinite(x) for x in (v.median, v.minus, v.plus))
+    assert any("percent of non-positive parallax draws" in c for c in star.caveats)
+    assert any(c.startswith("parallax over error") for c in star.caveats)
 
 
 def test_lookup_without_parallax_returns_an_unknown_star():
     star, planet = derive(replace(gaia_row_6146676(), parallax=None), 40.29, 0.048, 2165e-6, np.random.default_rng(1))
     assert star.route == "none" and star.radius is None and planet.rp_rearth is None
-    assert star.caveats == ("no Gaia parallax or colour: the star cannot be characterised from photometry",)
+    assert star.caveats == ("no Gaia parallax or colour: the star cannot be characterized from photometry",)
 
 
 def test_derive_without_a_gaia_row_returns_an_unknown_star():
