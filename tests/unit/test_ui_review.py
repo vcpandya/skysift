@@ -893,17 +893,24 @@ def test_a_cached_sparkline_is_keyed_by_what_it_draws(seeded, settings, monkeypa
 
 
 def test_an_aborted_detail_load_is_no_failure(seeded):
-    """hx-sync aborts a detail load a newer j, k or click replaced, and htmx 2 reports the abort as an unsuccessful
-    afterRequest: only the latest load may toast, select its row or change the URL."""
+    """hx-sync aborts a detail load a newer j, k or click replaced. In htmx 2.0.3 the old load's htmx:afterRequest
+    (successful undefined, readyState 4, status 0, as after a network error) fires before htmx:sendAbort and before
+    the new load's htmx:beforeRequest, so neither identity nor XHR state can tell the abort apart there: the toast
+    waits one microtask and skips an xhr sendAbort marked. Checked in a browser against the vendored htmx: a rapid
+    1, 2, 3 gave no toast and a 404 one (served app.js read as text here: there is no JS harness)."""
     client, _ids = seeded
     js = client.get("/static/app.js").text
-    queue = js[js.index("let latestLoad = null;"):]
+    queue = js[js.index("const aborted = new WeakSet();"):]
     queue = queue[:queue.index("const step = (by) =>")]
-    assert 'addEventListener("htmx:beforeRequest"' in queue and "latestLoad = e.detail.xhr" in queue
+    assert 'addEventListener("htmx:sendAbort", (e) => { if (e.detail.xhr) aborted.add(e.detail.xhr); });' in queue
     after = queue[queue.index('"htmx:afterRequest"'):]
-    assert "if (e.detail.xhr !== latestLoad) return;" in after
-    assert after.index("e.detail.xhr !== latestLoad") < after.index("Could not load the details")
-    assert after.index("e.detail.xhr !== latestLoad") < after.index("select(row)")
+    assert "queueMicrotask(() => { if (!aborted.has(xhr)) toast(" in after
+    assert after.index("if (!e.detail.successful)") < after.index("queueMicrotask") < after.index("select(row)")
+    assert "latestLoad" not in js and "readyState" not in queue.split("const aborted")[-1]
+    # the comment records why: the order of events that defeated the identity check
+    order = js[js.index("A newer j, k or click makes"):js.index("const aborted = new WeakSet();")]
+    assert "calls xhr.abort() on the old one" in order and "then htmx:sendAbort" in order
+    assert "only then does the new load" in order and "readyState is 4 and status 0" in order
 
 
 def test_chart_titles_use_the_text_colour(seeded):

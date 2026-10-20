@@ -153,17 +153,22 @@
     window.htmx.trigger(row, "split");      // the selection and the URL follow only a detail that arrived (below)
   };
   if (queue) {
-    // hx-sync replaces a detail load still in flight, and htmx reports the aborted one as an unsuccessful
-    // afterRequest: only the latest load may toast, select its row or change the URL
-    let latestLoad = null;
-    queue.addEventListener("htmx:beforeRequest", (e) => {
-      if (e.detail.target === detail) latestLoad = e.detail.xhr;
-    });
+    // A newer j, k or click makes hx-sync="#queue:replace" abort the detail load still in flight. The order of events
+    // (htmx 2.0.3): the new load's sync step calls xhr.abort() on the old one, whose onabort fires htmx:afterRequest
+    // (successful undefined) and then htmx:sendAbort, all on the same call stack, and only then does the new load
+    // fire htmx:beforeRequest. Neither the xhr's identity nor its state tells the abort apart inside afterRequest
+    // (readyState is 4 and status 0 there, as after a network error), so the failure toast waits one microtask, by
+    // which time sendAbort has marked an aborted xhr. A 404, a 500 or a network error (htmx:sendError) still toasts.
+    const aborted = new WeakSet();
+    queue.addEventListener("htmx:sendAbort", (e) => { if (e.detail.xhr) aborted.add(e.detail.xhr); });
     queue.addEventListener("htmx:afterRequest", (e) => {
       const row = e.detail.elt && e.detail.elt.closest && e.detail.elt.closest("tr.row-link[data-id]");
       if (!row || e.detail.target !== detail) return;
-      if (e.detail.xhr !== latestLoad) return;             // superseded by a newer j, k or click: not a failure
-      if (!e.detail.successful) { toast("Could not load the details. Try again.", "fail"); return; }
+      if (!e.detail.successful) {
+        const xhr = e.detail.xhr;
+        queueMicrotask(() => { if (!aborted.has(xhr)) toast("Could not load the details. Try again.", "fail"); });
+        return;
+      }
       select(row);
       const url = new URL(window.location.href);
       url.searchParams.set("signal", row.dataset.id);
