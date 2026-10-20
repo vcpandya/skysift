@@ -55,6 +55,7 @@ def test_why_lists_rungs_in_ladder_order_with_skipped_after_a_fail(seed_detail):
     assert [w.rung for w in rows] == explain.LADDER_ORDER
     assert rows[2].status == "fail" and rows[3].status == "skipped" and rows[-1].status == "skipped"
     assert "4.2" in rows[2].sentence and rows[2].numbers
+    assert rows[2].sentence == "Odd and even transits differ by 4.2 sigma, above the usual limit of 3"
     assert rows[3].sentence == "Skipped: an earlier check failed" and rows[1].sentence == "Not run under this ladder"
 
 
@@ -75,7 +76,7 @@ def test_why_uses_the_latest_row_of_each_rung():
 
 def test_why_sentences_carry_the_deciding_numbers(seed_detail):
     rows = {w.rung: w for w in explain.why(seed_detail("stage2")["tests"])}
-    assert rows["rung1_detection"].sentence == "SDE 50.5 against a threshold of 11"
+    assert rows["rung1_detection"].sentence == "SDE 50.5, above the usual minimum of 11"
     assert "32 of 37 predicted transits have data" in rows["rung1_events"].sentence
     assert "0.3 sigma" in rows["rung2_shape"].sentence and "2,202" in rows["rung2_shape"].numbers
     assert "p = 0.9" in rows["rung3_stability"].sentence
@@ -89,7 +90,7 @@ def test_verdict_words_and_stages(seed_detail):
     assert explain.verdict(**_args(seed_detail("stage2"))).stage == "stage 2"
     assert explain.verdict(**_args(seed_detail("undetermined"))).headline == "Undetermined: one check could not decide"
     assert explain.verdict(**_args(seed_detail("rejected"))).tone == "fail"
-    assert explain.verdict(**_args(seed_detail("rejected"))).headline == "Rejected: Transit shape failed"
+    assert explain.verdict(**_args(seed_detail("rejected"))).headline == 'Rejected: failed the check "Transit shape"'
 
 
 def test_verdict_with_no_tests_is_not_vetted(seed_detail):
@@ -117,6 +118,19 @@ def test_verdict_for_superseded_and_pending_with_tests(seed_detail):
     assert v.word == "Candidate" and v.tone == "pass"
 
 
+def test_undetermined_with_no_undetermined_row_says_a_check(seed_detail):
+    d = seed_detail("candidate")
+    v = explain.verdict({**d["signal"], "final_status": "undetermined"}, d["tests"], None)
+    assert v.headline == "Undetermined: a check could not decide"
+
+
+def test_default_limits_are_never_stated_as_the_run_limit():
+    row = {"rung": "rung1_detection", "status": "fail", "reason": "duration ratio 3.40 outside range", "metrics": {}}
+    assert explain.why([row])[0].sentence == ("The dip lasts 3.40 times the expected duration, outside the usual "
+                                              "range of 0.3 to 3")
+    assert {"MS2", "MS3", "Chases"} <= set(explain.GLOSSARY)
+
+
 def test_legacy_metrics_render_without_the_new_keys(seed_detail):
     rows = explain.why(seed_detail("legacy")["tests"])
     assert len(rows) == len(explain.LADDER_ORDER) and all(w.sentence for w in rows if w.status != "skipped")
@@ -131,7 +145,7 @@ def test_no_em_dash_anywhere(seed_detail):
         texts += [f"{w.sentence} {w.numbers} {w.missing or ''} {w.next_step or ''}" for w in explain.why(d["tests"])]
         assert all("—" not in t for t in texts), role
     glossaries = [*explain.GLOSSARY.values(), *(f"{a} {b}" for a, b in explain.STATUS_GLOSSARY)]
-    assert all("—" not in t for t in glossaries) and len(explain.GLOSSARY) == 10
+    assert all("—" not in t for t in glossaries) and len(explain.GLOSSARY) == 13
 
 
 def test_summary_sentence_and_copy_summary(seed_detail):

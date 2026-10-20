@@ -2,7 +2,8 @@
 undetermined check was missing and what happens next. The single source for the popup, the cards, the signal page and
 the About page (spec sections 4.1, 4.2 and 5.4). Pure: no store, no network, no templates.
 
-Thresholds are not stored on the test rows, so the sentences quote the configured defaults (``config.Thresholds``)."""
+Thresholds are not stored on the test rows and a sweep may override them, so a sentence that has no limit in its reason
+string quotes the default (``config.Thresholds``) as "the usual" limit, never as the one the run used."""
 from __future__ import annotations
 
 import math
@@ -42,6 +43,11 @@ GLOSSARY = {
               "the set of quarters on the same detector.",
     "aperture": "The set of pixels whose light is added up to make the light curve. Two apertures should give the "
                 "same depth for a dip on this star.",
+    "MS2": "Model-shift secondary significance (Kepler DV): how close the strongest other dip in the fold comes to the "
+           "transit's own significance.",
+    "MS3": "Model-shift positive-event significance (Kepler DV): how close the strongest brightening in the fold comes "
+           "to the transit's own significance.",
+    "Chases": "The local uniqueness of each event: how far its dip stands above other dips close to it in time.",
     "BKJD": "Barycentric Kepler Julian Date: the Kepler mission's clock, the Julian date minus 2,454,833.",
     "ppm": "Parts per million of the star's light. A dip of 1,000 ppm is 0.1 percent.",
     "impact parameter": "How far from the centre of the star the planet crosses, from 0 (dead centre) to about 1 "
@@ -88,8 +94,8 @@ FAILS: list[tuple[re.Pattern, Callable[[re.Match], str]]] = [(re.compile(p), w) 
     (r"^sde ([-\d.]+) < ([-\d.]+)", lambda g: f"SDE {g[1]} is below the threshold of {_f(float(g[2]))}"),
     (r"^snr ([-\d.]+) < ([-\d.]+)", lambda g: f"SNR {g[1]} is below the threshold of {_f(float(g[2]))}"),
     (r"^n_events (\d+) < (\d+)", lambda g: f"Only {g[1]} transits, fewer than the {g[2]} needed"),
-    (r"^duration ratio ([-\d.]+)", lambda g: f"The dip lasts {g[1]} times the expected duration, outside "
-                                             f"{_f(_TH.duration_ratio_min)} to {_f(_TH.duration_ratio_max)}"),
+    (r"^duration ratio ([-\d.]+)", lambda g: f"The dip lasts {g[1]} times the expected duration, outside the usual "
+                                             f"range of {_f(_TH.duration_ratio_min)} to {_f(_TH.duration_ratio_max)}"),
     (r"^gapped events \((\d+) of (\d+)", lambda g: f"Only {g[1]} of {g[2]} predicted transits have data"),
     (r"^n_good (\d+) < min_events (\d+)", lambda g: f"Only {g[1]} transits are clean, fewer than the {g[2]} needed"),
     (r"^single event dominates \(([-\d.]+)", lambda g: f"One transit carries most of the signal ({g[1]} of it)"),
@@ -101,8 +107,8 @@ FAILS: list[tuple[re.Pattern, Callable[[re.Match], str]]] = [(re.compile(p), w) 
      lambda g: f"Another dip in the fold is about as strong as the transit (MS2 {g[1]}, limit {g[2]})"),
     (r"^positive event .*\(MS3 ([-\d.]+) > ([-\d.]+)",
      lambda g: f"A brightening in the fold is as strong as the transit (MS3 {g[1]}, limit {g[2]})"),
-    (r"^odd_even ([-\d.]+) sigma", lambda g: f"Odd and even transits differ by {g[1]} sigma, above the limit of "
-                                             f"{_f(_TH.parity_sigma)}"),
+    (r"^odd_even ([-\d.]+) sigma", lambda g: f"Odd and even transits differ by {g[1]} sigma, above the usual limit "
+                                             f"of {_f(_TH.parity_sigma)}"),
     (r"^secondary_at_0\.5 ([-\d.]+) sigma",
      lambda g: f"A second dip at phase 0.5 stands out at {g[1]} sigma, the mark of an eclipsing binary"),
     (r"^eccentric_secondary", lambda g: "A second dip away from phase 0.5 stands out, the mark of an eclipsing binary"),
@@ -166,7 +172,7 @@ def _join(parts: list[str | None], sep: str = ", ") -> str:
 
 def _detection(m: dict) -> tuple[str, str]:
     sde, snr, n, ratio = (_num(m, k) for k in ("sde", "snr", "n_events", "duration_ratio"))
-    sentence = (f"SDE {sde:.1f} against a threshold of {_f(_TH.sde_min)}" if sde is not None
+    sentence = (f"SDE {sde:.1f}, above the usual minimum of {_f(_TH.sde_min)}" if sde is not None
                 else "The detection strength was not recorded")
     return sentence, _join([sde is not None and f"SDE {sde:.1f}", snr is not None and f"SNR {snr:.1f}",
                             n is not None and f"{n:.0f} transits",
@@ -351,11 +357,11 @@ def verdict(signal: dict, tests: list[dict], decision: dict | None, decisions: l
                        reviewer)
     if status == "undetermined":
         n = sum(1 for w in rows if w.status == "undetermined")
-        what = "one check" if n == 1 else f"{n} checks"
+        what = "one check" if n == 1 else f"{n} checks" if n else "a check"   # 0: stored status and rows disagree
         return Verdict("Undetermined", None, "undetermined", f"Undetermined: {what} could not decide", reviewer)
     if status == "rejected":
         failed = next((w for w in rows if w.status == "fail"), None)
-        headline = (f"Rejected: {failed.name} failed" if failed else
+        headline = (f'Rejected: failed the check "{failed.name}"' if failed else
                     "Rejected by reviewer" if reviewer == "Rejected by reviewer" else "Rejected")
         return Verdict("Rejected", None, "fail", headline, reviewer)
     if status == "superseded":
