@@ -77,7 +77,8 @@ def test_approved_page_lists_each_signal_once(settings, tmp_path):
     for decision, note in (("reject", "first look"), ("approve", "second look"), ("approve", "confirmed")):
         client.post(f"/signals/{sid}/decide", data={"decision": decision, "note": note, "_token": app.state.token})
     r = client.get("/approved")
-    assert r.status_code == 200 and r.text.count("kic-005689121") == 1 and "confirmed" in r.text
+    # a card names its target once as its title (the picture's alt text and the copy text repeat it)
+    assert r.status_code == 200 and r.text.count("<code>kic-005689121</code>") == 1 and "confirmed" in r.text
     assert "first look" not in r.text and "second look" not in r.text                         # superseded notes
     assert "kic-005689121" not in client.get("/approved?status=rejected").text
     assert "kic-005689121" not in client.get("/candidates?status=rejected").text

@@ -8,6 +8,7 @@ import subprocess
 from pathlib import Path
 from urllib.parse import urlencode, urlsplit
 
+import yaml
 from fastapi import Depends, FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -30,6 +31,33 @@ NAV = [("/", "Tonight"), ("/candidates", "Candidates"), ("/live", "Live"), ("/so
 # simple is Nova's view and the default, expert the astronomer's; the theme follows the system unless overridden
 PREFS = {"mode": ("simple", "expert"), "theme": ("system", "dark", "light")}
 PREF_COOKIE_AGE = 365 * 24 * 3600
+CITATION = HERE.parents[2] / "CITATION.cff"
+# the About page's recheck steps, in the order the recheck applies them; the names are explain's next-step words
+RECHECK_STEPS = [
+    (explain.REVET, ("When a signal was vetted by an older ladder, it is vetted again. The stacked-fold tests then "
+                     "settle most checks that had too few points in each transit.")),
+    (explain.HALVE, ("When the dip at phase 0.5 matches the main one, the signal is measured again at half the period "
+                     "and vetted as a new signal. The original is marked superseded once the new one settles it.")),
+    (explain.RETRY, "When a catalogue did not answer, only the novelty check runs again."),
+    (explain.PIXELS, ("Every stage 1 candidate, and every signal whose open question only the pixels can answer, goes "
+                      "to the pixel check. A pass makes it a stage 2 candidate. A dip on a neighbouring star rejects "
+                      "it.")),
+]
+
+
+def _citation(path: Path) -> dict | None:
+    """Title, authors, version and URL from CITATION.cff, or None when the file is missing or unreadable."""
+    try:
+        cff = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError):
+        return None
+    if not isinstance(cff, dict):
+        return None
+    authors = [a.get("name") or " ".join(filter(None, (a.get("given-names"), a.get("family-names"))))
+               for a in cff.get("authors") or [] if isinstance(a, dict)]
+    url = str(cff.get("url") or cff.get("repository-code") or "")
+    return {"title": cff.get("title") or "SkySift", "authors": [a for a in authors if a], "version": cff.get("version"),
+            "url": url if url.startswith(("https://", "http://")) else None}
 
 
 def _git_commit() -> str:
@@ -147,7 +175,11 @@ def create_app(settings: Settings, store: Store | None = None, blob: Blob | None
 
     @app.get("/about", response_class=HTMLResponse)
     def about(request: Request):
-        return render(request, "about.html", page_title="About")
+        th = request.app.state.settings.thresholds
+        return render(request, "about.html", page_title="About", statuses=explain.STATUS_GLOSSARY,
+                      glossary=explain.GLOSSARY, rung_names=list(explain.RUNG_NAMES.values()), steps=RECHECK_STEPS,
+                      thresholds=th.model_dump(exclude={"min_period_days", "max_period_days"}),
+                      window=(th.min_period_days, th.max_period_days), citation=_citation(CITATION))
 
     @app.exception_handler(Exception)
     async def _unhandled(request: Request, exc: Exception):

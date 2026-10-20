@@ -1,26 +1,90 @@
 {% extends "base.html" %}
+{% from "partials/pill.html" import pill %}
 {% block title %}SkySift · Sources{% endblock %}
 {% block content %}
-<h1>Data sources</h1>
-{% if active %}<p class="status-running">A sweep of <strong>{{ active.request.source }}</strong> is running (pid {{ active.pid }}). <a href="/live">Watch it</a>.</p>{% endif %}
-<div class="table-wrap"><table>
-<thead><tr><th>source</th><th>status</th><th class="num">light curves</th><th class="num">baseline d</th><th class="num">cadence min</th>
-<th class="num">depth ppm</th><th class="num">searched</th><th class="num">yield/10k</th><th class="num">CPU h/10k</th><th class="num">GB/10k</th>
-<th>progress</th><th></th></tr></thead>
-<tbody>
-{% for r in rows %}
-<tr class="{{ 'muted' if r.info.status != 'live' else '' }}">
-  <td class="wrap desc"><strong>{{ r.info.name }}</strong><div class="muted">{{ r.info.agency }}</div></td>
-  <td>{{ r.info.status }}</td>
-  <td class="num">{{ r.info.n_lightcurves | fmt }}</td><td class="num">{{ r.info.baseline_days | fmt(0) }}</td>
-  <td class="num">{{ r.info.cadence_min | fmt(1) }}</td><td class="num">{{ r.info.depth_limit_ppm | fmt(0) }}</td>
-  <td class="num">{{ (r.info.fraction_searched * 100) | fmt(0) }}%</td><td class="num">{{ r.info.est_yield_per_10k | fmt(1) }}</td>
-  <td class="num">{{ r.cpu_h_per_10k | fmt(0) }}</td><td class="num">{{ r.gb_per_10k | fmt(1) }}</td>
-  <td class="wrap progress">{% if r.info.status == 'live' %}{{ r.progress.done | fmt }} done · {{ r.progress.error | fmt }} error · {{ r.remaining | fmt }} remaining{% else %}<span class="muted">{{ r.info.notes }}</span>{% endif %}</td>
-  <td>{% if r.info.status == 'live' and not active %}<button hx-get="/partials/sweep-form?source={{ r.info.name }}" hx-target="#sweep-form" hx-swap="innerHTML">Start sweep</button>{% endif %}</td>
-</tr>
-{% endfor %}
-</tbody>
-</table></div>
-<div id="sweep-form"></div>
+{% set approved = steps.decided.get("approve", 0) %}
+{% set rejected = steps.decided.get("reject", 0) %}
+{% set asked = steps.decided.get("needs_data", 0) %}
+<section class="page-head">
+  <h1>Sources</h1>
+  <p class="lede">Three steps: pick a source of light curves, run a sweep through it, then look at what the checks let through.</p>
+</section>
+<ol class="steps" aria-label="Getting started">
+  <li class="step{{ ' is-done' if steps.known else '' }}">
+    <span class="step-state">{{ "Done" if steps.known else "Step 1" }}</span>
+    <h2 class="step-title">Pick a data source</h2>
+    <p class="step-body">{% if steps.known %}{{ steps.known | fmt }} target{{ "" if steps.known == 1 else "s" }} known. Start another sweep from a source below.{% else %}Choose a live source below. A sweep fetches its target list first.{% endif %}</p>
+  </li>
+  <li class="step{{ ' is-done' if steps.last_sweep or active else '' }}">
+    <span class="step-state">{{ "Running" if active else "Done" if steps.last_sweep else "Step 2" }}</span>
+    <h2 class="step-title">Run a sweep</h2>
+    <p class="step-body">{% if active %}A sweep of {{ active.request.source }} is running. <a href="/live">Watch it</a>.{% elif steps.last_sweep %}{% set s = steps.last_sweep %}The last sweep searched {{ s.n_targets | fmt }} star{{ "" if s.n_targets == 1 else "s" }} and finished {{ s.finished | ago }}. It found {{ s.candidates | fmt }} candidate{{ "" if s.candidates == 1 else "s" }}.{% else %}None yet. A sweep searches each star and vets every dip it finds.{% endif %}</p>
+  </li>
+  <li class="step{{ ' is-done' if steps.decided else '' }}">
+    <span class="step-state">{{ "Done" if steps.decided else "Step 3" }}</span>
+    <h2 class="step-title">Review candidates</h2>
+    <p class="step-body">{{ steps.waiting | fmt }} candidate{{ "" if steps.waiting == 1 else "s" }} waiting for a look. {% if steps.decided %}{{ approved | fmt }} approved, {{ rejected | fmt }} rejected, {{ asked | fmt }} waiting on more data.{% else %}No decision yet.{% endif %} <a href="/candidates">Open the candidates</a>.</p>
+  </li>
+</ol>
+
+<section aria-labelledby="sources-title">
+  <h2 id="sources-title">Data sources</h2>
+  {% if active %}<p class="status-running">A sweep of <strong>{{ active.request.source }}</strong> is running (pid {{ active.pid }}). One sweep runs at a time. <a href="/live">Watch it</a>.</p>{% endif %}
+  <div class="cards sources">
+  {% for r in rows %}
+    {% set live = r.info.status == "live" %}
+    <article class="card source{{ '' if live else ' is-planned' }}">
+      <header class="source-head">
+        <h3 class="source-name"><code>{{ r.info.name }}</code></h3>
+        {{ pill("pass" if live else "muted", r.info.status) }}
+      </header>
+      <p class="source-agency">{{ r.info.agency }}</p>
+      <dl class="source-facts">
+        <div><dt>light curves</dt><dd>{{ r.info.n_lightcurves | fmt }}</dd></div>
+        <div><dt>baseline</dt><dd>{{ r.info.baseline_days | fmt(0) }} days</dd></div>
+        <div><dt>targets known</dt><dd>{{ r.progress.total | fmt }}</dd></div>
+        <div><dt>searched</dt><dd>{{ r.progress.done | fmt }} done{% if r.progress.error %}, {{ r.progress.error | fmt }} with errors{% endif %}</dd></div>
+      </dl>
+      <div class="source-action">
+      {% if live and not active %}
+        <a class="btn primary" href="/sources?start={{ r.info.name }}#sweep-form" data-dialog-src="/partials/sweep-form?source={{ r.info.name }}" aria-haspopup="dialog">Start a sweep</a>
+      {% else %}
+        <button type="button" disabled>Start a sweep</button>
+        <span class="source-note">{{ "a sweep is running" if live else "not available yet" }}</span>
+      {% endif %}
+      </div>
+    </article>
+  {% endfor %}
+  </div>
+</section>
+
+{% if form %}
+<section id="sweep-form" class="card sweep-section">
+{% include "partials/sweep_form.html" %}
+</section>
+{% endif %}
+
+{% if mode == "expert" %}
+<section aria-labelledby="compare-title">
+  <h2 id="compare-title">Compare the sources</h2>
+  <div class="table-wrap"><table class="sources-table">
+  <thead><tr><th>source</th><th>status</th><th class="num">light curves</th><th class="num">baseline d</th><th class="num">cadence min</th>
+  <th class="num">depth ppm</th><th class="num">searched</th><th class="num">yield/10k</th><th class="num">CPU h/10k</th><th class="num">GB/10k</th>
+  <th>progress</th></tr></thead>
+  <tbody>
+  {% for r in rows %}
+  <tr class="{{ 'muted' if r.info.status != 'live' else '' }}">
+    <td class="source-cell"><strong>{{ r.info.name }}</strong><div class="muted">{{ r.info.agency }}</div></td>
+    <td>{{ r.info.status }}</td>
+    <td class="num">{{ r.info.n_lightcurves | fmt }}</td><td class="num">{{ r.info.baseline_days | fmt(0) }}</td>
+    <td class="num">{{ r.info.cadence_min | fmt(1) }}</td><td class="num">{{ r.info.depth_limit_ppm | fmt(0) }}</td>
+    <td class="num">{{ (r.info.fraction_searched * 100) | fmt(0) }}%</td><td class="num">{{ r.info.est_yield_per_10k | fmt(1) }}</td>
+    <td class="num">{{ r.cpu_h_per_10k | fmt(0) }}</td><td class="num">{{ r.gb_per_10k | fmt(1) }}</td>
+    <td class="progress-cell">{% if r.info.status == 'live' %}{{ r.progress.done | fmt }} done · {{ r.progress.error | fmt }} error · {{ r.remaining | fmt }} remaining{% else %}{{ r.info.notes }}{% endif %}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+  </table></div>
+</section>
+{% endif %}
 {% endblock %}

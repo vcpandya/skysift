@@ -207,12 +207,12 @@ def _tests_by_signal(s, ids: list[int]) -> dict[int, list[dict]]:
 
 
 def _explained(row: dict, tests: list[dict], latest_decision: str | None) -> dict:
-    """The queue row with the verdict in words (``explain.verdict``) and the summary sentence. The row itself carries
-    the signal and target fields both need."""
+    """The queue row with the verdict in words (``explain.verdict``, kept whole as ``v``) and the summary
+    sentence. The row itself carries the signal and target fields both need."""
     decision = {"status": row["decision"]} if row["decision"] else None
     v = explain.verdict(row, tests, decision, [{"decision": latest_decision}] if latest_decision else None)
     return {**row, "stage": v.stage, "verdict_word": v.word, "verdict_tone": v.tone, "reviewer": v.reviewer,
-            "summary": explain.summary_sentence(row, row, tests)}
+            "v": v, "summary": explain.summary_sentence(row, row, tests)}
 
 
 def review_queue(store: Store, status: str = "candidate_stage1", sort: str = "sde", desc: bool = True,
@@ -417,13 +417,25 @@ def signal_detail(store: Store, signal_id: int) -> dict | None:
 
 
 def approved(store: Store, status: str = "approved") -> list[dict]:
+    """The signals whose candidate row has ``status``, newest decision first, as explained cards with the note."""
+    latest = _latest_decision_subquery()
     with store.session() as s:
-        rows = s.execute(select(SignalRow, TargetRow, CandidateRow)
+        rows = s.execute(select(SignalRow, TargetRow, CandidateRow, latest.c.decision)
                          .join(CandidateRow, CandidateRow.signal_id == SignalRow.id)
                          .join(TargetRow, TargetRow.target_id == SignalRow.target_id)
+                         .outerjoin(latest, latest.c.signal_id == SignalRow.id)
                          .where(CandidateRow.status == status).order_by(CandidateRow.decided_at.desc())).all()
-        return [{**_queue_row(sig, t, c.status, None, None), "note": c.note, "decided_at": _iso(c.decided_at),
-                 "doi": c.doi} for sig, t, c in rows]
+        tests = _tests_by_signal(s, [sig.id for sig, *_rest in rows])
+        return [_explained({**_queue_row(sig, t, c.status, None, None), "note": c.note,
+                            "decided_at": _iso(c.decided_at), "doi": c.doi}, tests[sig.id], dec)
+                for sig, t, c, dec in rows]
+
+
+def decision_counts(store: Store) -> dict[str, int]:
+    """How many signals a person has decided, by their latest decision (approve, reject, needs_data)."""
+    latest = _latest_decision_subquery()
+    with store.session() as s:
+        return dict(s.execute(select(latest.c.decision, func.count()).group_by(latest.c.decision)).all())
 
 
 def review_document(store: Store, signal_id: int) -> dict | None:

@@ -241,10 +241,10 @@ def test_quiet_live_regions_rewrite_only_changed_words(settings):
 
 def test_sources_page_lists_registry_and_progress(settings, tmp_path):
     client, _app, _ids, _launcher = make_seeded_app(settings, tmp_path)
-    r = client.get("/sources")
+    r = client.get("/sources?mode=expert")                   # the comparison table is expert (Task 6)
     assert r.status_code == 200
     assert "kbonus_bkg" in r.text and "CPU h/10k" in r.text and "694" in r.text      # 250 s/star -> 694 CPU h per 10k
-    assert "7 done" in r.text and "planned" in r.text and "Start sweep" in r.text
+    assert "7 done" in r.text and "planned" in r.text and "Start a sweep" in r.text
 
 
 def test_start_sweep_form_launches_child_and_redirects(settings, tmp_path):
@@ -260,7 +260,7 @@ def test_start_sweep_form_launches_child_and_redirects(settings, tmp_path):
         active = launcher.active()
         assert active["request"]["retention"] == "budget:20" and active["request"]["limit"] == 25
         page = client.get("/sources").text
-        assert page.count("Start sweep") == 0 and "is running" in page and "kbonus_bkg" in page
+        assert 'data-dialog-src="/partials/sweep-form' not in page and "is running" in page and "kbonus_bkg" in page
         r2 = client.post("/sweeps", data={"source": "kbonus_bkg", "_token": app.state.token}, follow_redirects=False)
         assert r2.status_code == 409 and "already running" in r2.text
         r = client.post("/sweeps/stop", data={"mode": "now", "_token": app.state.token}, follow_redirects=False)
@@ -729,3 +729,118 @@ def test_the_queue_script_opens_the_split_view_only_on_wide_screens(settings):
     assert "replaceState" not in opener and "select(row)" not in opener
     css = client.get("/static/app.css").text
     assert ".card.candidate" in css and ".sparkline" in css and "tr.row-link.is-selected" in css
+
+
+def test_sources_has_three_steps_and_the_drawer_form(seeded_settings):
+    client, _ids = make_seeded_client(seeded_settings)
+    html = client.get("/sources").text
+    assert "Pick a data source" in html and "Run a sweep" in html and "Review candidates" in html
+    form = client.get("/partials/sweep-form?source=kbonus_bkg").text
+    assert 'class="drawer' in form and "What it does" in form
+
+
+def test_sources_steps_show_their_state_and_cards_open_the_drawer(seeded_settings):
+    client, _ids = make_seeded_client(seeded_settings)
+    html = client.get("/sources").text
+    steps = html.split('class="steps')[1].split("</ol>")[0]
+    assert steps.count('class="step is-done"') == 3                          # targets known, a sweep ran, a decision
+    assert "7 targets known" in steps and "3 candidates waiting" in steps and "1 approved" in steps
+    # one card per registry source; a live one opens the form in the drawer (a link without JavaScript)
+    assert html.count('class="card source') == 7
+    assert ('<a class="btn primary" href="/sources?start=kbonus_bkg#sweep-form" '
+            'data-dialog-src="/partials/sweep-form?source=kbonus_bkg" aria-haspopup="dialog">Start a sweep</a>') in html
+    assert html.count("<button type=\"button\" disabled>Start a sweep</button>") == 6 and "not available yet" in html
+    assert "7 done" in html and "<table" not in html                         # the comparison table is expert
+    assert "<table" in client.get("/sources?mode=expert").text
+    assert "—" not in html and "discover" not in html.lower()
+
+
+def test_sources_without_a_sweep_say_none_yet(settings):
+    client, _app = make_client(settings)
+    steps = client.get("/sources").text.split('class="steps')[1].split("</ol>")[0]
+    assert 'class="step is-done"' not in steps and "none yet" in steps.lower()
+
+
+def test_sweep_form_explains_every_field_and_works_without_javascript(seeded_settings):
+    client, _ids = make_seeded_client(seeded_settings)
+    form = client.get("/partials/sweep-form?source=kbonus_bkg").text
+    for name in ("limit", "min_period", "max_period", "retention_mode", "budget_gib", "workers_io", "workers_cpu",
+                 "gmag_max", "store_periodogram", "background_only"):
+        assert f'name="{name}"' in form, name
+    assert form.count("What it does") >= 10 and "Default" in form and "SDE" in form
+    assert 'method="post" action="/sweeps"' in form and 'hx-target="closest .drawer"' in form
+    page = client.get("/sources?start=kbonus_bkg").text                     # the drawer as a page section
+    assert 'id="sweep-form"' in page and 'name="gmag_max"' in page
+    assert 'name="gmag_max"' not in client.get("/sources?start=tess_lc").text   # planned: no form
+
+
+def test_a_plain_form_post_with_an_error_gets_the_whole_page(settings, tmp_path):
+    client, app, _ids, launcher = make_seeded_app(settings, tmp_path)
+    try:
+        r = client.post("/sweeps", data={"source": "kbonus_bkg", "limit": "abc", "_token": app.state.token})
+        assert r.status_code == 400 and 'class="topbar' in r.text and "limit: not a valid number" in r.text
+        r = client.post("/sweeps", data={"source": "kbonus_bkg", "limit": "abc", "_token": app.state.token},
+                        headers={"HX-Request": "true"})
+        assert r.status_code == 400 and 'class="topbar' not in r.text and 'class="drawer' in r.text
+        r = client.post("/sweeps", data={"source": "kbonus_bkg", "min_period": "40", "max_period": "5",
+                                        "_token": app.state.token}, headers={"HX-Request": "true"})
+        assert "period window must satisfy" in r.text and "pydantic" not in r.text     # the reason, not the dump
+    finally:
+        launcher.stop()
+
+
+def test_approved_renders_cards_and_table(seeded_settings):
+    client, _ids = make_seeded_client(seeded_settings)
+    assert 'class="card' in client.get("/approved?mode=simple").text
+    assert "<table" in client.get("/approved?mode=expert").text
+
+
+def test_approved_entries_copy_a_summary_and_link_the_review_json(seeded_settings):
+    client, ids = make_seeded_client(seeded_settings)
+    sid = ids["approved"]
+    for mode in ("simple", "expert"):
+        html = client.get(f"/approved?mode={mode}").text
+        assert ">Copy summary</button>" in html and 'data-copy="' in html, mode
+        assert f'href="/signals/{sid}/review.json"' in html and "Approved by reviewer" in html, mode
+        assert f"http://127.0.0.1/signals/{sid}" in html.split('data-copy="')[1].split('"')[0], mode
+        assert "looks real" in html and "—" not in html and "discover" not in html.lower(), mode
+    assert "<table" not in client.get("/approved?mode=simple").text
+    assert client.get("/approved?status=bogus").status_code == 400
+    empty = client.get("/approved?status=published").text
+    assert 'class="empty' in empty
+
+
+def test_about_lists_statuses_recheck_steps_and_glossary(seeded_settings):
+    client, _ids = make_seeded_client(seeded_settings)
+    html = client.get("/about").text
+    for word in ("Candidate, stage 1", "Candidate, stage 2", "Undetermined", "Rejected", "Re-vet at the suggested period", "SDE"):
+        assert word in html
+
+
+def test_about_has_every_section_in_order(settings):
+    from skysift.ui import explain
+    client, _app = make_client(settings)
+    html = client.get("/about").text
+    main = html.split("<main")[1].split("</main>")[0]
+    heads = ["How SkySift works", "What the words mean", "The recheck", "Terms", "Version and search configuration",
+             "How to cite"]
+    assert [main.index(h) for h in heads] == sorted(main.index(h) for h in heads)
+    method = main.split("How SkySift works")[1].split("What the words mean")[0]
+    assert method.count("<p>") == 6
+    for name in explain.RUNG_NAMES.values():
+        assert name in method
+    for step in ("Re-vet under the current ladder", "Re-vet at the suggested period", "Retry the catalogue",
+                 "Pixel stage"):
+        assert step in main
+    assert main.count("<dt>") >= len(explain.GLOSSARY) and "<dl" in main
+    assert "sde_min" in main and "11" in main and "0.5 to 200 days" in main
+    assert "Vikram Pandya" in main and "0.1.0" in main
+    assert "—" not in html and "discover" not in html.lower() and "style=" not in main
+
+
+def test_about_omits_the_citation_when_the_file_is_missing(settings, tmp_path, monkeypatch):
+    import skysift.ui.app as app_module
+    monkeypatch.setattr(app_module, "CITATION", tmp_path / "missing.cff")
+    client, _app = make_client(settings)
+    r = client.get("/about")
+    assert r.status_code == 200 and "How to cite" not in r.text and "Terms" in r.text

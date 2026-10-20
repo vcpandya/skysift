@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from pydantic import ValidationError
 
 from skysift.sources.base import load_registry
 from skysift.ui import queries
@@ -20,17 +21,39 @@ def _registry_rows(progress: dict) -> list[dict]:
     return rows
 
 
-@router.get("/sources", response_class=HTMLResponse)
-def sources_page(request: Request):
+def _steps(store, progress: dict) -> dict:
+    """The state of the three steps: targets known (pick), the latest sweep (run), candidates waiting and the
+    decisions people made (review). Waiting and the last sweep are Tonight's numbers, so the two pages agree."""
+    t = queries.tonight(store, queries.current_search_version(store))
+    return {"known": sum(p["total"] for p in progress.values()), "last_sweep": t["last_sweep"],
+            "waiting": t["candidates_waiting"], "decided": queries.decision_counts(store)}
+
+
+def _form_ctx(request: Request, source: str, error: str | None = None, values: dict | None = None) -> dict:
+    s = request.app.state.settings
+    return {"source": source, "th": s.thresholds, "settings": s, "error": error, "values": values or {}}
+
+
+def _page(request: Request, form: dict | None = None, status_code: int = 200) -> HTMLResponse:
+    """The Sources page; with ``form`` the sweep form is a section of it, which is what a browser without
+    JavaScript gets from a Start link or after a refused post."""
     st = request.app.state
+    progress = queries.source_progress(st.store)
     active = st.launcher.active() if st.launcher else None
-    return render(request, "sources.html", rows=_registry_rows(queries.source_progress(st.store)), active=active)
+    return render(request, "sources.html", status_code=status_code, rows=_registry_rows(progress), active=active,
+                  steps=_steps(st.store, progress), form=form, **(form or {}))
+
+
+@router.get("/sources", response_class=HTMLResponse)
+def sources_page(request: Request, start: str = ""):
+    info = load_registry().get(start)
+    live = info is not None and info.status == "live"
+    return _page(request, form=_form_ctx(request, start) if live else None)
 
 
 @router.get("/partials/sweep-form", response_class=HTMLResponse)
 def sweep_form(request: Request, source: str):
-    s = request.app.state.settings
-    return render(request, "partials/sweep_form.html", source=source, th=s.thresholds, settings=s, error=None, values={})
+    return render(request, "partials/sweep_form.html", **_form_ctx(request, source))
 
 
 def _request_from_form(form: dict) -> SweepRequest:
@@ -72,13 +95,21 @@ async def start_sweep(request: Request):
         req.validate(st.settings.thresholds)
         _require_live(req.source)
         st.launcher.start(req, st.settings.thresholds)
+    except ValidationError as e:         # the period window, checked by Thresholds: its message, not pydantic's dump
+        return _refused(request, form, "; ".join(x["msg"].removeprefix("Value error, ") for x in e.errors()), 400)
     except (ValueError, TypeError, OverflowError) as e:
-        return render(request, "partials/sweep_form.html", status_code=400, source=form.get("source", ""),
-                      th=st.settings.thresholds, settings=st.settings, error=str(e), values=form)
+        return _refused(request, form, str(e), 400)
     except SweepActive as e:
-        return render(request, "partials/sweep_form.html", status_code=409, source=form.get("source", ""),
-                      th=st.settings.thresholds, settings=st.settings, error=str(e), values=form)
+        return _refused(request, form, str(e), 409)
     return _go_live(request)
+
+
+def _refused(request: Request, form: dict, error: str, status_code: int) -> HTMLResponse:
+    """The form again with the reason: alone for htmx, which swaps it into the drawer, else inside the whole page."""
+    ctx = _form_ctx(request, form.get("source", ""), error, form)
+    if request.headers.get("HX-Request"):
+        return render(request, "partials/sweep_form.html", status_code=status_code, **ctx)
+    return _page(request, form=ctx, status_code=status_code)
 
 
 STOP_MODES = ("graceful", "now")

@@ -324,15 +324,9 @@ tr.row-link { cursor: pointer; transition: background var(--ease); }
 tr.row-link:hover { background: color-mix(in srgb, var(--raised) 60%, var(--surface)); }
 td.wrap { white-space: normal; overflow-wrap: anywhere; }
 td.desc { max-width: 28rem; }
-td.progress { max-width: 18rem; }
 td.metrics .metric { display: inline-block; margin-right: .75rem; white-space: nowrap; }
 details.raw summary { cursor: pointer; }
 details.raw pre { max-height: 300px; overflow: auto; font-size: var(--fs-12); }
-form.inline {
-  display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); align-items: end; gap: 12px 16px;
-  margin: 16px 0; padding: 16px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
-}
-form.inline .span-all { grid-column: 1 / -1; margin: 0; }
 label { display: flex; flex-direction: column; gap: 4px; font-size: var(--fs-12); color: var(--fg-2); }
 label.check { flex-direction: row; align-items: center; gap: 8px; }
 input, select, textarea { min-height: 32px; padding: 6px 10px; font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--muted); border-radius: 8px; }
@@ -477,6 +471,58 @@ tr.row-link.is-selected { background: var(--raised); box-shadow: inset 3px 0 0 v
 .seg-undetermined { fill: var(--undet); }
 .funnel-numbers { font: 400 var(--fs-12)/1.3 var(--font-mono); white-space: nowrap; }
 
+/* ---- Sources: the three steps, one card per source and the start-sweep drawer ---- */
+.steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--gutter); margin: 0 0 32px; padding: 0; list-style: none; }
+.step { display: grid; align-content: start; gap: 6px; padding: 16px; background: var(--surface); border: 1px solid var(--line); border-top: 3px solid var(--muted); border-radius: var(--radius); }
+.step.is-done { border-top-color: var(--pass); }
+.step-state { color: var(--fg-2); font-size: var(--fs-12); font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
+.step.is-done .step-state { color: var(--pass); }
+.step-title { margin: 0; font: 500 var(--fs-16)/1.3 var(--font-display); }
+.step-body { margin: 0; color: var(--fg-2); }
+.card.source { display: grid; gap: 10px; align-content: start; }
+.card.source.is-planned { background: color-mix(in srgb, var(--raised) 40%, var(--surface)); }
+.source-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 12px; }
+.source-name { margin: 0; font: 500 var(--fs-16)/1.3 var(--font-display); }
+.source-name code { font: 500 var(--fs-14)/1.3 var(--font-mono); overflow-wrap: normal; }
+.source-agency { margin: 0; color: var(--fg-2); font-size: var(--fs-13); }
+.source-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 12px; margin: 0; }
+.source-facts dt { color: var(--fg-2); font-size: var(--fs-12); }
+.source-facts dd { margin: 0; font: 500 var(--fs-13)/1.4 var(--font-mono); font-variant-numeric: tabular-nums; }
+.source-action { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 4px; }
+.source-note { color: var(--fg-2); font-size: var(--fs-13); }
+.sources-table .source-cell { min-width: 14rem; white-space: normal; }
+.sources-table .progress-cell { min-width: 14rem; max-width: 22rem; white-space: normal; }
+.sweep-section { margin: 0 0 24px; scroll-margin-top: calc(var(--topbar-h) + 16px); }
+.sweep-drawer header h2 { margin: 0 32px 8px 0; }
+.drawer-lede { margin: 0; color: var(--fg-2); }
+.sweep-form { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 240px), 1fr)); gap: 16px; }
+.sweep-form .drawer-note, .sweep-form .form-actions { grid-column: 1 / -1; }
+.field { display: grid; align-content: start; gap: 6px; }
+.field-help { margin: 0; color: var(--fg-2); font-size: var(--fs-12); }
+.field-what { font-weight: 600; }
+.field-default { color: var(--fg); }
+.form-actions { display: flex; gap: 8px; }
+
+/* ---- Approved: the card's note and its buttons sit above the card link's hit area ---- */
+.card-extra { position: relative; z-index: 1; display: grid; gap: 8px; }
+.card-note { margin: 0; padding: 8px 12px; background: var(--raised); border-left: 3px solid var(--ion); border-radius: 8px; overflow-wrap: anywhere; }
+.card-actions, .row-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+
+/* ---- About ---- */
+.about-section { margin-bottom: 32px; }
+.about-section > p { max-width: 68ch; }
+.rung-list, .recheck-steps { max-width: 68ch; margin: 0 0 12px; padding-left: 22px; }
+.rung-list li + li, .recheck-steps li + li { margin-top: 6px; }
+.glossary-table th, .glossary-table td { white-space: normal; }
+.glossary-table th[scope="row"] { min-width: 9rem; color: var(--fg); font-size: var(--fs-13); }
+.glossary { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); gap: 12px var(--gutter); margin: 0; }
+.glossary div { padding: 12px 16px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
+.glossary dt { font-weight: 600; }
+.glossary dd { margin: 4px 0 0; color: var(--fg-2); }
+.config-table { max-width: 560px; }
+.config-table th[scope="row"] { color: var(--fg); font-weight: 400; }
+.citation { max-width: 68ch; overflow-wrap: anywhere; }
+
 /* ---- Motion ---- */
 @keyframes drift { to { transform: translate3d(40px, 40px, 0); } }
 @keyframes ring-fill { from { stroke-dasharray: 0 400; } }
@@ -504,11 +550,12 @@ tr.row-link.is-selected { background: var(--raised); box-shadow: inset 3px 0 0 v
   .brand-tagline { display: none; }
   .segmented button { padding: 4px 10px; }
   .cards { grid-template-columns: minmax(0, 1fr); }
+  .steps { grid-template-columns: minmax(0, 1fr); }
   .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .grid > [class*="span-"] { grid-column: span 12; }
   .page-hero, .hero-number { font-size: var(--fs-28); }
   .dialog { width: calc(100vw - 16px); max-height: calc(100vh - 16px); padding: 16px; }
-  .dialog:has(.drawer) { width: 100vw; height: auto; max-height: 90vh; margin: auto 0 0; border-radius: 16px 16px 0 0; }
+  .dialog:has(.drawer) { width: 100vw; max-width: 100vw; height: auto; max-height: 90vh; margin: auto 0 0; border-radius: 16px 16px 0 0; }
   .decision-choice { max-width: none; }
   .hero-summary { font-size: var(--fs-16); }
   .hero-copy { margin-left: 0; }

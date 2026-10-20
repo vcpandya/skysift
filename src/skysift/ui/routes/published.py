@@ -7,7 +7,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 from skysift import jsonutil
-from skysift.ui import queries
+from skysift.ui import explain, queries
 from skysift.ui.app import render
 
 router = APIRouter()
@@ -20,8 +20,10 @@ def approved_page(request: Request):
     if status not in STATUSES:
         return render(request, "error.html", status_code=400,
                       error=f"unknown status {status!r}; one of {', '.join(STATUSES)}", log_hint="")
-    return render(request, "approved.html", rows=queries.approved(request.app.state.store, status=status),
-                  status=status, statuses=STATUSES)
+    rows = queries.approved(request.app.state.store, status=status)
+    for r in rows:                     # the clipboard paragraph names the signal page the reader can open
+        r["copy_text"] = explain.copy_summary(r, r, r["v"], f"{request.base_url}signals/{r['id']}")
+    return render(request, "approved.html", rows=rows, status=status, statuses=STATUSES)
 
 
 @router.get("/signals/{signal_id}/review.json")

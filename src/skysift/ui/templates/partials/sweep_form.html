@@ -1,21 +1,61 @@
-<form class="inline" hx-post="/sweeps" hx-target="#sweep-form" hx-swap="innerHTML">
-  <input type="hidden" name="_token" value="{{ token }}">
-  <input type="hidden" name="source" value="{{ source }}">
-  <h2 class="span-all">Start sweep of {{ source }}</h2>
-  {% if error %}<p class="error span-all">{{ error }}</p>{% endif %}
-  <label>limit (targets)<input name="limit" type="number" min="1" value="{{ values.get('limit', 500) }}"></label>
-  <label>min period (d)<input name="min_period" type="number" step="any" value="{{ values.get('min_period', th.min_period_days) }}"></label>
-  <label>max period (d)<input name="max_period" type="number" step="any" value="{{ values.get('max_period', th.max_period_days) }}"></label>
-  <label>retention<select name="retention_mode">
-    {% for m in ['stream', 'keep', 'budget'] %}<option value="{{ m }}" {{ 'selected' if values.get('retention_mode', settings.retention.split(':')[0]) == m else '' }}>{{ m }}</option>{% endfor %}
-  </select></label>
-  <label>budget (GiB, budget mode)<input name="budget_gib" type="number" step="any" value="{{ values.get('budget_gib', 50) }}"></label>
-  <label>workers io<input name="workers_io" type="number" min="1" value="{{ values.get('workers_io', settings.workers_io) }}"></label>
-  <label>workers cpu<input name="workers_cpu" type="number" min="1" value="{{ values.get('workers_cpu', settings.workers_cpu) }}"></label>
-  <label>G mag max<input name="gmag_max" type="number" step="any" value="{{ values.get('gmag_max', 19.0) }}"></label>
-  <label>store periodogram summary (~8 kB/star)<select name="store_periodogram">
-    {% for m, lbl in [('all', 'all targets'), ('signals', 'only targets with a signal'), ('off', 'off')] %}<option value="{{ m }}" {{ 'selected' if values.get('store_periodogram', settings.store_periodogram) == m else '' }}>{{ lbl }}</option>{% endfor %}
-  </select></label>
-  <label class="check"><input type="checkbox" name="background_only" {{ 'checked' if (not values or values.get('background_only')) else '' }}> background sources only</label>
-  <div><button class="primary" type="submit">Start</button></div>
-</form>
+{# The start-sweep form. Its root is .drawer: the Start button opens it in the dialog as a side panel, and the Sources
+   page includes it as a section for a browser without JavaScript. Every field keeps its name and says what it does. #}
+{% set retention_now = settings.retention.split(':')[0] %}
+{% set periodogram_labels = {'all': 'all targets', 'signals': 'only targets with a signal', 'off': 'off'} %}
+<section class="drawer sweep-drawer" aria-labelledby="sweep-title">
+  <header>
+    <h2 id="sweep-title" tabindex="-1" data-dialog-focus>Start a sweep of {{ source }}</h2>
+    <p class="drawer-lede">A sweep fetches each star's light curve, searches it for repeating dips and vets every dip it finds. Results appear on Live as they arrive.</p>
+  </header>
+  {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+  <form class="sweep-form" method="post" action="/sweeps" hx-post="/sweeps" hx-target="closest .drawer" hx-swap="outerHTML">
+    <input type="hidden" name="_token" value="{{ token }}">
+    <input type="hidden" name="source" value="{{ source }}">
+    <div class="field">
+      <label>Stars to search<input name="limit" type="number" min="1" value="{{ values.get('limit', 500) }}" aria-describedby="help-limit"></label>
+      <p class="field-help" id="help-limit"><span class="field-what">What it does:</span> how many stars this sweep takes from the source's list, highest priority first. Stars already searched are skipped. <span class="field-default">Default 500.</span></p>
+    </div>
+    <div class="field">
+      <label>Shortest period, days<input name="min_period" type="number" step="any" value="{{ values.get('min_period', th.min_period_days) }}" aria-describedby="help-min-period"></label>
+      <p class="field-help" id="help-min-period"><span class="field-what">What it does:</span> the shortest time between two dips that the search tries. <span class="field-default">Default {{ "%g" | format(th.min_period_days) }} days.</span></p>
+    </div>
+    <div class="field">
+      <label>Longest period, days<input name="max_period" type="number" step="any" value="{{ values.get('max_period', th.max_period_days) }}" aria-describedby="help-max-period"></label>
+      <p class="field-help" id="help-max-period"><span class="field-what">What it does:</span> the longest time between two dips that the search tries. A wider window takes longer and needs its own threshold calibration. <span class="field-default">Default {{ "%g" | format(th.max_period_days) }} days.</span></p>
+    </div>
+    <div class="field">
+      <label>Downloaded files<select name="retention_mode" aria-describedby="help-retention">
+        {% for m in ['stream', 'keep', 'budget'] %}<option value="{{ m }}" {{ 'selected' if values.get('retention_mode', retention_now) == m else '' }}>{{ m }}</option>{% endfor %}
+      </select></label>
+      <p class="field-help" id="help-retention"><span class="field-what">What it does:</span> stream deletes each light curve once its star is vetted, keep keeps them all, budget keeps them until the cache reaches the size below. Evidence for a kept signal is never deleted. <span class="field-default">Default {{ retention_now }}.</span></p>
+    </div>
+    <div class="field">
+      <label>Cache budget, GiB<input name="budget_gib" type="number" step="any" value="{{ values.get('budget_gib', 50) }}" aria-describedby="help-budget"></label>
+      <p class="field-help" id="help-budget"><span class="field-what">What it does:</span> with budget only, the most disk space the downloaded files may take. <span class="field-default">Default 50 GiB.</span></p>
+    </div>
+    <div class="field">
+      <label>Download workers<input name="workers_io" type="number" min="1" value="{{ values.get('workers_io', settings.workers_io) }}" aria-describedby="help-workers-io"></label>
+      <p class="field-help" id="help-workers-io"><span class="field-what">What it does:</span> how many light curves download at the same time. <span class="field-default">Default {{ settings.workers_io }}.</span></p>
+    </div>
+    <div class="field">
+      <label>Search workers<input name="workers_cpu" type="number" min="1" value="{{ values.get('workers_cpu', settings.workers_cpu) }}" aria-describedby="help-workers-cpu"></label>
+      <p class="field-help" id="help-workers-cpu"><span class="field-what">What it does:</span> how many stars are searched at the same time, one processor core each. <span class="field-default">Default {{ settings.workers_cpu }}.</span></p>
+    </div>
+    <div class="field">
+      <label>Faintest star, G magnitude<input name="gmag_max" type="number" step="any" value="{{ values.get('gmag_max', 19.0) }}" aria-describedby="help-gmag"></label>
+      <p class="field-help" id="help-gmag"><span class="field-what">What it does:</span> skips stars fainter than this in Gaia's G band. A larger number lets fainter stars in. <span class="field-default">Default 19.</span></p>
+    </div>
+    <div class="field">
+      <label>Periodogram summary<select name="store_periodogram" aria-describedby="help-periodogram">
+        {% for m, lbl in periodogram_labels.items() %}<option value="{{ m }}" {{ 'selected' if values.get('store_periodogram', settings.store_periodogram) == m else '' }}>{{ lbl }}</option>{% endfor %}
+      </select></label>
+      <p class="field-help" id="help-periodogram"><span class="field-what">What it does:</span> keeps the score of every period tried, about 8 kB a star, so the signal page can draw it. <span class="field-default">Default {{ periodogram_labels.get(settings.store_periodogram, settings.store_periodogram) }}.</span></p>
+    </div>
+    <div class="field">
+      <label class="check"><input type="checkbox" name="background_only" {{ 'checked' if (not values or values.get('background_only')) else '' }} aria-describedby="help-background"> Background stars only</label>
+      <p class="field-help" id="help-background"><span class="field-what">What it does:</span> skips the stars Kepler's own pipeline already searched. <span class="field-default">Default on.</span></p>
+    </div>
+    <p class="field-help drawer-note">The detection threshold is SDE {{ "%g" | format(th.sde_min) }}, from the configuration: a signal needs that score to count. The About page explains it.</p>
+    <div class="form-actions"><button class="primary" type="submit">Start the sweep</button></div>
+  </form>
+</section>

@@ -1,16 +1,40 @@
 {% extends "base.html" %}
+{% from "partials/chip.html" import chip %}
+{% from "partials/card.html" import card %}
+{% from "partials/empty.html" import empty %}
 {% block title %}SkySift · Approved{% endblock %}
 {% block content %}
-{% from "partials/chip.html" import chip %}
-<h1>Decisions</h1>
+<section class="page-head">
+  <h1>Decisions</h1>
+  <p class="lede">Every signal a person has looked at, with the note they left. Copy a summary to share it, or download the review file that holds every number and query behind it.</p>
+</section>
 <nav class="chips" aria-label="Status">{% for s in statuses %}{{ chip(s, "/approved?status=" ~ s, active=s == status) }}{% endfor %}</nav>
-<div class="table-wrap"><table><thead><tr><th>target</th><th class="num">period d</th><th class="num">depth ppm</th><th class="num">SDE</th><th>decided</th><th>note</th><th>DOI</th><th></th></tr></thead><tbody>
+{% if not rows %}
+{{ empty("No candidate has this status.", "Decisions you make on a signal page appear here.", "/candidates", "Open the candidates") }}
+{% elif mode == "expert" %}
+<div class="table-wrap"><table><thead><tr><th>target</th><th>verdict</th><th class="num">period d</th><th class="num">depth ppm</th><th class="num">SDE</th><th>decided</th><th>note</th><th>DOI</th><th></th></tr></thead><tbody>
 {% for r in rows %}
 <tr class="row-link" data-href="/signals/{{ r.id }}?status=all">
-  <td><code>{{ r.target_id }}</code></td><td class="num">{{ r.period | fmt(4) }}</td><td class="num">{{ r.depth_ppm | fmt(0) }}</td><td class="num">{{ r.sde | fmt(1) }}</td>
-  <td class="muted">{{ r.decided_at }}</td><td>{{ r.note }}</td><td>{{ r.doi or '' }}</td>
-  <td><a href="/signals/{{ r.id }}/review.json">review JSON</a></td>
+  <td><code>{{ r.target_id }}</code></td><td>{{ r.verdict_word }}{% if r.stage %}, {{ r.stage }}{% endif %}{% if r.reviewer %}. {{ r.reviewer }}{% endif %}</td>
+  <td class="num">{{ r.period | fmt(4) }}</td><td class="num">{{ r.depth_ppm | fmt(0) }}</td><td class="num">{{ r.sde | fmt(1) }}</td>
+  <td class="muted">{{ r.decided_at }}</td><td class="wrap desc">{{ r.note }}</td><td>{{ r.doi or '' }}</td>
+  <td class="row-actions"><button type="button" data-copy="{{ r.copy_text }}">Copy summary</button> <a href="/signals/{{ r.id }}/review.json">review JSON</a></td>
 </tr>
-{% else %}<tr><td colspan="8" class="muted">No candidate has this status.</td></tr>{% endfor %}
+{% endfor %}
 </tbody></table></div>
+{% else %}
+<div class="cards">
+{% for r in rows %}
+  {% call card(r, "status=all") %}
+  {%- if r.note %}
+  <p class="card-note"><span class="sr-only">Note: </span>{{ r.note }}</p>
+  {%- endif %}
+  <div class="card-actions">
+    <button type="button" data-copy="{{ r.copy_text }}">Copy summary</button>
+    <a href="/signals/{{ r.id }}/review.json">review JSON</a>
+  </div>
+  {% endcall %}
+{% endfor %}
+</div>
+{% endif %}
 {% endblock %}
