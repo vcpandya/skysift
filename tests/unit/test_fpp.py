@@ -44,15 +44,25 @@ def test_three_scenarios_sum_to_the_fpp():
     assert pl.weight == pytest.approx(0.1651 * 0.01273 * 1.0, rel=0.2)
     assert pl.prior == pytest.approx(0.1651, rel=0.01) and pl.geometric == pytest.approx(0.01273, rel=0.01)
     assert all(n["exclusion"] < 1e-6 for n in f.neighbours)        # k = 24.5 and 45.5 beyond r_c = 2.0"
+    # BEB geometric: an equal-mass solar pair (2.0 Msun) at 2P = 80.58 d, a = (2.0 * (80.58 / 365.25)^2)^(1/3) =
+    # (2.0 * 0.048671)^(1/3) = 0.46001 AU, (R1 + R2) / a = 2 * 0.00465047 / 0.46001 = 0.020219
     assert beb.factors["n_bright"] == 2 and beb.weight < 1e-6
-    # EB at 2P: prior 0.26 * 0.0413, geometric 0.0105; S_sec (216.5 predicted vs 72 +- 80 ppm) = 0.035,
-    # S_oe (541 predicted vs 87 +- 199 ppm) = 0.011, S_v (b 0.885) = 1
+    assert beb.geometric == pytest.approx(0.020219, rel=0.01)
+    # EB prior: f_bin 0.26 (M) x g_P, the Raghavan log-normal (mu 5.03, sigma 2.28) between log10(P) = 1.6052 and
+    # log10(4P) = 2.2073: Phi(-1.2380) - Phi(-1.5021) = 0.10786 - 0.06654 = 0.041315; prior 0.26 * 0.041315 = 0.010742.
+    # EB geometric: M1 + M2 = 0.495 * 1.5 = 0.7425 Msun at 80.58 d, a = (0.7425 * 0.048671)^(1/3) = 0.33062 AU,
+    # (R1 + R2) / a = 0.498 * 1.5 * 0.00465047 / 0.33062 = 0.010507.
+    # EB data: S_sec = 1 - Phi((216.5 - 72) / 80) = 0.03544, S_oe = 1 - Phi((541.25 - 87) / 199) = 0.01123, S_v = 1
+    # (b 0.885 < 0.9); data 3.978e-4, weight 0.010742 * 0.010507 * 3.978e-4 = 4.490e-8.
     assert eb.weight < 1e-6
+    assert eb.prior == pytest.approx(0.26 * 0.041315, rel=0.01) and eb.geometric == pytest.approx(0.010507, rel=0.01)
     assert eb.factors["S_sec"] == pytest.approx(0.0354, rel=0.01) and eb.factors["S_oe"] == pytest.approx(
         0.0112, rel=0.01) and eb.factors["S_v"] == 1.0
+    # FPP: (BEB ~1e-134 + EB 4.490e-8) / (PL 2.1012e-3 + 4.490e-8) = 2.137e-5
+    assert f.value == pytest.approx(2.137e-5, rel=0.01)
 
 
-def test_an_unlocalised_bright_neighbour_dominates_the_fpp():
+def test_an_unlocalized_bright_neighbour_dominates_the_fpp():
     # Without a pixel stage r_c is 3.98". At its real 10.8" the G 12.8 star is far outside (X = 1e-6) and the G 19.77
     # star at 7.14" drives BEB (X = 0.052), giving only 0.7 percent; so, as ruled, the G 12.8 star sits at 3.0" here.
     unplaced = compute(no_pixels(base()))
@@ -98,14 +108,37 @@ def test_a_grazing_fit_halves_the_v_shape_factor():
 def test_missing_fit_and_star_use_the_fallbacks():
     f = compute(base(teff=None, radius=None, mass=None, fit_k=None, fit_b=None, fit_a_over_r=None, rp_rearth=None))
     assert f.scenarios[0].factors["D_shape"] == 1.0 and f.scenarios[0].factors["class"] == "FGK"
+    # 0.5 Rsun: rp = sqrt(2165e-6) * 0.5 * 109.2 = 2.54 Re; 0.5 Msun: a = (0.5 * (40.29 / 365.25)^2)^(1/3) = 0.1825 AU
+    assert f.scenarios[0].factors["rp_rearth"] == pytest.approx(2.54, rel=0.01)
+    assert f.scenarios[0].factors["a_au"] == pytest.approx(0.1825, rel=0.01)
 
 
-@pytest.mark.parametrize("value,words", [(0.004, "under 1 percent"), (0.034, "about 3 percent"),
-                                         (0.27, "about 30 percent"), (0.95, "over 90 percent")])
+@pytest.mark.parametrize("value,words", [(0.004, "under 1 percent"), (0.01, "about 1 percent"),
+                                         (0.034, "about 3 percent"), (0.27, "about 30 percent"),
+                                         (0.9, "about 90 percent"), (0.95, "over 90 percent")])
 def test_words(value, words):
     f = compute(base()); assert Fpp(**{**f.__dict__, "value": value}).words() == words
 
 
 def test_as_dict_is_json_ready_and_carries_every_factor():
-    d = compute(base()).as_dict(); json.dumps(d)
+    d = compute(base()).as_dict(); json.dumps(d, allow_nan=False)
     assert {s["name"] for s in d["scenarios"]} == {"PL", "BEB", "EB"} and "S_sec" in d["scenarios"][2]["factors"]
+
+
+def test_a_nan_secondary_reads_as_missing():
+    nan, missing = compute(base(secondary_ppm=float("nan"))), compute(base(secondary_ppm=None))
+    assert nan.scenarios[2].factors["S_sec"] == missing.scenarios[2].factors["S_sec"] == 1.0
+    assert nan.value == missing.value and math.isfinite(nan.value)
+
+
+@pytest.mark.parametrize("field,value", [("fit_a_over_r", 0.0), ("depth", 0.0), ("period", -1.0)])
+def test_invalid_inputs_raise(field, value):
+    with pytest.raises(ValueError, match=field):
+        compute(base(**{field: value}))
+
+
+def test_without_pixels_a_stray_centroid_separation_is_ignored():
+    f = compute(base(centroid_sigma_arcsec=None))        # neighbours still carry centroid_sep_arcsec
+    assert not f.pixels and f.neighbours[1]["s_arcsec"] == 10.8
+    assert f.neighbours[1]["exclusion"] == pytest.approx(math.exp(-(10.8 - 3.98) ** 2 / (2 * 1.3 ** 2)))
+    assert f.value == compute(no_pixels(base())).value

@@ -34,6 +34,7 @@ RSUN_REARTH = 6.957e8 / 6.371e6      # the nominal solar and Earth radii of rung
 BEB_PAIR_MASS = 2.0         # Msun: an equal-mass pair of Sun-like stars
 BEB_PAIR_RADII = 2 * 1.0    # Rsun: R1 + R2 of that pair
 EB_R2_OVER_R1 = 0.5
+EB_M2_OVER_M1 = 0.5          # the companion's mass ratio, held equal to its radius ratio
 EB_SECONDARY_RATIO = 0.1    # an equal-period EB of this depth predicts a secondary of at least depth x 0.1
 EB_ODD_EVEN_RATIO = 0.25    # the predicted odd/even alternation for R2 = 0.5 R1, as a fraction of the depth
 V_SHAPE_B = 0.9
@@ -130,8 +131,9 @@ def _phi(x: float) -> float:
 
 def _tail(predicted: float, measured: float | None, err: float | None) -> float:
     """``1 - Phi((predicted - measured) / err)``: the chance that a signal of the predicted size hides under the
-    measurement; 1 when the measurement or its error is missing."""
-    if measured is None or err is None or not err > 0: return 1.0
+    measurement; 1 when the measurement or its error is missing or not finite (rung 2 can report NaN)."""
+    if measured is None or err is None or not math.isfinite(measured) or not math.isfinite(err) or not err > 0:
+        return 1.0
     return 1.0 - _phi((predicted - measured) / err)
 
 
@@ -178,7 +180,8 @@ def _background(inputs: FppInputs) -> tuple[ScenarioWeight, float, tuple[dict, .
         ratio = 10 ** (-0.4 * (n.gmag - inputs.gmag))
         frac = ratio / (1 + ratio)
         bright = frac >= 2 * inputs.depth
-        s = n.centroid_sep_arcsec if n.centroid_sep_arcsec is not None else n.sep_arcsec
+        # without a pixel stage every neighbour is measured from the target, whatever centroid it carries
+        s = n.centroid_sep_arcsec if sigma_c is not None and n.centroid_sep_arcsec is not None else n.sep_arcsec
         x = _exclusion(s, r_c, sigma_c)
         rows.append({"source_id": n.source_id, "sep_arcsec": n.sep_arcsec, "gmag": n.gmag,
                      "centroid_sep_arcsec": n.centroid_sep_arcsec, "s_arcsec": s, "flux_fraction": frac,
@@ -197,7 +200,7 @@ def _background(inputs: FppInputs) -> tuple[ScenarioWeight, float, tuple[dict, .
 def _on_target_binary(inputs: FppInputs, cls: str, radius: float, mass: float) -> ScenarioWeight:
     f_bin = F_BIN[cls]
     g_p = binary_period_fraction(inputs.period)
-    m_pair = mass * (1 + EB_R2_OVER_R1)
+    m_pair = mass * (1 + EB_M2_OVER_M1)
     a_2p = _a_au(2 * inputs.period, m_pair)
     geometric = radius * (1 + EB_R2_OVER_R1) * RSUN_AU / a_2p
     depth_ppm = inputs.depth * 1e6
@@ -216,7 +219,12 @@ def _on_target_binary(inputs: FppInputs, cls: str, radius: float, mass: float) -
 
 
 def compute(inputs: FppInputs) -> Fpp:
-    """The three scenario weights and the FPP of spec 4.2 for one signal."""
+    """The three scenario weights and the FPP of spec 4.2 for one signal. Raises ``ValueError`` on a non-positive
+    period, depth or fitted a/R*, and when the weights come out non-finite (a NaN stellar or fit input)."""
+    if not inputs.period > 0: raise ValueError(f"period must be positive, got {inputs.period}")
+    if not inputs.depth > 0: raise ValueError(f"depth must be positive, got {inputs.depth}")
+    if inputs.fit_a_over_r is not None and not inputs.fit_a_over_r > 0:
+        raise ValueError(f"fit_a_over_r must be positive, got {inputs.fit_a_over_r}")
     radius = inputs.radius or FALLBACK_RADIUS
     mass = inputs.mass or FALLBACK_MASS
     cls = spectral_class(inputs.teff)
@@ -224,6 +232,8 @@ def compute(inputs: FppInputs) -> Fpp:
     beb, r_c, rows = _background(inputs)
     eb = _on_target_binary(inputs, cls, radius, mass)
     total = pl.weight + beb.weight + eb.weight
+    if not math.isfinite(total):
+        raise ValueError("the scenario weights are not finite; check the stellar and fit inputs")
     value = (beb.weight + eb.weight) / total if total > 0 else 1.0     # no admissible scenario at all: not a planet
     return Fpp(value=value, scenarios=(pl, beb, eb), pixels=inputs.centroid_sigma_arcsec is not None,
                confusion_radius_arcsec=r_c, neighbours=rows)
