@@ -28,6 +28,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "skysift.ui" = ["templates/*.html", "templates/partials/*.html", "static/*", "static/fonts/*"]
+"skysift.data" = ["*.txt", "gaia_zpt/*", "rnaas/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
