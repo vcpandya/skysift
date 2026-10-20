@@ -4,12 +4,12 @@ import pytest
 from sqlalchemy import text
 
 from skysift.ui import explain
-from tests.unit.test_ui_pages import make_seeded_client
+from tests.unit.test_ui_pages import make_seeded_app
 from tests.unit.ui_seed import add_older_version
 
 
 def test_queue_page_defaults_and_filters(settings, tmp_path):
-    client, _app, ids, _launcher = make_seeded_client(settings, tmp_path)
+    client, _app, ids, _launcher = make_seeded_app(settings, tmp_path)
     r = client.get("/candidates?mode=expert")                         # the table and its reason column are expert
     assert r.status_code == 200 and "kic-005689121" in r.text and "gaia-dr3-2101234567890123457" not in r.text
     assert f'data-href="/signals/{ids["candidate"]}' in r.text and "13.7695" in r.text
@@ -21,7 +21,7 @@ def test_queue_page_defaults_and_filters(settings, tmp_path):
 
 
 def test_queue_rejects_unknown_query_parameters(settings, tmp_path):
-    client, _app, ids, _launcher = make_seeded_client(settings, tmp_path)
+    client, _app, ids, _launcher = make_seeded_app(settings, tmp_path)
     for qs in ("sort=evil", "status=nope", "dir=sideways"):
         r = client.get(f"/candidates?{qs}")
         assert r.status_code == 400 and "Something went wrong" in r.text
@@ -29,7 +29,7 @@ def test_queue_rejects_unknown_query_parameters(settings, tmp_path):
 
 
 def test_signal_page_shows_ladder_metrics_links_and_plots_hook(settings, tmp_path):
-    client, _app, ids, _launcher = make_seeded_client(settings, tmp_path)
+    client, _app, ids, _launcher = make_seeded_app(settings, tmp_path)
     r = client.get(f"/signals/{ids['candidate']}?status=all&sort=period&dir=asc&mode=expert")   # raw rows, neighbours
     assert r.status_code == 200
     assert "rung1_detection" in r.text and "parity_sigma" in r.text and "0.20" in r.text    # rung 2 metric shown
@@ -42,7 +42,7 @@ def test_signal_page_shows_ladder_metrics_links_and_plots_hook(settings, tmp_pat
 
 
 def test_signal_page_without_plotly_shows_notice(settings, tmp_path):
-    client, app, ids, _launcher = make_seeded_client(settings, tmp_path)
+    client, app, ids, _launcher = make_seeded_app(settings, tmp_path)
     assert app.state.plotly_path is None
     r = client.get(f"/signals/{ids['candidate']}")
     assert "Plotly bundle could not be fetched" in r.text and "/static/vendor/plotly" not in r.text
@@ -54,7 +54,7 @@ def test_signal_page_without_plotly_shows_notice(settings, tmp_path):
 
 
 def test_decision_bar_records_and_requires_note_for_reject(settings, tmp_path):
-    client, app, ids, _launcher = make_seeded_client(settings, tmp_path)
+    client, app, ids, _launcher = make_seeded_app(settings, tmp_path)
     sid = ids["candidate"]
     r = client.post(f"/signals/{sid}/decide", data={"decision": "reject", "note": "", "_token": app.state.token})
     assert r.status_code == 400 and "needs a note" in r.text
@@ -72,7 +72,7 @@ def test_decision_bar_records_and_requires_note_for_reject(settings, tmp_path):
 
 
 def test_approved_page_lists_each_signal_once(settings, tmp_path):
-    client, app, ids, _launcher = make_seeded_client(settings, tmp_path)
+    client, app, ids, _launcher = make_seeded_app(settings, tmp_path)
     sid = ids["candidate"]
     for decision, note in (("reject", "first look"), ("approve", "second look"), ("approve", "confirmed")):
         client.post(f"/signals/{sid}/decide", data={"decision": decision, "note": note, "_token": app.state.token})
@@ -85,7 +85,7 @@ def test_approved_page_lists_each_signal_once(settings, tmp_path):
 
 
 def test_approved_page_rejects_unknown_status(settings, tmp_path):
-    client, _app, _ids, _launcher = make_seeded_client(settings, tmp_path)
+    client, _app, _ids, _launcher = make_seeded_app(settings, tmp_path)
     r = client.get("/approved?status=bogus")
     assert r.status_code == 400 and "Something went wrong" in r.text
 
@@ -95,7 +95,7 @@ def _strict(body: str):
 
 
 def test_review_json_download(settings, tmp_path):
-    client, app, ids, _launcher = make_seeded_client(settings, tmp_path)
+    client, app, ids, _launcher = make_seeded_app(settings, tmp_path)
     sid = ids["candidate"]
     client.post(f"/signals/{sid}/decide", data={"decision": "approve", "note": "ok", "_token": app.state.token})
     with app.state.store.session() as s:           # the ORM sanitizes on write, so plant NaN/Infinity as raw JSON text
@@ -115,7 +115,7 @@ def test_review_json_download(settings, tmp_path):
 
 
 def test_review_json_filename_is_sanitised(settings, tmp_path, monkeypatch):
-    client, _app, ids, _launcher = make_seeded_client(settings, tmp_path)
+    client, _app, ids, _launcher = make_seeded_app(settings, tmp_path)
     sid = ids["candidate"]
     evil = 'kic-1";x=y' + chr(13) + chr(10) + "z/../w"                                    # quote, ;, CR, LF, /
     monkeypatch.setattr("skysift.ui.queries.review_document",
@@ -126,7 +126,7 @@ def test_review_json_filename_is_sanitised(settings, tmp_path, monkeypatch):
 
 
 def test_signal_page_lists_the_removed_waves(settings, tmp_path):
-    client, app, ids, _launcher = make_seeded_client(settings, tmp_path)
+    client, app, ids, _launcher = make_seeded_app(settings, tmp_path)
     comps = [{"frequency": 15.0479, "amplitude_ppm": 1100.0, "snr": 19000.0, "coef": [1.0, -0.0011, 0.0, 0.0, 0.0]},
              {"frequency": 13.4216, "amplitude_ppm": 600.0, "snr": 6800.0, "coef": [1.0, -0.0006, 0.0, 0.0, 0.0]}]
     extra = json.dumps({"baseline_days": 1400.0, "prewhitening": {"n": 2, "components": comps, "skipped": []}})
@@ -153,7 +153,7 @@ def _shown(html, rung):
 
 
 def test_rungs_2_and_3_show_whether_the_stacked_fold_answered(settings, tmp_path):
-    client, app, ids, _launcher = make_seeded_client(settings, tmp_path)
+    client, app, ids, _launcher = make_seeded_app(settings, tmp_path)
     _set_metrics(app, ids["candidate"], "rung2_shape", {"stacked": True, "parity_sigma": 0.4, "n_events": 480})
     _set_metrics(app, ids["candidate"], "rung3_stability", {"stacked": False, "p_value": 0.9, "n_events": 99})
     r = client.get(f"/signals/{ids['candidate']}?mode=expert")
@@ -165,7 +165,7 @@ def test_rungs_2_and_3_show_whether_the_stacked_fold_answered(settings, tmp_path
 def test_signal_page_shows_the_key_metrics_of_rung1_events(settings, tmp_path):
     """Ladder version 3's per-event rung has its key metrics in the cell, not only under raw (final review, finding 4)."""
     from skysift.store.db import TestRow
-    client, app, ids, _launcher = make_seeded_client(settings, tmp_path)
+    client, app, ids, _launcher = make_seeded_app(settings, tmp_path)
     metrics = {"n_events_with_data": 102, "n_covered": 97, "n_good": 95, "ses_rules_applied": True,
                "ses_max_over_mes": 0.123, "chases_median": None, "coverage": None, "ses": None, "chases": None,
                "coverage_summary": {"n": 102, "min": 0.0, "median": 1.0, "below_min": 5},
@@ -180,7 +180,7 @@ def test_signal_page_shows_the_key_metrics_of_rung1_events(settings, tmp_path):
 
 
 def test_rung4_shows_the_period_matched_object_and_its_separation(settings, tmp_path):
-    client, app, ids, _launcher = make_seeded_client(settings, tmp_path)
+    client, app, ids, _launcher = make_seeded_app(settings, tmp_path)
     matched = [{"catalog": "cumulative", "id": "K77777.01", "period": 13.77, "sep_arcsec": 90.04}]
     _set_metrics(app, ids["candidate"], "rung4_novelty", {"cumulative": 1, "period_matched": matched}, status="fail")
     r = client.get(f"/signals/{ids['candidate']}?mode=expert")
@@ -193,7 +193,7 @@ def test_rung4_shows_the_period_matched_object_and_its_separation(settings, tmp_
 
 
 def test_signal_header_says_when_the_period_was_multiplied(settings, tmp_path):
-    client, app, ids, _launcher = make_seeded_client(settings, tmp_path)
+    client, app, ids, _launcher = make_seeded_app(settings, tmp_path)
     resolved = {"from_period": 3.44143, "factor": 7, "factors": [7], "class_depths_ppm": [960.0] + [5.0] * 6,
                 "contrast_sigma": 40.0, "sde_original": 61.5, "sde_resolved": 58.0}
     legacy = {"from_period": 6.88475, "odd_ppm": 3600.0, "even_ppm": 10.0, "parity_sigma": 40.0, "sde_half": 21.1,
@@ -209,7 +209,7 @@ def test_signal_header_says_when_the_period_was_multiplied(settings, tmp_path):
 
 
 def test_queue_shows_the_current_search_version_by_default(settings, tmp_path):
-    client, app, ids, _launcher = make_seeded_client(settings, tmp_path)
+    client, app, ids, _launcher = make_seeded_app(settings, tmp_path)
     old = add_older_version(app.state.store)                         # same target, earlier sweep, period 6.88475 d
     r = client.get("/candidates?mode=expert")                         # the table rows carry data-href
     assert r.status_code == 200 and "13.7695" in r.text and "6.8848" not in r.text
@@ -227,7 +227,7 @@ def test_queue_shows_the_current_search_version_by_default(settings, tmp_path):
 
 
 def test_signal_neighbours_stay_inside_the_search_version(settings, tmp_path):
-    client, app, ids, _launcher = make_seeded_client(settings, tmp_path)
+    client, app, ids, _launcher = make_seeded_app(settings, tmp_path)
     old = add_older_version(app.state.store)                         # higher SDE: it precedes the candidate in 'all'
     r = client.get(f"/signals/{ids['candidate']}?mode=expert")
     assert f'href="/signals/{old}?' not in r.text and 'id="link-prev"' not in r.text
@@ -240,7 +240,7 @@ def test_signal_neighbours_stay_inside_the_search_version(settings, tmp_path):
 
 
 def test_signal_page_says_how_many_waves_were_put_back(settings, tmp_path):
-    client, app, ids, _launcher = make_seeded_client(settings, tmp_path)
+    client, app, ids, _launcher = make_seeded_app(settings, tmp_path)
     comps = [{"frequency": 15.0479, "amplitude_ppm": 1100.0, "snr": 19000.0, "coef": [1.0, -0.0011, 0.0, 0.0, 0.0]}]
     restored = [{"frequency": 0.14526, "amplitude_ppm": 420.0}]
     with app.state.store.session() as s:
@@ -257,7 +257,7 @@ def test_signal_page_says_how_many_waves_were_put_back(settings, tmp_path):
 
 
 def test_rung4_notes_whether_the_known_object_epoch_agrees(settings, tmp_path):
-    client, app, ids, _launcher = make_seeded_client(settings, tmp_path)
+    client, app, ids, _launcher = make_seeded_app(settings, tmp_path)
     base = {"catalog": "cumulative", "id": "K77777.01", "period": 13.77, "sep_arcsec": 0.4}
     prefix = '<span class="muted">period_matched</span> cumulative K77777.01 at 0.4 arcsec'
     for extra, expected in (({"epoch_offset_h": 0.26, "epoch_agrees": True}, f"{prefix}, epoch agrees (offset 0.3 h)<"),
@@ -271,7 +271,7 @@ def test_rung4_notes_whether_the_known_object_epoch_agrees(settings, tmp_path):
 
 
 def test_signal_page_says_the_true_period_may_be_half_the_detected_one(settings, tmp_path):
-    client, app, ids, _launcher = make_seeded_client(settings, tmp_path)
+    client, app, ids, _launcher = make_seeded_app(settings, tmp_path)
     _set_metrics(app, ids["candidate"], "rung2_shape", {"parity_sigma": 0.2, "suggested_period": 6.88475},
                  status="undetermined")
     r = client.get(f"/signals/{ids['candidate']}")
@@ -282,7 +282,7 @@ def test_signal_page_says_the_true_period_may_be_half_the_detected_one(settings,
 
 
 def test_signal_page_says_the_secondary_fits_a_planet_occultation(settings, tmp_path):
-    client, app, ids, _launcher = make_seeded_client(settings, tmp_path)
+    client, app, ids, _launcher = make_seeded_app(settings, tmp_path)
     _set_metrics(app, ids["candidate"], "rung2_shape",
                  {"parity_sigma": 0.2, "occultation_albedo": 0.34, "occultation_exception": True})
     r = client.get(f"/signals/{ids['candidate']}")
@@ -292,7 +292,7 @@ def test_signal_page_says_the_secondary_fits_a_planet_occultation(settings, tmp_
 
 
 def test_signal_page_keeps_quiet_when_the_occultation_exception_did_not_apply(settings, tmp_path):
-    client, app, ids, _launcher = make_seeded_client(settings, tmp_path)
+    client, app, ids, _launcher = make_seeded_app(settings, tmp_path)
     _set_metrics(app, ids["candidate"], "rung2_shape",
                  {"parity_sigma": 0.2, "occultation_albedo": 3.4, "occultation_exception": False}, status="fail")
     r = client.get(f"/signals/{ids['candidate']}")
@@ -303,7 +303,7 @@ def test_signal_page_keeps_quiet_when_the_occultation_exception_did_not_apply(se
 
 @pytest.fixture
 def seeded(settings, tmp_path):
-    client, _app, ids, _launcher = make_seeded_client(settings, tmp_path)
+    client, _app, ids, _launcher = make_seeded_app(settings, tmp_path)
     return client, ids
 
 

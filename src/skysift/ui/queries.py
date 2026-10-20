@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+from collections import Counter
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import func, select
 
@@ -51,16 +53,38 @@ def mean_seconds(store: Store) -> float | None:
     return round(total / n, 2) if n else None
 
 
+def _rung_counts(s) -> dict[str, dict]:
+    rungs: dict[str, dict] = {}
+    for rung, status, n in s.execute(select(TestRow.rung, TestRow.status, func.count())
+                                     .group_by(TestRow.rung, TestRow.status)):
+        rungs.setdefault(rung, {"pass": 0, "fail": 0, "undetermined": 0})[status] = n
+    return rungs
+
+
+def rung_counts(store: Store) -> dict[str, dict]:
+    """{rung: {"pass", "fail", "undetermined"}} over every test row, for the funnel."""
+    with store.session() as s:
+        return _rung_counts(s)
+
+
+def funnel(rungs: dict[str, dict]) -> list[dict]:
+    """The rung funnel as bars, in ladder order: each rung's verdict counts, and as percent of the widest rung."""
+    order = [*explain.LADDER_ORDER, *sorted(r for r in rungs if r not in explain.LADDER_ORDER)]
+    rows = [{"rung": r, "name": explain.RUNG_NAMES.get(r, r), **rungs[r]} for r in order if r in rungs]
+    widest = max((sum(r[k] for k in ("pass", "fail", "undetermined")) for r in rows), default=0) or 1
+    for r in rows:
+        r["total"] = r["pass"] + r["fail"] + r["undetermined"]
+        r["pct"] = {k: round(100 * r[k] / widest, 1) for k in ("pass", "fail", "undetermined")}
+    return rows
+
+
 def summary(store: Store, retention: Retention, settings) -> dict:
     from skysift.pipeline import MAX_ATTEMPTS, MAX_POOL_BREAKS
     counts = store.counts()
     with store.session() as s:
         states = dict(s.execute(select(TargetRow.state, func.count()).group_by(TargetRow.state)).all())
         outcomes = dict(s.execute(select(SignalRow.final_status, func.count()).group_by(SignalRow.final_status)).all())
-        rungs: dict[str, dict] = {}
-        for rung, status, n in s.execute(select(TestRow.rung, TestRow.status, func.count())
-                                         .group_by(TestRow.rung, TestRow.status)):
-            rungs.setdefault(rung, {"pass": 0, "fail": 0, "undetermined": 0})[status] = n
+        rungs = _rung_counts(s)
         errors = s.scalars(select(RunRow).where(RunRow.status == "error", RunRow.error != "superseded")
                            .order_by(RunRow.id.desc()).limit(5)).all()
         last_errors = [{"target": e.target_id, "finished": _iso(e.finished),
@@ -199,6 +223,143 @@ def review_queue(store: Store, status: str = "candidate_stage1", sort: str = "sd
         found = s.execute(_queue_select(status, sort, desc, version=version, search=search).limit(limit)).all()
         tests = _tests_by_signal(s, [row[0].id for row in found])
         return [_explained(_queue_row(*row[:6]), tests[row[0].id], row[6]) for row in found]
+
+
+CANDIDATE_STATUSES = ("candidate_stage1", "candidate_stage2")
+
+
+def _undecided(q, latest):
+    """``q`` kept to signals no person has decided: no decision row, and no candidate row past review."""
+    return q.where(latest.c.decision.is_(None),
+                   (CandidateRow.status.is_(None)) | (CandidateRow.status == "review"))
+
+
+def recent_candidates(store: Store, version: str | None, limit: int = 6) -> list[dict]:
+    """The newest stage 1 and stage 2 candidates of ``version`` nobody has decided yet, as cards (newest first)."""
+    last, latest = _last_test_subquery(), _latest_decision_subquery()
+    q = (_base(SignalRow, TargetRow, CandidateRow.status, last.c.rung, last.c.status, last.c.reason, latest=latest)
+         .join(TargetRow, TargetRow.target_id == SignalRow.target_id)
+         .outerjoin(last, last.c.signal_id == SignalRow.id)
+         .where(SignalRow.final_status.in_(CANDIDATE_STATUSES)))
+    if version is not None:
+        q = q.join(RunRow, RunRow.id == SignalRow.run_id).where(RunRow.detector_version == version)
+    with store.session() as s:
+        found = s.execute(_undecided(q, latest).order_by(SignalRow.id.desc()).limit(limit)).all()
+        tests = _tests_by_signal(s, [row[0].id for row in found])
+        return [_explained(_queue_row(*row), tests[row[0].id], None) for row in found]
+
+
+def _naive_utc(dt: datetime) -> datetime:
+    """The store's columns hold UTC without a zone: an aware time is converted, a naive one is taken as UTC."""
+    return dt.astimezone(UTC).replace(tzinfo=None) if dt.tzinfo else dt
+
+
+def _window(s, since: datetime | None) -> dict:
+    """The sweep window: from ``since`` (a running sweep's start) on, or else the UTC day of the most recent finished
+    run. The targets with a finished run started in it, their signals by status, and the window's first start and
+    last finish (None before the first run)."""
+    if since is not None:
+        start, end = _naive_utc(since), None
+    else:
+        latest = s.scalar(select(func.max(RunRow.started)).where(RunRow.status == "done"))
+        start = datetime(latest.year, latest.month, latest.day) if latest else None
+        end = start + timedelta(days=1) if start else None
+    out = {"start": start, "scanned": 0, "first": None, "last": None, "found": {}}
+    if start is not None:
+        window = [RunRow.status == "done", RunRow.started >= start, *([RunRow.started < end] if end else [])]
+        out["scanned"], out["first"], out["last"] = s.execute(
+            select(func.count(func.distinct(RunRow.target_id)), func.min(RunRow.started), func.max(RunRow.finished))
+            .where(*window)).one()
+        out["found"] = dict(s.execute(select(SignalRow.final_status, func.count())
+                                      .join(RunRow, RunRow.id == SignalRow.run_id)
+                                      .where(*window).group_by(SignalRow.final_status)).all())
+    return out
+
+
+def _last_sweep(w: dict) -> dict | None:
+    if w["first"] is None:
+        return None
+    first, last = w["first"], w["last"] or w["first"]
+    return {"started": first, "finished": last, "n_targets": w["scanned"],
+            "seconds": max(0.0, (last - first).total_seconds()),
+            "candidates": sum(w["found"].get(k, 0) for k in CANDIDATE_STATUSES)}
+
+
+def last_sweep(store: Store) -> dict | None:
+    """The latest sweep as Live's idle line says it: started, finished, targets, seconds and candidates found."""
+    with store.session() as s:
+        return _last_sweep(_window(s, None))
+
+
+def done_since(store: Store, since: datetime) -> int:
+    """How many targets a running sweep has finished: targets with a done run started at or after ``since``."""
+    with store.session() as s:
+        return _window(s, since)["scanned"]
+
+
+def tonight(store: Store, version: str | None, since: datetime | None = None) -> dict:
+    """The Tonight page's numbers. In the sweep window (``_window``): ``scanned`` targets and the ``signals`` their
+    runs found. ``candidates_waiting`` (stage 1 or 2, nobody has decided), ``undetermined`` (how many signals each
+    next step holds, from the latest undetermined test row of each) and ``rejected`` count every signal of
+    ``version``. ``last_sweep`` describes the window, None before the first run."""
+    with store.session() as s:
+        w = _window(s, since)
+        latest_dec = _latest_decision_subquery()
+        waiting = _undecided(_base(func.count(), latest=latest_dec)
+                             .where(SignalRow.final_status.in_(CANDIDATE_STATUSES)), latest_dec)
+        und_row = (select(TestRow.signal_id, func.max(TestRow.id).label("tid"))
+                   .where(TestRow.status == "undetermined").group_by(TestRow.signal_id).subquery())
+        und = (select(TestRow.reason).select_from(SignalRow)
+               .outerjoin(und_row, und_row.c.signal_id == SignalRow.id).outerjoin(TestRow, TestRow.id == und_row.c.tid)
+               .where(SignalRow.final_status == "undetermined"))
+        if version is not None:
+            waiting = waiting.join(RunRow, RunRow.id == SignalRow.run_id).where(RunRow.detector_version == version)
+            und = und.join(RunRow, RunRow.id == SignalRow.run_id).where(RunRow.detector_version == version)
+        groups = Counter(explain.reason_in_words(reason or "")[1] for reason in s.scalars(und))
+        out = {"scanned": w["scanned"], "signals": sum(w["found"].values()), "candidates_waiting": s.scalar(waiting),
+               "undetermined": dict(groups.most_common()), "rejected": _count(s, "rejected", version)}
+    start = w["start"]
+    today = since is not None or (start is not None and start.date() == datetime.now(UTC).date())   # a running sweep is tonight's
+    out.update(today=today, label="Tonight" if today or start is None else f"Last run ({start.day} {start:%B %Y})",
+               date=start.date() if start else None, last_sweep=_last_sweep(w))
+    return out
+
+
+def searched(store: Store) -> tuple[int, int]:
+    """(targets searched, targets listed) over every source, for the idle ring."""
+    with store.session() as s:
+        states = dict(s.execute(select(TargetRow.state, func.count()).group_by(TargetRow.state)).all())
+    return states.get("done", 0), sum(states.values())
+
+
+# a finished target's outcome in the ticker: (word, pill tone), the best verdict among its signals first
+OUTCOMES = (("candidate", "pass"), ("undetermined", "undetermined"), ("rejected", "fail"))
+
+
+def recent_runs(store: Store, limit: int = 10) -> list[dict]:
+    """The last ``limit`` finished targets, newest first, each with its outcome in one word: candidate, undetermined,
+    rejected, no signal, or error. A run superseded by a later one is not an outcome and is left out."""
+    with store.session() as s:
+        runs = s.execute(select(RunRow.id, RunRow.target_id, RunRow.finished, RunRow.status)
+                         .where(RunRow.finished.is_not(None), RunRow.status.in_(("done", "error")),
+                                RunRow.error != "superseded")
+                         .order_by(RunRow.finished.desc(), RunRow.id.desc()).limit(limit)).all()
+        statuses: dict[int, set] = {}
+        if runs:
+            for run_id, status in s.execute(select(SignalRow.run_id, SignalRow.final_status)
+                                            .where(SignalRow.run_id.in_([r.id for r in runs])).distinct()):
+                statuses.setdefault(run_id, set()).add(status)
+    out = []
+    for r in runs:
+        found = statuses.get(r.id, set())
+        if r.status == "error":
+            word, tone = "error", "fail"
+        else:
+            kinds = {"candidate" if f in CANDIDATE_STATUSES else f for f in found}
+            word, tone = next(((w, t) for w, t in OUTCOMES if w in kinds),
+                              ("no signal", "muted") if not found else ("not vetted", "muted"))
+        out.append({"run_id": r.id, "target_id": r.target_id, "finished": r.finished, "outcome": word, "tone": tone})
+    return out
 
 
 def neighbours(store: Store, signal_id: int, status: str, sort: str, desc: bool,

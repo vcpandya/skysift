@@ -18,14 +18,37 @@ def _summary(request: Request) -> dict:
     return queries.summary(st.store, ret, st.settings)
 
 
-def _elapsed_s(started) -> float | None:
-    """Seconds since the sweep started; None for a lock whose `started` is missing, malformed or not a string."""
+def _started_at(started) -> datetime | None:
+    """When the sweep started (UTC); None for a lock whose `started` is missing, malformed or not a string."""
     try:
         t = datetime.fromisoformat(started)
     except (TypeError, ValueError):
         return None
-    if t.tzinfo is None: t = t.replace(tzinfo=UTC)
-    return (datetime.now(UTC) - t).total_seconds()
+    return t.replace(tzinfo=UTC) if t.tzinfo is None else t
+
+
+def _elapsed_s(started) -> float | None:
+    """Seconds since the sweep started; None when the start is unknown."""
+    t = _started_at(started)
+    return None if t is None else (datetime.now(UTC) - t).total_seconds()
+
+
+def _progress(store, active: dict, req: dict) -> dict:
+    """How far the running sweep is: targets done since it started, of the limit it was asked for, as a percent (the
+    total and percent are None when the request has no usable limit)."""
+    since = _started_at(active.get("started"))
+    done = queries.done_since(store, since) if since is not None else 0
+    limit = req.get("limit")
+    total = limit if isinstance(limit, int) and not isinstance(limit, bool) and limit > 0 else None
+    return {"done": done, "total": total, "percent": min(100, round(100 * done / total)) if total else None,
+            "since": since}
+
+
+def _idle_ctx(store) -> dict:
+    """What the idle flight deck shows: the last sweep in words and the share of listed stars searched."""
+    done, total = queries.searched(store)
+    return {"last": queries.last_sweep(store), "searched": done, "listed": total,
+            "searched_pct": round(100 * done / total) if total else 0}
 
 
 def _as_dict(value) -> dict:
@@ -43,7 +66,7 @@ def _sweep_ctx(request: Request, mean=...) -> dict:
     st = request.app.state
     launcher = st.launcher
     idle = {"active": None, "stopping": False, "finishing": None, "in_flight_max": None, "pid": None, "req": {},
-            "tail": [], "history": [], "elapsed": None, "eta_s": None}
+            "tail": [], "history": [], "elapsed": None, "eta_s": None, "progress": None}
     if launcher is None:
         return idle
     active = launcher.active()
@@ -67,7 +90,15 @@ def _sweep_ctx(request: Request, mean=...) -> dict:
                 and not isinstance(cpu, bool)):
             eta = max(0.0, limit * mean / max(1, cpu) - elapsed)
     return {"active": active, "stopping": stopping, "finishing": finishing, "in_flight_max": in_flight_max, "pid": pid,
-            "req": req, "tail": launcher.tail(200), "history": history, "elapsed": elapsed, "eta_s": eta}
+            "req": req, "tail": launcher.tail(200), "history": history, "elapsed": elapsed, "eta_s": eta,
+            "progress": _progress(st.store, active, req)}
+
+
+def _cards_ctx(request: Request, summary: dict) -> dict:
+    """The counters, the ticker of finished targets and, for the expert, the rung funnel as bars."""
+    st = request.app.state
+    return {"summary": summary, "runs": queries.recent_runs(st.store, limit=10),
+            "funnel_rows": queries.funnel(summary["rung_counts"])}
 
 
 @router.get("/live", response_class=HTMLResponse)
@@ -77,18 +108,22 @@ def live_page(request: Request):
     st = request.app.state
     if ctx["active"] is None: st.stop_requested = None
     st.sweep_was_active = ctx["active"] is not None
-    return render(request, "live.html", summary=summary, **ctx)
+    idle = _idle_ctx(st.store) if ctx["active"] is None else {}
+    return render(request, "live.html", **_cards_ctx(request, summary), **ctx, **idle, polled=False)
 
 
 @router.get("/partials/live/cards", response_class=HTMLResponse)
 def live_cards(request: Request):
-    return render(request, "partials/live_cards.html", summary=_summary(request))
+    return render(request, "partials/live_cards.html", **_cards_ctx(request, _summary(request)))
 
 
 @router.get("/partials/live/sweep", response_class=HTMLResponse)
 def live_sweep(request: Request):
+    """The deck while it polls. The state line lives outside the swapped block, so that its aria-live region stays
+    the same node; the response updates it out of band (``polled``)."""
     ctx = _sweep_ctx(request)
-    resp = render(request, "partials/live_sweep.html", **ctx)
+    idle = _idle_ctx(request.app.state.store) if ctx["active"] is None else {}
+    resp = render(request, "partials/live_sweep.html", **ctx, **idle, polled=True)
     st = request.app.state
     now_active = ctx["active"] is not None
     # sweep-finished refreshes the cards once. Each client says whether it last saw the sweep running (?was=1), so

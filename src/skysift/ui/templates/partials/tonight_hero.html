@@ -1,0 +1,29 @@
+{# The Tonight hero: the sentence of the night with its two numbers counting up, and, while a sweep runs, its state
+   line and progress ring. Only then does it poll (every 10 s, replacing itself), so an idle page stays quiet. #}
+{% from "partials/ring.html" import ring %}
+{% from "partials/empty.html" import empty %}
+{% set active = sweep.active is not none %}
+{% set p = sweep.progress %}
+<section id="hero" class="tonight-hero"{% if active %} hx-get="/partials/tonight/hero" hx-trigger="every 10s" hx-swap="outerHTML"{% endif %}>
+{% if t.last_sweep is none and not active %}
+  {{ empty("No sweep yet", "SkySift has not searched a star yet. Pick a source and start a sweep. What it finds shows up here.", "/sources", "Pick a source") }}
+{% else %}
+  <div class="tonight-text">
+    <p class="eyebrow">{{ t.date.day ~ " " ~ t.date.strftime("%B %Y") if t.today else t.label }}</p>
+    <h1 class="tonight-line">{{ "Tonight" if t.today else "In its last run" }} SkySift scanned <span data-count="{{ t.scanned }}">{{ t.scanned | fmt }}</span> {{ "star" if t.scanned == 1 else "stars" }} and found <span data-count="{{ t.candidates_waiting }}">{{ t.candidates_waiting | fmt }}</span> {{ "candidate" if t.candidates_waiting == 1 else "candidates" }} waiting for a look.</h1>
+    <p class="tonight-sub">
+    {%- if active and p.total -%}
+      Sweep running: {{ p.done | fmt }} of {{ p.total | fmt }}{% if sweep.eta_s is not none and not sweep.finishing %}, {{ sweep.eta_s | left }}{% endif %}.
+    {%- elif active -%}
+      Sweep running: {{ p.done | fmt }} {{ "star" if p.done == 1 else "stars" }} done so far.
+    {%- else -%}
+      {%- set ls = t.last_sweep -%}
+      {{ "Finished " ~ (ls.finished | ago) if t.today else "Finished on " ~ ls.finished.day ~ " " ~ ls.finished.strftime("%B %Y") }}. It searched {{ ls.n_targets | fmt }} {{ "star" if ls.n_targets == 1 else "stars" }} in {{ ls.seconds | duration }} and found {{ t.signals | fmt }} {{ "signal" if t.signals == 1 else "signals" }}. <a href="/live">Open Live</a>
+    {%- endif -%}
+    </p>
+  </div>
+  {%- if active and p.percent is not none %}
+  {{ ring("tonight-ring", p.percent, "of tonight's list", "Sweep progress: " ~ p.percent ~ " percent of tonight's list", quiet=polled) }}
+  {%- endif %}
+{% endif %}
+</section>

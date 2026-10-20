@@ -20,7 +20,7 @@ def _registry_rows(progress: dict) -> list[dict]:
     return rows
 
 
-@router.get("/", response_class=HTMLResponse)
+@router.get("/sources", response_class=HTMLResponse)
 def sources_page(request: Request):
     st = request.app.state
     active = st.launcher.active() if st.launcher else None

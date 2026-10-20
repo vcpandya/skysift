@@ -1,0 +1,11 @@
+{# The ticker: the last targets finished, newest first, each with its outcome as a pill (icon and word). #}
+{% from "partials/pill.html" import pill %}
+{% if runs %}
+<ol class="ticker" aria-label="The last stars finished, newest first">
+{% for r in runs %}
+  <li class="ticker-row">{{ pill(r.tone, r.outcome) }} <code class="ticker-id">{{ r.target_id }}</code> <time class="ticker-time" datetime="{{ r.finished.isoformat() }}">{{ r.finished | ago }}</time></li>
+{% endfor %}
+</ol>
+{% else %}
+<p class="muted">No star has finished yet.</p>
+{% endif %}

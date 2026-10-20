@@ -1,0 +1,12 @@
+{# The progress ring: the percent written in the middle (never colour alone) and the arc drawn from --value, the one
+   inline style the pages carry. quiet: a polled copy, which eases from the old value (htmx settles the style of the
+   same id) instead of filling from zero again. #}
+{% macro ring(id, percent, caption, label, quiet=False) -%}
+<div class="ring{% if quiet %} ring-quiet{% endif %}" id="{{ id }}" style="--value: {{ percent }}" role="img" aria-label="{{ label }}">
+  <svg viewBox="0 0 120 120" aria-hidden="true" focusable="false">
+    <circle class="ring-track" cx="60" cy="60" r="52"/>
+    <circle class="ring-value" cx="60" cy="60" r="52"/>
+  </svg>
+  <div class="ring-label"><span data-count="{{ percent }}">{{ percent }}</span>%<span class="ring-caption">{{ caption }}</span></div>
+</div>
+{%- endmacro %}

@@ -160,3 +160,16 @@ def test_summary_sentence_of_the_stage2_signal(seed_detail):
     d = seed_detail("stage2")
     assert explain.summary_sentence(d["signal"], d["target"], d["tests"]) == (
         "A dip of 0.22 percent repeats every 40.3 days on a star of magnitude 16.2.")
+
+
+def test_time_in_words():
+    from datetime import UTC, datetime, timedelta
+    now = datetime(2026, 10, 20, 12, 0, tzinfo=UTC)
+    assert [explain.duration_words(s) for s in (None, 30, 60, 2400, 3600, 4500, 7500, 40 * 3600, 5 * 86400)] == [
+        "under a minute", "under a minute", "1 minute", "40 minutes", "1 hour", "1 hour 15 minutes", "2 hours", "40 hours",
+        "5 days"]
+    assert explain.ago(now - timedelta(seconds=20), now) == "just now"
+    assert explain.ago(datetime(2026, 10, 20, 10, 0), now) == "2 hours ago"            # a store time is UTC
+    assert explain.ago("2026-10-20T11:15:00+00:00", now) == "45 minutes ago"
+    assert explain.ago("not a time", now) == explain.ago(None, now) == "at an unknown time"
+    assert explain.time_left(20) == "under a minute left" and explain.time_left(2400) == "about 40 minutes left"

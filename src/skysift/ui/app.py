@@ -20,11 +20,13 @@ from skysift.config import Settings
 from skysift.sources.factory import make_source
 from skysift.store.blob import Blob, blob_from_url
 from skysift.store.db import Store
+from skysift.ui import explain
 
 log = logging.getLogger(__name__)
 HERE = Path(__file__).resolve().parent
 LOOPBACK = {"127.0.0.1", "localhost", "::1"}
-NAV = [("/", "Sources"), ("/live", "Live"), ("/candidates", "Candidates"), ("/approved", "Approved")]
+NAV = [("/", "Tonight"), ("/candidates", "Candidates"), ("/live", "Live"), ("/sources", "Sources"),
+       ("/approved", "Approved")]
 # simple is Nova's view and the default, expert the astronomer's; the theme follows the system unless overridden
 PREFS = {"mode": ("simple", "expert"), "theme": ("system", "dark", "light")}
 PREF_COOKIE_AGE = 365 * 24 * 3600
@@ -114,6 +116,9 @@ def create_app(settings: Settings, store: Store | None = None, blob: Blob | None
     st.token = secrets.token_urlsafe(32)
     st.templates = Jinja2Templates(directory=str(HERE / "templates"))
     st.templates.env.filters["fmt"] = _fmt
+    st.templates.env.filters["ago"] = explain.ago
+    st.templates.env.filters["duration"] = explain.duration_words
+    st.templates.env.filters["left"] = explain.time_left
     st.plotly_path = plotly_path
     st.git_commit = _git_commit()
     st.plot_cache = {}
@@ -152,8 +157,8 @@ def create_app(settings: Settings, store: Store | None = None, blob: Blob | None
         return render(request, "error.html", status_code=500, error=f"{type(exc).__name__}: {exc}",
                       log_hint=str(settings.data_dir / "ui" / "dashboard.log"))
 
-    from skysift.ui.routes import api, live, published, review, sources  # routers are added by Tasks 8 to 12
-    for router in (sources.router, live.router, review.router, published.router, api.router):
+    from skysift.ui.routes import api, home, live, published, review, sources  # routers are added by Tasks 8 to 12
+    for router in (home.router, sources.router, live.router, review.router, published.router, api.router):
         app.include_router(router)
     return app
 

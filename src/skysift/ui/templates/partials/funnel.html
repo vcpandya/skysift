@@ -1,0 +1,25 @@
+{# The rung funnel for the expert: one bar per check, its pass, fail and undetermined counts on one shared scale, with
+   the numbers written beside it. The bar is an SVG, so its widths are attributes rather than inline styles. #}
+{% macro funnel(rows) -%}
+<section class="funnel-section" aria-labelledby="funnel-title">
+<h2 id="funnel-title">Rung funnel</h2>
+<p class="muted">How many signals each check passed, failed or could not decide. The bars share one scale.</p>
+{%- if rows %}
+<ol class="funnel">
+{%- for r in rows %}
+  <li class="funnel-row">
+    <span class="funnel-name"><code>{{ r.rung }}</code> <span class="muted">{{ r.name }}</span></span>
+    <svg class="funnel-bar" viewBox="0 0 100 10" preserveAspectRatio="none" aria-hidden="true" focusable="false">
+      <rect class="seg-pass" x="0" y="0" width="{{ r.pct.pass }}" height="10"/>
+      <rect class="seg-fail" x="{{ r.pct.pass }}" y="0" width="{{ r.pct.fail }}" height="10"/>
+      <rect class="seg-undetermined" x="{{ r.pct.pass + r.pct.fail }}" y="0" width="{{ r.pct.undetermined }}" height="10"/>
+    </svg>
+    <span class="funnel-numbers"><span class="status-pass">{{ r.pass | fmt }} pass</span> · <span class="status-fail">{{ r.fail | fmt }} fail</span> · <span class="status-undetermined">{{ r.undetermined | fmt }} undetermined</span></span>
+  </li>
+{%- endfor %}
+</ol>
+{%- else %}
+<p class="muted">No check has run yet.</p>
+{%- endif %}
+</section>
+{%- endmacro %}

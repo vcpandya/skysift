@@ -1,0 +1,12 @@
+{#- The flight deck's state in one sentence. It sits in a fixed aria-live paragraph; a poll refreshes it out of band. -#}
+{%- if active -%}
+  {%- if stopping -%}Sweep stopping, waiting for the sweep to exit.
+  {%- elif finishing -%}Finishing the stars already in flight. Then the sweep ends.
+  {%- elif progress.total -%}Scanning star {{ [progress.done + 1, progress.total] | min | fmt }} of {{ progress.total | fmt }}{% if eta_s is not none %}, {{ eta_s | left }}{% endif %}.
+  {%- else -%}Scanning. {{ progress.done | fmt }} {{ "star" if progress.done == 1 else "stars" }} done so far.
+  {%- endif -%}
+{%- elif last -%}
+  Idle. The last sweep finished {{ last.finished | ago }} and found {{ last.candidates | fmt }} {{ "candidate" if last.candidates == 1 else "candidates" }}.
+{%- else -%}
+  Idle. No sweep has run yet.
+{%- endif -%}

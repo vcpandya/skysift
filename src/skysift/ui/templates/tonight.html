@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% from "partials/stat.html" import stat %}
+{% from "partials/chip.html" import chip %}
+{% from "partials/empty.html" import empty %}
+{% from "partials/card.html" import card %}
+{% from "partials/funnel.html" import funnel %}
+{% block title %}SkySift · Tonight{% endblock %}
+{% block content %}
+<div class="hero-live" aria-live="polite">
+{% include "partials/tonight_hero.html" %}
+</div>
+{% if t.last_sweep is not none or sweep.active is not none %}
+{% set rechecks = t.undetermined.values() | sum %}
+{% set groups %}{% for word, n in t.undetermined.items() %}{{ n }} {{ word }}{% if not loop.last %}, {% endif %}{% endfor %}{% endset %}
+<div class="tiles tonight-tiles">
+  {{ stat("candidates waiting", t.candidates_waiting, "Cleared every light-curve check. Nobody has looked yet.") }}
+  {{ stat("being rechecked", rechecks, groups if rechecks else "No check is waiting on more data.") }}
+  {{ stat("rejected", t.rejected, "Failed a check. The reason is kept.") }}
+</div>
+<section aria-labelledby="feed-title">
+  <div class="section-head">
+    <h2 id="feed-title">Waiting for a look</h2>
+    <a href="/candidates">See all</a>
+  </div>
+  <div class="feed">
+  {% if feed %}
+    <div class="cards">
+    {% for r in feed %}{{ card(r, "status=" ~ r.final_status ~ "&sort=detected&dir=desc") }}{% endfor %}
+    </div>
+  {% elif sweep.active is not none and sweep.progress.percent is not none %}
+    {{ empty("Nothing waiting.", "The sweep is " ~ sweep.progress.percent ~ " percent through tonight's list.") }}
+  {% else %}
+    {{ empty("Nothing waiting.", "Every candidate has had a look.") }}
+  {% endif %}
+  </div>
+</section>
+{% if t.undetermined %}
+<section class="rechecks" aria-labelledby="rechecks-title">
+  <h2 id="rechecks-title">Being rechecked</h2>
+  <p class="muted">Undetermined signals, by what happens next.</p>
+  <nav class="chips" aria-label="Rechecks by next step">
+  {% for word, n in t.undetermined.items() %}{{ chip(word, "/candidates?status=undetermined", n) }}{% endfor %}
+  </nav>
+</section>
+{% endif %}
+{% if mode == "expert" %}
+<section class="tonight-expert" aria-label="Throughput and the rung funnel">
+  <p class="throughput">{% if per_hour %}{{ per_hour | fmt(1) }} stars an hour, {{ mean_s | fmt(1) }} s each, over every finished run.{% else %}No finished run yet.{% endif %}</p>
+  {{ funnel(funnel_rows) }}
+</section>
+{% endif %}
+{% endif %}
+{% endblock %}

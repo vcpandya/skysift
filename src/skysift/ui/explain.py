@@ -10,7 +10,7 @@ import math
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 
 from skysift.config import Thresholds
 
@@ -399,3 +399,46 @@ def copy_summary(signal: dict, target: dict, v: Verdict, url: str) -> str:
         name += f" (KIC {target['kic']})"
     status = _join([v.headline + ".", v.reviewer and v.reviewer + "."], " ")
     return f"{name}. {_facts(signal, target, _num(signal, 'depth_ppm'), ppm=True)} {status} Details: {url}"
+
+
+def _count_of(n: int, unit: str) -> str:
+    return f"{n} {unit}" + ("" if n == 1 else "s")
+
+
+def duration_words(seconds: float | None) -> str:
+    """A span of time as Live and Tonight say it: "under a minute", "40 minutes", "2 hours 5 minutes", "3 days"."""
+    if seconds is None or not math.isfinite(seconds) or seconds < 60:
+        return "under a minute"
+    minutes = round(seconds / 60)
+    if minutes < 60:
+        return _count_of(minutes, "minute")
+    hours, rest = divmod(minutes, 60)
+    if hours < 48:
+        return _count_of(hours, "hour") + (f" {_count_of(rest, 'minute')}" if rest and hours == 1 else "")
+    return _count_of(round(hours / 24), "day")
+
+
+def _as_utc(when: datetime | str | None) -> datetime | None:
+    if isinstance(when, str):
+        try:
+            when = datetime.fromisoformat(when)
+        except ValueError:
+            return None
+    if not isinstance(when, datetime):
+        return None
+    return when.replace(tzinfo=UTC) if when.tzinfo is None else when.astimezone(UTC)
+
+
+def ago(when: datetime | str | None, now: datetime | None = None) -> str:
+    """How long ago, in words: "just now", "5 minutes ago", "2 hours ago". A store time without a zone is UTC; a
+    missing or unreadable time is "at an unknown time"."""
+    then = _as_utc(when)
+    if then is None:
+        return "at an unknown time"
+    seconds = ((now or datetime.now(UTC)) - then).total_seconds()
+    return "just now" if seconds < 60 else f"{duration_words(seconds)} ago"
+
+
+def time_left(seconds: float) -> str:
+    """The time a sweep has left: "under a minute left" or "about 40 minutes left"."""
+    return "under a minute left" if not math.isfinite(seconds) or seconds < 60 else f"about {duration_words(seconds)} left"

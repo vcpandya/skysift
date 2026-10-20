@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 from skysift.store.blob import LocalBlob
 from skysift.store.db import RunRow, Store
@@ -183,3 +183,69 @@ def test_status_counts_follow_the_version_filter(tmp_path, settings):
     assert queries.status_counts(store, VERSION)["candidate_stage1"] == 3
     assert queries.status_counts(store, VERSION)["all"] == 6
     assert queries.hidden_by_version(store, "approved", VERSION) == 0
+
+
+def _selects(store, fn):
+    """(fn's result, the number of SELECT statements it ran)."""
+    from sqlalchemy import event
+    statements = []
+
+    def listen(conn, cursor, statement, *args):
+        statements.append(statement)
+
+    event.listen(store.engine, "before_cursor_execute", listen)
+    try:
+        out = fn()
+    finally:
+        event.remove(store.engine, "before_cursor_execute", listen)
+    return out, len([s for s in statements if s.lstrip().upper().startswith("SELECT")])
+
+
+def test_tonight_counts_the_latest_sweep(tmp_path, settings):
+    store, _blob, ids = _env(tmp_path, settings)
+    t = queries.tonight(store, VERSION)
+    assert (t["scanned"], t["signals"], t["candidates_waiting"], t["rejected"]) == (7, 7, 3, 1)
+    assert t["undetermined"] == {"retry the catalogue": 1} and t["today"] and t["label"] == "Tonight"
+    last = t["last_sweep"]
+    assert last["n_targets"] == 7 and last["candidates"] == 4 and last["seconds"] >= 0
+    assert last["started"] <= last["finished"]
+    store.decide(ids["candidate"], "needs_data", "")                  # a person has looked: no longer waiting
+    assert queries.tonight(store, VERSION)["candidates_waiting"] == 2
+    assert queries.tonight(store, "9+other")["candidates_waiting"] == 0  # kept to the search version
+
+
+def test_tonight_since_an_active_sweep_and_on_an_older_day(tmp_path, settings):
+    store, _blob, _ids = _env(tmp_path, settings)
+    assert queries.tonight(store, VERSION, since=datetime.now(UTC) + timedelta(hours=1))["scanned"] == 0
+    with store.session() as s:
+        for run in s.query(RunRow):
+            run.started -= timedelta(days=3); run.finished -= timedelta(days=3)
+    t = queries.tonight(store, VERSION)
+    assert t["scanned"] == 7 and not t["today"] and t["label"].startswith("Last run (")
+    running = queries.tonight(store, VERSION, since=datetime.now(UTC) - timedelta(days=4))   # a sweep still running
+    assert running["scanned"] == 7 and running["today"] and running["label"] == "Tonight"
+
+
+def test_tonight_before_the_first_run(settings):
+    store = Store(settings.database_url); store.init_schema()
+    t = queries.tonight(store, None)
+    assert t["last_sweep"] is None and t["scanned"] == 0 and t["undetermined"] == {}
+
+
+def test_recent_candidates_newest_first_undecided_in_two_queries(tmp_path, settings):
+    store, _blob, ids = _env(tmp_path, settings)
+    rows, n = _selects(store, lambda: queries.recent_candidates(store, VERSION))
+    assert [r["id"] for r in rows] == [ids["stage2"], ids["legacy"], ids["candidate"]] and n == 2
+    assert rows[0]["stage"] == "stage 2" and rows[0]["verdict_word"] == "Candidate" and rows[0]["summary"]
+    assert [r["id"] for r in queries.recent_candidates(store, VERSION, limit=1)] == [ids["stage2"]]
+
+
+def test_recent_runs_outcome_words(tmp_path, settings):
+    store, _blob, _ids = _env(tmp_path, settings)
+    runs, n = _selects(store, lambda: queries.recent_runs(store, limit=10))
+    assert len(runs) == 7 and n == 2
+    words = {r["target_id"]: (r["outcome"], r["tone"]) for r in runs}
+    assert words["kic-005689121"] == ("candidate", "pass")
+    assert words["gaia-dr3-2101234567890123457"] == ("undetermined", "undetermined")
+    assert words["gaia-dr3-2101234567890123458"] == ("rejected", "fail")
+    assert runs[0]["finished"] >= runs[-1]["finished"] and len(queries.recent_runs(store, limit=3)) == 3
