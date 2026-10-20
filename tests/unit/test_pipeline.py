@@ -13,15 +13,20 @@ import pytest
 from skysift import jsonutil, pipeline
 from skysift.config import Thresholds, load_settings
 from skysift.detectors.base import get_detector
+from skysift.lc.ops import detrend
 from skysift.models import LightCurve, Signal, Target, TestResult, TestStatus
 from skysift.pipeline import (
+    DEFAULT_LADDER_VERSION,
+    LADDER_COMPATIBLE,
     MAX_ATTEMPTS,
     MAX_POOL_RESTARTS,
     _cpu_work,
     _select_targets,
     _write_results,
     build_ladder,
+    halved_signal,
     priority_score,
+    revet,
     run,
     search_version,
 )
@@ -30,6 +35,9 @@ from skysift.store.blob import LocalBlob
 from skysift.store.db import Store, make_job_key
 from skysift.store.retention import DiskBudgetExceeded
 from tests.synthetic import inject_transit, inject_v_eclipse, make_lightcurve
+from tests.unit import fake_fetch
+
+TARGET = Target(source="fake", target_id="t", ra=0, dec=0, gmag=16.5)
 
 
 class FakeSource:
@@ -79,7 +87,7 @@ def test_build_ladder_orders_rungs_and_drops_novelty_on_request():
                                                        "rung3_stability", "rung4_novelty"]
     assert [r.name for r in build_ladder(with_novelty=False).rungs] == ["rung1_detection", "rung1_events",
                                                                          "rung2_shape", "rung3_stability"]
-    assert pipeline.DEFAULT_LADDER_VERSION == "3"
+    assert pipeline.DEFAULT_LADDER_VERSION == "4"
     assert build_ladder("7").version == "7"
 
 
@@ -1009,3 +1017,40 @@ def test_restore_leaves_a_wave_at_three_halves_of_the_detection_frequency():
     _flux, new = out
     assert [r["frequency"] for r in new["restored"]] == [f, 2 * f]
     assert [c["frequency"] for c in new["components"]] == [1.5 * f] and new["n"] == 1
+
+
+def test_revet_reproduces_the_sweep_verdict(settings):
+    lc = inject_transit(make_lightcurve(noise_ppm=500, seed=5), 12.0, 140.0, 0.1, 3000.0)
+    out = json.loads(_cpu_work(pickle.dumps(lc), TARGET.model_dump_json(), settings.thresholds.model_dump_json(),
+                               "box_dip", "4", True, fetch_module="tests.unit.fake_fetch"))
+    item = out["signals"][0]; sig = Signal(**item["signal"])
+    outcome, results = revet(lc, TARGET, settings.thresholds, sig, build_ladder("4"), fetch=fake_fetch.fetch)
+    assert outcome == item["outcome"] and [r.rung for r in results] == [t["rung"] for t in item["tests"]]
+
+
+def test_halved_signal_measures_the_true_period():
+    lc = inject_transit(make_lightcurve(noise_ppm=400, seed=7), 8.0, 140.0, 0.1, 2500.0)
+    fn = detrend(lc)
+    doubled = Signal(target_id="t", detector="box_dip", detector_version="v", period=16.0, t0=140.0, duration=0.1,
+                     depth_ppm=2500, snr=30, sde=20, n_events=80)
+    half = halved_signal(doubled, lc, fn)
+    assert half.period == 8.0 and abs(half.depth_ppm - 2500) < 200 and half.n_events > doubled.n_events
+    assert half.extra["parent_period"] == 16.0 and half.sde == 20
+
+
+def test_build_ladder_version_4_is_the_default_and_three_is_compatible():
+    assert DEFAULT_LADDER_VERSION == "4" and LADDER_COMPATIBLE["4"] == ("3",)
+
+
+def test_select_targets_skips_a_target_done_under_ladder_3(settings, monkeypatch):
+    """Ladder 4 adds the recheck, not a new search: a target finished under ladder 3 with the same detector version is
+    not swept again. One finished under ladder 2 (not compatible) is, and so is one done under another search."""
+    s, store, blob = _env(monkeypatch, settings)
+    targets = [_tgt("old3"), _tgt("old2"), _tgt("other"), _tgt("fresh")]
+    src = ScriptedSource(targets, {t.target_id: make_lightcurve(n_days=60, seed=4) for t in targets}, store, blob)
+    det = get_detector("box_dip"); ver = search_version(det, s.thresholds)
+    for tid, v, lad in (("old3", ver, "3"), ("old2", ver, "2"), ("other", "0+00000000", "3")):
+        store.finish_run(store.start_run(make_job_key(tid, "box_dip", v, lad), tid, "box_dip", v, lad), "done")
+    todo, skipped, gave_up, _unknown = _select_targets(src, store, {}, det, ver, "4", None)
+    assert sorted(t.target_id for t, _k in todo) == ["fresh", "old2", "other"] and skipped == 1 and gave_up == 0
+    assert all(k == make_job_key(t.target_id, "box_dip", ver, "4") for t, k in todo)

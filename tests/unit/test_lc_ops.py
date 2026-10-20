@@ -1,3 +1,5 @@
+import math
+
 import numpy as np
 import pytest
 from scipy.special import erfcinv
@@ -11,6 +13,7 @@ from skysift.lc.ops import (
     event_depths,
     event_quality,
     fold_phase,
+    measure_at,
     phase_significance,
     secondary_search,
     stacked_depth,
@@ -493,3 +496,15 @@ def test_event_quality_guards_duplicated_stamps_and_brightenings():
     lc = _chases_curve(extra=[(1e4, ET0 + EP, EDUR, -6000)])                # the second event: net +3000 ppm
     eq = event_quality(lc.time, detrend(lc), EP, ET0, EDUR)
     assert eq.ses[1] < -3 and np.isnan(eq.chases[1]) and np.isfinite(eq.chases[[0, 2, 3]]).all()
+
+
+def test_measure_at_recovers_an_injected_depth():
+    lc = inject_transit(make_lightcurve(noise_ppm=300, seed=3), 10.0, 140.0, 0.12, 2000.0)
+    fn = detrend(lc)
+    m = measure_at(lc.time, fn, 10.0, 140.0, 0.12)
+    assert abs(m.depth_ppm - 2000) < 150 and m.snr > 20 and m.n_events >= 100
+
+
+def test_measure_at_without_points_is_nan():
+    m = measure_at(np.array([1.0, 2.0]), np.array([1.0, 1.0]), 10.0, 0.0, 0.1)
+    assert math.isnan(m.depth_ppm) and m.n_events == 0

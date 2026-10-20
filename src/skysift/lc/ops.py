@@ -96,6 +96,45 @@ def n_window_epochs(time, fnorm, period, t0, duration_days) -> int:
     return int(np.unique(np.round((time[inside] - t0) / period)).size)
 
 
+MEASURE_MIN_IN, MEASURE_MIN_OUT = 5, 10     # measure_at gives NaN below these in-transit and out-of-transit counts
+MEASURE_OUT_DURATIONS = 3.0                 # measure_at's baseline: from one to this many durations from mid-transit
+
+
+@dataclass(frozen=True)
+class MeasuredDip:
+    depth_ppm: float
+    depth_err_ppm: float
+    snr: float
+    n_events: int
+    n_in: int
+    n_out: int
+
+
+def measure_at(time, fnorm, period, t0, duration_days) -> MeasuredDip:
+    """Box depth of a dip at a given ephemeris, with no search: the recheck measures a signal at a period the detector
+    did not report (P/2 when rung 2 suggests it). In transit is ``|dt| < duration / 2`` from the nearest mid-transit,
+    the baseline ``duration <= |dt| <= 3 duration`` (finite points only). The depth is one minus the in-transit mean
+    over the baseline mean, the error ``std(baseline) * sqrt(1 / n_in + 1 / n_out)`` relative to the baseline mean,
+    ``snr`` their ratio. ``n_events`` counts the epochs with at least one in-transit point. Depth, error and snr are
+    NaN when fewer than 5 points are in transit or fewer than 10 in the baseline."""
+    time, fnorm = np.asarray(time, float), np.asarray(fnorm, float)
+    good = np.isfinite(time) & np.isfinite(fnorm)
+    t, f = time[good], fnorm[good]
+    dt = np.abs(fold_phase(t, period, t0))
+    inside = dt < 0.5 * duration_days
+    base = (dt >= duration_days) & (dt <= MEASURE_OUT_DURATIONS * duration_days)
+    n_in, n_out = int(inside.sum()), int(base.sum())
+    n_events = int(np.unique(np.round((t[inside] - t0) / period)).size)
+    if n_in < MEASURE_MIN_IN or n_out < MEASURE_MIN_OUT:
+        nan = float("nan")
+        return MeasuredDip(nan, nan, nan, n_events, n_in, n_out)
+    level = float(np.mean(f[base]))
+    depth = 1.0 - float(np.mean(f[inside])) / level
+    err = float(np.std(f[base])) / level * float(np.sqrt(1.0 / n_in + 1.0 / n_out))
+    snr = depth / err if err > 0 else float("nan")
+    return MeasuredDip(depth * 1e6, err * 1e6, snr, n_events, n_in, n_out)
+
+
 def season_of(quarter: np.ndarray) -> np.ndarray:
     """Kepler season of each quarter (``quarter % 4``): the spacecraft rolls every quarter, so a star returns to the
     same CCD module every fourth quarter."""

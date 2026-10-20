@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import copy
 import hashlib
 import importlib
 import json
 import logging
+import math
 import multiprocessing
 import os
 import pickle
@@ -27,9 +29,10 @@ from skysift.lc.ops import (
     MEDIAN_PAD_MODE,
     apply_mask,
     detrend,
+    measure_at,
 )
 from skysift.lc.prewhiten import GUARD_EXCLUSION, PREWHITEN_VERSION, prewhiten, prewhiten_model
-from skysift.models import LightCurve, Signal, Target
+from skysift.models import LightCurve, Signal, Target, TestResult
 from skysift.net import ServiceUnavailable
 from skysift.store.blob import Blob
 from skysift.store.db import (
@@ -56,7 +59,13 @@ log = logging.getLogger(__name__)
 #   rung 3 seasonal and aperture depth disagreement routed to review,
 #   rung 4 epoch mismatch with a known object routed to review.
 # 2: rung 4 integer-ratio and epoch rules, second-pass signals vetted on the masked flux (18 Oct 2026)
-DEFAULT_LADDER_VERSION = "3"
+# Ladder version 4 (20 Oct 2026, mission control spec 2026-10-20-skysift-mission-control-design.md sections 4.3, 6):
+#   the stage-2 recheck (re-vet, P/2 re-measure, catalogue retry) and the pixel rung; the light-curve rungs are those
+#   of ladder 3, so a target swept under ladder 3 is not searched again (LADDER_COMPATIBLE)
+DEFAULT_LADDER_VERSION = "4"
+# ladder version -> earlier versions whose finished jobs count as done for it: same search, same rungs on the light
+# curve, so the sweep skips the target and the recheck brings its open signals up to date instead
+LADDER_COMPATIBLE: dict[str, tuple[str, ...]] = {"4": ("3",)}
 UPSERT_BATCH = 1000
 MAX_ATTEMPTS = 3            # spec section 9: a target that errors three times is left for a human
 MAX_POOL_RESTARTS = 2       # a CPU pool that breaks a third time in one sweep ends the sweep
@@ -283,6 +292,64 @@ def _cpu_work(lc_pickle: bytes, target_json: str, thresholds_json: str, detector
     return jsonutil.dumps({"signals": out, "queries": recorder.rows, "periodogram": periodogram}, default=str)
 
 
+def _restore_recorded(time, fn, record: dict, stored: dict, sig: Signal):
+    """``fn`` (freshly whitened, its pre-whitening ``record``) with the components the sweep put back for this
+    signal's target: those whose frequencies the stored record lists under ``restored``. The whitening is
+    deterministic, so they are components of ``record``; matching them by frequency replays the sweep exactly even
+    when another detection's harmonics were the ones restored. Should they not all match, the harmonics of the signal
+    itself are restored (``restore_harmonics``), which is the sweep's own rule for a single detection."""
+    import numpy as np
+    want = np.array([float(r["frequency"]) for r in stored["restored"]])
+    comps = record.get("components") or []
+    back = [c for c in comps if np.isclose(want, float(c["frequency"]), rtol=1e-9, atol=0.0).any()]
+    if len(back) == want.size:
+        return fn + prewhiten_model(time, back)
+    log.warning("re-vet of %s: the restored components did not replay (%d of %d); restoring at the signal's period",
+                sig.target_id, len(back), want.size)
+    out = restore_harmonics(time, fn, record, [(1.0 / sig.period, float(sig.depth_ppm))])
+    return fn if out is None else out[0]
+
+
+def revet(lc: LightCurve, target: Target, th: Thresholds, sig: Signal, ladder: Ladder, *, fetch=net.fetch,
+          store=None, on_result=None) -> tuple[str, list[TestResult]]:
+    """Vet a stored signal again, on the flux the sweep vetted it on, through ``ladder`` (the recheck: a newer ladder,
+    a P/2 signal, a catalogue retry with a one-rung ladder). The bundle is built as ``_cpu_work`` builds it: primary
+    and secondary flux detrended and pre-whitened with ``th``; when the signal's ``extra["prewhitening"]`` records a
+    restoration, the restored components are put back in the primary flux (``_restore_recorded``) and the signal's
+    own harmonics in the secondary flux (``restore_harmonics``; the sweep restored the secondary from every detection
+    of its first search, which is not stored, so a target with two detections may differ there); a second-pass
+    signal sees its mask (``_vetting_bundle``). ``fetch`` and ``store`` go to the rungs as in the worker (rung 4's
+    catalogue queries; ``store`` receives ``log_query``). ``on_result(result, seconds)`` is called after each rung.
+    Returns the ladder's (outcome, results)."""
+    lc.meta.setdefault("target_id", target.target_id)
+    fn, record, _settings, fn_detrended = whitened_flux(lc, th)
+    fn_alt, alt_record = whitened_flux(lc, th, flux=lc.flux_alt)[:2] if lc.flux_alt is not None else (None, None)
+    stored = sig.extra.get("prewhitening") or {}
+    if stored.get("restored"):
+        fn = _restore_recorded(lc.time, fn, record, stored, sig)
+        if fn_alt is not None:
+            alt = restore_harmonics(lc.time, fn_alt, alt_record, [(1.0 / sig.period, float(sig.depth_ppm))])
+            if alt is not None: fn_alt = alt[0]
+    bundle = DataBundle(lc=lc, fnorm=fn, fnorm_alt=fn_alt, target=target, thresholds=th, store=store, fetch=fetch,
+                        flux_detrended=fn_detrended)
+    return ladder.run(sig, _vetting_bundle(bundle, sig), on_result=on_result)
+
+
+def halved_signal(sig: Signal, lc: LightCurve, fnorm) -> Signal:
+    """The signal at half its period, for rung 2's ``suggested_period`` (an equal secondary at phase 0.5): ``t0`` and
+    ``duration`` kept, depth, snr and event count measured on ``fnorm`` (the whitened flux the signal was vetted on)
+    by ``measure_at``, whose depth error goes in ``extra["depth_err_ppm"]`` (None when it is not finite: too few
+    points). The SDE is the parent's (no search ran at P/2) and ``extra`` says so, with the parent's period and why it
+    was halved."""
+    period = sig.period / 2.0
+    m = measure_at(lc.time, fnorm, period, sig.t0, sig.duration)
+    err = m.depth_err_ppm if math.isfinite(m.depth_err_ppm) else None
+    extra = {**copy.deepcopy(sig.extra), "parent_period": sig.period, "sde_inherited": True,
+             "halving": "rung2 suggested_period", "depth_err_ppm": err}
+    return sig.model_copy(update={"period": period, "depth_ppm": m.depth_ppm, "snr": m.snr, "n_events": m.n_events,
+                                  "extra": extra})
+
+
 def _write_results(store: Store, blob: Blob, run_id: int, target_id: str, payload: str) -> dict:
     """Parse a worker payload, store the periodogram summary (content addressed, so a retry reuses the same file)
     and write everything else atomically through ``Store.record_results``; evidence (the summary included) is pinned
@@ -337,7 +404,9 @@ def _select_targets(source, store: Store, filter: dict, det, version: str, ladde
     MAX_ATTEMPTS times and keys whose runs were lost in MAX_POOL_BREAKS broken pools (uncharged breaks included: at
     production depth a break holds several runs and charges none, so a target that always kills its worker would
     otherwise take its neighbours' work down every sweep), and return (the top ``max_targets`` remaining targets by
-    priority, highest first; skipped count; gave-up count)."""
+    priority, highest first; skipped count; gave-up count). A job done under a ladder version that
+    ``LADDER_COMPATIBLE`` lists for ``ladder_version`` (same detector version) counts as done: ladder 4 added the
+    recheck, not a new search, so no finished target is swept again."""
     todo, skipped, gave_up = [], 0, 0
     wanted = filter.get("target_ids")           # a named list (`--targets FILE`): only these, in the list's order
     rank = None if wanted is None else {tid: i for i, tid in enumerate(wanted)}
@@ -347,7 +416,8 @@ def _select_targets(source, store: Store, filter: dict, det, version: str, ladde
             if t.target_id not in rank: continue
             found += 1
         key = make_job_key(t.target_id, det.name, version, ladder_version)
-        if store.job_done(key): skipped += 1
+        if any(store.job_done(make_job_key(t.target_id, det.name, version, lad))
+               for lad in (ladder_version, *LADDER_COMPATIBLE.get(ladder_version, ()))): skipped += 1
         elif store.attempts(key) >= MAX_ATTEMPTS or store.pool_breaks(key) >= MAX_POOL_BREAKS: gave_up += 1
         else: todo.append((t, key))
     if rank is None:
