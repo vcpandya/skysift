@@ -10,8 +10,8 @@ Estimators, as in the study:
 - the events of every usable quarter of a season stacked with inverse-variance weights on the season's union frame
   (below);
 - the 3x3 flux-weighted centroid boxed on the highest signal-to-noise difference pixel (the brightest-pixel box was
-  bimodal on KIC 6146676), its error from an N_MC-draw noise Monte Carlo, and its signed distance from the
-  perpendicular bisector of the two stars in units of that error;
+  bimodal on KIC 6146676), its error covariance from an N_MC-draw noise Monte Carlo, and its signed distance from
+  the perpendicular bisector of the two stars in units of its error along the star-to-star axis;
 - a two-source Gaussian PSF fit (free width, free common shift) on the direct image for each star's flux, the same
   PSFs on the difference image for each star's lost flux, implied depth = lost flux / flux.
 
@@ -111,7 +111,8 @@ class SeasonResult:
     dist_target_pix: float
     dist_neighbour_pix: float
     nearer: str                                 # "target" | "neighbour" | "unknown" (a season that does not vote)
-    separation_sigma: float                     # (d_n^2 - d_t^2) / (2 S) / sigma: signed distance from the bisector
+    separation_sigma: float                     # (d_n^2 - d_t^2) / (2 S) / sigma_axis: signed distance from the
+    #                                             bisector over the centroid error along the star-to-star axis
     depth_target_ppm: tuple[float, float]       # two-source implied depth, error
     depth_neighbour_ppm: tuple[float, float]
     max_snr: float
@@ -121,6 +122,9 @@ class SeasonResult:
     on_frame: bool = False                      # both stars' 3x3 boxes complete on valid frame pixels
     pos_target: tuple[float, float] = _NAN2     # season-frame (col, row)
     pos_neighbour: tuple[float, float] = _NAN2
+    centroid_sigma_axis_pix: float = math.nan   # centroid error along the neighbour-to-target axis
+    non_voting_reason: str | None = None        # "box incomplete: target" | "box incomplete: neighbour" |
+    #                                             "centroid not measured"; None for a voting season
 
 
 def _f(x) -> float | None:
@@ -150,7 +154,7 @@ class Localisation:
             "nearer": s.nearer, "separation_sigma": _f(s.separation_sigma),
             "depth_target_ppm": [_f(x) for x in s.depth_target_ppm],
             "depth_neighbour_ppm": [_f(x) for x in s.depth_neighbour_ppm], "max_snr": _f(s.max_snr),
-            "two_source": bool(s.two_source), "voting": bool(s.voting),
+            "two_source": bool(s.two_source), "voting": bool(s.voting), "non_voting_reason": s.non_voting_reason,
             "pos_target": [_f(x) for x in s.pos_target], "pos_neighbour": [_f(x) for x in s.pos_neighbour],
         } for s in self.seasons]
         # the mean centroid error of the voting seasons (of all seasons with one when none votes)
@@ -309,7 +313,7 @@ def difference_images(cube, time, quality, quarter, eph: Ephemeris, *, in_half: 
     pixel, with variance std(out)^2 (1/n_in + 1/n_out). Good means quality 0 and finite flux in every valid pixel.
     Quarters with fewer than QUARTER_EVENTS_MIN events are unusable; the events of a season's usable quarters are
     stacked with inverse-variance weights. Without positions the images carry NaN positions and no frame flags."""
-    known = pos_target is not None and pos_neighbour is not None
+    known = _finite2(pos_target) and _finite2(pos_neighbour)
     pt, pn = (pos_target, pos_neighbour) if known else ((0.0, 0.0), (0.0, 0.0))
     images = season_images(_split_quarters(cube, time, quality, quarter, pt, pn), eph,
                            in_half=in_half, out_lo=out_lo, out_hi=out_hi)
@@ -338,14 +342,18 @@ def _box_centroid(img: np.ndarray, valid: np.ndarray, r0: int, c0: int, half: in
     return float((sub * cc).sum() / tot), float((sub * rr).sum() / tot)
 
 
-def snr_box_centroid(diff, var, valid, rng) -> tuple[tuple[float, float], float, float]:
-    """3x3 flux-weighted centroid ``(col, row)`` around the highest-S/N difference pixel, its error and that S/N.
-    The error is sqrt of the mean per-axis variance of N_MC centroids of ``diff + N(0, sqrt(var))``, each redrawn
-    around its own highest-S/N pixel."""
+_NAN_COV = np.full((2, 2), np.nan)
+
+
+def snr_box_centroid(diff, var, valid, rng) -> tuple[tuple[float, float], float, float, np.ndarray]:
+    """3x3 flux-weighted centroid ``(col, row)`` around the highest-S/N difference pixel, its error, that S/N and
+    the 2x2 (col, row) covariance of the N_MC centroids of ``diff + N(0, sqrt(var))``, each redrawn around its own
+    highest-S/N pixel. The error is sqrt of the mean per-axis variance (the trace of that covariance over 2); the
+    errors can be anisotropic, so a test along one direction should project the covariance (``_axis_sigma``)."""
     diff = np.asarray(diff, float); var = np.asarray(var, float); valid = np.asarray(valid, bool)
     snr = _snr(diff, var, valid)
     if not np.isfinite(snr).any():
-        return (math.nan, math.nan), math.nan, math.nan
+        return (math.nan, math.nan), math.nan, math.nan, _NAN_COV.copy()
     r0, c0 = np.unravel_index(int(np.argmax(snr)), snr.shape)
     centroid = _box_centroid(diff, valid, int(r0), int(c0))
     sd = np.sqrt(np.where(valid & np.isfinite(var), var, 0.0))
@@ -355,8 +363,20 @@ def snr_box_centroid(diff, var, valid, rng) -> tuple[tuple[float, float], float,
         a, b = np.unravel_index(int(np.argmax(_snr(dm, var, valid))), dm.shape)
         draws[i] = _box_centroid(dm, valid, int(a), int(b))
     draws = draws[np.all(np.isfinite(draws), axis=1)]
-    sigma = float(np.sqrt(np.mean(np.var(draws, axis=0, ddof=1)))) if len(draws) >= 2 else math.nan
-    return centroid, sigma, float(snr[r0, c0])
+    if len(draws) < 3:
+        return centroid, math.nan, float(snr[r0, c0]), _NAN_COV.copy()
+    cov = np.cov(draws.T, ddof=1)
+    return centroid, float(np.sqrt(0.5 * np.trace(cov))), float(snr[r0, c0]), cov
+
+
+def _axis_sigma(cov: np.ndarray, pos_target, pos_neighbour) -> float:
+    """Centroid error along the unit vector from the neighbour to the target: sqrt(u^T C u)."""
+    d = np.array([pos_target[0] - pos_neighbour[0], pos_target[1] - pos_neighbour[1]], float)
+    n = float(np.hypot(*d))
+    if not (n > 0 and np.all(np.isfinite(cov))):
+        return math.nan
+    u = d / n
+    return float(math.sqrt(max(float(u @ cov @ u), 0.0)))
 
 
 def gauss_psf(shape: tuple[int, int], col: float, row: float, sig: float) -> np.ndarray:
@@ -527,7 +547,7 @@ def verdict(seasons: list[SeasonResult], n_events_used: int) -> tuple[str, str]:
     voting = sorted((s for s in seasons if s.voting and s.n_events >= SEASON_EVENTS_MIN
                      and math.isfinite(s.separation_sigma)), key=lambda s: s.season)
     if not voting:
-        if any(not s.on_frame for s in seasons):
+        if seasons and all(not s.on_frame for s in seasons):
             return "undetermined", "pixels: no season holds both stars on the frame"
         return "undetermined", "pixels: no season localises the dip"
     m = len(voting)
@@ -567,20 +587,31 @@ def localise_quarters(quarters: list[QuarterData], eph: Ephemeris, *,
     for im in images:
         (ct, rt), (cn, rn) = im.pos_target, im.pos_neighbour
         on_frame = im.target_on_frame and im.neighbour_on_frame
-        (col, row), sigma, max_snr = snr_box_centroid(im.diff, im.var, im.valid, rng)
+        (col, row), sigma, max_snr, cov = snr_box_centroid(im.diff, im.var, im.valid, rng)
         d_t, d_n = math.hypot(col - ct, row - rt), math.hypot(col - cn, row - rn)
         sep_pix = math.hypot(cn - ct, rn - rt)
-        with np.errstate(invalid="ignore", divide="ignore"):
-            sep = (d_n ** 2 - d_t ** 2) / (2.0 * sep_pix) / sigma if sep_pix > 0 and sigma > 0 else math.nan
+        sigma_axis = _axis_sigma(cov, (ct, rt), (cn, rn))
+        # signed distance of the centroid from the bisector, in units of the centroid error along the star axis
+        sep = ((d_n ** 2 - d_t ** 2) / (2.0 * sep_pix) / sigma_axis
+               if sep_pix > 0 and sigma_axis > 0 else math.nan)
         voting = bool(on_frame and math.isfinite(sep) and im.n_events >= SEASON_EVENTS_MIN)
         nearer = ("target" if sep > 0 else "neighbour") if voting else "unknown"
+        if voting:
+            why = None
+        elif not im.target_on_frame:
+            why = "box incomplete: target"
+        elif not im.neighbour_on_frame:
+            why = "box incomplete: neighbour"
+        else:
+            why = "centroid not measured"
         fit = two_source_fit(im.direct, im.diff, im.var, im.valid, (ct, rt), (cn, rn)) if on_frame else _nan_fit()
         seasons.append(SeasonResult(
             season=im.season, n_events=im.n_events, centroid_colrow=(col, row), centroid_sigma_pix=sigma,
             dist_target_pix=d_t, dist_neighbour_pix=d_n, nearer=nearer, separation_sigma=sep,
             depth_target_ppm=fit["depth_target_ppm"], depth_neighbour_ppm=fit["depth_neighbour_ppm"],
             max_snr=max_snr, quarters=list(im.quarters), two_source=on_frame, voting=voting, on_frame=on_frame,
-            pos_target=(ct, rt), pos_neighbour=(cn, rn)))
+            pos_target=(ct, rt), pos_neighbour=(cn, rn), centroid_sigma_axis_pix=sigma_axis,
+            non_voting_reason=why))
     n_used = int(sum(im.n_events for im in images))
     v, reason = verdict(seasons, n_used)
     return Localisation(seasons=seasons, n_events_used=n_used, n_quarters_usable=len(usable),

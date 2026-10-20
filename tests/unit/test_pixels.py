@@ -10,6 +10,7 @@ from skysift.lc.pixels import (
     Ephemeris,
     QuarterData,
     SeasonResult,
+    _axis_sigma,
     difference_images,
     leak_depth,
     localise,
@@ -120,6 +121,12 @@ def test_difference_images_recover_the_dip_pixels():
     assert all(im.diff.shape == im.var.shape == im.direct.shape == im.valid.shape == SHAPE for im in seasons)
 
 
+def test_difference_images_treat_nan_positions_as_unknown():
+    cube, time, quality, quarter, eph, *_ = make_cube("target")
+    assert len(difference_images(cube, time, quality, quarter, eph, pos_target=(math.nan, math.nan),
+                                 pos_neighbour=(math.nan, math.nan))) == 4
+
+
 def test_difference_images_drop_quarters_with_fewer_than_two_events():
     cube, time, quality, quarter, eph, *_ = make_cube("target", n_days=40)
     quarter = np.where(time > 145.0, 2, 1)          # quarter 1 holds one transit (137), quarter 2 the other three
@@ -139,9 +146,10 @@ def test_flagged_cadences_and_a_dead_pixel_are_left_out():
 
 def test_snr_box_centroid_finds_a_point_source_and_its_error():
     diff = 100.0 * _psf((3.3, 5.0)); var = np.full(SHAPE, 1.0); valid = np.ones(SHAPE, bool)
-    (col, row), sigma, snr = snr_box_centroid(diff, var, valid, np.random.default_rng(3))
+    (col, row), sigma, snr, cov = snr_box_centroid(diff, var, valid, np.random.default_rng(3))
     assert abs(col - 3.3) < 0.2 and abs(row - 5.0) < 0.05
-    assert 0 < sigma < 0.1 and snr > 15 and N_MC == 200
+    assert 0 < sigma < 0.1 and snr > 15 and N_MC == 200 and cov.shape == (2, 2)
+    assert math.isclose(sigma, math.sqrt(0.5 * np.trace(cov)))
 
 
 def test_two_source_fit_recovers_the_injected_depth():
@@ -198,7 +206,29 @@ def test_separation_is_the_signed_distance_from_the_bisector():
         u = np.array([ct - cn, rt - rn]) / math.hypot(ct - cn, rt - rn)      # unit vector towards the target
         mid = np.array([(ct + cn) / 2, (rt + rn) / 2])
         along = float((np.array(s.centroid_colrow) - mid) @ u)
-        assert math.isclose(s.separation_sigma, along / s.centroid_sigma_pix, rel_tol=1e-9)
+        assert math.isclose(s.separation_sigma, along / s.centroid_sigma_axis_pix, rel_tol=1e-9)
+
+
+def test_separation_uses_the_centroid_error_along_the_star_axis():
+    # an elongated error: noisy pixels left and right of a bright point source jitter the column centroid only
+    diff = 2000.0 * _psf((4.0, 4.0)); var = np.ones(SHAPE); var[4, 3] = var[4, 5] = 400.0
+    (_col, _row), sigma, _snr, cov = snr_box_centroid(diff, var, np.ones(SHAPE, bool), np.random.default_rng(5))
+    along = _axis_sigma(cov, (4.0, 4.0), (6.8, 4.0))               # stars side by side: the axis is the column
+    assert cov[0, 0] > 25 * cov[1, 1] and along > 1.2 * sigma and math.isclose(along, math.sqrt(cov[0, 0]))
+    # on the cube the reported separation divides by the axis error, which differs from the isotropic mean
+    loc = localise(*make_cube("target"))
+    assert any(abs(s.centroid_sigma_axis_pix / s.centroid_sigma_pix - 1) > 0.2 for s in loc.seasons)
+    for s in loc.seasons:
+        (ct, rt), (cn, rn) = s.pos_target, s.pos_neighbour
+        bisector = (s.dist_neighbour_pix ** 2 - s.dist_target_pix ** 2) / (2 * math.hypot(ct - cn, rt - rn))
+        assert math.isclose(s.separation_sigma, bisector / s.centroid_sigma_axis_pix, rel_tol=1e-9)
+
+
+def test_axis_sigma_projects_the_covariance():
+    cov = np.array([[0.04, 0.0], [0.0, 0.0025]])                  # 0.2 px in col, 0.05 px in row
+    assert math.isclose(_axis_sigma(cov, (4.0, 4.0), (7.0, 4.0)), 0.2)
+    assert math.isclose(_axis_sigma(cov, (4.0, 4.0), (4.0, 1.0)), 0.05)
+    assert math.isnan(_axis_sigma(cov, (4.0, 4.0), (4.0, 4.0)))
 
 
 def _season(season, sep=10.0, d_t=(3000.0, 100.0), d_n=(0.0, 50.0), n=5, voting=True, on_frame=True):
@@ -240,6 +270,8 @@ def test_verdict_rules():
     assert verdict(none, 20) == ("undetermined", "pixels: no season holds both stars on the frame")
     lost = [_season(s, sep=math.nan, voting=False) for s in range(4)]
     assert verdict(lost, 20) == ("undetermined", "pixels: no season localises the dip")
+    mixed = lost[:2] + [_season(s, voting=False, on_frame=False) for s in (2, 3)]   # some on the frame, none voting
+    assert verdict(mixed, 20) == ("undetermined", "pixels: no season localises the dip")
 
 
 def test_leak_depth_sees_an_injected_dip_and_nothing_elsewhere():
@@ -284,11 +316,12 @@ def test_metrics_carry_the_dashboard_keys_and_strict_json():
             "centroid_sigma_pix_mean", "seasons"} <= set(m)
     keys = {"season", "quarters", "n_events", "centroid_colrow", "centroid_sigma_pix", "dist_target_pix",
             "dist_neighbour_pix", "nearer", "separation_sigma", "depth_target_ppm", "depth_neighbour_ppm", "max_snr",
-            "two_source", "pos_target", "pos_neighbour", "voting"}
+            "two_source", "pos_target", "pos_neighbour", "voting", "non_voting_reason"}
     assert all(set(s) == keys for s in m["seasons"]) and len(m["seasons"]) == 4
     assert isinstance(m["seasons"][0]["centroid_colrow"][0], float) and isinstance(m["n_events_used"], int)
     assert m["centroid_sigma_pix_mean"] == np.mean([s["centroid_sigma_pix"] for s in m["seasons"]])
-    assert all(s["pos_target"] == list(POS_TARGET) and s["voting"] is True for s in m["seasons"])
+    assert all(s["pos_target"] == list(POS_TARGET) and s["voting"] is True and s["non_voting_reason"] is None
+               for s in m["seasons"])
 
 
 def test_localise_quarters_co_registers_a_shifted_reshaped_stamp():
@@ -335,6 +368,7 @@ def test_a_season_without_the_neighbour_does_not_vote():
         m = loc.metrics(); json.dumps(m, allow_nan=False)
         by = {s["season"]: s for s in m["seasons"]}
         assert by[1]["voting"] is False and by[1]["nearer"] == "unknown" and by[1]["two_source"] is False
+        assert by[1]["non_voting_reason"] == "box incomplete: neighbour"
         assert by[1]["depth_neighbour_ppm"] == [None, None]
         assert all(by[s]["voting"] and by[s]["depth_neighbour_ppm"][0] is not None for s in (0, 2, 3))
         assert loc.verdict == expected and "3/3 seasons" in loc.reason
@@ -345,6 +379,7 @@ def test_a_season_with_the_target_on_the_stamp_edge_does_not_vote():
     s1 = _by_season(loc)[1]; im = next(i for i in loc.images if i.season == 1)
     assert im.pos_target == (0.0, 4.0) and not im.target_on_frame and im.neighbour_on_frame
     assert not s1.voting and s1.nearer == "unknown" and not s1.two_source
+    assert s1.non_voting_reason == "box incomplete: target"
     assert loc.verdict == "pass" and "3/3 seasons" in loc.reason
 
 
