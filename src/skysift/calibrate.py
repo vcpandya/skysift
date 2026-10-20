@@ -4,16 +4,19 @@ raw first-pass statistics (no masked pass, no alias resolution) and the sweep's 
 harmonics (``pipeline.search_with_restore``). Inverting (2 - f) turns dips into bumps and keeps
 systematics and variability; the detector clips upward outliers only, so the former dips are removed while former
 flares and upward ramps become dips: the inverted search is a "systematics as dips" null. One JSON line per target
-holds the top three SDEs of each search; ``summarise`` turns a file into the distribution ``sde_min`` is read from.
+holds the top three SDEs of each search; ``summarise`` turns a file into the distribution ``sde_min`` is read from,
+and ``false_alarm`` into the false-alarm probability a dossier prints for a candidate's SDE (the add-one rule).
 Lines carry the search version, so a file is tied to the code that wrote it."""
 from __future__ import annotations
 
 import json
 import logging
+import math
 import pickle
 import time
 from collections.abc import Callable
 from concurrent.futures import FIRST_COMPLETED, wait
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -40,6 +43,7 @@ NULLS = ("scrambled", "inverted")
 SDE_LEVELS = (7, 8, 9, 10, 11, 12, 15)
 TOP_N = 3
 SCRAMBLE_SEED = 1
+MIN_NULLS = 200                     # null searches needed before a false-alarm probability is shown (spec 4.1)
 
 
 class VersionMismatch(ValueError):
@@ -241,6 +245,44 @@ def _top(row: dict, kind: str) -> float | None:
     """The top SDE of one search; a None (a non-finite SDE written as null) is ignored."""
     values = [float(v) for v in (row.get(kind) or []) if v is not None]
     return max(values) if values else None
+
+
+@dataclass(frozen=True)
+class FalseAlarm:
+    """How often noise alone gave a top peak at least as strong as the candidate's, from the null searches."""
+    k: int                      # null searches with top SDE >= sde
+    n: int                      # null searches counted (both null kinds, rows with a finite top only)
+    fap: float | None           # (k + 1) / (n + 1); None when n < MIN_NULLS
+    calibrated: bool            # n >= MIN_NULLS
+    version_matches: bool       # every row's search_version == version
+    versions: tuple[str, ...]   # the search versions seen, sorted
+
+    def one_in(self) -> int | None:
+        """1 / fap rounded to two significant figures, and to a whole number below 10 (1 / 0.55 is 2, not 1.8);
+        None when not calibrated."""
+        if not self.calibrated or self.fap is None: return None
+        x = 1.0 / self.fap
+        return int(round(x, min(0, 1 - math.floor(math.log10(x)))))
+
+    def words(self) -> str:
+        """The tile's text: "1 in 1,700", "not yet calibrated" or "calibration is for an older search"."""
+        if not self.calibrated: return "not yet calibrated"
+        if not self.version_matches: return "calibration is for an older search"
+        return f"1 in {self.one_in():,}"
+
+
+def false_alarm(rows: list[dict], sde: float, version: str) -> FalseAlarm:
+    """The false-alarm probability of a peak of ``sde`` against the null searches (each kind in NULLS of every row):
+    ``k`` of the ``n`` finite null tops sit at or above it, and FAP = (k + 1) / (n + 1), the add-one rule, so a peak
+    above every null reads as "1 in n + 1", never zero. Rows of another search version are still counted; the result
+    notes the mismatch. Below MIN_NULLS null searches the FAP is None."""
+    tops = [v for r in rows for kind in NULLS if (v := _top(r, kind)) is not None and math.isfinite(v)]
+    n = len(tops)
+    k = sum(v >= sde for v in tops)
+    calibrated = n >= MIN_NULLS
+    versions = tuple(sorted({str(r.get("search_version")) for r in rows}))
+    return FalseAlarm(k=k, n=n, fap=(k + 1) / (n + 1) if calibrated else None, calibrated=calibrated,
+                      version_matches=all(str(r.get("search_version")) == version for r in rows), versions=versions)
 
 
 def summarise(rows: list[dict], sde_min: float, all_versions: bool = False) -> dict:
