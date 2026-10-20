@@ -8,10 +8,12 @@ from skysift.lc.ops import season_of
 from skysift.lc.pixels import (
     N_MC,
     Ephemeris,
+    QuarterData,
     SeasonResult,
     difference_images,
     leak_depth,
     localise,
+    localise_quarters,
     snr_box_centroid,
     two_source_fit,
     verdict,
@@ -31,11 +33,11 @@ DEPTH = 3000e-6
 RATIO = 5.0
 
 
-def _psf(pos):
+def _psf(pos, shape=SHAPE):
     """Pixel-integrated circular Gaussian of unit total flux centred on (col, row)."""
     col, row = pos
     s = math.sqrt(2.0) * PSF_SIGMA
-    cc, rr = np.arange(SHAPE[1]), np.arange(SHAPE[0])
+    cc, rr = np.arange(shape[1]), np.arange(shape[0])
     px = 0.5 * (erf((cc + 0.5 - col) / s) - erf((cc - 0.5 - col) / s))
     py = 0.5 * (erf((rr + 0.5 - row) / s) - erf((rr - 0.5 - row) / s))
     return np.outer(py, px)
@@ -192,3 +194,75 @@ def test_metrics_carry_the_dashboard_keys_and_strict_json():
     assert all(set(s) == keys for s in m["seasons"]) and len(m["seasons"]) == 4
     assert isinstance(m["seasons"][0]["centroid_colrow"][0], float) and isinstance(m["n_events_used"], int)
     assert m["centroid_sigma_pix_mean"] == np.mean([s["centroid_sigma_pix"] for s in m["seasons"]])
+
+
+SHIFTED = ((10, 10), (-1, 0))       # one extra column on the left (stars one column further right), one extra row
+NARROW = ((9, 6), (0, 0))           # columns 0 to 5 only: the neighbour (col 6.8) is off the stamp
+
+
+def make_quarters(dip_on="target", layout=None, n_quarters=5, seed=0):
+    """Per-quarter stamps of the make_cube scene: ``layout`` maps a quarter to (shape, stamp origin (col, row) on the
+    sky grid of the default stamp); positions are given in each stamp's own pixels. Quarters 1 and 5 share season 1."""
+    layout = layout or {}
+    rng = np.random.default_rng(seed)
+    time = np.arange(T_START, T_START + QUARTER_DAYS * n_quarters, CADENCE)
+    quarter = np.minimum(1 + ((time - T_START) // QUARTER_DAYS).astype(int), n_quarters)
+    dip = np.where(_in_transit(time, EPH), DEPTH, 0.0)
+    f_t = F_TARGET * (1.0 - (dip if dip_on == "target" else 0.0 * dip))
+    f_n = RATIO * F_TARGET * (1.0 - (dip if dip_on == "neighbour" else 0.0 * dip))
+    out = []
+    for q in range(1, n_quarters + 1):
+        m = quarter == q
+        shape, (oc, orow) = layout.get(q, (SHAPE, (0, 0)))
+        pt = (POS_TARGET[0] - oc, POS_TARGET[1] - orow); pn = (POS_NEIGHBOUR[0] - oc, POS_NEIGHBOUR[1] - orow)
+        model = f_t[m, None, None] * _psf(pt, shape) + f_n[m, None, None] * _psf(pn, shape) + BACKGROUND
+        out.append(QuarterData(quarter=q, cube=rng.normal(model, np.sqrt(model)), time=time[m],
+                               quality=np.zeros(m.sum(), int), pos_target=pt, pos_neighbour=pn))
+    return out
+
+
+def test_localise_quarters_co_registers_a_shifted_reshaped_stamp():
+    aligned = localise_quarters(make_quarters(), EPH)
+    shifted = localise_quarters(make_quarters(layout={5: SHIFTED}), EPH)
+    assert aligned.verdict == shifted.verdict == "pass"
+    im = next(i for i in shifted.images if i.season == 1)
+    assert im.quarters == [1, 5] and im.diff.shape == SHAPE and im.n_events == 18
+    assert im.pos_target == POS_TARGET and im.pos_neighbour == POS_NEIGHBOUR
+    assert im.offsets_pix == [(0, 0), (1, 0)] and all(max(abs(x) for x in r) < 0.5 for r in im.residual_offsets_pix)
+    s = next(s for s in shifted.seasons if s.season == 1)
+    assert s.nearer == "target" and s.separation_sigma > 3
+    assert abs(s.depth_neighbour_ppm[0]) < 3 * s.depth_neighbour_ppm[1]
+    assert abs(s.depth_target_ppm[0] - 3000) < 4 * s.depth_target_ppm[1]
+    assert math.hypot(s.centroid_colrow[0] - POS_TARGET[0], s.centroid_colrow[1] - POS_TARGET[1]) < 0.2
+
+
+def test_localise_quarters_dip_on_the_neighbour_fails_across_shifted_stamps():
+    loc = localise_quarters(make_quarters("neighbour", layout={5: SHIFTED}), EPH)
+    assert loc.verdict == "fail" and "neighbour" in loc.reason
+
+
+def test_a_stamp_without_the_neighbour_keeps_the_centroid_test():
+    # quarter 5 lacks the neighbour, quarter 1 holds it: season 1 keeps its two-source fit
+    loc = localise_quarters(make_quarters(layout={5: NARROW}), EPH)
+    s1 = next(s for s in loc.seasons if s.season == 1)
+    assert loc.verdict == "pass" and s1.two_source and s1.depth_neighbour_ppm[1] > 0 and s1.n_events == 18
+    # quarter 1 lacks it, quarter 5 holds it: quarter 5 becomes the season's reference grid
+    loc = localise_quarters(make_quarters(layout={1: NARROW}), EPH)
+    im = next(i for i in loc.images if i.season == 1)
+    assert im.quarters == [1, 5] and im.neighbour_in_frame and im.diff.shape == SHAPE and loc.verdict == "pass"
+    # no quarter of season 1 holds it: the fit is unavailable for that season only, the centroid still votes
+    loc = localise_quarters(make_quarters(layout={1: NARROW, 5: NARROW}), EPH)
+    m = loc.metrics(); json.dumps(m, allow_nan=False)
+    by = {s["season"]: s for s in m["seasons"]}
+    assert by[1]["depth_neighbour_ppm"] == [None, None] and by[1]["nearer"] == "target"
+    assert by[1]["separation_sigma"] > 3 and all(by[s]["depth_neighbour_ppm"][0] is not None for s in (0, 2, 3))
+    assert loc.verdict == "pass"
+    nb = localise_quarters(make_quarters("neighbour", layout={1: NARROW, 5: NARROW}), EPH)
+    assert nb.verdict == "fail"
+
+
+def test_localise_wrapper_carries_the_positions_into_the_season_images():
+    loc = localise(*make_cube("target"))
+    assert all(im.pos_target == POS_TARGET and im.pos_neighbour == POS_NEIGHBOUR and im.offsets_pix == [(0, 0)]
+               for im in loc.images)
+    assert all(s.two_source for s in loc.seasons)
