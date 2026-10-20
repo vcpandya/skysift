@@ -7,16 +7,21 @@ the ephemeris and the pixel positions of the target and of the neighbouring star
 
 Estimators, as in the study:
 - per event, mean out-of-transit image minus mean in-transit image, its variance from the out-of-transit scatter;
-- the events of every usable quarter of a season stacked with inverse-variance weights (a star returns to the same
-  CCD module every fourth quarter, so a season's quarters share one pixel grid);
+- the events of every usable quarter of a season stacked with inverse-variance weights on the season's union frame
+  (below);
 - the 3x3 flux-weighted centroid boxed on the highest signal-to-noise difference pixel (the brightest-pixel box was
-  bimodal on KIC 6146676), its error from an N_MC-draw noise Monte Carlo;
+  bimodal on KIC 6146676), its error from an N_MC-draw noise Monte Carlo, and its signed distance from the
+  perpendicular bisector of the two stars in units of that error;
 - a two-source Gaussian PSF fit (free width, free common shift) on the direct image for each star's flux, the same
   PSFs on the difference image for each star's lost flux, implied depth = lost flux / flux.
 
-Real target pixel files change stamp shape between quarters and the stars' pixel positions change between seasons,
-so the general entry point is ``localise_quarters`` on one ``QuarterData`` per quarter, each with its own stamp and
-positions; within a season the quarters are co-registered on the integer pixel offset of the target.
+Real target pixel files change stamp shape between quarters, and the stars' pixel positions change between seasons
+(the spacecraft rolls every quarter). The general entry point is therefore ``localise_quarters`` on one
+``QuarterData`` per quarter, each with its own stamp and positions. Within a season every quarter is placed by the
+integer offset of its rounded target position relative to the season's first usable quarter; the season frame is
+the union of all the shifted stamps (as the study built it from CRVAL1P/CRVAL2P), with invalid padding wherever a
+quarter has no pixel. A season votes only when both stars' 3x3 boxes lie complete on valid pixels of that frame: a
+truncated box pulls the centroid towards the frame interior and could reject a real candidate or pass a blend.
 ``localise`` is the single-grid convenience wrapper.
 
 Known limitation: the Gaussian PSF is not the Kepler PRF, so the two-source depth errors are somewhat optimistic
@@ -26,6 +31,7 @@ when the model does not match the stars' images (on a pixel-integrated synthetic
 from __future__ import annotations
 
 import math
+import warnings
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -77,10 +83,10 @@ _NAN2 = (math.nan, math.nan)
 
 @dataclass
 class SeasonImage:
-    """A season's stacked images on the grid of its reference quarter (the first usable quarter whose stamp holds
-    the neighbour, else the first usable quarter). ``offsets_pix`` is the integer (col, row) shift that took each
-    quarter onto that grid, ``residual_offsets_pix`` the target's leftover fractional (col, row) offset (below
-    0.5 px by construction)."""
+    """A season's stacked images on its union frame. ``offsets_pix`` is each quarter's integer (col, row) offset
+    from the season's first usable quarter (round of the target-position difference), ``residual_offsets_pix`` the
+    target's leftover fractional (col, row) offset (at most 0.5 px by construction). ``target_on_frame`` and
+    ``neighbour_on_frame`` say whether that star's 3x3 box lies complete on valid frame pixels."""
     season: int
     quarters: list[int]
     n_events: int
@@ -92,7 +98,8 @@ class SeasonImage:
     pos_neighbour: tuple[float, float] = _NAN2
     offsets_pix: list[tuple[int, int]] = field(default_factory=list)
     residual_offsets_pix: list[tuple[float, float]] = field(default_factory=list)
-    neighbour_in_frame: bool = False                # the neighbour's pixel lies on a valid pixel of the frame
+    target_on_frame: bool = False
+    neighbour_on_frame: bool = False
 
 
 @dataclass
@@ -100,16 +107,20 @@ class SeasonResult:
     season: int
     n_events: int
     centroid_colrow: tuple[float, float]
-    centroid_sigma_pix: float
+    centroid_sigma_pix: float                   # per-axis centroid error
     dist_target_pix: float
     dist_neighbour_pix: float
-    nearer: str                                 # "target" | "neighbour"
-    separation_sigma: float                     # (dist_neighbour - dist_target) / sigma
+    nearer: str                                 # "target" | "neighbour" | "unknown" (a season that does not vote)
+    separation_sigma: float                     # (d_n^2 - d_t^2) / (2 S) / sigma: signed distance from the bisector
     depth_target_ppm: tuple[float, float]       # two-source implied depth, error
     depth_neighbour_ppm: tuple[float, float]
     max_snr: float
     quarters: list[int] = field(default_factory=list)
-    two_source: bool = True         # False: no quarter of the season holds the neighbour, the fit is unavailable
+    two_source: bool = False                    # the two-source fit ran (both stars on the frame)
+    voting: bool = False                        # both stars on the frame, a finite centroid, >= SEASON_EVENTS_MIN
+    on_frame: bool = False                      # both stars' 3x3 boxes complete on valid frame pixels
+    pos_target: tuple[float, float] = _NAN2     # season-frame (col, row)
+    pos_neighbour: tuple[float, float] = _NAN2
 
 
 def _f(x) -> float | None:
@@ -139,8 +150,12 @@ class Localisation:
             "nearer": s.nearer, "separation_sigma": _f(s.separation_sigma),
             "depth_target_ppm": [_f(x) for x in s.depth_target_ppm],
             "depth_neighbour_ppm": [_f(x) for x in s.depth_neighbour_ppm], "max_snr": _f(s.max_snr),
+            "two_source": bool(s.two_source), "voting": bool(s.voting),
+            "pos_target": [_f(x) for x in s.pos_target], "pos_neighbour": [_f(x) for x in s.pos_neighbour],
         } for s in self.seasons]
-        sig = [s["centroid_sigma_pix"] for s in seasons if s["centroid_sigma_pix"] is not None]
+        # the mean centroid error of the voting seasons (of all seasons with one when none votes)
+        sig = [s["centroid_sigma_pix"] for s in seasons if s["centroid_sigma_pix"] is not None and s["voting"]]
+        sig = sig or [s["centroid_sigma_pix"] for s in seasons if s["centroid_sigma_pix"] is not None]
         return {"seasons": seasons, "n_events_used": int(self.n_events_used),
                 "n_quarters_usable": int(self.n_quarters_usable),
                 "unusable_quarters": [int(q) for q in self.unusable_quarters],
@@ -186,7 +201,8 @@ def _quarter_events(qd: QuarterData, eph: Ephemeris, in_half: float, out_lo: flo
         outmask |= outs
     if len(events) < QUARTER_EVENTS_MIN:
         return None
-    with np.errstate(invalid="ignore"):
+    with warnings.catch_warnings():                 # an all-NaN (invalid) pixel has no mean
+        warnings.simplefilter("ignore", RuntimeWarning)
         direct = np.where(valid, np.nanmean(np.where(valid, fl[outmask], np.nan), axis=0), np.nan)
     return events, valid, direct
 
@@ -195,12 +211,15 @@ def _finite2(p) -> bool:
     return p is not None and all(math.isfinite(float(x)) for x in p)
 
 
-def _holds(pos, valid: np.ndarray) -> bool:
-    """True when the (col, row) position falls on a valid pixel of the grid."""
+def _box_on_frame(pos, valid: np.ndarray) -> bool:
+    """True when the 3x3 box around the (col, row) position's pixel lies complete on valid pixels of the grid, that
+    is the position is at least one pixel inside the valid extent."""
     if not _finite2(pos):
         return False
     c, r = round(float(pos[0])), round(float(pos[1]))
-    return 0 <= r < valid.shape[0] and 0 <= c < valid.shape[1] and bool(valid[r, c])
+    if not (1 <= r < valid.shape[0] - 1 and 1 <= c < valid.shape[1] - 1):
+        return False
+    return bool(valid[r - 1:r + 2, c - 1:c + 2].all())
 
 
 def _shift_into(img: np.ndarray, shape: tuple[int, int], dc: int, dr: int, fill) -> np.ndarray:
@@ -216,13 +235,15 @@ def _shift_into(img: np.ndarray, shape: tuple[int, int], dc: int, dr: int, fill)
 def season_images(quarters: list[QuarterData], eph: Ephemeris, *, in_half: float = 0.5, out_lo: float = 1.0,
                   out_hi: float = 3.0) -> list[SeasonImage]:
     """Per-season difference images from per-quarter stamps, sorted by season. Per quarter the events as in
-    ``difference_images``; within a season (``season_of``) every usable quarter is moved onto the grid of the
-    reference quarter (the first usable one whose stamp holds the neighbour, else the first usable one) by the
-    integer pixel offset round(pos_target - reference pos_target), with invalid padding where the stamps do not
-    overlap, and the events are stacked with per-pixel inverse-variance weights. The season's positions are the
-    reference quarter's."""
+    ``difference_images``; quarters with non-finite star positions are dropped. Within a season (``season_of``)
+    each quarter is offset from the season's first usable quarter by round(pos_target - first pos_target) per axis;
+    the frame spans the minimum to maximum extent of all the shifted stamps, a quarter's missing pixels are invalid,
+    and the events are stacked with per-pixel inverse-variance weights. Season positions are the first quarter's,
+    carried into the frame."""
     usable: dict[int, tuple] = {}
     for qd in sorted(quarters, key=lambda x: int(x.quarter)):
+        if not (_finite2(qd.pos_target) and _finite2(qd.pos_neighbour)):
+            continue
         res = _quarter_events(qd, eph, in_half, out_lo, out_hi)
         if res is not None:
             usable[int(qd.quarter)] = (qd, *res)
@@ -232,37 +253,41 @@ def season_images(quarters: list[QuarterData], eph: Ephemeris, *, in_half: float
     images = []
     for s in sorted(by_season):
         qs = by_season[s]
-        ref = next((q for q in qs if _holds(usable[q][0].pos_neighbour, usable[q][2])), qs[0])
-        rqd = usable[ref][0]
-        shape = usable[ref][2].shape
-        p_t = tuple(float(x) for x in rqd.pos_target) if _finite2(rqd.pos_target) else _NAN2
-        p_n = tuple(float(x) for x in rqd.pos_neighbour) if _finite2(rqd.pos_neighbour) else _NAN2
+        first = usable[qs[0]][0]
+        p_t = (float(first.pos_target[0]), float(first.pos_target[1]))
+        p_n = (float(first.pos_neighbour[0]), float(first.pos_neighbour[1]))
+        offsets, residuals = [], []
+        for q in qs:
+            pt = usable[q][0].pos_target
+            dc, dr = round(float(pt[0]) - p_t[0]), round(float(pt[1]) - p_t[1])
+            offsets.append((dc, dr)); residuals.append((float(pt[0]) - dc - p_t[0], float(pt[1]) - dr - p_t[1]))
+        # quarter q covers first-quarter columns [-dc, -dc + width) and rows [-dr, -dr + height)
+        c_min = min(-dc for dc, _ in offsets); r_min = min(-dr for _, dr in offsets)
+        c_max = max(-dc + usable[q][2].shape[1] for q, (dc, _) in zip(qs, offsets))
+        r_max = max(-dr + usable[q][2].shape[0] for q, (_, dr) in zip(qs, offsets))
+        shape = (r_max - r_min, c_max - c_min)
         num, wsum = np.zeros(shape), np.zeros(shape)
         dsum, dn = np.zeros(shape), np.zeros(shape)
-        offsets, residuals, n_events = [], [], 0
-        for q in qs:
-            qd, events, valid, direct = usable[q]
-            if _finite2(qd.pos_target) and _finite2(p_t):
-                dc = round(float(qd.pos_target[0]) - p_t[0]); dr = round(float(qd.pos_target[1]) - p_t[1])
-                residuals.append((float(qd.pos_target[0]) - dc - p_t[0], float(qd.pos_target[1]) - dr - p_t[1]))
-            else:
-                dc = dr = 0; residuals.append(_NAN2)
-            offsets.append((dc, dr))
-            v = _shift_into(valid, shape, dc, dr, False)
+        n_events = 0
+        for q, (dc, dr) in zip(qs, offsets):
+            _qd, events, valid, direct = usable[q]
+            sc, sr = dc + c_min, dr + r_min             # frame pixel (r, c) is quarter pixel (r + sr, c + sc)
+            v = _shift_into(valid, shape, sc, sr, False)
             for img, var in events:
-                vv = _shift_into(var, shape, dc, dr, np.inf)
+                vv = _shift_into(var, shape, sc, sr, np.inf)
                 w = np.where(v & np.isfinite(vv), 1.0 / np.where(np.isfinite(vv), vv, 1.0), 0.0)
-                num += w * _shift_into(img, shape, dc, dr, 0.0); wsum += w
-            dsum += np.where(v, _shift_into(np.nan_to_num(direct), shape, dc, dr, 0.0), 0.0); dn += v
+                num += w * _shift_into(img, shape, sc, sr, 0.0); wsum += w
+            dsum += np.where(v, _shift_into(np.nan_to_num(direct), shape, sc, sr, 0.0), 0.0); dn += v
             n_events += len(events)
         valid = wsum > 0
         safe = np.where(valid, wsum, 1.0)
+        f_t, f_n = (p_t[0] - c_min, p_t[1] - r_min), (p_n[0] - c_min, p_n[1] - r_min)
         images.append(SeasonImage(
             season=s, quarters=qs, n_events=n_events, diff=np.where(valid, num / safe, 0.0),
             var=np.where(valid, 1.0 / safe, np.inf),
             direct=np.where(valid & (dn > 0), dsum / np.maximum(dn, 1), np.nan), valid=valid,
-            pos_target=p_t, pos_neighbour=p_n, offsets_pix=offsets, residual_offsets_pix=residuals,
-            neighbour_in_frame=_holds(p_n, valid)))
+            pos_target=f_t, pos_neighbour=f_n, offsets_pix=offsets, residual_offsets_pix=residuals,
+            target_on_frame=_box_on_frame(f_t, valid), neighbour_on_frame=_box_on_frame(f_n, valid)))
     return images
 
 
@@ -277,15 +302,22 @@ def _split_quarters(cube, time, quality, quarter, pos_target, pos_neighbour) -> 
 
 
 def difference_images(cube, time, quality, quarter, eph: Ephemeris, *, in_half: float = 0.5, out_lo: float = 1.0,
-                      out_hi: float = 3.0, pos_target=_NAN2, pos_neighbour=_NAN2) -> list[SeasonImage]:
+                      out_hi: float = 3.0, pos_target=None, pos_neighbour=None) -> list[SeasonImage]:
     """Per-season difference images of one cube on one pixel grid, sorted by season. Per quarter, every event with
     at least EVENT_IN_MIN good cadences within ``in_half`` durations of mid-transit and EVENT_OUT_MIN good cadences
     between ``out_lo`` and ``out_hi`` durations (EVENT_OUT_SIDE_MIN on each side) gives mean(out) - mean(in) per
     pixel, with variance std(out)^2 (1/n_in + 1/n_out). Good means quality 0 and finite flux in every valid pixel.
     Quarters with fewer than QUARTER_EVENTS_MIN events are unusable; the events of a season's usable quarters are
-    stacked with inverse-variance weights. The positions, when given, are carried into the season images."""
-    return season_images(_split_quarters(cube, time, quality, quarter, pos_target, pos_neighbour), eph,
-                         in_half=in_half, out_lo=out_lo, out_hi=out_hi)
+    stacked with inverse-variance weights. Without positions the images carry NaN positions and no frame flags."""
+    known = pos_target is not None and pos_neighbour is not None
+    pt, pn = (pos_target, pos_neighbour) if known else ((0.0, 0.0), (0.0, 0.0))
+    images = season_images(_split_quarters(cube, time, quality, quarter, pt, pn), eph,
+                           in_half=in_half, out_lo=out_lo, out_hi=out_hi)
+    if not known:
+        for im in images:
+            im.pos_target = im.pos_neighbour = _NAN2
+            im.target_on_frame = im.neighbour_on_frame = False
+    return images
 
 
 def _snr(diff: np.ndarray, var: np.ndarray, valid: np.ndarray) -> np.ndarray:
@@ -334,12 +366,11 @@ def gauss_psf(shape: tuple[int, int], col: float, row: float, sig: float) -> np.
 
 
 def _nan_fit() -> dict:
-    nan2 = (math.nan, math.nan)
-    return {"psf_sigma_pix": math.nan, "shift_pix": nan2, "direct_flux_target": math.nan,
+    return {"psf_sigma_pix": math.nan, "shift_pix": _NAN2, "direct_flux_target": math.nan,
             "direct_flux_target_err": math.nan, "direct_flux_neighbour": math.nan,
             "direct_flux_neighbour_err": math.nan, "diff_amp_target": math.nan, "diff_amp_target_err": math.nan,
-            "diff_amp_neighbour": math.nan, "diff_amp_neighbour_err": math.nan, "depth_target_ppm": nan2,
-            "depth_neighbour_ppm": nan2, "chi2_two_source": math.nan, "npix": 0}
+            "diff_amp_neighbour": math.nan, "diff_amp_neighbour_err": math.nan, "depth_target_ppm": _NAN2,
+            "depth_neighbour_ppm": _NAN2, "chi2_two_source": math.nan, "npix": 0}
 
 
 def _depth(a: float, var_a: float, f: float, var_f: float) -> tuple[float, float]:
@@ -413,23 +444,35 @@ def _box(time: np.ndarray, fn: np.ndarray, t0: float, eph: Ephemeris, usable: np
     return (float(np.mean(fout)) - float(np.mean(fin))) * 1e6, s * math.sqrt(1 / fin.size + 1 / fout.size) * 1e6
 
 
-def leak_depth(time, flux, quality, eph: Ephemeris) -> tuple[float, float]:
+def _running_median(t: np.ndarray, f: np.ndarray, keep: np.ndarray) -> np.ndarray:
+    """LEAK_WINDOW_DAYS running median of ``f`` (``t`` sorted) over the ``keep`` points; NaN with fewer than 10."""
+    tk, fk = t[keep], f[keep]
+    lo = np.searchsorted(tk, t - 0.5 * LEAK_WINDOW_DAYS); hi = np.searchsorted(tk, t + 0.5 * LEAK_WINDOW_DAYS)
+    return np.array([np.median(fk[a:b]) if b - a >= 10 else np.nan for a, b in zip(lo, hi)])
+
+
+def leak_depth(time, flux, quality, eph: Ephemeris, quarter=None) -> tuple[float, float]:
     """Box depth and error (ppm) at the ephemeris in a light curve (the a2 ``measure`` method). The flux is divided
-    by a LEAK_WINDOW_DAYS running median with the transits (|dt| < one duration) excluded, so raw counts are fine;
+    by a LEAK_WINDOW_DAYS running median with the transits (|dt| < one duration) excluded, per quarter when
+    ``quarter`` is given (as a2 ``detrend`` did: the flux level jumps between quarters), so raw counts are fine;
     quality-flagged and non-finite cadences are dropped. The formal error is inflated by the scatter of the depths at
     LEAK_N_CONTROL control phases (each at least four durations from the transit, the transits masked) when that
     scatter is larger. Returns (NaN, NaN) when there are too few points in or around the transits; callers turn NaN
     into None before it goes into JSON metrics."""
     t = np.asarray(time, float); f = np.asarray(flux, float); q = np.asarray(quality)
+    qq = np.zeros(t.size, int) if quarter is None else np.asarray(quarter).astype(int)
+    if not (f.size == q.size == qq.size == t.size):
+        raise ValueError("time, flux, quality and quarter differ in length")
     ok = (q == 0) & np.isfinite(t) & np.isfinite(f)
-    t, f = t[ok], f[ok]
-    order = np.argsort(t); t, f = t[order], f[order]
+    t, f, qq = t[ok], f[ok], qq[ok]
+    order = np.argsort(t, kind="stable"); t, f, qq = t[order], f[order], qq[order]
     if t.size == 0:
         return math.nan, math.nan
     keep = np.abs(_phase_dt(t, eph.t0, eph.period)) >= eph.duration
-    tk, fk = t[keep], f[keep]
-    lo = np.searchsorted(tk, t - 0.5 * LEAK_WINDOW_DAYS); hi = np.searchsorted(tk, t + 0.5 * LEAK_WINDOW_DAYS)
-    med = np.array([np.median(fk[a:b]) if b - a >= 10 else np.nan for a, b in zip(lo, hi)])
+    med = np.full(t.size, np.nan)
+    for g in np.unique(qq):
+        m = qq == g
+        med[m] = _running_median(t[m], f[m], keep[m])
     with np.errstate(invalid="ignore", divide="ignore"):
         fn = f / med
     usable = np.isfinite(fn)
@@ -451,37 +494,53 @@ def leak_depth(time, flux, quality, eph: Ephemeris) -> tuple[float, float]:
 
 
 def _on_target(s: SeasonResult) -> bool:
-    """Centroid nearer the target by more than SEPARATION_SIGMA and, when the two-source fit is available (some
-    quarter of the season holds the neighbour), no significant depth on the neighbour."""
+    """Centroid more than SEPARATION_SIGMA on the target's side of the bisector and a two-source depth on the
+    neighbour consistent with zero."""
     d_n, e_n = s.depth_neighbour_ppm
-    return bool(s.nearer == "target" and s.separation_sigma > SEPARATION_SIGMA
-                and (not s.two_source or abs(d_n) < NEIGHBOUR_DEPTH_SIGMA * e_n))
+    return bool(s.separation_sigma > SEPARATION_SIGMA and abs(d_n) < NEIGHBOUR_DEPTH_SIGMA * e_n)
 
 
 def _on_neighbour(s: SeasonResult) -> bool:
+    """Centroid more than SEPARATION_SIGMA on the neighbour's side, or a significant two-source depth on the
+    neighbour with none on the target."""
     (d_t, e_t), (d_n, e_n) = s.depth_target_ppm, s.depth_neighbour_ppm
-    return bool(s.nearer == "neighbour" or (d_n > NEIGHBOUR_DEPTH_SIGMA * e_n and d_t < TARGET_DEPTH_SIGMA * e_t))
+    return bool(s.separation_sigma < -SEPARATION_SIGMA
+                or (d_n > NEIGHBOUR_DEPTH_SIGMA * e_n and d_t < TARGET_DEPTH_SIGMA * e_t))
+
+
+def _neighbour_strength(s: SeasonResult) -> float:
+    """The stronger of the two neighbour indicators, in sigma."""
+    d_n, e_n = s.depth_neighbour_ppm
+    by_depth = d_n / e_n if e_n > 0 else -math.inf
+    return max(-s.separation_sigma, by_depth if math.isfinite(by_depth) else -math.inf)
 
 
 def verdict(seasons: list[SeasonResult], n_events_used: int) -> tuple[str, str]:
-    """Spec 4.4: undetermined with fewer than TRANSITS_MIN usable transits; pass when every season with at least
-    SEASON_EVENTS_MIN events has its centroid nearer the target by more than SEPARATION_SIGMA and a two-source depth
-    on the neighbour consistent with zero; fail when the centroid or the two-source fit prefers the neighbour in a
-    majority of those seasons; undetermined otherwise, naming the first season that disagrees."""
+    """Spec 4.4 over the voting seasons (both stars' 3x3 boxes on the frame, a finite centroid and error, at least
+    SEASON_EVENTS_MIN events): undetermined with fewer than TRANSITS_MIN usable transits or no voting season; pass
+    when every voting season is more than SEPARATION_SIGMA on the target's side of the bisector with a neighbour
+    depth consistent with zero; fail when a majority is more than SEPARATION_SIGMA on the neighbour's side or puts
+    the depth on the neighbour; otherwise undetermined, naming the first voting season that does not pass
+    ("ambiguous" when it lies within SEPARATION_SIGMA of the bisector)."""
     if n_events_used < TRANSITS_MIN:
         return "undetermined", f"pixels: {n_events_used} usable transits < {TRANSITS_MIN}"
-    voting = sorted((s for s in seasons if s.n_events >= SEASON_EVENTS_MIN), key=lambda s: s.season)
+    voting = sorted((s for s in seasons if s.voting and s.n_events >= SEASON_EVENTS_MIN
+                     and math.isfinite(s.separation_sigma)), key=lambda s: s.season)
     if not voting:
-        return "undetermined", f"pixels: no season with {SEASON_EVENTS_MIN} usable transits"
+        if any(not s.on_frame for s in seasons):
+            return "undetermined", "pixels: no season holds both stars on the frame"
+        return "undetermined", "pixels: no season localises the dip"
     m = len(voting)
     if all(_on_target(s) for s in voting):
         k = min(s.separation_sigma for s in voting)
         return "pass", f"pixels: the dip is on the target in {m}/{m} seasons (centroid >= {k:.1f} sigma nearer)"
     neighbour = [s for s in voting if _on_neighbour(s)]
     if len(neighbour) > m / 2:
-        k = float(np.median([abs(s.separation_sigma) for s in neighbour]))
+        k = float(np.median([_neighbour_strength(s) for s in neighbour]))
         return "fail", f"pixels: the dip is on the neighbour in {len(neighbour)}/{m} seasons ({k:.1f} sigma)"
     s = next(s for s in voting if not _on_target(s))
+    if abs(s.separation_sigma) <= SEPARATION_SIGMA:
+        return "undetermined", f"pixels: season {s.season} ambiguous ({s.separation_sigma:.1f} sigma)"
     return "undetermined", (f"pixels: season {s.season} disagrees "
                             f"(centroid nearer {s.nearer}, {abs(s.separation_sigma):.1f} sigma)")
 
@@ -494,10 +553,12 @@ def localise(cube, time, quality, quarter, eph: Ephemeris, pos_target, pos_neigh
 
 def localise_quarters(quarters: list[QuarterData], eph: Ephemeris, *,
                       rng: np.random.Generator | None = None) -> Localisation:
-    """Season images co-registered from per-quarter stamps (``season_images``), the S/N-box centroid and the
-    two-source fit in each season frame, and the verdict. A season with no quarter holding the neighbour still
-    gets the centroid test; its two-source fit is unavailable (depths None in the metrics). Every Monte Carlo draw
-    comes from ``rng`` (default seeded with RNG_SEED), so the result is deterministic."""
+    """Season images on union frames from per-quarter stamps (``season_images``), the S/N-box centroid and the
+    two-source fit in each season frame, and the verdict. A season votes only with both stars' 3x3 boxes complete
+    on valid frame pixels and a finite centroid and error; otherwise it is kept with ``nearer="unknown"`` (and
+    without the two-source fit when a star is off the frame). Quarters with non-finite star positions are
+    unusable. Every Monte Carlo draw comes from ``rng`` (default seeded with RNG_SEED), so the result is
+    deterministic."""
     rng = np.random.default_rng(RNG_SEED) if rng is None else rng
     images = season_images(quarters, eph)
     usable = sorted(q for im in images for q in im.quarters)
@@ -505,17 +566,21 @@ def localise_quarters(quarters: list[QuarterData], eph: Ephemeris, *,
     seasons = []
     for im in images:
         (ct, rt), (cn, rn) = im.pos_target, im.pos_neighbour
+        on_frame = im.target_on_frame and im.neighbour_on_frame
         (col, row), sigma, max_snr = snr_box_centroid(im.diff, im.var, im.valid, rng)
         d_t, d_n = math.hypot(col - ct, row - rt), math.hypot(col - cn, row - rn)
-        sep = (d_n - d_t) / sigma if sigma > 0 else math.nan
-        fit = (two_source_fit(im.direct, im.diff, im.var, im.valid, (ct, rt), (cn, rn))
-               if im.neighbour_in_frame else _nan_fit())
+        sep_pix = math.hypot(cn - ct, rn - rt)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            sep = (d_n ** 2 - d_t ** 2) / (2.0 * sep_pix) / sigma if sep_pix > 0 and sigma > 0 else math.nan
+        voting = bool(on_frame and math.isfinite(sep) and im.n_events >= SEASON_EVENTS_MIN)
+        nearer = ("target" if sep > 0 else "neighbour") if voting else "unknown"
+        fit = two_source_fit(im.direct, im.diff, im.var, im.valid, (ct, rt), (cn, rn)) if on_frame else _nan_fit()
         seasons.append(SeasonResult(
             season=im.season, n_events=im.n_events, centroid_colrow=(col, row), centroid_sigma_pix=sigma,
-            dist_target_pix=d_t, dist_neighbour_pix=d_n, nearer="neighbour" if d_n < d_t else "target",
-            separation_sigma=sep, depth_target_ppm=fit["depth_target_ppm"],
-            depth_neighbour_ppm=fit["depth_neighbour_ppm"], max_snr=max_snr, quarters=list(im.quarters),
-            two_source=im.neighbour_in_frame))
+            dist_target_pix=d_t, dist_neighbour_pix=d_n, nearer=nearer, separation_sigma=sep,
+            depth_target_ppm=fit["depth_target_ppm"], depth_neighbour_ppm=fit["depth_neighbour_ppm"],
+            max_snr=max_snr, quarters=list(im.quarters), two_source=on_frame, voting=voting, on_frame=on_frame,
+            pos_target=(ct, rt), pos_neighbour=(cn, rn)))
     n_used = int(sum(im.n_events for im in images))
     v, reason = verdict(seasons, n_used)
     return Localisation(seasons=seasons, n_events_used=n_used, n_quarters_usable=len(usable),
