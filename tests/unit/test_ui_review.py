@@ -680,7 +680,9 @@ def test_dialog_and_controls_are_labelled(seeded):
     assert 'role="dialog"' in both and 'aria-labelledby=' in both and 'aria-label="Close"' in both
     assert 'aria-labelledby="dialog-title"' in dialog and 'id="dialog-title"' in html
     home = client.get("/").text
-    assert 'aria-live="polite"' in home and 'aria-hidden="true"' in home     # counters; starfield
+    # the Tonight status is a polite live region; decorative SVG icons are hidden (the starfield is a ::before layer,
+    # outside the accessibility tree, and needs no aria-hidden)
+    assert 'aria-live="polite"' in home and 'aria-hidden="true"' in home
     # the drawer names the dialog by its own heading: app.js points aria-labelledby at the loaded [data-dialog-focus]
     form = client.get("/partials/sweep-form?source=kbonus_bkg").text
     assert 'id="sweep-title"' in form and "data-dialog-focus" in form
@@ -784,6 +786,15 @@ def test_keyboard_reaches_every_queue_row_and_a_refused_reject_lands_in_the_note
     after = js[js.index('"htmx:afterSwap"'):]
     assert 'xhr.status !== 400' in after and 'textarea[name=note]' in after and "note.focus()" in after
     assert "'a[href], button, summary, input" in js                           # the trap knows disclosures
+    # a plain click on the row's link at split-view width loads the detail instead of leaving the page
+    handler = js[js.index('const row = e.target.closest("tr.row-link[data-href]")'):]
+    handler = handler[:handler.index("});")]
+    assert "e.button === 0" in handler and "e.ctrlKey || e.metaKey || e.shiftKey || e.altKey" in handler
+    assert 'e.target.closest("a.row-name") && detail && wide.matches' in handler
+    assert handler.index("e.preventDefault(); openRow(row)") < handler.index('!e.target.closest("a, button, input")')
+    css = client.get("/static/app.css").text
+    assert ".row-name { color: inherit; text-decoration: none; }" in css
+    assert ".row-name:hover, .row-name:focus-visible { text-decoration: underline; }" in css
 
 
 def test_the_sky_never_sits_behind_text_and_wide_tables_show_their_edge(settings):

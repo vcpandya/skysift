@@ -171,7 +171,12 @@
   };
   document.addEventListener("click", (e) => {
     const row = e.target.closest("tr.row-link[data-href]");
-    if (row && !e.target.closest("a, button, input")) openRow(row);
+    if (!row) return;
+    // the target id is a real link for the keyboard, middle-click and a new tab; a plain click on it at split-view
+    // width loads the detail beside the table like a click anywhere else on the row
+    const plain = e.button === 0 && !(e.ctrlKey || e.metaKey || e.shiftKey || e.altKey);
+    if (plain && e.target.closest("a.row-name") && detail && wide.matches) { e.preventDefault(); openRow(row); return; }
+    if (!e.target.closest("a, button, input")) openRow(row);
   });
   if (detail && wide.matches) {             // a reload keeps the open signal
     const id = new URLSearchParams(window.location.search).get("signal");

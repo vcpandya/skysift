@@ -444,6 +444,9 @@ kbd { padding: 0 4px; font-size: var(--fs-12); border: 1px solid currentColor; b
 .queue-search { flex: 1 1 220px; max-width: 320px; }
 .queue-clear { align-self: center; font-size: var(--fs-13); }
 tr.row-link.is-selected { background: var(--raised); box-shadow: inset 3px 0 0 var(--ion); }
+/* the row's target link keeps the table's colour; the underline shows only when it is pointed at or focused */
+.row-name { color: inherit; text-decoration: none; }
+.row-name:hover, .row-name:focus-visible { text-decoration: underline; }
 .detail .hero-name { font-size: var(--fs-20); }
 .detail-summary { margin: 0 0 12px; }
 .detail-open { margin-left: auto; }
