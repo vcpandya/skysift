@@ -225,7 +225,7 @@ def test_status_reports_rungs_and_states(settings, tmp_path):
     r = CliRunner().invoke(app, ["status"])
     assert r.exit_code == 0, r.output
     out = json.loads(r.stdout)
-    assert out["targets_by_state"] == {"done": 3} and out["rung_counts"]["rung1_detection"]["pass"] == 3
+    assert out["targets_by_state"] == {"done": 7} and out["rung_counts"]["rung1_detection"]["pass"] == 6
 
 
 def test_run_passes_a_stop_check_that_sees_the_stop_file_and_the_first_ctrl_c(settings, monkeypatch):

@@ -17,28 +17,29 @@ def _env(tmp_path, settings):
 def test_summary_counts_states_outcomes_and_rungs(tmp_path, settings):
     store, blob, _ids = _env(tmp_path, settings)
     out = queries.summary(store, Retention(RetentionPolicy.parse("stream"), store, blob), settings)
-    assert out["targets_by_state"] == {"done": 3}
-    assert out["signal_outcomes"] == {"candidate_stage1": 1, "undetermined": 1, "rejected": 1}
-    assert out["rung_counts"]["rung2_shape"] == {"pass": 2, "fail": 1, "undetermined": 0}
-    assert out["rung_counts"]["rung4_novelty"] == {"pass": 1, "fail": 0, "undetermined": 1}
+    assert out["targets_by_state"] == {"done": 7}
+    assert out["signal_outcomes"] == {"candidate_stage1": 3, "candidate_stage2": 1, "undetermined": 1, "rejected": 1,
+                                      "pending": 1}
+    assert out["rung_counts"]["rung2_shape"] == {"pass": 5, "fail": 1, "undetermined": 0}
+    assert out["rung_counts"]["rung4_novelty"] == {"pass": 4, "fail": 0, "undetermined": 1}
     assert out["counts"]["queries"] == 3 and out["error_capped_targets"] == 0 and out["last_errors"] == []
     assert out["mean_seconds_per_run"] is not None and out["cache_bytes"] > 0
 
 
 def test_source_progress(tmp_path, settings):
     store, _blob, _ids = _env(tmp_path, settings)
-    assert queries.source_progress(store) == {"kbonus_bkg": {"new": 0, "done": 3, "error": 0, "total": 3}}
+    assert queries.source_progress(store) == {"kbonus_bkg": {"new": 0, "done": 7, "error": 0, "total": 7}}
 
 
 def test_review_queue_default_and_sorting(tmp_path, settings):
     store, _blob, ids = _env(tmp_path, settings)
     rows = queries.review_queue(store)
-    assert [r["id"] for r in rows] == [ids["candidate"]]
+    assert [r["id"] for r in rows] == [ids["candidate"], ids["approved"], ids["legacy"]]     # by SDE, highest first
     r = rows[0]
     assert (r["last_rung"], r["verdict"], r["decision"], r["reason"]) == ("rung4_novelty", "pass", None, "")
     assert abs(r["duration_h"] - 0.096 * 24) < 1e-9 and r["kic"] == 5689121
     both = queries.review_queue(store, status="all", sort="period", desc=False)
-    assert [round(b["period"], 2) for b in both] == [1.07, 3.21, 13.77]
+    assert [round(b["period"], 2) for b in both] == [1.07, 3.21, 5.43, 7.65, 13.77]
     und = queries.review_queue(store, status="undetermined")[0]
     assert und["verdict"] == "undetermined" and und["reason"].startswith("outage:vizier")
 
@@ -54,14 +55,14 @@ def test_signal_detail_neighbours_and_history(tmp_path, settings):
     assert d["candidate"]["status"] == "approved" and d["decisions"][0]["decision"] == "approve"
     assert queries.signal_detail(store, 10**6) is None
     prev_id, next_id = queries.neighbours(store, ids["undetermined"], status="all", sort="period", desc=False)
-    assert (prev_id, next_id) == (ids["rejected"], ids["candidate"])
+    assert (prev_id, next_id) == (ids["rejected"], ids["legacy"])
 
 
 def test_approved_and_review_document(tmp_path, settings):
     store, _blob, ids = _env(tmp_path, settings)
     store.decide(ids["candidate"], "approve", "fine"); store.decide(ids["undetermined"], "reject", "noise")
     rows = queries.approved(store)
-    assert [r["id"] for r in rows] == [ids["candidate"]] and rows[0]["note"] == "fine"
+    assert [r["id"] for r in rows] == [ids["candidate"], ids["approved"]] and rows[0]["note"] == "fine"
     assert [r["id"] for r in queries.approved(store, status="rejected")] == [ids["undetermined"]]
     doc = queries.review_document(store, ids["candidate"])
     assert doc["signal"]["target_id"] == "kic-005689121" and len(doc["tests"]) == 4
@@ -102,14 +103,16 @@ def test_current_search_version_is_the_latest_done_run(tmp_path, settings):
 def test_queue_and_neighbours_keep_to_one_search_version(tmp_path, settings):
     store, _blob, ids = _env(tmp_path, settings)
     old = add_older_version(store)
-    assert {r["id"] for r in queries.review_queue(store)} == {ids["candidate"], old}         # no version: everything
-    assert [r["id"] for r in queries.review_queue(store, version=VERSION)] == [ids["candidate"]]
+    current = [ids["candidate"], ids["approved"], ids["legacy"]]                              # by SDE, highest first
+    assert {r["id"] for r in queries.review_queue(store)} == {*current, old}                 # no version: everything
+    assert [r["id"] for r in queries.review_queue(store, version=VERSION)] == current
     assert queries.hidden_by_version(store, "candidate_stage1", VERSION) == 1
     assert queries.hidden_by_version(store, "all", VERSION) == 1
     assert queries.hidden_by_version(store, "rejected", VERSION) == 0
     assert queries.hidden_by_version(store, "candidate_stage1", None) == 0
     # the old signal has the higher SDE, so in the unfiltered queue it sits just before the current one
-    assert queries.neighbours(store, ids["candidate"], "candidate_stage1", "sde", True) == (old, None)
-    assert queries.neighbours(store, ids["candidate"], "candidate_stage1", "sde", True, version=VERSION) == (None, None)
+    assert queries.neighbours(store, ids["candidate"], "candidate_stage1", "sde", True) == (old, ids["approved"])
+    assert (queries.neighbours(store, ids["candidate"], "candidate_stage1", "sde", True, version=VERSION)
+            == (None, ids["approved"]))
     assert old not in queries.neighbours(store, ids["undetermined"], "all", "sde", True, version=VERSION)
     assert queries.neighbours(store, old, "candidate_stage1", "sde", True, version=VERSION) == (None, None)

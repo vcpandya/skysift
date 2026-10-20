@@ -1,5 +1,7 @@
-"""A small realistic database for dashboard tests: three KBonus-like targets, one done run each, one candidate with
-four passing rungs, one undetermined signal (rung 4 outage), one failed signal, raw artifacts for two targets."""
+"""A small realistic database for dashboard tests: seven KBonus-like targets, one done run each. The first three: one
+candidate with four passing rungs, one undetermined signal (rung 4 outage), one failed signal, raw artifacts for two
+of them and three logged queries. Then a legacy candidate (pre-M3 metrics), a stage-2 candidate with a passing pixel
+rung, an approved stage-1 candidate and a pending signal with no test rows (no artifacts, no queries)."""
 from skysift.models import Signal, Target, TestResult, TestStatus
 from skysift.store.db import SignalRow, Store, make_job_key
 
@@ -67,7 +69,86 @@ def seed(store: Store, blob=None) -> dict:
     with store.session() as s:
         for row in s.query(SignalRow):
             ids[key_of[row.target_id]] = row.id
-    return {**ids, "targets": [t.target_id for t in targets], "run_ids": runs}
+    ids.update(_seed_more(store))
+    return {**ids, "targets": [t.target_id for t in targets], "run_ids": runs,
+            "approved_target": APPROVED_TARGET}
+
+
+APPROVED_TARGET = "gaia-dr3-2101234567890123461"
+
+
+def _legacy_tests() -> list[TestResult]:
+    """Rungs 1 to 3 as stored before M3 (fewer metric keys, no rung1_events row) and a bare rung 4 pass."""
+    return [TestResult(rung="rung1_detection", status=TestStatus.PASS,
+                       metrics={"sde": 16.2, "snr": 20.1, "n_events": 60}),
+            TestResult(rung="rung2_shape", status=TestStatus.PASS,
+                       metrics={"depth_ppm": 950.0, "odd_ppm": 940.0, "even_ppm": 960.0, "parity_sigma": 0.4,
+                                "secondary_ppm": 10.0, "secondary_sigma": 0.2}),
+            TestResult(rung="rung3_stability", status=TestStatus.PASS,
+                       metrics={"season_depths": {"0": 930.0, "1": 970.0, "2": 950.0}, "chi2": 0.4, "dof": 2,
+                                "p_value": 0.82}),
+            TestResult(rung="rung4_novelty", status=TestStatus.PASS, metrics={"cumulative": 0})]
+
+
+def _stage2_tests() -> list[TestResult]:
+    """The four light-curve rungs with today's metrics and a passing pixel rung (KIC 6146676 at 40.29 d)."""
+    seasons = [{"season": s, "nearer": "target", "dist_target_pix": 0.15, "dist_neighbour_pix": 2.9,
+                "centroid_sigma_pix": 0.05, "separation_sigma": 55.0, "depth_target_ppm": [2213, 78],
+                "depth_neighbour_ppm": [-21, 25]} for s in range(4)]
+    return [
+        TestResult(rung="rung1_detection", status=TestStatus.PASS,
+                   metrics={"sde": 50.5, "snr": 64.2, "n_events": 34, "duration_ratio": 0.82, "t_circ_days": 0.21,
+                            "stellar_mass": 0.5, "stellar_radius": 0.5, "stellar_source": "fallback"}),
+        TestResult(rung="rung1_events", status=TestStatus.PASS,
+                   metrics={"n_events_with_data": 37, "n_covered": 32, "n_good": 32, "duty_cycle": 0.81,
+                            "ses_rules_applied": True, "ses_max_over_mes": 0.21, "chases_median": 0.93,
+                            "coverage": None, "ses": None, "chases": None, "coverage_summary": None,
+                            "ses_summary": None}),
+        TestResult(rung="rung2_shape", status=TestStatus.PASS,
+                   metrics={"stacked": False, "depth_ppm": 2180.0, "depth_err_ppm": 60.0, "n_events": 32,
+                            "odd_ppm": 2202.0, "even_ppm": 2115.0, "parity_sigma": 0.3, "secondary_ppm": 15.0,
+                            "secondary_sigma": 0.2, "free_secondary_phase": 0.62, "free_secondary_ppm": 40.0,
+                            "free_secondary_sigma": 1.4, "control_rms_ppm": 65.0, "box_chi2": 120.0,
+                            "sine_chi2": 410.0, "shape_n": 300, "fit_ok": True, "fit_k": 0.047, "fit_b": 0.31,
+                            "fit_depth_ppm": 2150.0, "v_shape_applied": False}),
+        TestResult(rung="rung3_stability", status=TestStatus.PASS,
+                   metrics={"stacked": False, "season_depths": {"0": 2150.0, "1": 2230.0, "2": 2190.0, "3": 2170.0},
+                            "season_errs": {"0": 110.0, "1": 120.0, "2": 105.0, "3": 115.0},
+                            "season_z": {"0": -0.3, "1": 0.4, "2": 0.1, "3": -0.1}, "chi2": 0.3, "dof": 3,
+                            "p_value": 0.9, "n_events": 32, "sap_psf_ratio": 1.04, "aperture_z": 0.6,
+                            "aperture_ratio": 1.04}),
+        TestResult(rung="rung4_novelty", status=TestStatus.PASS,
+                   metrics={"cumulative": 0, "q1_q17_dr25_tce": 0, "toi": 0, "kepler_eb": 0,
+                            "other_period_objects": []}),
+        TestResult(rung="rung5_pixels", status=TestStatus.PASS,
+                   metrics={"seasons": seasons, "n_events_used": 35, "n_quarters_usable": 16}),
+    ]
+
+
+def _seed_more(store: Store) -> dict:
+    """The roles added for the plain-language explanations, each on its own target so the per-target assertions
+    above hold: a legacy candidate, a stage-2 candidate, an approved stage-1 candidate and a pending signal with no
+    test rows."""
+    specs = [("legacy", _target("gaia-dr3-2101234567890123459", gaia="2101234567890123459"), 5.4321, 16.2,
+              _legacy_tests()),
+             ("stage2", _target("kic-006146676", kic=6146676, gaia="2101234567890123462", gmag=16.2), 40.2899, 50.5,
+              _stage2_tests()),
+             ("approved", _target(APPROVED_TARGET, gaia="2101234567890123461"), 7.654, 18.3, _tests("pass")),
+             ("pending", _target("gaia-dr3-2101234567890123460", gaia="2101234567890123460"), 2.345, 12.0, [])]
+    store.upsert_targets([t for _role, t, *_rest in specs])
+    ids = {}
+    for role, t, period, sde, tests in specs:
+        rid = store.start_run(make_job_key(t.target_id, "box_dip", VERSION, "1"), t.target_id, "box_dip", VERSION, "1")
+        sig = _signal(t.target_id, period, sde, depth=2200.0 if role == "stage2" else 1800.0)
+        item = {"signal": sig.model_dump(), "outcome": "pass", "tests": [r.model_dump() for r in tests],
+                "timings": [0.01] * len(tests)}
+        store.record_results(rid, t.target_id, [item], [], pin_evidence=False)
+        with store.session() as s:
+            ids[role] = s.query(SignalRow.id).filter(SignalRow.run_id == rid).scalar()
+    store.set_signal_status(ids["stage2"], "candidate_stage2")
+    store.set_signal_status(ids["pending"], "pending")
+    store.decide(ids["approved"], "approve", "looks real")
+    return ids
 
 
 OLD_VERSION = "0+0ld0ld00"

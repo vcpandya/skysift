@@ -35,7 +35,7 @@ def test_signal_page_shows_ladder_metrics_links_and_plots_hook(settings, tmp_pat
     assert "season_depths" not in r.text or "raw" in r.text                                # dict metrics only in raw
     assert f'id="plots" data-signal="{ids["candidate"]}"' in r.text and "/static/plots.js" in r.text
     assert "exofop.ipac.caltech.edu" not in r.text and "archive.stsci.edu" in r.text and "gea.esac.esa.int" in r.text
-    assert f'id="link-prev" href="/signals/{ids["undetermined"]}' in r.text and 'id="link-next"' not in r.text
+    assert f'id="link-prev" href="/signals/{ids["approved"]}' in r.text and 'id="link-next"' not in r.text
     assert client.get("/signals/999999").status_code == 404
 
 

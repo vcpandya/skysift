@@ -104,7 +104,7 @@ def test_sources_page_lists_registry_and_progress(settings, tmp_path):
     r = client.get("/")
     assert r.status_code == 200
     assert "kbonus_bkg" in r.text and "CPU h/10k" in r.text and "694" in r.text      # 250 s/star -> 694 CPU h per 10k
-    assert "3 done" in r.text and "planned" in r.text and "Start sweep" in r.text
+    assert "7 done" in r.text and "planned" in r.text and "Start sweep" in r.text
 
 
 def test_start_sweep_form_launches_child_and_redirects(settings, tmp_path):
