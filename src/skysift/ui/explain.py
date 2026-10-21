@@ -323,12 +323,32 @@ def pixel_seasons(m: dict) -> list[dict]:
 NEARER = {"target": "the star", "neighbour": "the neighbour"}
 
 
+def partial_box_clause(m: dict) -> str:
+    """" (1 of 3 with a box cut by the stamp edge)" when a voting season's box was cut by the edge of its stamp, else
+    "" (also for a row stored before the box keys, which holds no such season)."""
+    voting = [s for s in pixel_seasons(m) if season_votes(s)]
+    cut = sum(1 for s in voting if s.get("box_partial") is True)
+    return f" ({cut} of {len(voting)} with a box cut by the stamp edge)" if cut else ""
+
+
+def _box_cut(s: dict) -> list[str | bool]:
+    """A voting season's box-cut words: the stars whose box lost pixels, then the allowance it paid in the error."""
+    if s.get("box_partial") is not True:
+        return []
+    cut = [f"{who}'s box cut, {n:.0f} of 9 pixels"
+           for who, key in (("this star", "box_pixels_target"), ("the neighbour", "box_pixels_neighbour"))
+           if (n := _num(s, key)) is not None and n < 9]
+    bias = _num(s, "edge_bias_pix")
+    return [*cut, bias is not None and f"{bias:.2f} px allowance in the error"]
+
+
 def _pixels(m: dict) -> tuple[str, str]:
     seasons = pixel_seasons(m)
     voting = [s for s in seasons if season_votes(s)]
     on_target = sum(1 for s in voting if s.get("nearer") == "target")
     if voting:
-        sentence = f"The dip sits on this star in {on_target} of {len(voting)} seasons that could vote"
+        sentence = (f"The dip sits on this star in {on_target} of {len(voting)} seasons that could vote"
+                    + partial_box_clause(m))
     else:
         sentence = "No season could vote on which star dims" if seasons else "Pixel offsets were not recorded"
     if voting and len(voting) < len(seasons):
@@ -344,7 +364,8 @@ def _pixels(m: dict) -> tuple[str, str]:
         rows.append(f"{season_name(s)}: " + _join([
             d_star is not None and f"{d_star:.2f}" + (f" ± {err:.2f}" if err is not None else "") + " px from the star",
             d_nbr is not None and f"{d_nbr:.2f} from the neighbour",
-            sep is not None and s.get("nearer") in NEARER and f"{abs(sep):.1f} σ nearer {NEARER[s['nearer']]}"]))
+            sep is not None and s.get("nearer") in NEARER and f"{abs(sep):.1f} σ nearer {NEARER[s['nearer']]}",
+            *_box_cut(s)]))
     n_ev, n_q = _num(m, "n_events_used"), _num(m, "n_quarters_usable")
     leak = m.get("leak_depth_ppm")
     leak = [_num({"x": x}, "x") for x in leak] if isinstance(leak, list) and len(leak) == 2 else [None, None]
@@ -401,7 +422,8 @@ def _row(rung: str, row: dict) -> Why:
             detail = _ARCHIVE_SEASON.sub("archive season ", detail)
         sentence = f"No verdict: {missing[:1].lower()}{missing[1:]}" + (f" ({detail.strip()})" if detail else "")
     else:
-        sentence = _passed_in_words(reason) or passed
+        said = _passed_in_words(reason)       # the fallback headline of _pixels carries the clause already
+        sentence = said + partial_box_clause(m) if said and rung == "rung5_pixels" else said or passed
     return Why(rung, RUNG_NAMES.get(rung, rung), status, sentence, numbers, missing, nxt, _when(row),
                row.get("recheck_id"))
 
