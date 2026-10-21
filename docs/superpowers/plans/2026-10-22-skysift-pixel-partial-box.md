@@ -242,6 +242,8 @@ git commit -m "feat(pixels): a box cut by the stamp edge votes with the edge all
 
 ### Task 3: The rung, the synthetic pixel files and the read-only rerun tool
 
+> Ruling after Task 2 (22 October): the synthetic PSF width becomes a `psf_sigma` keyword of `_psf`, `_render`, `make_quarters` and `tpf_quarters` (default 0.9 unchanged); the edge and corner tests of this task and the two edge tests of Task 2 run at 0.55 px, the Kepler core width the study fitted, because at 0.9 px the edge allowance is 0.36 px and the edge seasons sit at the 3 sigma line. The Task 2 eligibility test keeps the 0.9 px abstention covered.
+
 **Files:**
 - Modify: `src/skysift/vetting/rung5_pixels.py` (the `metrics` dict in `run`), `tests/unit/synthetic_tpf.py`, `tests/unit/test_rung5_pixels.py`
 - Create: `tools/pixels_rerun.py`
