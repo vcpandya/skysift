@@ -1093,6 +1093,23 @@ def test_why_rows_take_the_words_of_the_newer_row(seeded):
     assert "A catalogue did not answer when we asked" not in html
 
 
+def test_a_catalogue_retry_that_met_the_outage_again_still_says_it_will_retry(seeded):
+    """The real copy's exoarchive outages: the catalogue step wrote a newer outage row, and the recheck retries it."""
+    from skysift.models import TestResult, TestStatus
+    client, ids = seeded
+    store = client.app.state.store
+    reason = "outage:exoarchive: HTTP 503"
+    store.add_test(ids["candidate"], TestResult(rung="rung4_novelty", status=TestStatus.UNDETERMINED, reason=reason,
+                                                metrics={}), 0.01)
+    rid = store.add_recheck(ids["candidate"], "catalogue", "4", "undetermined", reason)
+    store.add_test(ids["candidate"], TestResult(rung="rung4_novelty", status=TestStatus.UNDETERMINED, reason=reason,
+                                                metrics={}), 0.01, recheck_id=rid)
+    store.refresh_status(ids["candidate"])
+    html = client.get(f"/partials/signals/{ids['candidate']}/verdict").text
+    assert "still no answer; retry the catalogue" in html and "Retried on" in html
+    assert "Rechecked on" not in html
+
+
 def test_a_superseded_signal_says_its_pixels_were_not_examined(seeded_pair):
     client, ids = seeded_pair
     for page in (f"/partials/signals/{ids['superseded']}/verdict", f"/signals/{ids['superseded']}"):

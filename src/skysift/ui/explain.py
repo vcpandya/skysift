@@ -174,6 +174,7 @@ class Why:
     missing: str | None
     next_step: str | None
     when: str | None
+    recheck_id: int | None = None       # the recheck step that wrote the row, None for a sweep's row
 
 
 @dataclass(frozen=True)
@@ -396,7 +397,8 @@ def _row(rung: str, row: dict) -> Why:
         sentence = f"No verdict: {missing[:1].lower()}{missing[1:]}" + (f" ({detail.strip()})" if detail else "")
     else:
         sentence = _passed_in_words(reason) or passed
-    return Why(rung, RUNG_NAMES.get(rung, rung), status, sentence, numbers, missing, nxt, _when(row))
+    return Why(rung, RUNG_NAMES.get(rung, rung), status, sentence, numbers, missing, nxt, _when(row),
+               row.get("recheck_id"))
 
 
 def _latest(tests: list[dict]) -> dict[str, dict]:
@@ -553,6 +555,8 @@ def recheck_history(rechecks: list[dict], children: list[dict] | None = None) ->
 
 # the rechecks step that takes each next step: once it has run, "pixel stage" or "retry the catalogue" is done
 STEP_OF_NEXT = {HALVE: "period", PIXELS: "pixels", PIXELS_RETRY: "pixels", RETRY: "catalogue"}
+# the next steps that ask the same source again; a retry that met the outage again writes the row being explained
+RETRIES = (RETRY, PIXELS_RETRY)
 NOT_EXAMINED_SUPERSEDED = "Not examined: superseded"
 
 
@@ -560,7 +564,11 @@ def with_recheck_state(rows: list[Why], rechecks: list[dict], children: list[dic
                        final_status: str | None = None) -> list[Why]:
     """The Why rows with each undetermined row's next step given its state once the recheck has taken it ("rechecked
     on 21 Oct 2026: superseded by the signal at 40.2899 d, now a stage 1 candidate"), and, on a superseded signal, the
-    unexamined pixel row saying the recheck never will examine it; other rows as they are."""
+    unexamined pixel row saying the recheck never will examine it; other rows as they are.
+
+    The step that wrote a row (``Why.recheck_id``) never counts as having taken that row's next step: a catalogue or
+    pixel retry that met the outage again leaves an outage row, and the recheck will retry it, so the row keeps its
+    retry wording with the attempt in front ("retried on 21 Oct 2026, still no answer; retry the catalogue")."""
     status = {c.get("id"): c.get("final_status") for c in children or []}
     history = recheck_history(rechecks, children)
     out = []
@@ -570,7 +578,12 @@ def with_recheck_state(rows: list[Why], rechecks: list[dict], children: list[dic
             continue
         step = STEP_OF_NEXT.get(w.next_step or "")
         done = [h for r, h in zip(rechecks, history, strict=True) if step and r.get("step") == step
-                and r.get("outcome") != "skipped"]
+                and r.get("outcome") != "skipped" and (w.recheck_id is None or r.get("id") != w.recheck_id)]
+        wrote = [h for r, h in zip(rechecks, history, strict=True)
+                 if w.recheck_id is not None and r.get("id") == w.recheck_id]
+        if w.status == "undetermined" and w.next_step in RETRIES and wrote:
+            out.append(replace(w, next_step=f"retried on {wrote[0]['date']}, still no answer; {w.next_step}"))
+            continue
         if w.status != "undetermined" or not done:
             out.append(w)
             continue

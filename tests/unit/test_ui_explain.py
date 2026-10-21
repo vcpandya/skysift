@@ -337,20 +337,45 @@ def test_vetted_statuses_are_the_engine_statuses_less_pending():
     assert explain.VETTED_STATUSES == tuple(s for s in ENGINE_STATUSES if s != "pending")
 
 
-def test_the_pixel_and_catalogue_steps_mark_their_next_step_taken():
-    rows = explain.why([{"rung": "rung4_novelty", "status": "undetermined", "metrics": {},
-                         "reason": "outage:exoarchive: HTTP 503"},
-                        {"rung": "rung5_pixels", "status": "undetermined", "metrics": {},
+def _step(id_, step, outcome, reason="", utc="2026-10-21T01:00:00"):
+    return {"id": id_, "step": step, "ladder_version": "4", "outcome": outcome, "new_signal_id": None,
+            "reason": reason, "utc": utc}
+
+
+def test_a_catalogue_retry_that_met_the_outage_again_keeps_the_retry_wording():
+    """The catalogue step wrote the outage row it explains, so it has not taken that row's next step."""
+    rows = explain.why([{"rung": "rung4_novelty", "status": "undetermined", "metrics": {}, "recheck_id": 7,
+                         "reason": "outage:exoarchive: HTTP 503"}])
+    done = explain.with_recheck_state(rows, [_step(7, "catalogue", "undetermined", "outage:exoarchive: HTTP 503")])
+    assert done[4].next_step == "retried on 21 Oct 2026, still no answer; " + explain.RETRY
+    assert rows[4].next_step == explain.RETRY and explain.with_recheck_state(rows, []) == rows   # a sweep row
+
+
+def test_a_pixel_retry_that_met_the_outage_again_keeps_the_retry_wording():
+    rows = explain.why([{"rung": "rung5_pixels", "status": "undetermined", "metrics": {}, "recheck_id": 8,
                          "reason": "outage:mast: HTTP 503"}])
-    steps = [{"id": 1, "step": "catalogue", "ladder_version": "4", "outcome": "pass", "new_signal_id": None,
-              "reason": "", "utc": "2026-10-21T01:00:00"},
-             {"id": 2, "step": "pixels", "ladder_version": "4", "outcome": "fail", "new_signal_id": None,
-              "reason": "the dip is on a neighbouring star (4.1 sigma, 3/4 seasons)", "utc": "2026-10-21T02:00:00"}]
-    done = explain.with_recheck_state(rows, steps, [])
-    assert done[4].next_step == "rechecked on 21 Oct 2026: passed"
-    assert done[5].next_step == "rechecked on 21 Oct 2026: failed"
-    skipped = [{**steps[1], "outcome": "skipped", "reason": "reviewer decided meanwhile"}]
-    assert explain.with_recheck_state(rows, skipped, [])[5].next_step == explain.PIXELS_RETRY   # a skip takes no step
+    done = explain.with_recheck_state(rows, [_step(8, "pixels", "undetermined", "outage:mast: HTTP 503")])
+    assert done[5].next_step == "retried on 21 Oct 2026, still no answer; ask the pixel archive again"
+
+
+def test_a_catalogue_retry_whose_newer_row_passed_leaves_no_retry_wording():
+    rows = explain.why([{"rung": "rung4_novelty", "status": "undetermined", "metrics": {}, "id": 1,
+                         "reason": "outage:exoarchive: HTTP 503", "created": "2026-10-20T01:00:00"},
+                        {"rung": "rung4_novelty", "status": "pass", "metrics": {"cumulative": 0, "toi": 0}, "id": 2,
+                         "recheck_id": 7, "created": "2026-10-21T01:00:00"}])
+    done = explain.with_recheck_state(rows, [_step(7, "catalogue", "pass")])
+    assert done[4].status == "pass" and done[4].next_step is None and "retr" not in done[4].sentence.lower()
+
+
+def test_a_pixel_step_takes_the_next_step_a_rung3_row_asked_for():
+    """The pixel stage a stability row asks for is taken by a step that wrote a different rung's row."""
+    rows = explain.why([{"rung": "rung3_stability", "status": "undetermined", "metrics": {},
+                         "reason": "aperture-dependent depth (3.9 sigma)"}])
+    assert rows[3].next_step == explain.PIXELS
+    done = explain.with_recheck_state(rows, [_step(9, "pixels", "pass")])
+    assert done[3].next_step == "rechecked on 21 Oct 2026: passed"
+    skipped = [_step(9, "pixels", "skipped", "reviewer decided meanwhile")]
+    assert explain.with_recheck_state(rows, skipped)[3].next_step == explain.PIXELS      # a skip takes no step
 
 
 def test_a_superseded_signal_unexamined_pixel_row_says_so():
