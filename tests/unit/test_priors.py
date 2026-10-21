@@ -6,7 +6,6 @@ from skysift import priors
 from skysift.priors import (
     CITATIONS,
     F_BIN,
-    F_EB,
     M_GRID_NOTE,
     OCCURRENCE,
     RAGHAVAN_LOGP,
@@ -17,12 +16,12 @@ from skysift.priors import (
 
 BRIEF_CITATIONS = (
     "Dressing, C. D. and Charbonneau, D. 2015, ApJ 807, 45", "Fressin, F. et al. 2013, ApJ 766, 81",
-    "Kirk, B. et al. 2016, AJ 151, 68", "Winters, J. G. et al. 2019, AJ 157, 216",
+    "Winters, J. G. et al. 2019, AJ 157, 216",
     "Raghavan, D. et al. 2010, ApJS 190, 1", "Morton, T. D. 2012, ApJ 761, 6", "Lindegren, L. et al. 2021, A&A 649, A4",
     "Bailer-Jones, C. A. L. et al. 2021, AJ 161, 147", "Mann, A. W. et al. 2015, ApJ 804, 64",
     "Mann, A. W. et al. 2019, ApJ 871, 63", "Pecaut, M. J. and Mamajek, E. E. 2013, ApJS 208, 9",
     "Kopparapu, R. K. et al. 2013, ApJ 765, 131")
-CONSTANTS = ("F_EB", "F_BIN", "RAGHAVAN_LOGP", "PIXEL_ARCSEC", "CONFUSION_FLOOR_ARCSEC", "PSF_BLEND_ARCSEC",
+CONSTANTS = ("F_BIN", "RAGHAVAN_LOGP", "PIXEL_ARCSEC", "CONFUSION_FLOOR_ARCSEC", "NO_PIXEL_FALLOFF_ARCSEC",
              "ECCENTRICITY_ALLOWANCE", "OCCURRENCE")
 
 
@@ -34,7 +33,7 @@ def test_f_pl_interpolates_in_log_space_and_holds_at_the_edges():
 
 
 def test_every_constant_has_a_citation():
-    for name in ("F_EB", "F_BIN", "RAGHAVAN_LOGP", "OCCURRENCE"):
+    for name in ("F_BIN", "RAGHAVAN_LOGP", "OCCURRENCE"):
         assert CITATIONS[name]
 
 
@@ -49,9 +48,10 @@ def test_every_module_constant_is_cited_and_the_brief_strings_are_verbatim():
 
 
 def test_constant_values():
-    assert F_EB == 0.014 and F_BIN == {"M": 0.26, "FGK": 0.44} and RAGHAVAN_LOGP == (5.03, 2.28)
+    assert F_BIN == {"M": 0.26, "FGK": 0.44} and RAGHAVAN_LOGP == (5.03, 2.28)
     assert priors.PIXEL_ARCSEC == 3.98 and priors.CONFUSION_FLOOR_ARCSEC == 2.0
-    assert priors.PSF_BLEND_ARCSEC == 1.3 and priors.ECCENTRICITY_ALLOWANCE == 0.30
+    assert priors.NO_PIXEL_FALLOFF_ARCSEC == 3.98 and priors.NO_PIXEL_CONFUSION_ARCSEC == 7.96
+    assert priors.ECCENTRICITY_ALLOWANCE == 0.30
 
 
 def test_binary_period_fraction_is_a_probability_that_peaks_near_the_mode():

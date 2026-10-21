@@ -508,10 +508,10 @@ def test_an_unchanged_dossier_reports_its_stored_fap_and_a_version_bump_regenera
     rep = generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch)
     assert not rep.generated and rep.fap.words() == "1 in 1,700" == seeded["fap"]["words"]
     assert rep.fpp.value == pytest.approx(compute(FppInputs(**seeded["fpp"]["inputs"])).value)
-    monkeypatch.setattr(dossier_module, "DOSSIER_VERSION", "2")
+    monkeypatch.setattr(dossier_module, "DOSSIER_VERSION", "3")
     again = generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch)
     assert again.generated and "format changed" in again.stale_reason
-    assert env.store.dossier(STAGE2_TARGET)["dossier_version"] == "2"
+    assert env.store.dossier(STAGE2_TARGET)["dossier_version"] == "3"
 
 
 def test_rank_key_orders_stage_two_approved_stage_one_and_rejected_last():
@@ -789,3 +789,17 @@ def test_the_export_and_the_stored_provenance_name_no_local_folder(env):
     data["section_errors"] = {"pixels": {"error": f"cannot read '{root / 'blobs' / 'z.npz'}'"}}
     text = export_html(data, data_dir=root)
     assert "cannot read 'blobs\\/z.npz'" in text and root.parent.name not in text
+
+
+def test_one_voting_season_keeps_the_no_pixel_rule(env):
+    # rung 5 passes on two voting seasons at least; the FPP takes its centroid only on the same footing
+    signal = pick_signal(env.store, STAGE2_TARGET)
+    tests = [t for t in env.store.latest_tests(signal["id"]) if t["rung"] != "rung5_pixels"]
+    star, planet = SimpleNamespace(teff=None, radius=None, mass=None), SimpleNamespace(rp_rearth=None)
+    one = tests + [{"rung": "rung5_pixels", "status": "undetermined",
+                    "metrics": {"seasons": [_season(0, 0.2, 0.05), _season(1, 0.3, 0.05, voting=False)]}}]
+    two = tests + [{"rung": "rung5_pixels", "status": "pass",
+                    "metrics": {"seasons": [_season(0, 0.2, 0.05), _season(1, 0.25, 0.05)]}}]
+    assert dossier_module.MIN_VOTING_SEASONS == 2
+    assert dossier_module.fpp_inputs(signal, one, star, planet, [], 16.2).centroid_sigma_arcsec is None
+    assert dossier_module.fpp_inputs(signal, two, star, planet, [], 16.2).centroid_sigma_arcsec is not None

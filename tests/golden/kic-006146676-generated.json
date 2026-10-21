@@ -1,6 +1,6 @@
 {
- "dossier_version": "1",
- "generated": "2026-10-21T09:05:21.685211+00:00",
+ "dossier_version": "2",
+ "generated": "2026-10-21T16:18:24.432346+00:00",
  "target": {
   "target_id": "kic-006146676",
   "source": "kbonus_bkg",
@@ -57,16 +57,16 @@
   "sentence_not_covered": "This is about noise. A real dip on a neighbouring star or an eclipsing binary passes this test."
  },
  "fpp": {
-  "value": 0.012917186,
-  "words": "about 1 percent",
+  "value": 0.0035281094,
+  "words": "under 1 percent",
   "label": "False positive",
-  "signed_off": false,
+  "signed_off": true,
   "pixels": true,
   "neighbours_known": true,
   "value_without_beb": null,
   "spec_product": {
    "eb_weight": 2.8559513e-07,
-   "value": 0.00013902264,
+   "value": 3.7617702e-05,
    "rule": "spec 4.2 as first written: one EB scenario at 2P weighted by S_sec x S_oe"
   },
   "confusion_radius_arcsec": 2.0,
@@ -135,14 +135,14 @@
   "scenarios": [
    {
     "name": "PL",
-    "prior": 0.16037841,
+    "prior": 0.59276589,
     "geometric": 0.012838661,
     "data": 0.99756055,
-    "weight": 0.002054021,
+    "weight": 0.0075917552,
     "factors": {
      "class": "M",
      "rp_rearth": 2.63,
-     "f_pl": 0.16037841,
+     "f_pl": 0.59276589,
      "a_au": 0.18292308,
      "R_star_over_a": 0.012838661,
      "T14_circ": 0.16466103,
@@ -154,12 +154,13 @@
    },
    {
     "name": "BEB",
-    "prior": 0.084,
+    "prior": 0.10907202,
     "geometric": 0.020218597,
     "data": 2.234256e-222,
-    "weight": 3.7945758e-225,
+    "weight": 4.9271671e-225,
     "factors": {
-     "f_EB": 0.014,
+     "f_bin": 0.44,
+     "g_2P": 0.041315157,
      "n_bright": 6,
      "a_2P_au": 0.46001907,
      "X_mean": 2.234256e-222,
@@ -450,7 +451,7 @@
     "fit_delta_chi2": 1.5118928e-10,
     "v_shape_applied": false
    },
-   "created": "2026-10-21T04:06:15.455019"
+   "created": "2026-10-21T15:15:13.041409"
   },
   {
    "rung": "rung3_stability",
@@ -486,7 +487,7 @@
     "aperture_z": -3.8649537,
     "aperture_ratio": 0.70413088
    },
-   "created": "2026-10-21T04:06:15.455019"
+   "created": "2026-10-21T15:15:13.041409"
   },
   {
    "rung": "rung4_novelty",
@@ -501,7 +502,7 @@
     "gaia_vari_eclipsing_binary": 0,
     "other_period_objects": []
    },
-   "created": "2026-10-19T21:08:04.353497"
+   "created": "2026-10-21T15:15:13.041409"
   },
   {
    "rung": "rung5_pixels",
@@ -547,7 +548,12 @@
       "pos_neighbour": [
        3.2785141,
        3.2647079
-      ]
+      ],
+      "shift_pix": [
+       -0.14534369,
+       0.1094859
+      ],
+      "psf_sigma_pix": 0.5822205
      },
      {
       "season": 1,
@@ -587,7 +593,12 @@
       "pos_neighbour": [
        3.7002277,
        2.2351523
-      ]
+      ],
+      "shift_pix": [
+       0.015488111,
+       -0.08465081
+      ],
+      "psf_sigma_pix": 0.55310831
      },
      {
       "season": 2,
@@ -627,7 +638,12 @@
       "pos_neighbour": [
        3.6553056,
        2.1374019
-      ]
+      ],
+      "shift_pix": [
+       0.079734052,
+       -0.0091868252
+      ],
+      "psf_sigma_pix": 0.54572803
      },
      {
       "season": 3,
@@ -666,7 +682,12 @@
       "pos_neighbour": [
        3.4807486,
        2.1754589
-      ]
+      ],
+      "shift_pix": [
+       null,
+       null
+      ],
+      "psf_sigma_pix": null
      }
     ],
     "n_events_used": 34,
@@ -714,7 +735,7 @@
     },
     "pixels_sha256": "7e207f54a1316c90af324ad533ec99fc2420a35d52ea299691b9cb1c80ca219e"
    },
-   "created": "2026-10-21T04:07:27.287189"
+   "created": "2026-10-21T15:16:48.861048"
   }
  ],
  "provenance": {
@@ -725,9 +746,9 @@
    "rung1_events": "4",
    "rung2_shape": "4",
    "rung3_stability": "4",
-   "rung4_novelty": "3",
+   "rung4_novelty": "4",
    "rung5_pixels": "4"
   },
-  "git_commit": "1f66c29"
+  "git_commit": "9c97dfa-dirty"
  }
 }

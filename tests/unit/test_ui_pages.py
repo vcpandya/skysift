@@ -844,7 +844,7 @@ def test_about_has_every_section_in_order(settings):
                  "Pixel stage"):
         assert step in main
     assert main.count("<dt>") >= len(explain.GLOSSARY) and "<dl" in main
-    assert "sde_min" in main and "11" in main and "0.5 to 200 days" in main
+    assert "sde_min" in main and '<td class="num">12</td>' in main and "0.5 to 200 days" in main
     assert "Vikram Pandya" in main and "0.1.0" in main
     assert "—" not in html and "discover" not in html.lower() and "style=" not in main
 
@@ -865,7 +865,7 @@ def test_about_configuration_follows_an_overridden_threshold_and_calls_it_provis
     row = main.split("<code>sde_min</code>")[1].split("</tr>")[0]
     assert '<td class="num">13</td>' in row
     method = main.split("How SkySift works")[1].split("What the words mean")[0]
-    assert "The current threshold, SDE 13, is provisional until the 1,000-star pilot reports." in method
+    assert "The current threshold, SDE 13, follows the 1,000-star pilot of 21 October 2026." in method
 
 
 def test_about_omits_a_citation_file_that_is_not_utf8(settings, tmp_path, monkeypatch):

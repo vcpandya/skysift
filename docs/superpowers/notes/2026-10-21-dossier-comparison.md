@@ -528,3 +528,146 @@ interim golden block from HEAD a49ba9b plus the diff (`git_commit` "a49ba9b-dirt
 golden block regenerated from the clean tree at 1f66c29, which differs from the interim one in `generated` and
 `git_commit` only. The runs made 12 Gaia calls (rows 3192 to 3203, all 200).
 
+## Appendix: sign-off round (21 October 2026, evening)
+
+The sign-off items were decided on best practice at Vikram's request (commits 9c97dfa and the review-fix commit after
+it on main; the independent review of the first is in `.superpowers/sdd/decisions-20261021/review.md`). The rulings:
+the planet prior reads each occurrence cell as a density per dex of period and dex of radius and multiplies it by one
+window (a factor of two in period either way, 30 percent in radius either way, the `rbin_width` of vespa), so the
+window sets the absolute planet prior on both grids; the background binary prior is built per bright neighbour as the
+FGK binary fraction times the period window around 2P, then the pair's eclipse probability, replacing the Kirk et al.
+2016 eclipsing fraction that already held the geometry; without pixel data the confusion radius is two Kepler pixels
+with a one-pixel fall-off beyond it; the false-positive inputs take the pixel centroid only from a rung 5 row with at
+least two voting seasons, the rung's own pass rule; the factor tables are signed off (`fpp.SIGNED_OFF` True) and the
+model version is part of the dossier fingerprint, so every dossier written under the first model is stale and the
+live Zenodo gate also reads the stored dossier's own flag.
+
+The live recheck then ran on the production database itself (29 signals, 33 minutes, 14 pixel steps): KIC 6146676
+passed the pixel stage in 3 of 3 voting seasons and is a stage 2 candidate (signal 1032, SDE 50.5; its 80.58 d twin
+was superseded by the 40.29 d child, which also passed), and KIC 5689121 came out undetermined, since only one of its
+four seasons could vote (the target's 3 x 3 box is incomplete in the other three), so its number is the no-pixel one.
+The golden block was regenerated from this run. The tables below are the tool's output on the two regenerated
+dossiers; the per-season centroid rows of the comparison above did not change.
+
+### Probabilities after the sign-off
+
+False alarm: "1 in 170", 11 of 1998 null searches at or above SDE 50.5 (by null kind: inverted 11 of 999, scrambled 0 of 999), calibration version 5+42061727 (signal search 5+6cfe4cf4, version matches True).
+
+**KIC 6146676**: FPP 0.003528 ("under 1 percent", label "False positive", pixels True, signed off True), confusion radius 2 arcsec. Centroid error sigma_c 0.1373 arcsec, the statistical one of statistical 0.1373 and scatter 0.1103 arcsec. Spec 4.2 as first written (one EB at 2P weighted by S_sec x S_oe): EB weight 2.856e-07, FPP 3.762e-05.
+
+| Scenario | Prior | Geometric | Data | Weight | Share of the total |
+| --- | --- | --- | --- | --- | --- |
+| PL | 0.5928 | 0.01284 | 0.9976 | 0.007592 | 0.9965 |
+| BEB | 0.1091 | 0.02022 | 2.234e-222 | 4.927e-225 | 6.467e-223 |
+| EB-P | 0.008896 | 0.01682 | 0.1683 | 2.518e-05 | 0.003305 |
+| EB-2P | 0.01074 | 0.0106 | 0.01491 | 1.697e-06 | 0.0002228 |
+
+| Scenario | Factor | Value |
+| --- | --- | --- |
+| PL | class | M |
+| PL | rp_rearth | 2.63 |
+| PL | f_pl | 0.5928 |
+| PL | a_au | 0.1829 |
+| PL | R_star_over_a | 0.01284 |
+| PL | T14_circ | 0.1647 |
+| PL | T14_fit | 0.161 |
+| PL | sigma | 0.05196 |
+| PL | z | -0.06989 |
+| PL | D_shape | 0.9976 |
+| BEB | f_bin | 0.44 |
+| BEB | g_2P | 0.04132 |
+| BEB | n_bright | 6 |
+| BEB | a_2P_au | 0.46 |
+| BEB | X_mean | 2.234e-222 |
+| BEB | r_c_arcsec | 2 |
+| BEB | centroid_sigma_arcsec | 0.1373 |
+| EB-P | class | M |
+| EB-P | f_bin | 0.26 |
+| EB-P | pair_mass_msun | 0.7545 |
+| EB-P | fit_b | 0.8933 |
+| EB-P | S_v | 1 |
+| EB-P | g_P | 0.03422 |
+| EB-P | a_P_au | 0.2094 |
+| EB-P | secondary_predicted_ppm | 218.7 |
+| EB-P | secondary_ppm | 95.43 |
+| EB-P | secondary_err_ppm | 128.2 |
+| EB-P | S_sec | 0.1683 |
+| EB-2P | class | M |
+| EB-2P | f_bin | 0.26 |
+| EB-2P | pair_mass_msun | 0.7545 |
+| EB-2P | fit_b | 0.8933 |
+| EB-2P | S_v | 1 |
+| EB-2P | g_2P | 0.04132 |
+| EB-2P | a_2P_au | 0.3324 |
+| EB-2P | odd_even_predicted_ppm | 546.7 |
+| EB-2P | odd_even_ppm | 69.28 |
+| EB-2P | odd_even_err_ppm | 219.7 |
+| EB-2P | S_oe | 0.01491 |
+
+| Gaia DR3 neighbour | Separation (arcsec) | G | Flux fraction | Bright enough | s from the centroid (arcsec) | Exclusion X_i |
+| --- | --- | --- | --- | --- | --- | --- |
+| 2073896294004902144 | 7.142 | 19.77 | 0.03711 | yes | 6.38 | 1.341e-221 |
+| 2073896289692192128 | 10.94 | 17.9 | 0.1783 | yes | 10.18 | 0 |
+| 2073896190925687296 | 11.45 | 12.81 | 0.9593 | yes | 10.69 | 0 |
+| 2073896190926955520 | 12.97 | 19.74 | 0.03832 | yes | 12.2 | 0 |
+| 2073896190921609600 | 13.51 | 19.38 | 0.05242 | yes | 12.75 | 0 |
+| 2073896289692177024 | 18.62 | 18.88 | 0.08034 | yes | 17.86 | 0 |
+
+**KIC 5689121**: FPP 0.06254 ("about 6 percent", label "False positive (no pixel data yet)", pixels False, signed off True), confusion radius 7.96 arcsec. Spec 4.2 as first written (one EB at 2P weighted by S_sec x S_oe): EB weight 1.646e-07, FPP 0.06115.
+
+| Scenario | Prior | Geometric | Data | Weight | Share of the total |
+| --- | --- | --- | --- | --- | --- |
+| PL | 0.4975 | 0.02623 | 0.9286 | 0.01212 | 0.9375 |
+| BEB | 0.06738 | 0.04136 | 0.2831 | 0.0007891 | 0.06104 |
+| EB-P | 0.00642 | 0.03437 | 0.07825 | 1.727e-05 | 0.001336 |
+| EB-2P | 0.007963 | 0.02165 | 0.0122 | 2.103e-06 | 0.0001627 |
+
+| Scenario | Factor | Value |
+| --- | --- | --- |
+| PL | class | M |
+| PL | rp_rearth | 2.54 |
+| PL | f_pl | 0.4975 |
+| PL | a_au | 0.08936 |
+| PL | R_star_over_a | 0.02623 |
+| PL | T14_circ | 0.115 |
+| PL | T14_fit | 0.1011 |
+| PL | sigma | 0.03595 |
+| PL | z | -0.385 |
+| PL | D_shape | 0.9286 |
+| BEB | f_bin | 0.44 |
+| BEB | g_2P | 0.03063 |
+| BEB | n_bright | 5 |
+| BEB | a_2P_au | 0.2249 |
+| BEB | X_mean | 0.2831 |
+| BEB | r_c_arcsec | 7.96 |
+| BEB | centroid_sigma_arcsec | n/a |
+| EB-P | class | M |
+| EB-P | f_bin | 0.26 |
+| EB-P | pair_mass_msun | 0.753 |
+| EB-P | fit_b | 0.8611 |
+| EB-P | S_v | 1 |
+| EB-P | g_P | 0.02469 |
+| EB-P | a_P_au | 0.1023 |
+| EB-P | secondary_predicted_ppm | 203.1 |
+| EB-P | secondary_ppm | 7.054 |
+| EB-P | secondary_err_ppm | 138.4 |
+| EB-P | S_sec | 0.07825 |
+| EB-2P | class | M |
+| EB-2P | f_bin | 0.26 |
+| EB-2P | pair_mass_msun | 0.753 |
+| EB-2P | fit_b | 0.8611 |
+| EB-2P | S_v | 1 |
+| EB-2P | g_2P | 0.03063 |
+| EB-2P | a_2P_au | 0.1624 |
+| EB-2P | odd_even_predicted_ppm | 507.8 |
+| EB-2P | odd_even_ppm | 0.4658 |
+| EB-2P | odd_even_err_ppm | 225.4 |
+| EB-2P | S_oe | 0.0122 |
+
+| Gaia DR3 neighbour | Separation (arcsec) | G | Flux fraction | Bright enough | s from the centroid (arcsec) | Exclusion X_i |
+| --- | --- | --- | --- | --- | --- | --- |
+| 2103792427466721792 | 7.128 | 15.48 | 0.6773 | yes | 7.128 | 1 |
+| 2103792393102276480 | 14.66 | 19.79 | 0.03807 | yes | 14.66 | 0.2427 |
+| 2103792393108242176 | 16.34 | 19.13 | 0.06765 | yes | 16.34 | 0.1087 |
+| 2103792427462012544 | 17.96 | 19.96 | 0.03261 | yes | 17.96 | 0.04259 |
+| 2103792427462012032 | 18.98 | 20.58 | 0.01878 | yes | 18.98 | 0.02164 |

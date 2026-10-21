@@ -58,7 +58,7 @@ def test_pure_noise_stays_below_threshold(seed):
     # Mirror padding no longer flattens the noise at segment edges, so noise peaks rose a little: seed 7's 19.585 d
     # peak went from SDE 8.82 to 9.39, and to 9.45 once the data start was masked too (seeds 11 and 21 peak at 6.21
     # and 6.57), over the old bound of 9. The bound is 10: tight enough to catch a real rise in the noise floor, and
-    # still below sde_min (11).
+    # still below sde_min (12).
     lc = make_lightcurve(n_days=500, seed=seed)
     sig = BoxDip().detect(lc, detrend(lc), NARROW)
     assert all(s.sde < 10 for s in sig), [(s.period, s.sde) for s in sig]

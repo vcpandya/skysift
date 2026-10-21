@@ -11,7 +11,9 @@ DEFAULT_YAML = Path(__file__).resolve().parents[2] / "config" / "default.yaml"
 
 class Thresholds(BaseModel):
     # null calibration on 30 real KBonus curves (17 Oct 2026): noise alone (flux scrambled within quarters) clears 9 on
-    # 4 of 30 and 10 on 1 of 30 (max 10.1); every real detection of interest sat above 15. 11 until the 1000-star pilot
+    # 4 of 30 and 10 on 1 of 30 (max 10.1); every real detection of interest sat above 15. The 999-curve pilot of
+    # 21 October 2026 (search version 5+42061727) gave 18 of 999 scrambled curves at or above 11 and 8 at or above
+    # 12: 12 is the lowest level at or under 1 percent (README, "Calibrating the detection threshold")
     sde_min: float = 12.0
     snr_min: float = 7.0
     min_events: int = 3

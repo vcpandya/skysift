@@ -199,9 +199,10 @@ keeps systematics and variability; its tail shows what pre-whitening and the lat
 curves the scrambled maximum was 10.1, hence the interim value of 11.
 
 The rule used on 21 October 2026, on the 999-curve pilot at the production window (search version 5+42061727):
-`sde_min` is the lowest level at which the scrambled null gives at most 1 percent of curves, the 1 percent
-false-alarm convention of Hippke and Heller (2019) for transit searches. The scrambled row gave 18 of 999 at 11 and 8
-of 999 at 12 (3 at 15), so the default is 12. The cost in completeness, from the injection set
+`sde_min` is the lowest level at which the scrambled null gives at most 1 percent of curves. The 1 percent per-star
+level is SkySift's own rule, set for the ladder behind rung 1 (Hippke and Heller 2019 recommend SDE 9 for TLS, where
+white noise gives about 0.01 percent; real Kepler curves give far more at every level, which is why the null is
+measured on them). The scrambled row gave 18 of 999 at 11 and 8 of 999 at 12 (3 at 15), so the default is 12. The cost in completeness, from the injection set
 (`inject_recovery.jsonl`, 30 injections per SNR): 2 of 30 recoveries at SNR 10 and 1 of 30 at SNR 15 sit between 11
 and 12. The inverted row hardly falls with the level (114 at 11, 96 at 12, 65 at 15): its tail is strong systematic
 features (inverted flares and ramps) that no threshold removes and rungs 2 to 5 must reject. `sde_min` is not part

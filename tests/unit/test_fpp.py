@@ -52,6 +52,9 @@ def test_four_scenarios_sum_to_the_fpp():
     # (2.0 * 0.048671)^(1/3) = 0.46001 AU, (R1 + R2) / a = 2 * 0.00465047 / 0.46001 = 0.020219
     assert beb.factors["n_bright"] == 2 and beb.weight < 1e-6
     assert beb.geometric == pytest.approx(0.020219, rel=0.01)
+    # BEB prior per bright neighbour: the FGK binary fraction 0.44 times g_2P (the EB-2P window, 0.041315), twice
+    assert beb.prior == pytest.approx(0.44 * 0.041315 * 2, rel=0.01) and beb.factors["f_bin"] == 0.44
+    assert beb.factors["g_2P"] == pytest.approx(0.041315, rel=0.01)
     # EB prior: f_bin 0.26 (M) x g_P, the Raghavan log-normal (mu 5.03, sigma 2.28) between log10(P) = 1.6052 and
     # log10(4P) = 2.2073 for EB-2P (a factor of two around 2P): Phi(-1.2380) - Phi(-1.5021) = 0.10786 - 0.06654 =
     # 0.041315, prior 0.26 * 0.041315 = 0.010742; for EB-P between log10(P / 2) = 1.3042 and log10(2P) = 1.9062:
@@ -81,22 +84,22 @@ def test_four_scenarios_sum_to_the_fpp():
 
 def test_an_unlocalized_bright_neighbour_dominates_the_fpp():
     # Without a pixel stage r_c is two Kepler pixels (7.96", 21 October 2026 ruling): the G 19.77 star at 7.14" is
-    # not excluded at all (X = 1) and the G 12.8 star at 10.8" keeps X = exp(-(10.8 - 7.96)^2 / (2 x 1.3^2)) = 0.092,
-    # so the FPP without pixels is 3.9 percent against 0.085 percent with them: the pixel stage is what the
-    # candidate needs. By hand, X_mean = (1 + 0.092) / 2 = 0.546, BEB = 0.014 x 2 x 0.020219 x 0.546 = 3.09e-4;
-    # with the two on-target EB terms (5.26e-6 + 1.27e-6) FPP = (3.09e-4 + 6.53e-6) / (7.690e-3 + 3.09e-4 +
-    # 6.53e-6) = 0.0394.
+    # not excluded at all (X = 1) and the G 12.8 star at 10.8" keeps X = exp(-(10.8 - 7.96)^2 / (2 x 3.98^2)) =
+    # 0.775 (a one-pixel fall-off), so the FPP without pixels is 7.9 percent against 0.085 percent with them: the
+    # pixel stage is what the candidate needs. By hand, X_mean = (1 + 0.775) / 2 = 0.888, BEB prior 0.44 x 0.041315
+    # x 2 = 0.036357, BEB = 0.036357 x 0.020219 x 0.888 = 6.52e-4; with the two on-target EB terms (5.26e-6 +
+    # 1.27e-6) FPP = (6.52e-4 + 6.53e-6) / (7.690e-3 + 6.52e-4 + 6.53e-6) = 0.0789.
     unplaced = compute(no_pixels(base()))
     assert unplaced.neighbours[0]["exclusion"] == 1.0
-    assert unplaced.neighbours[1]["exclusion"] == pytest.approx(0.092, rel=0.02)
-    assert unplaced.value == pytest.approx(0.0394, rel=0.02) and unplaced.value > 40 * compute(base()).value
-    # the G 12.8 star moved inside the two pixels: both neighbours count in full, X_mean = 1, BEB = 5.66e-4, 6.9 percent
+    assert unplaced.neighbours[1]["exclusion"] == pytest.approx(0.775, rel=0.02)
+    assert unplaced.value == pytest.approx(0.0789, rel=0.02) and unplaced.value > 80 * compute(base()).value
+    # the G 12.8 star moved inside the two pixels: both neighbours count in full, X_mean = 1, BEB = 7.35e-4, 8.8 percent
     far = dataclasses.replace(base().neighbours[1], sep_arcsec=3.0)
     f = compute(no_pixels(base(neighbours=(base().neighbours[0], far))))
     assert f.label() == "False positive (no pixel data yet)" and not f.pixels
     assert f.neighbours[1]["bright_enough"] and f.neighbours[1]["exclusion"] == 1.0
     assert f.scenarios[1].weight > f.scenarios[2].weight
-    assert f.value == pytest.approx(0.0693, rel=0.02)
+    assert f.value == pytest.approx(0.0880, rel=0.02)
 
 
 def test_bright_neighbour_far_from_the_centroid_is_excluded():
@@ -113,7 +116,7 @@ def test_bright_neighbour_far_from_the_centroid_is_excluded():
 def test_compute_without_pixels_uses_a_two_pixel_confusion_radius():
     f = compute(no_pixels(base()))
     assert not f.pixels and f.confusion_radius_arcsec == 7.96 and f.label() == "False positive (no pixel data yet)"
-    assert f.neighbours[1]["exclusion"] == pytest.approx(math.exp(-(10.8 - 7.96) ** 2 / (2 * 1.3 ** 2)))
+    assert f.neighbours[1]["exclusion"] == pytest.approx(math.exp(-(10.8 - 7.96) ** 2 / (2 * 3.98 ** 2)))
 
 
 def test_a_deep_secondary_raises_the_eb_weight():
@@ -179,5 +182,5 @@ def test_invalid_inputs_raise(field, value):
 def test_without_pixels_a_stray_centroid_separation_is_ignored():
     f = compute(base(centroid_sigma_arcsec=None))        # neighbours still carry centroid_sep_arcsec
     assert not f.pixels and f.neighbours[1]["s_arcsec"] == 10.8
-    assert f.neighbours[1]["exclusion"] == pytest.approx(math.exp(-(10.8 - 7.96) ** 2 / (2 * 1.3 ** 2)))
+    assert f.neighbours[1]["exclusion"] == pytest.approx(math.exp(-(10.8 - 7.96) ** 2 / (2 * 3.98 ** 2)))
     assert f.value == compute(no_pixels(base())).value

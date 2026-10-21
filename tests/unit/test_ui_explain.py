@@ -78,7 +78,7 @@ def test_why_uses_the_latest_row_of_each_rung():
 
 def test_why_sentences_carry_the_deciding_numbers(seed_detail):
     rows = {w.rung: w for w in explain.why(seed_detail("stage2")["tests"])}
-    assert rows["rung1_detection"].sentence == "SDE 50.5, above the usual minimum of 11"
+    assert rows["rung1_detection"].sentence == "SDE 50.5, above the usual minimum of 12"
     assert "32 of 37 predicted transits have data" in rows["rung1_events"].sentence
     assert "0.3 sigma" in rows["rung2_shape"].sentence and "2,202" in rows["rung2_shape"].numbers
     assert "p = 0.9" in rows["rung3_stability"].sentence
@@ -103,7 +103,7 @@ def test_the_detection_sentence_quotes_the_configured_minimum():
     # a legacy row that passed under an older, lower threshold quotes no number it never had to clear
     explain.configure(Thresholds())
     assert explain.why(_detection_row(9.6))[0].sentence == "SDE 9.6, above the threshold that run used"
-    assert explain.why(_detection_row(14.0))[0].sentence == "SDE 14.0, above the usual minimum of 11"
+    assert explain.why(_detection_row(14.0))[0].sentence == "SDE 14.0, above the usual minimum of 12"
 
 
 def test_create_app_points_explain_at_the_settings_thresholds(settings, monkeypatch):

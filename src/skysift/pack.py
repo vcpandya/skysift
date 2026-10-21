@@ -1354,6 +1354,9 @@ def build_pack(store, blob, settings, target_id: str, *, out_dir: Path | None = 
     if zenodo is not None and not zenodo.sandbox and not fpp_model.SIGNED_OFF:
         raise PackError("the false-positive estimate is provisional until spec 4.2's factor tables are signed off, "
                         "so no draft is made on zenodo.org; use --zenodo for a sandbox rehearsal")
+    if zenodo is not None and not zenodo.sandbox and not (raw.get("fpp") or {}).get("signed_off"):
+        raise PackError(f"the stored dossier of {target_id} was written before the false-positive sign-off, so no "
+                        f"draft is made on zenodo.org; run skysift dossier --target {target_id} --force first")
     say("loading the light curve")
     target = ds._target_dict(store, target_id)
     lc = LightCurveLoader(store, blob, source_factory=ds._offline_factory(target_id, sid)).load(target, pin=True)

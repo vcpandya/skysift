@@ -225,7 +225,7 @@ def test_calibrate_report_prints_the_table(settings, tmp_path):
     real = next(x for x in lines if x.startswith("real"))
     assert real.split() == ["real", "3", "10.50", "16.00", "3", "2", "2", "2", "1", "1", "1"]
     assert any(x.startswith("inverted") for x in lines) and any(x.startswith("scrambled") for x in lines)
-    assert "1+aaaa0000" in r.stdout and "1 of 3" in r.stdout and "sde_min 11" in r.stdout
+    assert "1+aaaa0000" in r.stdout and "1 of 3" in r.stdout and "sde_min 12" in r.stdout
 
     path.write_text(path.read_text(encoding="utf-8") + json.dumps(_row("e", [8.0], [8.0], [8.0], version="2+x")) + "\n",
                     encoding="utf-8")

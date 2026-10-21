@@ -26,7 +26,6 @@ NAN = float("nan")
 
 DRESSING_2015 = "Dressing, C. D. and Charbonneau, D. 2015, ApJ 807, 45"
 FRESSIN_2013 = "Fressin, F. et al. 2013, ApJ 766, 81"
-KIRK_2016 = "Kirk, B. et al. 2016, AJ 151, 68"
 WINTERS_2019 = "Winters, J. G. et al. 2019, AJ 157, 216"
 RAGHAVAN_2010 = "Raghavan, D. et al. 2010, ApJS 190, 1"
 MORTON_2012 = "Morton, T. D. 2012, ApJ 761, 6"
@@ -34,7 +33,6 @@ MORTON_2012 = "Morton, T. D. 2012, ApJ 761, 6"
 M_TEFF_MAX = 4000.0                       # below this Teff the M-dwarf grid and binary fraction apply
 M_GRID_NOTE = "radius above the M-dwarf grid; Fressin rate used"
 
-F_EB = 0.014                              # Kirk et al. 2016
 F_BIN = {"M": 0.26, "FGK": 0.44}          # Winters et al. 2019; Raghavan et al. 2010
 RAGHAVAN_LOGP = (5.03, 2.28)              # mean and sigma of log10(P/day), Raghavan et al. 2010
 PIXEL_ARCSEC = 3.98
@@ -43,7 +41,7 @@ NO_PIXEL_CONFUSION_ARCSEC = 2 * PIXEL_ARCSEC   # without pixel data, no neighbou
 # the planet hypothesis window: within a factor of two of the period either way, within 30 percent of the radius
 PL_PERIOD_WINDOW_DEX = 2 * math.log10(2.0)
 PL_RADIUS_WINDOW_DEX = math.log10(1.3 / 0.7)
-PSF_BLEND_ARCSEC = 1.3                    # KBonus PSF photometry blend scale
+NO_PIXEL_FALLOFF_ARCSEC = PIXEL_ARCSEC         # the Gaussian fall-off of the no-pixel exclusion beyond that radius
 ECCENTRICITY_ALLOWANCE = 0.30
 
 
@@ -95,7 +93,8 @@ class OccurrenceGrid:
 
     def total(self, period_max: float, rp_min: float = 0.0, rp_max: float = math.inf) -> float:
         """Planets per star summed over the bins lying wholly at periods up to ``period_max`` and radii in
-        [rp_min, rp_max], blank cells taking their held neighbour value as in ``f_pl``."""
+        [rp_min, rp_max]: the per-bin counts (not the densities ``f_pl`` reads), a blank cell taking the count of
+        its nearest finite period neighbour."""
         tol = 1e-9
         rows = [i for i in range(len(self.radius_edges) - 1)
                 if self.radius_edges[i] >= rp_min * (1 - tol) and self.radius_edges[i + 1] <= rp_max * (1 + tol)]
@@ -149,7 +148,6 @@ OCCURRENCE = {
 }
 
 CITATIONS = {
-    "F_EB": KIRK_2016,
     "F_BIN": f"M: {WINTERS_2019}; FGK: {RAGHAVAN_2010}",
     "F_BIN_M": WINTERS_2019,
     "F_BIN_FGK": RAGHAVAN_2010,
@@ -165,7 +163,8 @@ CITATIONS = {
                                  "without pixel data no neighbour inside two pixels is excluded (spec 4.2)",
     "PL_PERIOD_WINDOW_DEX": "a factor of two in period either way, the width of the binary period window (spec 4.2)",
     "PL_RADIUS_WINDOW_DEX": f"30 percent in radius either way, the rbin_width of vespa ({MORTON_2012})",
-    "PSF_BLEND_ARCSEC": "KBonus Kepler PSF photometry blend scale (spec 4.2)",
+    "NO_PIXEL_FALLOFF_ARCSEC": "one Kepler pixel, the scale of the PRF core (Kepler Instrument Handbook): without "
+                               "pixel data a neighbour two to three pixels out keeps most of its weight (spec 4.2)",
     "ECCENTRICITY_ALLOWANCE": "SkySift allowance for the duration of an eccentric orbit (spec 4.2)",
     # the scenario model and the references the dossier's stellar and planet parameters rest on
     "FPP_MODEL": MORTON_2012,

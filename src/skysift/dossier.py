@@ -38,7 +38,7 @@ from skysift import jsonutil, net, stars
 from skysift.calibrate import FalseAlarm
 from skysift.detectors.base import get_detector
 from skysift.detectors.periodogram import PeriodogramSummary
-from skysift.fpp import Fpp, FppInputs, Neighbour, compute
+from skysift.fpp import FPP_MODEL_VERSION, Fpp, FppInputs, Neighbour, compute
 from skysift.lc.loader import TARGET_FIELDS, LightCurveLoader
 from skysift.lc.ops import event_depths, event_quality, fold_phase, season_of
 from skysift.lc.transit_model import uniform_disc_flux
@@ -67,9 +67,10 @@ from skysift.vetting.rung1_detection import SYSTEMATIC_PERIODS
 
 log = logging.getLogger(__name__)
 
-DOSSIER_VERSION = "1"
+DOSSIER_VERSION = "2"           # 2: the FPP model version joins the fingerprint (21 October 2026)
 STATUS_ORDER = ("candidate_stage2", "approved", "candidate_stage1")
 CLOSE_SIGMA = 3.5               # a voting season nearer the 3 sigma decision than this gets the Monte Carlo caveat
+MIN_VOTING_SEASONS = 2          # rung 5 passes on two voting seasons at least; below that the FPP keeps the no-pixel rule
 CLOSE_CALL = ("The centroid error comes from 200 Monte Carlo draws, so a season this close to the 3 sigma threshold "
               "can move by about 5 percent with the seed.")
 SERIES_BIN_DAYS = 0.25
@@ -254,12 +255,13 @@ def pick_signal(store: Store, target_id: str, signal_id: int | None = None) -> d
 
 
 def fingerprint(latest_tests: list[dict], final_status: str, decision: str | None, calibration_rows: int = 0) -> str:
-    """sha256 of the sorted test row ids, the final status, the latest decision and the number of rows in the source's
-    null calibration (``calibration_rows``): a dossier is stale when any of them changed since it was written, so one
-    written while the calibration was short goes stale as the null searches arrive."""
+    """sha256 of the sorted test row ids, the final status, the latest decision, the number of rows in the source's
+    null calibration (``calibration_rows``) and the FPP model version: a dossier is stale when any of them changed
+    since it was written, so one written while the calibration was short goes stale as the null searches arrive, and
+    one written under an older false-positive model goes stale with the model."""
     ids = sorted(int(t["id"]) for t in latest_tests)
     text = json.dumps({"tests": ids, "status": final_status, "decision": decision,
-                       "calibration_rows": int(calibration_rows)}, sort_keys=True)
+                       "calibration_rows": int(calibration_rows), "fpp_model": FPP_MODEL_VERSION}, sort_keys=True)
     return hashlib.sha256(text.encode()).hexdigest()
 
 
@@ -597,8 +599,8 @@ def _lookup(target: Target, signal: dict, tests: list[dict], *, fetch, store: St
 
 def fpp_inputs(signal: dict, tests: list[dict], star: stars.StarParams, planet: stars.PlanetParams,
                neighbours: list[Neighbour] | None, gmag: float | None) -> FppInputs:
-    """The FPP inputs from the signal, rung 2, the star and, when a rung 5 row has voting seasons, the centroid
-    (``centroid_estimate``): each Gaia neighbour's ``centroid_sep_arcsec`` is then its separation less the centroid's
+    """The FPP inputs from the signal, rung 2, the star and, when a rung 5 row has at least ``MIN_VOTING_SEASONS``
+    voting seasons (the rung's own pass rule; one season decides nothing), the centroid (``centroid_estimate``): each Gaia neighbour's ``centroid_sep_arcsec`` is then its separation less the centroid's
     offset from the target (the nearest the centroid can sit to it, since the cone gives no position angle), floored
     at zero, and the centroid error with the two numbers it was chosen from goes into the inputs record. The
     neighbour list counts as known only when the cone answered (``neighbours`` is not None) and the target has a G;
@@ -608,6 +610,8 @@ def fpp_inputs(signal: dict, tests: list[dict], star: stars.StarParams, planet: 
     odd, even, parity = _num(shape, "odd_ppm"), _num(shape, "even_ppm"), _num(shape, "parity_sigma")
     odd_even_err = abs(odd - even) / parity if odd is not None and even is not None and parity else None
     centroid = centroid_estimate(_metrics(tests, "rung5_pixels")) if _rung(tests, "rung5_pixels") else None
+    if centroid is not None and centroid.n_seasons < MIN_VOTING_SEASONS:
+        centroid = None             # one voting season decides nothing for rung 5 either: the no-pixel rule applies
     known = neighbours is not None and gmag is not None
     neighbours = list(neighbours or [])
     if centroid is not None:

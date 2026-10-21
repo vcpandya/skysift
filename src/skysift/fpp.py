@@ -2,8 +2,11 @@
 the target (PL), a background or foreground eclipsing binary within the confusion radius (BEB) and an eclipsing binary
 on the target itself, kept as two sub-scenarios that cannot both hold: one whose true period is P (EB-P, tested by the
 secondary at phase 0.5) and one whose true period is 2P (EB-2P, tested by the odd/even difference). Being hypotheses
-about different orbital periods, each carries the full binary fraction and its own period window. Each scenario weighs
-``prior x geometric x data``;
+about different orbital periods, each carries the full binary fraction and its own period window. The background
+binary is built the same way per bright neighbour (the FGK binary fraction times the window around 2P, then the
+pair's eclipse probability at 2P), so the three binary scenarios and the planet window are on one footing; the spec as
+first written used the Kepler eclipsing-binary fraction of Kirk et al. 2016, which already contains the eclipse
+probability over every period (ruling of 21 October 2026). Each scenario weighs ``prior x geometric x data``;
 ``FPP = (w_BEB + w_EB-P + w_EB-2P) / (w_PL + w_BEB + w_EB-P + w_EB-2P)``. The spec as first written multiplied the two
 EB tests into one scenario at 2P; that product and the FPP it gives are kept on the result (``product_eb_weight``,
 ``product_value``) for the sign-off. Every factor and its inputs is kept in ``ScenarioWeight.factors`` so the dossier
@@ -25,15 +28,17 @@ from skysift.priors import (
     CONFUSION_FLOOR_ARCSEC,
     ECCENTRICITY_ALLOWANCE,
     F_BIN,
-    F_EB,
     NO_PIXEL_CONFUSION_ARCSEC,
-    PSF_BLEND_ARCSEC,
+    NO_PIXEL_FALLOFF_ARCSEC,
     binary_period_fraction,
     planet_prior,
     spectral_class,
 )
 
 SIGNED_OFF = True           # the review of spec 4.2 (21 October 2026); the tile says "provisional" while False
+FPP_MODEL_VERSION = "2"     # 1: spec 4.2 as first written; 2: the sign-off rulings of 21 October 2026 (the planet
+                            # window, the two-pixel no-pixel radius, the BEB prior per neighbour); part of the dossier
+                            # fingerprint, so a stored dossier of an older model is stale
 
 FALLBACK_RADIUS = 0.5       # Rsun, when the star has no radius
 FALLBACK_MASS = 0.5         # Msun, when the star has no mass
@@ -206,9 +211,9 @@ def _planet(inputs: FppInputs, cls: str, radius: float, mass: float) -> Scenario
 
 def _exclusion(s: float, r_c: float, sigma_c: float | None) -> float:
     """``X_i``: with pixels ``exp(-k^2 / 2)`` for ``k = max(0, (s - r_c) / sigma_c)``; without, 1 inside ``r_c`` and
-    a Gaussian fall-off of width ``PSF_BLEND_ARCSEC`` outside it."""
+    a Gaussian fall-off of width ``NO_PIXEL_FALLOFF_ARCSEC`` (one pixel) outside it."""
     if s <= r_c: return 1.0
-    if sigma_c is None: return math.exp(-(s - r_c) ** 2 / (2 * PSF_BLEND_ARCSEC ** 2))
+    if sigma_c is None: return math.exp(-(s - r_c) ** 2 / (2 * NO_PIXEL_FALLOFF_ARCSEC ** 2))
     if not sigma_c > 0: return 0.0            # a zero centroid error excludes everything outside r_c
     k = (s - r_c) / sigma_c
     return math.exp(-k ** 2 / 2)
@@ -230,13 +235,16 @@ def _background(inputs: FppInputs) -> tuple[ScenarioWeight, float, tuple[dict, .
                      "bright_enough": bright, "exclusion": x})
         if bright: bright_x.append(x)
     n_bright = len(bright_x)
+    # each bright neighbour is a field star: an FGK binary with probability f_bin, with its period within a factor
+    # of two of 2P with probability g_2P (the EB-2P window), eclipsing with the pair's geometric probability at 2P
+    f_bin, g_2p = F_BIN["FGK"], binary_period_fraction(inputs.period)
     a_2p = _a_au(2 * inputs.period, BEB_PAIR_MASS)
     geometric = BEB_PAIR_RADII * RSUN_AU / a_2p
     x_mean = sum(bright_x) / n_bright if n_bright else 0.0     # no bright neighbour: the BEB weight is 0
     factors: dict[str, float | str | None] = {
-        "f_EB": F_EB, "n_bright": n_bright, "a_2P_au": a_2p, "X_mean": x_mean, "r_c_arcsec": r_c,
+        "f_bin": f_bin, "g_2P": g_2p, "n_bright": n_bright, "a_2P_au": a_2p, "X_mean": x_mean, "r_c_arcsec": r_c,
         "centroid_sigma_arcsec": sigma_c}
-    return ScenarioWeight("BEB", F_EB * n_bright, geometric, x_mean, factors), r_c, tuple(rows)
+    return ScenarioWeight("BEB", f_bin * g_2p * n_bright, geometric, x_mean, factors), r_c, tuple(rows)
 
 
 def _on_target_binaries(inputs: FppInputs, cls: str, radius: float, mass: float) -> tuple[ScenarioWeight, ...]:
