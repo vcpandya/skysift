@@ -1027,28 +1027,42 @@ def _rows(results) -> list:
 
 
 def test_revet_reproduces_the_sweep_verdict(settings, caplog):
-    """Rung by rung, the same status, reason and metrics as the sweep. A 2 d stellar wave (the sixth harmonic of the
-    12 d transit) is whitened away and then restored, from the 12, 24, 36 and 48 d detections of the first search,
-    so the restore replay is what is under test, the secondary flux included. With ``restored_for`` dropped (a
+    """Every signal of the target, rung by rung: the same status, reason and metrics as the sweep. A 2 d stellar wave
+    (the sixth harmonic of the 12 d transit) is whitened away and then restored, from the 12, 24, 36 and 48 d
+    detections of the first search, so the restore replay is what is under test. For the 12 d signal the secondary
+    flux restored from its own period is the same as from ``restored_for``; for the others (24 d among them) it is not,
+    so those re-vets hold only if ``revet_flux`` restores from ``restored_for``. With ``restored_for`` dropped (a
     signal swept before it was stored) the re-vet says so at debug level and falls back to the signal's own period."""
+    th = settings.thresholds
     base = inject_transit(make_lightcurve(noise_ppm=500, seed=5), 12.0, 140.0, 0.1, 3000.0)
     lc = _with_dip(base, 1.0 + 500e-6 * np.sin(2 * np.pi * base.time / 2.0))
-    out = json.loads(_cpu_work(pickle.dumps(lc), TARGET.model_dump_json(), settings.thresholds.model_dump_json(),
+    out = json.loads(_cpu_work(pickle.dumps(lc), TARGET.model_dump_json(), th.model_dump_json(),
                                "box_dip", "4", True, fetch_module="tests.unit.fake_fetch"))
-    item = out["signals"][0]; sig = Signal(**item["signal"])
-    pw = sig.extra["prewhitening"]
-    assert pw["restored"] and len(pw["restored_for"]) >= 2
-    with caplog.at_level(logging.DEBUG, logger="skysift.pipeline"):
-        outcome, results = revet(lc, TARGET, settings.thresholds, sig, build_ladder("4"), fetch=fake_fetch.fetch)
-    mine = [r for r in caplog.records if r.name == "skysift.pipeline"]
-    assert not [r for r in mine if r.levelno >= logging.WARNING or "restored_for" in r.getMessage()]
-    assert outcome == item["outcome"] and _rows(results) == [(t["rung"], t["status"], t["reason"], t["metrics"])
-                                                             for t in item["tests"]]
-    caplog.clear()
+    flux = pipeline._sweep_flux(lc, th)
+    gaps = []
+    for item in out["signals"]:
+        sig = Signal(**item["signal"])
+        pw = sig.extra["prewhitening"]
+        assert pw["restored"] and len(pw["restored_for"]) >= 2
+        exact = pipeline._restore_alt(lc.time, flux.alt, flux.alt_record, [tuple(d) for d in pw["restored_for"]])
+        own = pipeline._restore_alt(lc.time, flux.alt, flux.alt_record, [(1.0 / sig.period, sig.depth_ppm)])
+        np.testing.assert_array_equal(pipeline.revet_flux(lc, th, sig)[1], exact)
+        gaps.append((round(sig.period, 1), float(np.nanmax(np.abs(own - exact)))))
+        caplog.clear()
+        with caplog.at_level(logging.DEBUG, logger="skysift.pipeline"):
+            outcome, results = revet(lc, TARGET, th, sig, build_ladder("4"), fetch=fake_fetch.fetch)
+        mine = [r for r in caplog.records if r.name == "skysift.pipeline"]
+        assert not [r for r in mine if r.levelno >= logging.WARNING or "restored_for" in r.getMessage()]
+        assert outcome == item["outcome"] and _rows(results) == [(t["rung"], t["status"], t["reason"], t["metrics"])
+                                                                 for t in item["tests"]], sig.period
+    # the secondary flux of at least one signal (the 24 d one) depends on restored_for by more than 100 ppm
+    assert any(abs(period - 24.0) < 0.5 and gap > 100e-6 for period, gap in gaps), gaps
+    sig = Signal(**out["signals"][0]["signal"]); pw = sig.extra["prewhitening"]
     old = sig.model_copy(update={"extra": {**sig.extra, "prewhitening": {k: v for k, v in pw.items()
                                                                          if k != "restored_for"}}})
+    caplog.clear()
     with caplog.at_level(logging.DEBUG, logger="skysift.pipeline"):
-        revet(lc, TARGET, settings.thresholds, old, build_ladder("4", with_novelty=False))
+        revet(lc, TARGET, th, old, build_ladder("4", with_novelty=False))
     assert any("no restored_for" in r.getMessage() and r.levelno == logging.DEBUG for r in caplog.records)
     assert not [r for r in caplog.records if r.name == "skysift.pipeline" and r.levelno >= logging.WARNING]
 
