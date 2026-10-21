@@ -184,7 +184,7 @@ def test_no_em_dash_anywhere(seed_detail):
         texts += [f"{w.sentence} {w.numbers} {w.missing or ''} {w.next_step or ''}" for w in explain.why(d["tests"])]
         assert all("—" not in t for t in texts), role
     glossaries = [*explain.GLOSSARY.values(), *(f"{a} {b}" for a, b in explain.STATUS_GLOSSARY)]
-    assert all("—" not in t for t in glossaries) and len(explain.GLOSSARY) == 13
+    assert all("—" not in t for t in glossaries) and len(explain.GLOSSARY) == 15
 
 
 def test_summary_sentence_and_copy_summary(seed_detail):

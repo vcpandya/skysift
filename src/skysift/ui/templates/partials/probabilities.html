@@ -1,0 +1,30 @@
+{# The two probabilities, side by side and never combined (dossiers spec 4.3): each with its name, its number and the
+   sentence on what it does not cover, and the way to the dossier's section 03. Shared by the verdict popup and the
+   dossier page. Context: fap and fpp (the dossier's fap and fpp blocks), target_id; heading_id names the block. #}
+{% set fap_words = fap.get("words") or fap.get("text") or "not yet calibrated" %}
+{% set fpp_words = fpp.get("words") or "not computed" %}
+<section id="probabilities" class="probabilities" tabindex="-1" aria-labelledby="{{ heading_id or 'probabilities-title' }}">
+  <h3 id="{{ heading_id or 'probabilities-title' }}">Probabilities</h3>
+  <p class="prob-intro">Two different questions, so two numbers. They are shown apart and never combined.</p>
+  <dl class="prob-list">
+    <div class="prob-item">
+      <dt>False alarm</dt>
+      <dd>
+        <p class="prob-value">{{ fap_words }}</p>
+        <p class="prob-what">How often noise alone gives a peak this strong.</p>
+        <p class="prob-not">{{ fap.get("sentence_not_covered") or "This is about noise. A real dip on a neighbouring star or an eclipsing binary passes this test." }}</p>
+      </dd>
+    </div>
+    <div class="prob-item">
+      <dt>{{ fpp.get("label") or "False positive" }}</dt>
+      <dd>
+        <p class="prob-value">{{ fpp_words }}{% if not fpp.get("signed_off") %} <span class="chip-provisional">provisional</span>{% endif %}</p>
+        <p class="prob-what">Given a real dip, how likely it is to be something other than a planet on this star.{% if not fpp.get("signed_off") %} The number is provisional until its priors are reviewed.{% endif %}</p>
+        <p class="prob-not">{{ fpp.get("sentence_not_covered") or "This counts the common impostors with simple priors. It is not a vespa or a Kepler DR25 false-positive probability, and it has no radial-velocity or imaging input." }}</p>
+      </dd>
+    </div>
+  </dl>
+  {%- if link %}
+  <p><a href="/dossiers/{{ target_id }}#checks">How both are worked out, in the dossier</a></p>
+  {%- endif %}
+</section>

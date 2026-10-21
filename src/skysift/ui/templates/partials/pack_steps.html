@@ -1,0 +1,17 @@
+{# The submission pack's five steps (dossiers spec 5.9), each with its tick. Ticking posts to /dossiers/<id>/steps,
+   which stores it on the dossier row and answers with this list. Only step 1 is something the engine can help with;
+   the others need the person's own accounts. Context: target_id, pack_steps, steps_done. #}
+<ol class="pack-steps" id="pack-steps">
+  {%- for n, title, text in pack_steps %}
+  {% set done = steps_done.get(n | string) %}
+  <li class="pack-step{% if done %} is-done{% endif %}">
+    <form hx-post="/dossiers/{{ target_id }}/steps" hx-target="#pack-steps" hx-swap="outerHTML">
+      <input type="hidden" name="_token" value="{{ token }}">
+      <input type="hidden" name="step" value="{{ n }}">
+      <input type="hidden" name="done" value="{{ '0' if done else '1' }}">
+      <button class="pack-tick" aria-pressed="{{ 'true' if done else 'false' }}" aria-label="Step {{ n }}, {{ title }}: {{ 'done, press to undo' if done else 'not done, press to mark done' }}">{{ "✓" if done else n }}</button>
+    </form>
+    <div><p class="pack-title">{{ title }}{% if done %} <span class="muted">(done)</span>{% endif %}</p><p class="pack-text">{{ text }}</p></div>
+  </li>
+  {%- endfor %}
+</ol>

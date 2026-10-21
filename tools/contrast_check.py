@@ -24,7 +24,15 @@ PAIRS: list[tuple[str, str, float]] = [
     *[(s, bg, TEXT) for s in STATUS for bg in ("surface", "bg")],
     *[(c, "raised", TEXT) for c in ("pass", "fail", "undet", "ion", "solar")],      # hover rows, toasts, chip counts
     ("surface", "ion", TEXT), ("surface", "fail", TEXT),
+    ("space-fg", "space", TEXT),                    # captions inside the dossier drawings
 ]
+# The planet thumbnail's physical colours (skysift.ui.planet_svg): the four planet discs by equilibrium temperature
+# and the four star limbs by effective temperature. They are graphics, so the minimum is the UI one, against the
+# drawing's own sky (--space, defined in both themes); on the light theme's white surface they would read at 1.2 to
+# 3.5:1, which is why the thumbnail carries that sky.
+PLANET_COLOURS = ("#cfe6ff", "#7fb7a3", "#c9a96e", "#e0784a")
+STAR_COLOURS = ("#fff3d6", "#ffd9a0", "#ffbe78", "#ff9d5c")
+GRAPHICS: list[tuple[str, str, float]] = [(c, "space", LARGE) for c in (*PLANET_COLOURS, *STAR_COLOURS)]
 BLOCKS = {"light": r"^:root\s*\{(.*?)\}", "dark": r'^:root\[data-theme="dark"\]\s*\{(.*?)\}'}
 SYSTEM_DARK = r'@media \(prefers-color-scheme: dark\)\s*\{\s*:root\[data-theme="system"\]\s*\{(.*?)\}'
 
@@ -72,6 +80,14 @@ def check(css: str | None = None) -> list[str]:
             r = ratio(*colours)
             if r < minimum:
                 failures.append(f"{theme}: --{fg} {colours[0]} on --{bg} {colours[1]} is {r:.2f}:1, needs {minimum}:1")
+        for colour, bg, minimum in GRAPHICS:
+            ground = t.get(bg, "")
+            if not re.fullmatch(r"#[0-9a-fA-F]{3}|#[0-9a-fA-F]{6}", ground):
+                failures.append(f"{theme}: --{bg} is not a hex colour ({ground!r})")
+                continue
+            r = ratio(colour, ground)
+            if r < minimum:
+                failures.append(f"{theme}: thumbnail {colour} on --{bg} {ground} is {r:.2f}:1, needs {minimum}:1")
     return failures
 
 
@@ -80,7 +96,7 @@ def main() -> int:
     for line in failures:
         print(line)
     if not failures:
-        print(f"contrast ok: {len(PAIRS)} pairs in both themes")
+        print(f"contrast ok: {len(PAIRS)} pairs and {len(GRAPHICS)} thumbnail colours in both themes")
     return 1 if failures else 0
 
 

@@ -53,6 +53,12 @@ GLOSSARY = {
     "ppm": "Parts per million of the star's light. A dip of 1,000 ppm is 0.1 percent.",
     "impact parameter": "How far from the centre of the star the planet crosses, from 0 (dead centre) to about 1 "
                         "(the edge). Above 1 the crossing is grazing.",
+    "False alarm": "How often noise alone, on light curves like this one, gives a peak at least as strong as the "
+                   "candidate's, written as 1 in N. It comes from the calibration searches on flipped and shuffled "
+                   "light curves, and it says nothing about a real dip on another star.",
+    "False positive": "Given that the dip is real, how likely it is to be something other than a planet on this star, "
+                      "such as an eclipsing binary on the star or behind it. An approximate count of the common "
+                      "impostors with simple priors, shown apart from the false alarm and never combined with it.",
 }
 
 REVET = "re-vet under the current ladder"

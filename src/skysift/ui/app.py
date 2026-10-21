@@ -1,5 +1,6 @@
 """FastAPI application factory for the local dashboard. The UI reads the engine's store and blob and changes nothing
-scientific; its only writes are decisions (Store.decide) and starting or stopping a sweep (SweepLauncher)."""
+scientific; its only writes are decisions (Store.decide), starting or stopping a sweep (SweepLauncher), starting a
+dossier or pack job (ui.jobs.DossierJobs) and ticking the pack's steps (Store.set_pack_steps)."""
 from __future__ import annotations
 
 import logging
@@ -26,8 +27,8 @@ from skysift.ui import explain
 log = logging.getLogger(__name__)
 HERE = Path(__file__).resolve().parent
 LOOPBACK = {"127.0.0.1", "localhost", "::1"}
-NAV = [("/", "Tonight"), ("/candidates", "Candidates"), ("/live", "Live"), ("/sources", "Sources"),
-       ("/approved", "Approved")]
+NAV = [("/", "Tonight"), ("/candidates", "Candidates"), ("/dossiers", "Dossiers"), ("/live", "Live"),
+       ("/sources", "Sources"), ("/approved", "Approved")]
 # simple is Nova's view and the default, expert the astronomer's; the theme follows the system unless overridden
 PREFS = {"mode": ("simple", "expert"), "theme": ("system", "dark", "light")}
 PREF_COOKIE_AGE = 365 * 24 * 3600
@@ -130,7 +131,7 @@ def render(request: Request, name: str, status_code: int = 200, **ctx) -> HTMLRe
 
 
 def create_app(settings: Settings, store: Store | None = None, blob: Blob | None = None, launcher=None,
-               plotly_path: Path | None = None) -> FastAPI:
+               plotly_path: Path | None = None, dossier_jobs=None) -> FastAPI:
     app = FastAPI(title="SkySift", docs_url=None, redoc_url=None, openapi_url=None)
     # the dashboard has no authentication: refuse any Host header that is not loopback (DNS-rebinding defence).
     # Starlette strips the port before matching, so port-qualified entries would never match.
@@ -142,6 +143,7 @@ def create_app(settings: Settings, store: Store | None = None, blob: Blob | None
     if store is None: st.store.init_schema()
     st.blob = blob if blob is not None else blob_from_url(settings.blob_url)
     st.launcher = launcher
+    st.dossier_jobs = dossier_jobs         # the Dossiers page's job launcher (ui.jobs); made on first use when None
     st.token = secrets.token_urlsafe(32)
     st.templates = Jinja2Templates(directory=str(HERE / "templates"))
     st.templates.env.filters["fmt"] = _fmt
@@ -190,8 +192,9 @@ def create_app(settings: Settings, store: Store | None = None, blob: Blob | None
         return render(request, "error.html", status_code=500, error=f"{type(exc).__name__}: {exc}",
                       log_hint=str(settings.data_dir / "ui" / "dashboard.log"))
 
-    from skysift.ui.routes import api, home, live, published, review, sources  # routers are added by Tasks 8 to 12
-    for router in (home.router, sources.router, live.router, review.router, published.router, api.router):
+    from skysift.ui.routes import api, dossiers, home, live, published, review, sources
+    for router in (home.router, sources.router, live.router, review.router, dossiers.router, published.router,
+                   api.router):
         app.include_router(router)
     return app
 

@@ -33,6 +33,7 @@ def approved_page(request: Request):
     for r in rows:                     # the clipboard paragraph names the signal page the reader can open
         r["copy_text"] = explain.copy_summary(r, r, r["v"], f"{request.base_url}signals/{r['id']}")
     return render(request, "approved.html", rows=rows, status=status, statuses=STATUSES, versions=versions,
+                  dossier_targets={d["target_id"] for d in store.dossiers()},
                   hidden=queries.decided_hidden_by_version(store, status, version))
 
 

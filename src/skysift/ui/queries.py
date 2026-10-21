@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 from collections import Counter
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 from sqlalchemy import func, select
 
@@ -506,3 +507,164 @@ def review_document(store: Store, signal_id: int) -> dict | None:
         arts_d = [{"sha256": a.sha256, "nbytes": a.nbytes, "url": a.url, "kind": a.kind, "pinned": a.pinned,
                    "deleted_at": _iso(a.deleted_at)} for a in arts]
     return {**d, "queries": queries_d, "artifacts": arts_d}
+
+
+# ---- the Dossiers page (dossiers spec 5.5) ------------------------------------------------------------------------
+
+FINAL_GROUPS = ("approved", "stage2", "stage1")
+_JSON_CACHE: dict[str, tuple[int, dict | None, str | None]] = {}      # path -> (mtime_ns, data, error)
+_JSON_CACHE_MAX = 64
+
+
+def dossier_json(path: str) -> tuple[dict | None, str | None]:
+    """(the parsed ``dossier_data.json``, None) or (None, why it could not be read), cached by modification time so
+    a page of tiles does not parse every file on every request."""
+    p = Path(path) if path else None
+    try:
+        mtime = p.stat().st_mtime_ns if p is not None else None
+    except OSError:
+        mtime = None
+    if p is None or mtime is None:
+        return None, "the dossier's data file is missing"
+    hit = _JSON_CACHE.get(str(p))
+    if hit is not None and hit[0] == mtime:
+        return hit[1], hit[2]
+    try:
+        data, error = json.loads(p.read_text(encoding="utf-8")), None
+        if not isinstance(data, dict):
+            data, error = None, "the dossier's data file does not hold a dossier"
+    except (OSError, ValueError) as e:
+        data, error = None, f"the dossier's data file could not be read ({type(e).__name__})"
+    if len(_JSON_CACHE) >= _JSON_CACHE_MAX:
+        _JSON_CACHE.clear()
+    _JSON_CACHE[str(p)] = (mtime, data, error)
+    return data, error
+
+
+def _group(final_status: str, decision: str | None, candidate_status: str | None) -> str:
+    if decision == "approve" or candidate_status in ("approved", "published"):
+        return "approved"
+    return "stage2" if final_status == "candidate_stage2" else "stage1"
+
+
+def _final_rank(row: dict) -> tuple:
+    """As ``dossier.pick_signal`` ranks a target's signals: not rejected by a reviewer, then approved, stage 2,
+    stage 1, then SDE."""
+    rejected = row["decision"] == "reject" or row["candidate_status"] == "rejected"
+    return rejected, FINAL_GROUPS.index(row["group"]), -float(row["sde"] or 0.0), row["signal_id"]
+
+
+def stale_reason(store: Store, row: dict, best_signal_id: int | None = None) -> str | None:
+    """Why the dossier ``row`` no longer describes its target (spec 5.4), or None when it is current: its data file
+    is gone, the dossier format changed, another signal is now the target's best, or the fingerprint of the signal's
+    latest test rows, status and decision differs from the one it was built from."""
+    from skysift import dossier as ds
+    if not row.get("data_path") or not Path(row["data_path"]).is_file():
+        return "its data file is missing"
+    if row.get("dossier_version") != ds.DOSSIER_VERSION:
+        return "the dossier format changed"
+    if best_signal_id is None:
+        try:
+            best_signal_id = ds.pick_signal(store, row["target_id"])["id"]
+        except ds.NoSignal:
+            best_signal_id = row["signal_id"]
+    if best_signal_id != row["signal_id"]:
+        return "another signal is now the target's best"
+    sid = row["signal_id"]
+    with store.session() as s:
+        sig = s.get(SignalRow, sid)
+        status = sig.final_status if sig is not None else None
+    decisions = store.decisions(sid)
+    fp = ds.fingerprint(store.latest_tests(sid), status, decisions[0]["decision"] if decisions else None)
+    if fp == row.get("tests_fingerprint"):
+        return None
+    if status != row.get("status_at_generation"):
+        return "the signal's status changed"
+    return "the checks or the reviewer's decision changed"
+
+
+def _tile_facts(data: dict | None) -> dict:
+    """What a tile prints from the dossier's JSON: the look block, the star line and the summary."""
+    if not data:
+        return {"look": None, "star_line": None, "summary": None}
+    star = data.get("star") or {}
+    dist = star.get("distance_pc")
+    dist = dist.get("median") if isinstance(dist, dict) else None
+    parts = [star.get("spectral_type"), f"{dist:,.0f} pc" if isinstance(dist, (int, float)) else None]
+    return {"look": data.get("look"), "star_line": " · ".join(p for p in parts if p) or None,
+            "summary": data.get("summary")}
+
+
+def final_set(store: Store, version: str | None, target_id: str | None = None) -> list[dict]:
+    """One row per target for the Dossiers page: every ``candidate_stage2`` signal of ``version`` (None: every
+    version), every signal of ``version`` whose latest decision is an approval, and every target with a dossier row
+    whatever its version. A target shows its best signal by ``_final_rank``. Rows carry ``target_id``,
+    ``signal_id``, ``final_status``, ``decision``, ``dossier`` (the row or None), ``stale`` and ``stale_reason``,
+    ``group`` ("approved", "stage2", "stage1"), ``fpp`` and ``fap``, plus what a tile prints; sorted approved,
+    stage 2, stage 1, then FPP ascending with None last. With ``target_id``, the one row of that target (any of its
+    signals qualifies, so a stage-1 candidate's tile can be drawn while its first dossier is generated)."""
+    from skysift import dossier as ds
+    latest = _latest_decision_subquery()
+    base = (select(SignalRow, TargetRow, latest.c.decision, CandidateRow.status).select_from(SignalRow)
+            .join(TargetRow, TargetRow.target_id == SignalRow.target_id)
+            .outerjoin(CandidateRow, CandidateRow.signal_id == SignalRow.id)
+            .outerjoin(latest, latest.c.signal_id == SignalRow.id))
+    if target_id is not None:
+        base = base.where(SignalRow.target_id == target_id)
+        q = base
+    else:
+        q = base.where((SignalRow.final_status == "candidate_stage2") | (latest.c.decision == "approve"))
+    if version is not None:
+        q = q.join(RunRow, RunRow.id == SignalRow.run_id).where(RunRow.detector_version == version)
+    dossiers = {d["target_id"]: d for d in store.dossiers() if target_id is None or d["target_id"] == target_id}
+    with store.session() as s:
+        found = list(s.execute(q))
+        have = {sig.id for sig, *_rest in found}
+        extra = [d["signal_id"] for d in dossiers.values() if d["signal_id"] not in have]
+        if extra:
+            found += list(s.execute(base.where(SignalRow.id.in_(extra))))
+        rows = []
+        for sig, t, decision, cand in found:
+            target = {c.name: getattr(t, c.name) for c in TargetRow.__table__.columns}
+            signal = {c.name: getattr(sig, c.name) for c in SignalRow.__table__.columns}
+            rows.append({"target_id": sig.target_id, "signal_id": sig.id, "final_status": sig.final_status,
+                         "decision": decision, "candidate_status": cand, "sde": sig.sde, "signal": signal,
+                         "target": {**target, "name": ds.target_name(target)},
+                         "group": _group(sig.final_status, decision, cand)})
+        tests = _tests_by_signal(s, [r["signal_id"] for r in rows])
+    by_target: dict[str, list[dict]] = {}
+    for r in rows:
+        by_target.setdefault(r["target_id"], []).append(r)
+    out = []
+    for tid, found_rows in by_target.items():
+        d = dossiers.get(tid)
+        row = min(found_rows, key=_final_rank)
+        data, error = dossier_json(d["data_path"]) if d else (None, None)
+        reason = stale_reason(store, d, row["signal_id"]) if d else None
+        facts = _tile_facts(data)
+        cand = {"status": row["candidate_status"]} if row["candidate_status"] else None
+        t = tests[row["signal_id"]]
+        v = explain.verdict(row["signal"], t, cand, [{"decision": row["decision"]}] if row["decision"] else None)
+        out.append({**row, "dossier": d, "stale": reason is not None, "stale_reason": reason,
+                    "fpp": d["fpp"] if d else None, "fap": d["fap"] if d else None,
+                    "fap_detail": (d or {}).get("fap_detail") or {}, "fpp_detail": (d or {}).get("fpp_detail") or {},
+                    "data_error": error, "v": v, "look": facts["look"], "star_line": facts["star_line"],
+                    "summary": facts["summary"] or explain.summary_sentence(row["signal"], row["target"], t)})
+    return sorted(out, key=lambda r: (FINAL_GROUPS.index(r["group"]), r["fpp"] is None,
+                                      r["fpp"] if r["fpp"] is not None else 0.0, r["target_id"]))
+
+
+def dossier_for(store: Store, target_id: str, with_data: bool = True) -> dict | None:
+    """The target's dossier row with ``stale`` and ``stale_reason``, its signal's ``detail`` (as ``signal_detail``),
+    ``signal`` and latest ``decision``, and with ``with_data`` the parsed JSON as ``data`` (None, with
+    ``data_error``, when it cannot be read). None when the target has no dossier."""
+    row = store.dossier(target_id)
+    if row is None:
+        return None
+    detail = signal_detail(store, row["signal_id"])
+    decisions = (detail or {}).get("decisions") or []
+    data, error = dossier_json(row["data_path"]) if with_data else (None, None)
+    reason = stale_reason(store, row)
+    return {**row, "row": row, "stale": reason is not None, "stale_reason": reason, "data": data,
+            "data_error": error, "detail": detail, "signal": (detail or {}).get("signal"),
+            "decision": decisions[0]["decision"] if decisions else None}

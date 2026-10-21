@@ -46,6 +46,10 @@
   --undet: #936600;
   --running: #0072B2;
   --star: #0b1020;
+  /* the night sky of the dossier drawings and the planet thumbnail, the same in both themes: their star and planet
+     colours are physical, too pale for the light surface (planet_svg.py; contrast_check.py pins them on it) */
+  --space: #0b1020;
+  --space-fg: #e8ecf4;
   --sky-opacity: .04;
   --backdrop: rgba(11, 16, 32, .45);
   --shadow: 0 1px 2px rgba(10, 16, 32, .06), 0 8px 24px rgba(10, 16, 32, .06);
@@ -83,6 +87,8 @@
   --undet: #ffc04d;
   --running: #4ea1ff;
   --star: #e8ecf4;
+  --space: #0b1020;
+  --space-fg: #e8ecf4;
   --sky-opacity: .9;
   --backdrop: rgba(2, 4, 10, .7);
   --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 12px 32px rgba(0, 0, 0, .35);
@@ -104,6 +110,8 @@
     --undet: #ffc04d;
     --running: #4ea1ff;
     --star: #e8ecf4;
+    --space: #0b1020;
+    --space-fg: #e8ecf4;
     --sky-opacity: .9;
     --backdrop: rgba(2, 4, 10, .7);
     --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 12px 32px rgba(0, 0, 0, .35);

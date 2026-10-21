@@ -1,151 +1,457 @@
-/* SkySift dossier, minimal (dossiers plan Task 4; Task 5 replaces it). Draws the eight sections from the JSON in
-   #dossier-data: the summary, the four signal tiles, the two probabilities with what they do not cover, the checks,
-   the caveats and the reproduction commands, with a Normal / Expert toggle that sets data-level (and data-mode, so
-   the dashboard's .only-expert rule applies) on the root element. Text only through textContent. */
-(function () {
+/* SkySift dossier: the charts, the event gallery, the per-season S/N maps and the "How it might look" panels, drawn
+   from the JSON in #dossier-data with the dashboard's colour tokens (--fg, --fg-2, --muted, --ion, --solar, --line,
+   --space). Ported from the hand-built KIC 6146676 page (docs/candidates/kic-006146676/dossier_template.html).
+
+   Two hosts. On the dashboard the page is rendered by the server and every figure is an empty [data-chart] box that
+   this script fills. In the standalone export (dossier.export_html) <main id="dossier"> arrives empty: the script
+   first writes the eight sections from the JSON, with their own Normal / Expert toggle, then fills the same boxes.
+   Text goes in through textContent only. */
+(() => {
   "use strict";
-  var holder = document.getElementById("dossier-data");
-  var app = document.getElementById("dossier");
-  if (!holder || !app) return;
-  var D = JSON.parse(holder.textContent);
-  var root = document.documentElement;
+  const holder = document.getElementById("dossier-data");
+  if (!holder) return;
+  const D = JSON.parse(holder.textContent);
+  const root = document.documentElement;
+  const NS = "http://www.w3.org/2000/svg";
+  const P = D.plots || {};
+  const E = D.ephemeris || {};
 
-  function h(tag, cls, text) {
-    var el = document.createElement(tag);
-    if (cls) el.className = cls;
-    if (text !== undefined && text !== null) el.textContent = String(text);
-    return el;
+  // ---- small helpers
+  const isNum = (x) => typeof x === "number" && Number.isFinite(x);
+  const fmt = (x, d = 0) => (isNum(x) ? x.toLocaleString("en-GB", { maximumFractionDigits: d, minimumFractionDigits: d }) : "–");
+  const pm = (v, e, d = 0) => `${fmt(v, d)} ± ${fmt(e, d)}`;
+  const el = (tag, attrs, parent) => {
+    const n = document.createElementNS(NS, tag);
+    for (const k in attrs || {}) n.setAttribute(k, attrs[k]);
+    if (parent) parent.appendChild(n);
+    return n;
+  };
+  const h = (tag, cls, text) => {
+    const n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text !== undefined && text !== null) n.textContent = String(text);
+    return n;
+  };
+  const text = (parent, attrs, words) => { el("text", attrs, parent).textContent = words; };
+  const metrics = (rung) => ((D.tests || []).find((t) => t.rung === rung) || {}).metrics || {};
+  const extent = (values, pad = 0.08) => {
+    const v = values.filter(isNum);
+    if (!v.length) return [-1, 1];
+    let lo = Math.min(...v), hi = Math.max(...v);
+    if (lo === hi) { lo -= 1; hi += 1; }
+    const span = hi - lo;
+    return [lo - span * pad, hi + span * pad];
+  };
+
+  // ---- the chart kit (niceTicks, chart, hover, errbar, dot, path) from the hand-built page
+  function niceTicks(lo, hi, n = 5) {
+    const span = hi - lo, raw = span / n, mag = 10 ** Math.floor(Math.log10(raw)), r = raw / mag;
+    const step = (r < 1.5 ? 1 : r < 3 ? 2 : r < 7 ? 5 : 10) * mag, out = [];
+    for (let v = Math.ceil(lo / step) * step; v <= hi + step * 1e-6; v += step) out.push(+v.toFixed(10));
+    return out;
   }
-  function num(x, digits) {
-    if (x === null || x === undefined || !isFinite(x)) return "unknown";
-    return Number(x).toLocaleString("en-GB", { maximumFractionDigits: digits, minimumFractionDigits: 0 });
+  const kfmt = (v) => (Math.abs(v) >= 1000 ? `${(v / 1000).toLocaleString("en-GB", { maximumFractionDigits: 1 })}k` : fmt(v));
+  function chart(host, o) {
+    const w = o.w || 760, hh = o.h || 340, m = Object.assign({ l: 58, r: 18, t: 14, b: 44 }, o.m || {});
+    const [x0, x1] = o.x.dom, [y0, y1] = o.y.dom;
+    const xlog = !!o.x.log, fx = xlog ? Math.log10 : (v) => v;
+    const sx = (v) => m.l + (fx(v) - fx(x0)) / (fx(x1) - fx(x0)) * (w - m.l - m.r);
+    const sy = (v) => hh - m.b - (v - y0) / (y1 - y0) * (hh - m.t - m.b);
+    const svg = el("svg", { viewBox: `0 0 ${w} ${hh}`, class: "chart", role: "img", "aria-label": o.aria || "" });
+    const grid = el("g", { class: "grid" }, svg);
+    (o.y.ticks || niceTicks(y0, y1, o.y.n || 5)).forEach((v) => {
+      el("line", { x1: m.l, x2: w - m.r, y1: sy(v), y2: sy(v) }, grid);
+      text(svg, { x: m.l - 8, y: sy(v) + 4, "text-anchor": "end", class: "axis" }, (o.y.fmt || kfmt)(v));
+    });
+    const xt = o.x.ticks || (xlog ? [0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500].filter((v) => v >= x0 && v <= x1)
+      : niceTicks(x0, x1, o.x.n || 6));
+    xt.forEach((v) => text(svg, { x: sx(v), y: hh - m.b + 18, "text-anchor": "middle", class: "axis" }, (o.x.fmt || fmt)(v)));
+    el("line", { x1: m.l, x2: w - m.r, y1: sy(y0), y2: sy(y0), class: "baseline" }, svg);
+    if (y0 < 0 && y1 > 0) el("line", { x1: m.l, x2: w - m.r, y1: sy(0), y2: sy(0), class: "baseline" }, svg);
+    if (o.x.label) text(svg, { x: (m.l + w - m.r) / 2, y: hh - 6, "text-anchor": "middle", class: "axis-title" }, o.x.label);
+    if (o.y.label) {
+      const cy = (m.t + hh - m.b) / 2;
+      text(svg, { x: 14, y: cy, "text-anchor": "middle", class: "axis-title", transform: `rotate(-90 14 ${cy})` }, o.y.label);
+    }
+    const g = el("g", {}, svg);
+    host.appendChild(svg);
+    return { svg, g, sx, sy, w, h: hh, m, x0, x1, y0, y1 };
   }
-  function val(v, digits, unit) {
-    if (!v || v.median === undefined) return "unknown";
-    return num(v.median, digits) + " (+" + num(v.plus, digits) + " / -" + num(v.minus, digits) + ")" + (unit || "");
+  function tipFor(host) {
+    let tip = host.querySelector(":scope > .dossier-tip");
+    if (!tip) { tip = h("div", "dossier-tip"); tip.setAttribute("aria-hidden", "true"); host.appendChild(tip); }
+    return tip;
+  }
+  function hover(c, host, pts, lines, mode = "near") {
+    if (!pts.length) return;
+    const tip = tipFor(host);
+    const ov = el("rect", { x: c.m.l, y: c.m.t, width: c.w - c.m.l - c.m.r, height: c.h - c.m.t - c.m.b, fill: "transparent" }, c.svg);
+    const cross = el("line", { y1: c.m.t, y2: c.h - c.m.b, class: "hover-line", opacity: 0 }, c.svg);
+    const ring = el("circle", { r: 7, class: "hover-ring", opacity: 0 }, c.svg);
+    const out = () => { tip.style.opacity = 0; cross.setAttribute("opacity", 0); ring.setAttribute("opacity", 0); };
+    ov.addEventListener("pointermove", (ev) => {
+      const r = c.svg.getBoundingClientRect(), k = c.w / r.width;
+      const px = (ev.clientX - r.left) * k, py = (ev.clientY - r.top) * k;
+      let best = null, bd = Infinity;
+      for (const p of pts) {
+        const dx = c.sx(p.x) - px, dy = mode === "x" ? 0 : c.sy(p.y) - py, d = dx * dx + dy * dy;
+        if (d < bd) { bd = d; best = p; }
+      }
+      if (!best || bd > (mode === "x" ? 1e9 : 40 * 40)) { out(); return; }
+      cross.setAttribute("x1", c.sx(best.x)); cross.setAttribute("x2", c.sx(best.x)); cross.setAttribute("opacity", 0.8);
+      ring.setAttribute("cx", c.sx(best.x)); ring.setAttribute("cy", c.sy(best.y)); ring.setAttribute("opacity", 1);
+      tip.replaceChildren(...lines(best).map((line, i) => h(i ? "span" : "b", null, line)));
+      const hr = host.getBoundingClientRect();
+      tip.style.left = `${c.sx(best.x) / k + r.left - hr.left}px`;
+      tip.style.top = `${c.sy(best.y) / k + r.top - hr.top}px`;
+      tip.style.opacity = 1;
+    });
+    ov.addEventListener("pointerleave", out);
+  }
+  const errbar = (c, g, x, y, e, col) => {
+    if (!isNum(e)) return;
+    el("line", { x1: c.sx(x), x2: c.sx(x), y1: c.sy(y - e), y2: c.sy(y + e), stroke: col, "stroke-width": 1.5, "stroke-linecap": "round" }, g);
+  };
+  const dot = (c, g, x, y, col, r = 4) => {
+    el("circle", { cx: c.sx(x), cy: c.sy(y), r: r + 2, fill: "var(--surface)" }, g);
+    el("circle", { cx: c.sx(x), cy: c.sy(y), r, fill: col }, g);
+  };
+  const path = (c, g, pts, col, w = 2, extra = {}) => el("path", Object.assign({
+    d: pts.map((p, i) => `${i ? "L" : "M"}${c.sx(p[0]).toFixed(1)} ${c.sy(p[1]).toFixed(1)}`).join(""),
+    fill: "none", stroke: col, "stroke-width": w, "stroke-linejoin": "round", "stroke-linecap": "round" }, extra), g);
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  const vline = (c, x, cls) => el("line", { x1: c.sx(x), x2: c.sx(x), y1: c.m.t, y2: c.h - c.m.b, class: cls }, c.g);
+
+  // ---- the charts, by data-chart name
+  const win = P.window_h || 12;
+  const foldRange = () => {
+    const ys = [...(P.fold_bins || []).map((b) => b[1] - (b[2] || 0)), ...(P.model || []).map((p) => p[1])];
+    const lo = Math.min(-100, ...ys.filter(isNum)) * 1.35;
+    return [lo, Math.max(-lo * 0.4, ...(P.fold_bins || []).map((b) => b[1] + (b[2] || 0)).filter(isNum))];
+  };
+  const DRAW = {
+    fold(host) {
+      const [lo, hi] = foldRange();
+      const c = chart(host, { h: 360, x: { dom: [-win, win], label: "hours from mid-transit", n: 8 },
+        y: { dom: [lo, hi], label: "relative flux, ppm" }, aria: `Folded light curve on ${fmt(E.period_days, 4)} days, with its bins and the transit model` });
+      (P.fold_points || []).forEach(([x, y]) => { if (y > lo && y < hi) el("circle", { cx: c.sx(x), cy: c.sy(y), r: 1.5, class: "pt" }, c.g); });
+      if ((P.model || []).length) path(c, c.g, P.model, "var(--solar)", 2.5);
+      (P.fold_bins || []).forEach(([x, y, e]) => { errbar(c, c.g, x, y, e, "var(--ion)"); dot(c, c.g, x, y, "var(--ion)", 3.5); });
+      hover(c, host, (P.fold_bins || []).map(([x, y, e, n]) => ({ x, y, e, n })),
+        (p) => [`${fmt(p.x, 2)} h`, `${pm(p.y, p.e)} ppm`, `${fmt(p.n)} cadences`]);
+    },
+    spectrum(host) {
+      const S = (P.spectrum || []).filter((p) => isNum(p[0]) && isNum(p[1]) && p[0] > 0);
+      if (!S.length) { host.appendChild(h("p", "dossier-notice", "No stored periodogram for this signal.")); return; }
+      const x0 = Math.min(...S.map((p) => p[0])), x1 = Math.max(...S.map((p) => p[0]));
+      const c = chart(host, { h: 300, x: { dom: [x0, x1], log: true, label: "trial period, days" },
+        y: { dom: [0, Math.max(...S.map((p) => p[1])) * 1.12], label: "SDE" }, aria: "Detection spectrum: SDE against trial period" });
+      const L = P.spectrum_lines || {};
+      (L.systematic_periods || []).filter((v) => v >= x0 && v <= x1).forEach((v) => vline(c, v, "mark-muted"));
+      (L.aliases || []).filter((v) => v >= x0 && v <= x1).forEach((v) => vline(c, v, "mark-solar dashed"));
+      if (isNum(E.period_days)) vline(c, E.period_days, "mark-solar");
+      path(c, c.g, S, "var(--ion)", 1.4);
+      hover(c, host, S.map(([x, y]) => ({ x, y })), (p) => [`${fmt(p.x, 3)} d`, `SDE ${fmt(p.y, 1)}`], "x");
+    },
+    events(host) {
+      const ev = (P.events || []).filter((e) => isNum(e.t_mid) && isNum(e.depth_ppm));
+      if (!ev.length) { host.appendChild(h("p", "dossier-notice", "No transit could be measured on its own.")); return; }
+      const [t0, t1] = extent(ev.map((e) => e.t_mid), 0.04);
+      const top = Math.max(...ev.map((e) => e.depth_ppm + (e.err_ppm || 0)));
+      const c = chart(host, { h: 320, x: { dom: [t0, t1], label: "time, BKJD (days since 2009 January 1)", n: 8 },
+        y: { dom: [Math.min(0, ...ev.map((e) => e.depth_ppm - (e.err_ppm || 0))), top * 1.15], label: "single-transit depth, ppm" },
+        aria: `Depth of each of ${ev.length} transits against time` });
+      (P.quarters || []).forEach((q, i) => {
+        if (q.t_end < t0 || q.t_start > t1) return;
+        const a = c.sx(clamp(q.t_start, t0, t1)), b = c.sx(clamp(q.t_end, t0, t1));
+        if (i % 2) el("rect", { x: a, y: c.m.t, width: Math.max(0, b - a), height: c.h - c.m.t - c.m.b, class: "band" }, c.g);
+        if (b - a > 24) text(c.g, { x: (a + b) / 2, y: c.m.t + 12, "text-anchor": "middle", class: "axis" }, `Q${q.q}`);
+      });
+      const w = ev.map((e) => (isNum(e.err_ppm) && e.err_ppm > 0 ? 1 / e.err_ppm ** 2 : 1));
+      const mean = ev.reduce((s, e, i) => s + e.depth_ppm * w[i], 0) / w.reduce((s, x) => s + x, 0);
+      el("line", { x1: c.m.l, x2: c.w - c.m.r, y1: c.sy(mean), y2: c.sy(mean), stroke: "var(--solar)", "stroke-width": 1.5 }, c.g);
+      text(c.g, { x: c.w - c.m.r - 4, y: c.sy(mean) - 7, "text-anchor": "end", class: "lab strong" }, `mean ${fmt(mean)} ppm`);
+      ev.forEach((e) => { errbar(c, c.g, e.t_mid, e.depth_ppm, e.err_ppm, "var(--ion)"); dot(c, c.g, e.t_mid, e.depth_ppm, "var(--ion)", 3.5); });
+      hover(c, host, ev.map((e) => ({ x: e.t_mid, y: e.depth_ppm, e })),
+        (p) => [`epoch ${p.e.epoch} · Q${p.e.quarter}`, `BKJD ${fmt(p.e.t_mid, 2)}`, `${pm(p.e.depth_ppm, p.e.err_ppm)} ppm`]);
+    },
+    gallery(host) {
+      const G = P.event_gallery || [];
+      if (!G.length) { host.appendChild(h("p", "dossier-notice", "No transit has data close enough to draw.")); return; }
+      const half = P.gallery_half_hours || 8, depth = Math.abs(E.depth_ppm || 1000);
+      const lo = -2.2 * depth, hi = 1.0 * depth, w = 150, hh = 90;
+      const x = (v) => (v + half) / (2 * half) * (w - 8) + 4, y = (v) => 6 + (hi - clamp(v, lo, hi)) / (hi - lo) * (hh - 12);
+      const grid = h("div", "gallery");
+      G.forEach((ev) => {
+        const box = h("figure", "gallery-cell");
+        const svg = el("svg", { viewBox: `0 0 ${w} ${hh}`, role: "img",
+          "aria-label": `Transit ${ev.epoch}, quarter ${ev.quarter}: depth ${pm(ev.depth_ppm, ev.err_ppm)} ppm` });
+        el("line", { x1: 4, x2: w - 4, y1: y(0), y2: y(0), class: "baseline" }, svg);
+        if ((P.model || []).length) el("path", { d: P.model.filter((p) => Math.abs(p[0]) <= half).map((p, i) => `${i ? "L" : "M"}${x(p[0]).toFixed(1)} ${y(p[1]).toFixed(1)}`).join(""), fill: "none", stroke: "var(--solar)", "stroke-width": 1.5 }, svg);
+        (ev.pts || []).forEach(([a, b]) => { if (isNum(a) && isNum(b)) el("circle", { cx: x(a), cy: y(b), r: 1.6, fill: "var(--ion)" }, svg); });
+        const cap = h("figcaption", "gallery-cap");
+        cap.append(h("span", null, `#${ev.epoch} Q${ev.quarter}`), h("span", null, `${fmt(ev.depth_ppm)} ± ${fmt(ev.err_ppm)}`));
+        box.append(svg, cap);
+        grid.appendChild(box);
+      });
+      host.appendChild(grid);
+    },
+    oddeven(host) {
+      const odd = P.odd_bins || [], even = P.even_bins || [];
+      const [lo, hi] = foldRange();
+      const c = chart(host, { w: 420, h: 300, m: { l: 50, r: 12, t: 14, b: 40 }, x: { dom: [-win, win], label: "hours from mid-transit", n: 6 },
+        y: { dom: [lo, hi], label: "ppm" }, aria: "Odd and even transits folded apart" });
+      const dx = win / 120;
+      const drawSet = (bins, col, off) => bins.forEach(([bx, by, e]) => { errbar(c, c.g, bx + off, by, e, col); dot(c, c.g, bx + off, by, col, 3); });
+      drawSet(odd, "var(--ion)", -dx); drawSet(even, "var(--solar)", dx);
+      const r2 = metrics("rung2_shape");
+      if (isNum(r2.odd_ppm) && isNum(r2.even_ppm)) {
+        text(c.g, { x: c.m.l + 6, y: c.m.t + 14, class: "lab" }, `odd ${fmt(r2.odd_ppm)} · even ${fmt(r2.even_ppm)} ppm${isNum(r2.parity_sigma) ? ` · ${fmt(r2.parity_sigma, 1)} sigma apart` : ""}`);
+      }
+      hover(c, host, [...odd.map(([bx, by, e]) => ({ x: bx - dx, y: by, e, w: "odd" })), ...even.map(([bx, by, e]) => ({ x: bx + dx, y: by, e, w: "even" }))],
+        (p) => [`${p.w} · ${fmt(p.x, 1)} h`, `${pm(p.y, p.e)} ppm`]);
+    },
+    seasons(host) {
+      const m = metrics("rung3_stability"), depths = m.season_depths || {}, errs = m.season_errs || {};
+      const rows = Object.keys(depths).map((s) => ({ x: +s, y: depths[s], e: errs[s] })).filter((p) => isNum(p.y));
+      if (!rows.length) { host.appendChild(h("p", "dossier-notice", "The depth was not measured by season.")); return; }
+      const [lo, hi] = extent(rows.flatMap((p) => [p.y - (p.e || 0), p.y + (p.e || 0)]), 0.3);
+      const c = chart(host, { w: 420, h: 300, m: { l: 54, r: 12, t: 14, b: 40 }, x: { dom: [-0.6, 3.6], label: "Kepler season", ticks: [0, 1, 2, 3] },
+        y: { dom: [lo, hi], label: "depth, ppm" }, aria: "Transit depth in each Kepler season" });
+      const mean = rows.reduce((s, p) => s + p.y, 0) / rows.length;
+      el("line", { x1: c.m.l, x2: c.w - c.m.r, y1: c.sy(mean), y2: c.sy(mean), stroke: "var(--solar)", "stroke-width": 1.5 }, c.g);
+      rows.forEach((p) => { errbar(c, c.g, p.x, p.y, p.e, "var(--ion)"); dot(c, c.g, p.x, p.y, "var(--ion)", 4.5); });
+      hover(c, host, rows, (p) => [`season ${p.x}`, `${pm(p.y, p.e)} ppm`]);
+    },
+    series(host) {
+      const S = (P.series_binned || []).filter((p) => isNum(p[0]) && isNum(p[1]));
+      if (!S.length) return;
+      const ys = S.map((p) => p[1]).sort((a, b) => a - b);
+      const q = (f) => ys[Math.min(ys.length - 1, Math.floor(f * ys.length))];
+      const lo = Math.min(q(0.005), -Math.abs(E.depth_ppm || 0)) * 1.2, hi = Math.max(q(0.995), 100) * 1.2;
+      const [t0, t1] = extent(S.map((p) => p[0]), 0.01);
+      const c = chart(host, { h: 280, x: { dom: [t0, t1], label: "BKJD", n: 8 }, y: { dom: [lo, hi], label: "ppm" }, aria: "The light curve in time bins" });
+      S.forEach(([t, y]) => el("circle", { cx: c.sx(t), cy: c.sy(clamp(y, lo, hi)), r: 1.3, class: "pt" }, c.g));
+      if (isNum(E.period_days) && isNum(E.t0_bkjd) && E.period_days > 0) {
+        for (let t = E.t0_bkjd + Math.ceil((t0 - E.t0_bkjd) / E.period_days) * E.period_days; t <= t1; t += E.period_days) {
+          el("line", { x1: c.sx(t), x2: c.sx(t), y1: c.sy(lo), y2: c.sy(lo) + (c.sy(lo * 0.85) - c.sy(lo)), stroke: "var(--solar)", "stroke-width": 2 }, c.g);
+        }
+      }
+      hover(c, host, S.map(([x, y, n]) => ({ x, y: clamp(y, lo, hi), raw: y, n })), (p) => [`BKJD ${fmt(p.x, 2)}`, `${fmt(p.raw)} ppm · ${fmt(p.n)} cadences`], "x");
+    },
+    pixmaps(host) {
+      const PX = (D.pixels || []).filter((s) => Array.isArray(s.snr) && s.snr.length);
+      if (!PX.length) return;
+      const vmax = Math.max(1, ...PX.flatMap((s) => s.snr.flat().filter(isNum)));
+      const wrap = h("div", "pix-grid");
+      PX.forEach((s) => {
+        const nr = s.snr.length, nc = s.snr[0].length, cs = 28, pad = 16, w = nc * cs + pad * 2, hh = nr * cs + pad * 2;
+        const X = (col) => pad + (col + 0.5) * cs, Y = (row) => pad + (nr - 0.5 - row) * cs;    // row 0 at the bottom
+        const peak = Math.max(...s.snr.flat().filter(isNum));
+        const svg = el("svg", { viewBox: `0 0 ${w} ${hh}`, role: "img",
+          "aria-label": `Season ${s.season} difference image, peak S/N ${fmt(peak, 1)}, nearer ${s.nearer === "target" ? "this star" : s.nearer || "neither"}` });
+        for (let r = 0; r < nr; r++) {
+          for (let cc = 0; cc < nc; cc++) {
+            const v = s.snr[r][cc], x = pad + cc * cs + 1, y = pad + (nr - 1 - r) * cs + 1;
+            const pct = isNum(v) ? Math.round(clamp(v / vmax, 0, 1) * 100) : 0;
+            const fill = isNum(v) ? (v <= 0 ? "var(--surface)" : `color-mix(in srgb, var(--ion) ${pct}%, var(--surface))`) : "var(--bg)";
+            const rect = el("rect", { x, y, width: cs - 2, height: cs - 2, rx: 2, fill, class: "pix" }, svg);
+            el("title", {}, rect).textContent = isNum(v) ? `S/N ${fmt(v, 1)}` : "no valid pixel";
+            if (!isNum(v)) el("line", { x1: x + 5, y1: y + cs - 7, x2: x + cs - 7, y2: y + 5, class: "baseline" }, svg);
+          }
+        }
+        const [tc, tr] = s.pos_target || [], [nc2, nr2] = s.pos_neighbour || [];
+        if (isNum(nc2) && isNum(nr2)) el("rect", { x: X(nc2) - 7, y: Y(nr2) - 7, width: 14, height: 14, class: "mark-neighbour" }, svg);
+        if (isNum(tc) && isNum(tr)) {
+          el("circle", { cx: X(tc), cy: Y(tr), r: 9, class: "mark-halo" }, svg);
+          el("circle", { cx: X(tc), cy: Y(tr), r: 9, class: "mark-target" }, svg);
+        }
+        const [xc, xr] = s.centroid || [];
+        if (isNum(xc) && isNum(xr)) {
+          const cx = X(xc), cy = Y(xr), e = Math.max((s.centroid_sigma || 0) * cs, 2);
+          el("line", { x1: cx - e, x2: cx + e, y1: cy, y2: cy, class: "mark-centroid" }, svg);
+          el("line", { x1: cx, x2: cx, y1: cy - e, y2: cy + e, class: "mark-centroid" }, svg);
+          el("line", { x1: cx - 5, x2: cx + 5, y1: cy - 5, y2: cy + 5, class: "mark-centroid" }, svg);
+          el("line", { x1: cx - 5, x2: cx + 5, y1: cy + 5, y2: cy - 5, class: "mark-centroid" }, svg);
+        }
+        const cell = h("figure", "pix-cell");
+        cell.append(svg, h("figcaption", null, `Season ${s.season}${(s.quarters || []).length ? ` · Q${s.quarters.join(", Q")}` : ""} · peak S/N ${fmt(peak, 1)}`));
+        wrap.appendChild(cell);
+      });
+      host.appendChild(wrap);
+      host.appendChild(h("p", "dossier-small", `Colour runs from no lost light to S/N ${fmt(vmax, 0)}. A crossed square is a pixel outside the stored aperture.`));
+    },
+  };
+
+  // ---- "How it might look", from the look block (dossier.look_numbers)
+  const L = D.look;
+  const STAR = (t) => (t > 5500 ? "#fff3d6" : t > 4500 ? "#ffd9a0" : t > 3900 ? "#ffbe78" : "#ff9d5c");    // planet_svg.STAR_COLOURS
+  const PLANET = (t) => (!isNum(t) ? "#a7b0c3" : t < 200 ? "#cfe6ff" : t < 320 ? "#7fb7a3" : t < 700 ? "#c9a96e" : "#e0784a");
+  let gid = 0;
+  const space = (host, w, hh, aria) => {
+    const svg = el("svg", { viewBox: `0 0 ${w} ${hh}`, class: "space", role: "img", "aria-label": aria });
+    el("rect", { width: w, height: hh, rx: 12, fill: "var(--space)" }, svg);
+    host.appendChild(svg);
+    return svg;
+  };
+  const glow = (svg, cx, cy, r, col) => {
+    const id = `dg${gid++}`, gr = el("radialGradient", { id }, el("defs", {}, svg));
+    el("stop", { offset: "0%", "stop-color": col, "stop-opacity": 0.5 }, gr);
+    el("stop", { offset: "100%", "stop-color": col, "stop-opacity": 0 }, gr);
+    el("circle", { cx, cy, r: r * 1.8, fill: `url(#${id})` }, svg);
+  };
+  const disc = (svg, cx, cy, r, col, shade = true) => {
+    const id = `dd${gid++}`, gr = el("radialGradient", { id, cx: "38%", cy: "35%", r: "75%" }, el("defs", {}, svg));
+    el("stop", { offset: "0%", "stop-color": "#ffffff", "stop-opacity": shade ? 0.35 : 0 }, gr);
+    el("stop", { offset: "60%", "stop-color": col, "stop-opacity": 1 }, gr);
+    el("stop", { offset: "100%", "stop-color": "#000000", "stop-opacity": shade ? 0.5 : 0.2 }, gr);
+    el("circle", { cx, cy, r, fill: col }, svg);
+    el("circle", { cx, cy, r, fill: `url(#${id})` }, svg);
+  };
+  const cap = (svg, x, y, words, strong) => text(svg, { x, y, "text-anchor": "middle", class: strong ? "cap strong" : "cap" }, words);
+  const name = (D.target && D.target.name) || "the star";
+  const LOOK = L ? {
+    "look-star"(host) {
+      const svg = space(host, 520, 300, `${name} beside the Sun, to scale`);
+      const R = 95, rs = L.radius_rsun || 1, k = R * Math.min(rs, 1.5);
+      glow(svg, 150, 150, R, "#ffe9b8"); disc(svg, 150, 150, R, STAR(5772), false);
+      glow(svg, 385, 150, k, STAR(L.teff_k)); disc(svg, 385, 150, k, STAR(L.teff_k), false);
+      cap(svg, 150, 272, "the Sun", true); cap(svg, 150, 288, "5,772 K · 1 solar radius");
+      cap(svg, 385, 272, name, true); cap(svg, 385, 288, `${fmt(L.teff_k)} K · ${fmt(rs, 2)} solar radii`);
+      cap(svg, 385, 30, `${fmt(L.luminosity_lsun, 3)} of the Sun's light`);
+    },
+    "look-planet"(host) {
+      const svg = space(host, 520, 300, "The candidate planet beside Earth and Neptune, to scale");
+      const rp = L.rp_rearth || 1, unit = Math.min(27, 95 / Math.max(rp, 3.88));
+      [[90, 1, "#3f8fd8", "Earth", "1 Earth radius"], [255, rp, PLANET(L.teq_k), "the candidate", `${fmt(rp, 2)} Earth radii`],
+        [420, 3.88, "#3a5fc8", "Neptune", "3.88 Earth radii"]].forEach(([cx, r, col, n1, n2]) => {
+        disc(svg, cx, 140, r * unit, col); cap(svg, cx, 262, n1, true); cap(svg, cx, 278, n2);
+      });
+    },
+    "look-orbit"(host) {
+      const svg = space(host, 520, 420, "The orbit drawn against the habitable zone");
+      const cx = 260, cy = 210, a = L.a_au, outer = Math.max(L.hz_optimistic_outer_au || 0, L.hz_outer_au || 0, a || 0);
+      if (!isNum(outer) || outer <= 0) { cap(svg, cx, cy, "The orbit or the habitable zone is not known."); return; }
+      const sc = 186 / outer, ring = (d, fill, op) => { if (isNum(d)) el("circle", { cx, cy, r: d * sc, fill, "fill-opacity": op }, svg); };
+      ring(L.hz_optimistic_outer_au, "#2f8f5b", 0.2); ring(L.hz_outer_au, "#2f8f5b", 0.25);
+      ring(L.hz_inner_au, "var(--space)", 1); ring(L.hz_inner_au, "#d9a441", 0.15); ring(L.hz_optimistic_inner_au, "var(--space)", 1);
+      if (isNum(a)) el("circle", { cx, cy, r: a * sc, fill: "none", stroke: "var(--space-fg)", "stroke-width": 1.5, "stroke-dasharray": "3 4" }, svg);
+      glow(svg, cx, cy, 10, STAR(L.teff_k)); el("circle", { cx, cy, r: 7, fill: STAR(L.teff_k) }, svg);
+      if (isNum(a)) {
+        const px = cx + a * sc * Math.cos(-0.6), py = cy + a * sc * Math.sin(-0.6);
+        el("circle", { cx: px, cy: py, r: 5, fill: PLANET(L.teq_k) }, svg);
+        text(svg, { x: px + 10, y: py - 8, class: "cap strong" }, `planet, ${fmt(a, 3)} AU`);
+        text(svg, { x: px + 10, y: py + 8, class: "cap" }, `${fmt(L.insolation_earth, 1)} times Earth's sunlight, ${fmt(L.teq_k)} K`);
+      }
+      const lab = (d, words, dy) => { if (isNum(d)) text(svg, { x: cx + 6, y: cy - d * sc + dy, class: "cap" }, words); };
+      lab(L.hz_inner_au, `inner edge ${fmt(L.hz_inner_au, 2)} AU`, -4); lab(L.hz_outer_au, `outer edge ${fmt(L.hz_outer_au, 2)} AU`, 12);
+    },
+    "look-sky"(host) {
+      const svg = space(host, 520, 300, "The star seen from the planet beside the Sun seen from Earth");
+      const sc = 60, sun = 0.533, ang = L.angular_size_deg;
+      glow(svg, 140, 140, (sun / 2) * sc, "#fff3d6"); disc(svg, 140, 140, (sun / 2) * sc, "#fff3d6", false);
+      if (isNum(ang)) { const r = Math.min(110, (ang / 2) * sc); glow(svg, 380, 140, r, STAR(L.teff_k)); disc(svg, 380, 140, r, STAR(L.teff_k), false); }
+      cap(svg, 140, 256, "the Sun from Earth", true); cap(svg, 140, 272, `${fmt(sun, 2)} degrees across`);
+      cap(svg, 380, 256, "the star from the planet", true);
+      cap(svg, 380, 272, isNum(ang) ? `${fmt(ang, 2)} degrees across, ${fmt(L.angular_size_sun, 1)} times wider` : "not known");
+    },
+  } : {};
+
+  // ---- the standalone export: write the eight sections first (the dashboard renders them on the server)
+  const main = document.getElementById("dossier");
+  if (main && !main.childElementCount) buildStandalone(main);
+
+  function buildStandalone(app) {
+    const toggle = h("div", "dossier-toggle");
+    toggle.setAttribute("role", "group"); toggle.setAttribute("aria-label", "Level of detail");
+    const buttons = {};
+    const setLevel = (level) => {
+      root.setAttribute("data-level", level);
+      root.setAttribute("data-mode", level === "expert" ? "expert" : "simple");
+      Object.keys(buttons).forEach((k) => buttons[k].setAttribute("aria-pressed", String(k === level)));
+    };
+    [["normal", "Normal"], ["expert", "Expert"]].forEach(([level, label]) => {
+      const b = h("button", null, label); b.type = "button";
+      b.addEventListener("click", () => setLevel(level));
+      buttons[level] = b; toggle.appendChild(b);
+    });
+    setLevel(root.getAttribute("data-level") === "expert" ? "expert" : "normal");
+    const head = h("header", "dossier-hero");
+    const st = D.status || {};
+    head.append(h("p", "dossier-kicker", `Candidate dossier · ${(D.target || {}).target_id || ""}`), h("h1", null, name),
+      h("p", "hero-summary", D.summary), h("p", "dossier-status", st.headline || st.label || ""), toggle);
+    const tiles = h("div", "tiles dossier-tiles");
+    [["period, days", fmt(E.period_days, 4)], ["depth, ppm", fmt(E.depth_ppm)], ["duration, hours", fmt(E.duration_h, 2)], ["SDE", fmt(E.sde, 1)]]
+      .forEach(([k, v]) => { const t = h("div", "tile"); t.append(h("div", "stat-value", v), h("div", "stat-label", k)); tiles.appendChild(t); });
+    head.appendChild(tiles);
+    app.appendChild(head);
+    const ids = ["signal", "repeat", "checks", "pixels", "star", "look", "caveats", "reproduce"];
+    const nav = h("nav", "dossier-sections"); nav.setAttribute("aria-label", "Sections");
+    const secs = (D.sections || []).map((s, i) => {
+      const a = h("a", null, `${s.number} ${s.title}`); a.href = `#${ids[i]}`; nav.appendChild(a);
+      const sec = h("section", "dossier-section"); sec.id = ids[i];
+      sec.append(h("p", "dossier-kicker mono", s.number), h("h2", null, s.title));
+      return sec;
+    });
+    app.appendChild(nav);
+    const sec = (i) => secs[i] || app;
+    const fig = (i, chartName, caption, expert) => {
+      const f = h("figure", `dossier-fig${expert ? " only-expert" : ""}`);
+      const host = h("div", chartName === "gallery" ? "gallery-host" : chartName === "pixmaps" ? "pix-host" : "chart-host");
+      host.dataset.chart = chartName;
+      f.append(h("figcaption", null, caption), host);
+      sec(i).appendChild(f);
+    };
+    const para = (i, words, cls) => { if (words) sec(i).appendChild(h("p", cls || null, words)); };
+    const list = (i, items) => {
+      const ul = h("ul", "dossier-caveats");
+      items.forEach(([b, rest, cls]) => { const li = h("li", cls || null); li.append(h("strong", null, b), document.createTextNode(` ${rest || ""}`)); ul.appendChild(li); });
+      sec(i).appendChild(ul);
+    };
+    // 01 to 08
+    para(0, `Every ${fmt(E.period_days, 2)} days the star dims by ${fmt(E.depth_ppm)} parts per million for ${fmt(E.duration_h, 1)} hours.`, "lede");
+    fig(0, "fold", "The folded light curve: single cadences, their bins and the model.");
+    fig(0, "spectrum", "The detection spectrum, with the aliases of the period marked.", true);
+    para(1, `${(P.events || []).length} transits with data were measured one by one.`, "lede");
+    fig(1, "events", "The depth of every transit, measured on its own.");
+    fig(1, "gallery", "Every transit, one by one, with the model.");
+    fig(1, "oddeven", "Odd and even transits, folded apart.");
+    fig(1, "seasons", "The depth in each Kepler season.");
+    fig(1, "series", "The whole light curve in time bins.", true);
+    para(2, st.headline ? `${st.headline}.` : "", "lede");
+    list(2, (D.why || []).map((w) => [`${w.name}: ${w.status}.`, w.sentence]));
+    const fap = D.fap || {}, fpp = D.fpp || {};
+    list(2, [[`False alarm: ${fap.words || "not yet calibrated"}.`, fap.sentence_not_covered],
+      [`${fpp.label || "False positive"}: ${fpp.words || "not computed"}${fpp.signed_off ? "" : " (provisional)"}.`, fpp.sentence_not_covered]]);
+    if (isNum(fap.n)) para(2, `${fmt(fap.k)} of ${fmt(fap.n)} null searches reached SDE ${fmt(fap.sde, 1)}.`, "only-expert mono");
+    if (D.pixels) fig(3, "pixmaps", "Difference images by season: the ring marks this star, the square the neighbour, the cross the centroid.");
+    else para(3, "The pixel step has not produced difference images for this signal.");
+    const r5 = metrics("rung5_pixels");
+    list(3, (r5.seasons || []).map((s) => [`Season ${s.season}:`, s.voting === false ? `not voting, ${s.non_voting_reason || "no reason stored"}.`
+      : `nearer ${s.nearer === "target" ? "this star" : s.nearer || "neither"}, ${fmt(s.dist_target_pix, 2)} px from it and ${fmt(s.dist_neighbour_pix, 2)} px from the neighbour.`]));
+    const S = D.star || {}, PL = D.planet || {};
+    const v = (x, d, unit) => (x && isNum(x.median) ? `${fmt(x.median, d)} (+${fmt(x.plus, d)} / -${fmt(x.minus, d)}) ${unit}` : "not known");
+    list(4, [["Spectral type", S.spectral_type || "not known"], ["Distance", v(S.distance_pc, 0, "pc")], ["Temperature", v(S.teff, 0, "K")],
+      ["Radius", v(S.radius, 3, "solar radii")], ["Mass", v(S.mass, 3, "solar masses")], ["Planet radius", v(PL.rp_rearth, 2, "Earth radii")],
+      ["Orbit", v(PL.a_au, 3, "AU")], ["Equilibrium temperature", v(PL.teq_k, 0, "K")]]);
+    if (L) { ["look-star", "look-planet", "look-orbit", "look-sky"].forEach((n) => fig(5, n, "")); }
+    else para(5, "The star could not be characterized, so the panel is not drawn.");
+    list(6, (D.caveats || []).map((c) => [`${c.title}.`, c.text]));
+    const prov = D.provenance || {};
+    sec(7).appendChild(h("pre", "dossier-pre", (prov.commands || []).join("\n")));
+    para(7, `Search version ${prov.search_version}, ladder version ${prov.ladder_version}, commit ${prov.git_commit}, ${(prov.queries || []).length} logged queries.`);
+    const body = h("div", "dossier-body");
+    secs.forEach((s) => body.appendChild(s));
+    app.appendChild(body);
   }
 
-  var toggle = h("div", "dossier-toggle");
-  toggle.setAttribute("role", "group");
-  toggle.setAttribute("aria-label", "Level of detail");
-  var buttons = {};
-  [["normal", "Normal"], ["expert", "Expert"]].forEach(function (pair) {
-    var b = h("button", null, pair[1]);
-    b.type = "button";
-    b.addEventListener("click", function () { setLevel(pair[0]); });
-    buttons[pair[0]] = b;
-    toggle.appendChild(b);
+  // ---- fill every box
+  document.querySelectorAll("[data-chart]").forEach((host) => {
+    const draw = DRAW[host.dataset.chart] || LOOK[host.dataset.chart];
+    if (!draw || host.childElementCount) return;
+    try { draw(host); } catch (err) {
+      host.replaceChildren(h("p", "dossier-notice", "This figure could not be drawn from the stored data."));
+      if (window.console) console.error(err);
+    }
   });
-  function setLevel(level) {
-    root.setAttribute("data-level", level);
-    root.setAttribute("data-mode", level === "expert" ? "expert" : "simple");
-    Object.keys(buttons).forEach(function (k) { buttons[k].setAttribute("aria-pressed", String(k === level)); });
-  }
-  setLevel(root.getAttribute("data-level") === "expert" ? "expert" : "normal");
-
-  var head = h("header", "dossier-head");
-  var titles = h("div");
-  titles.appendChild(h("h1", null, (D.target && D.target.name) || "Dossier"));
-  titles.appendChild(h("p", "dossier-status", (D.status && (D.status.headline || D.status.label)) || ""));
-  head.appendChild(titles);
-  head.appendChild(toggle);
-  app.appendChild(head);
-
-  var sections = (D.sections || []).map(function (s) {
-    var sec = h("section", "dossier-section");
-    sec.id = "section-" + s.number;
-    var h2 = h("h2");
-    h2.appendChild(h("span", "num", s.number));
-    h2.appendChild(document.createTextNode(s.title));
-    sec.appendChild(h2);
-    app.appendChild(sec);
-    return sec;
-  });
-  function section(i) { return sections[i] || app; }
-
-  /* 01 The signal */
-  var eph = D.ephemeris || {};
-  section(0).appendChild(h("p", null, D.summary));
-  var tiles = h("div", "dossier-tiles");
-  [["Period", num(eph.period_days, 4) + " days"], ["Depth", num(eph.depth_ppm, 0) + " ppm"],
-   ["Duration", num(eph.duration_h, 2) + " hours"], ["SDE", num(eph.sde, 1)]].forEach(function (t) {
-    var tile = h("div", "dossier-tile");
-    tile.appendChild(h("span", "label", t[0]));
-    tile.appendChild(h("span", "value", t[1]));
-    tiles.appendChild(tile);
-  });
-  section(0).appendChild(tiles);
-
-  /* 02 Does it repeat */
-  var events = (D.plots && D.plots.events) || [];
-  section(1).appendChild(h("p", null, events.length + " transits with data were measured one by one."));
-
-  /* 03 The checks */
-  var why = h("ul", "dossier-list");
-  (D.why || []).forEach(function (w) {
-    var li = h("li");
-    li.appendChild(h("b", null, w.name + ": " + w.status));
-    li.appendChild(h("span", null, w.sentence));
-    if (w.numbers) li.appendChild(h("span", "only-expert", " (" + w.numbers + ")"));
-    why.appendChild(li);
-  });
-  section(2).appendChild(why);
-  var fap = D.fap || {}, fpp = D.fpp || {};
-  [["False alarm", fap.words, fap.sentence_not_covered,
-    fap.n !== undefined ? fap.k + " of " + num(fap.n, 0) + " null searches reached SDE " + num(fap.sde, 1) : ""],
-   [fpp.label || "False positive", fpp.words + (fpp.signed_off ? "" : " (provisional)"), fpp.sentence_not_covered,
-    "FPP " + num(fpp.value, 4) + ", confusion radius " + num(fpp.confusion_radius_arcsec, 2) + " arcsec"]
-  ].forEach(function (p) {
-    var box = h("div", "dossier-prob");
-    var line = h("p");
-    line.appendChild(h("b", null, p[0] + " "));
-    line.appendChild(document.createTextNode(p[1] || "unknown"));
-    box.appendChild(line);
-    box.appendChild(h("p", "not-covered", p[2]));
-    if (p[3]) box.appendChild(h("p", "only-expert", p[3]));
-    section(2).appendChild(box);
-  });
-
-  /* 04 Which star is dimming */
-  var px = D.pixels;
-  section(3).appendChild(h("p", null, px ? "Difference images in " + px.length + " seasons: the dip is nearer the " +
-    "target in " + px.filter(function (s) { return s.nearer === "target"; }).length + " of them."
-    : "The pixel check has not produced difference images for this signal."));
-
-  /* 05 The star and the planet */
-  var star = D.star || {}, planet = D.planet || {};
-  var kv = h("ul", "dossier-list");
-  [["Spectral type", star.spectral_type || "unknown"], ["Temperature", val(star.teff, 0, " K")],
-   ["Radius", val(star.radius, 3, " Rsun")], ["Mass", val(star.mass, 3, " Msun")],
-   ["Distance", val(star.distance_pc, 0, " pc")], ["Planet radius", val(planet.rp_rearth, 2, " Earth radii")],
-   ["Orbit", val(planet.a_au, 3, " AU")], ["Equilibrium temperature", val(planet.teq_k, 0, " K")]
-  ].forEach(function (r) {
-    var li = h("li");
-    li.appendChild(h("b", null, r[0]));
-    li.appendChild(h("span", null, r[1]));
-    kv.appendChild(li);
-  });
-  section(4).appendChild(kv);
-
-  /* 06 How it might look */
-  var look = D.look;
-  section(5).appendChild(h("p", null, look ? "A " + look.star_colour + " star; from the planet it would look " +
-    num(look.angular_size_sun, 1) + " times as wide as the Sun from Earth."
-    : "The star could not be characterized, so the panel is not drawn."));
-
-  /* 07 What is not yet known */
-  var cav = h("ul", "dossier-list");
-  (D.caveats || []).forEach(function (c) {
-    var li = h("li");
-    li.appendChild(h("b", null, c.title));
-    li.appendChild(h("span", null, c.text));
-    cav.appendChild(li);
-  });
-  section(6).appendChild(cav);
-
-  /* 08 How to reproduce */
-  var prov = D.provenance || {};
-  section(7).appendChild(h("pre", null, (prov.commands || []).join("\n")));
-  section(7).appendChild(h("p", null, "Search version " + prov.search_version + ", ladder version " +
-    prov.ladder_version + ", commit " + prov.git_commit + ", " + (prov.queries || []).length + " logged queries."));
 })();

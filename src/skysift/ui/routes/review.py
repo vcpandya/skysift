@@ -201,12 +201,14 @@ def signal_page(request: Request, signal_id: int):
 @router.get("/partials/signals/{signal_id}/verdict", response_class=HTMLResponse)
 def verdict_popup(request: Request, signal_id: int):
     """The verdict popup's body: the headline, one row per check, what an undetermined check was missing and what
-    happens next, and the status glossary."""
-    d = queries.signal_detail(request.app.state.store, signal_id)
+    happens next, the two probabilities when the target has a dossier, and the status glossary."""
+    store = request.app.state.store
+    d = queries.signal_detail(store, signal_id)
     if d is None:
         return HTMLResponse(f"no signal {signal_id}", status_code=404)
+    dossier = queries.dossier_for(store, d["signal"]["target_id"], with_data=False)
     return render(request, "partials/verdict.html", signal=d["signal"], target=d["target"], signal_id=signal_id,
-                  **_explained(d, signal_id))
+                  dossier=dossier, **_explained(d, signal_id))
 
 
 @router.get("/partials/signals/{signal_id}/detail", response_class=HTMLResponse)

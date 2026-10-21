@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% from "partials/empty.html" import empty %}
+{% block title %}SkySift · Dossiers{% endblock %}
+{% block head %}<link rel="stylesheet" href="/static/dossier.css?v={{ git_commit }}">{% endblock %}
+{% block content %}
+<section class="page-head">
+  <h1>Dossiers</h1>
+  <p class="lede">The final set: every stage 2 candidate and every candidate a person approved, each with two separate numbers. False alarm asks whether noise could make the dip. False positive asks whether a real dip could be something other than a planet on this star.</p>
+</section>
+<p class="muted">{% if versions == 'current' %}Current search version only · <a href="/dossiers?versions=all">show all</a>{% else %}All search versions · <a href="/dossiers?versions=current">current only</a>{% endif %}</p>
+{% if not rows %}
+{{ empty("No dossiers yet. A dossier is generated for a stage-2 candidate or an approved one.", "Run a sweep, then a recheck.", "/sources", "Open Sources") }}
+<p class="empty-more"><a href="/candidates">See the candidates</a></p>
+{% else %}
+{% if not any_dossier %}
+<div class="dossier-empty-note">
+  <p class="empty-title">No dossiers yet.</p>
+  <p>A dossier is generated for a stage-2 candidate or an approved one. The candidates below qualify: press Generate on one. More come from a sweep and a recheck, from <a href="/sources">Sources</a>; the full list is on <a href="/candidates">Candidates</a>.</p>
+</div>
+{% endif %}
+<div class="dossier-grid">
+{% for r in rows %}{% include "partials/dossier_tile.html" %}{% endfor %}
+</div>
+{% endif %}
+{% endblock %}

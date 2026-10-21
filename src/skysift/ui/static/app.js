@@ -42,9 +42,13 @@
     dialog.setAttribute("aria-labelledby", heading ? heading.id : "dialog-title");
     if (!dialog.open) dialog.showModal();
     // a long partial marks its heading [data-dialog-focus] (tabindex -1) so focus starts at the top, not on a far link
-    const first = dialog.querySelector("[data-dialog-focus]")
+    // a trigger with data-dialog-at (the Dossiers tile's probability pills) opens the partial at that block instead
+    const at = opener && opener.dataset.dialogAt;
+    const block = at ? dialog.querySelector(`#${CSS.escape(at)}`) : null;
+    const first = block || dialog.querySelector("[data-dialog-focus]")
       || focusables().find((el) => !el.matches("[data-dialog-close]")) || focusables()[0];
     if (first) first.focus();
+    if (block) block.scrollIntoView({ block: "start" });
   };
   const closeDialog = () => { if (dialog.open) dialog.close(); };
   dialog.addEventListener("close", () => {

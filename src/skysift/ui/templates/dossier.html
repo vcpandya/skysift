@@ -1,0 +1,346 @@
+{% extends "base.html" %}
+{% from "partials/pill.html" import pill, reviewer_pill %}
+{% from "partials/empty.html" import empty %}
+{#- A value with its 16th to 84th percentile range: {"median", "minus", "plus"} -#}
+{% macro val(v, digits=2, unit="") -%}
+{%- if v and v.median is not none -%}
+<span class="mono">{{ v.median | fmt(digits) }}</span>{% if v.plus is not none and v.minus is not none %}<span class="pm"> +{{ v.plus | fmt(digits) }} −{{ v.minus | fmt(digits) }}</span>{% endif %}{% if unit %} {{ unit }}{% endif %}
+{%- else -%}<span class="muted">not known</span>{%- endif -%}
+{%- endmacro %}
+{% macro notice_list(items) -%}
+{%- for name, text in items %}
+<p class="dossier-notice" role="note">The {{ name }} part of this dossier could not be built: {{ text }}.</p>
+{%- endfor %}
+{%- endmacro %}
+{% macro section_head(n, sid, title, lede=None) -%}
+<header class="dossier-sec-head">
+  <p class="dossier-kicker mono">{{ n }}</p>
+  <h2 id="{{ sid }}-title">{{ title }}</h2>
+  {%- if lede %}
+  <p class="lede">{{ lede }}</p>
+  {%- endif %}
+</header>
+{%- endmacro %}
+{% block title %}SkySift · {{ page_title }}{% endblock %}
+{% block head %}<link rel="stylesheet" href="/static/dossier.css?v={{ git_commit }}">{% endblock %}
+{% block content %}
+{% if dz is none %}
+<section class="page-head">
+  <h1>No dossier for <code>{{ target_id }}</code> yet</h1>
+  {%- if r %}
+  <p class="lede">This target has a signal, so a dossier can be generated from what is stored. It takes one to three minutes.</p>
+  {%- else %}
+  <p class="lede">SkySift has no signal for this target, so there is nothing to build a dossier from.</p>
+  {%- endif %}
+</section>
+{% if r %}<div class="dossier-grid dossier-grid-one">{% include "partials/dossier_tile.html" %}</div>{% else %}{{ empty("Nothing to show.", "Dossiers are listed on the Dossiers page.", "/dossiers", "Open the Dossiers page") }}{% endif %}
+{% else %}
+{% set e = data.ephemeris or {} %}
+{% set plots = data.plots or {} %}
+{% set fap = data.fap or dz.fap_detail or {} %}
+{% set fpp = data.fpp or dz.fpp_detail or {} %}
+{% set star = data.star or {} %}
+{% set planet = data.planet or {} %}
+{% set status = data.status or {} %}
+{% set prov = data.provenance or {} %}
+{% set tests_by = {} %}{% for t in data.tests or [] %}{% set _ = tests_by.update({t.rung: t}) %}{% endfor %}
+<nav class="signal-nav" aria-label="Dossier">
+  <a href="/dossiers">← Dossiers</a> · <a href="/signals/{{ signal_id }}">Open in the candidate queue</a>
+</nav>
+<header class="dossier-hero">
+  <p class="dossier-kicker">Candidate dossier · <code>{{ target_id }}</code></p>
+  <h1>{{ (data.target or {}).name or target_id }}</h1>
+  <p class="hero-summary">{{ data.summary }}</p>
+  <div class="hero-verdict">
+    {%- if status.reviewer and status.label not in status.reviewer %}{{ reviewer_pill(status.reviewer) }}{% endif %}
+    {{ pill("pass" if (status.final_status or "").startswith("candidate") else "muted", status.label or status.final_status or "unknown", "/partials/signals/" ~ signal_id ~ "/verdict") }}
+    <a class="btn prob-link" href="#checks"><span class="prob-name">False alarm</span> {{ fap.words or "not yet calibrated" }}</a>
+    <a class="btn prob-link" href="#checks"><span class="prob-name">{{ fpp.label or "False positive" }}</span> {{ fpp.words or "not computed" }}{% if not fpp.signed_off %} <span class="chip-provisional">provisional</span>{% endif %}</a>
+  </div>
+  <div class="dossier-actions">
+    <a class="btn primary" href="/dossiers/{{ target_id }}/export.html" download>Download standalone page</a>
+    <a class="btn" href="/signals/{{ signal_id }}">Open in the candidate queue</a>
+    <span class="muted">Generated {{ generated_words }} · search version {{ dz.search_version }} · ladder version {{ dz.ladder_version or "unknown" }}</span>
+  </div>
+  {%- if dz.stale %}
+  <div class="dossier-stale" role="status">
+    <p><strong>This dossier is stale:</strong> {{ dz.stale_reason }}. It still shows the numbers as they were on {{ generated_words }}.</p>
+    <form hx-post="/dossiers/{{ target_id }}/generate" hx-target="#dossier-job" hx-swap="innerHTML">
+      <input type="hidden" name="_token" value="{{ token }}">
+      <button class="primary">Regenerate</button>
+    </form>
+  </div>
+  {%- endif %}
+  <div id="dossier-job" class="dossier-job" aria-live="polite">{% if r and r.generating %}{% include "partials/dossier_tile.html" %}{% endif %}</div>
+  {%- if dz.data_error %}
+  <p class="dossier-notice" role="alert">{{ dz.data_error[:1] | upper }}{{ dz.data_error[1:] }}. Generate the dossier again to rebuild it.</p>
+  {%- endif %}
+  <div class="tiles dossier-tiles">
+    <div class="tile"><div class="stat-value">{{ e.period_days | fmt(4) }}</div><div class="stat-label">period, days</div><p class="stat-gloss only-simple">Time from one dip to the next.</p></div>
+    <div class="tile"><div class="stat-value">{{ e.depth_ppm | fmt(0) }}</div><div class="stat-label">depth, ppm</div><p class="stat-gloss only-simple">Share of the star's light the dip takes.</p></div>
+    <div class="tile"><div class="stat-value">{{ e.duration_h | fmt(2) }}</div><div class="stat-label">duration, hours</div><p class="stat-gloss only-simple">How long each dip lasts.</p></div>
+    <div class="tile"><div class="stat-value">{{ e.sde | fmt(1) }}</div><div class="stat-label">SDE</div><p class="stat-gloss only-simple">How far the signal stands above the noise.</p></div>
+  </div>
+</header>
+
+<div class="dossier-layout">
+<nav class="dossier-sections" aria-label="Sections">
+  {%- for sec in data.sections or [] %}
+  <a href="#{{ sections[loop.index0] }}"><span class="mono">{{ sec.number }}</span> {{ sec.title }}</a>
+  {%- endfor %}
+</nav>
+<div class="dossier-body">
+
+<section id="signal" class="dossier-section" aria-labelledby="signal-title">
+  {{ section_head("01", "signal", "The signal", "Every " ~ (e.period_days | fmt(2)) ~ " days the star dims by " ~ (e.depth_ppm | fmt(0)) ~ " parts per million for " ~ (e.duration_h | fmt(1)) ~ " hours. Folding the light curve on that period stacks every dip into one.") }}
+  <figure class="dossier-fig">
+    <figcaption>The folded light curve: single cadences, their bins with errors, and the {{ "fitted transit" if plots.model_kind == "fit" else "box the search found" }}.
+      <span class="legend"><i class="sw sw-muted"></i>cadences <i class="sw sw-ion"></i>bins <i class="sw sw-solar"></i>model</span></figcaption>
+    <div class="chart-host" data-chart="fold"></div>
+  </figure>
+  {{ notice_list(notices.get("signal", [])) }}
+  <div class="only-expert">
+    <figure class="dossier-fig">
+      <figcaption>The detection spectrum: SDE against trial period, with the aliases of the period and the spacecraft's own rhythms marked.
+        <span class="legend"><i class="sw sw-ion"></i>SDE <i class="sw sw-solar"></i>P, P/2, 2P, 3P <i class="sw sw-muted"></i>spacecraft rhythms</span></figcaption>
+      <div class="chart-host" data-chart="spectrum"></div>
+    </figure>
+    <dl class="dossier-kv">
+      <div><dt>Period</dt><dd class="mono">{{ e.period_days | fmt(6) }} d</dd></div>
+      <div><dt>Mid-transit T0</dt><dd class="mono">BKJD {{ e.t0_bkjd | fmt(4) }} (BJD {{ e.t0_bjd | fmt(4) }})</dd></div>
+      <div><dt>Duration (search box)</dt><dd class="mono">{{ e.duration_h | fmt(2) }} h</dd></div>
+      <div><dt>Depth</dt><dd class="mono">{{ e.depth_ppm | fmt(0) }} ppm</dd></div>
+      <div><dt>SDE, SNR</dt><dd class="mono">{{ e.sde | fmt(1) }}, {{ e.snr | fmt(1) }}</dd></div>
+      <div><dt>Transits in the baseline</dt><dd class="mono">{{ e.n_events | fmt }}</dd></div>
+      {%- set pw = ((data.signal or {}).extra or {}).get("prewhitening") %}
+      <div><dt>Pre-whitening</dt><dd>{% if pw and pw.n %}{{ pw.n }} wave{{ "s" if pw.n != 1 else "" }} removed before the search{% if pw.components %}, the strongest at {{ (1 / pw.components[0].frequency) | fmt(4) }} d and {{ pw.components[0].amplitude_ppm | fmt(0) }} ppm{% endif %}{% else %}none recorded{% endif %}</dd></div>
+    </dl>
+  </div>
+</section>
+
+{% set events = plots.events or [] %}
+{% set r3 = (tests_by.get("rung3_stability") or {}).get("metrics") or {} %}
+{% set r1e = (tests_by.get("rung1_events") or {}).get("metrics") or {} %}
+<section id="repeat" class="dossier-section" aria-labelledby="repeat-title">
+  {{ section_head("02", "repeat", "Does it repeat", events | length ~ " transits with data were measured one by one. A real transit comes back on schedule with the same depth, in every season.") }}
+  <figure class="dossier-fig">
+    <figcaption>The depth of every transit, measured on its own, with its error. The line is the mean.
+      <span class="legend"><i class="sw sw-ion"></i>one transit <i class="sw sw-solar"></i>mean</span></figcaption>
+    <div class="chart-host" data-chart="events"></div>
+  </figure>
+  <figure class="dossier-fig">
+    <figcaption>Every transit, one by one: {{ plots.gallery_half_hours | fmt(0) }} hours either side of each predicted mid-transit, with the model.</figcaption>
+    <div class="gallery-host" data-chart="gallery"></div>
+  </figure>
+  <div class="dossier-pair">
+    <figure class="dossier-fig">
+      <figcaption>Odd and even transits, folded apart. An eclipsing binary at twice the period would usually give two depths.
+        <span class="legend"><i class="sw sw-ion"></i>odd <i class="sw sw-solar"></i>even</span></figcaption>
+      <div class="chart-host" data-chart="oddeven"></div>
+    </figure>
+    <figure class="dossier-fig">
+      <figcaption>The depth in each Kepler season. Each season puts the star on a different detector.{% if r3.p_value is not none and r3.p_value is defined %} χ² {{ r3.chi2 | fmt(2) }} for {{ r3.dof }} degrees of freedom, p = {{ r3.p_value | fmt(2) }}.{% endif %}</figcaption>
+      <div class="chart-host" data-chart="seasons"></div>
+    </figure>
+  </div>
+  {{ notice_list(notices.get("repeat", [])) }}
+  <div class="only-expert">
+    <figure class="dossier-fig">
+      <figcaption>The whole light curve in {{ ((plots.series_bin_days or 0.25) * 24) | round | int }}-hour bins, with the predicted transit times marked.</figcaption>
+      <div class="chart-host" data-chart="series"></div>
+    </figure>
+    {%- if r1e %}
+    <p class="mono dossier-small">{{ r1e.n_events_with_data | fmt }} transits with data, {{ r1e.n_covered | fmt }} well covered, {{ r1e.n_good | fmt }} clean · largest single-event share {{ r1e.ses_max_over_mes | fmt(2) }} · median Chases {{ r1e.chases_median | fmt(2) }}</p>
+    {%- endif %}
+    {%- if events %}
+    <div class="table-wrap"><table class="dossier-table">
+      <caption>Per-transit depths</caption>
+      <thead><tr><th scope="col" class="num">epoch</th><th scope="col" class="num">quarter</th><th scope="col" class="num">mid-transit, BKJD</th><th scope="col" class="num">depth, ppm</th><th scope="col" class="num">coverage</th><th scope="col" class="num">single-event S/N</th></tr></thead>
+      <tbody>{% for ev in events %}<tr><td class="num">{{ ev.epoch }}</td><td class="num">{{ ev.quarter }}</td><td class="num">{{ ev.t_mid | fmt(3) }}</td><td class="num">{{ ev.depth_ppm | fmt(0) }} ± {{ ev.err_ppm | fmt(0) }}</td><td class="num">{{ ev.coverage | fmt(2) }}</td><td class="num">{{ ev.ses | fmt(1) }}</td></tr>{% endfor %}</tbody>
+    </table></div>
+    {%- endif %}
+  </div>
+</section>
+
+<section id="checks" class="dossier-section" aria-labelledby="checks-title">
+  {{ section_head("03", "checks", "The checks", (status.headline or "") ~ ". Most repeating dips are not planets: they are eclipsing binaries, blended neighbours or instrument effects. Each check below looks for one of them.") }}
+  {% with rows = why_rows, show_numbers = True, recheck_history = [] %}{% include "partials/why.html" %}{% endwith %}
+  {% with link = False, heading_id = "probabilities-page" %}{% include "partials/probabilities.html" %}{% endwith %}
+  <div class="only-expert dossier-expert">
+    <h3>The false-alarm counts</h3>
+    {%- if fap.n is not none and fap.n is defined %}
+    <p class="mono">{{ fap.k | fmt }} of {{ fap.n | fmt }} null searches reached SDE {{ fap.sde | fmt(1) }}{% if fap.fap is not none %} · FAP = (k + 1) / (n + 1) = {{ "%.3g" | format(fap.fap) }}{% endif %}</p>
+    {%- endif %}
+    <p>{% if not fap.calibrated %}Not yet calibrated: at least {{ fap.min_nulls or 200 }} null searches of this source and search version are needed, and the pilot calibration is still running.{% elif not fap.version_matches %}The calibration is for an older search ({{ (fap.versions or []) | join(", ") }}), so the number is shown here only: {{ "1 in %s" | format(fap.one_in) if fap.one_in else "no number" }}.{% else %}Calibration version {{ fap.calibration_version }}, matching the signal's search.{% endif %}</p>
+    <h3>The false-positive factor table</h3>
+    <p>FPP = (w<sub>BEB</sub> + w<sub>EB</sub>) / (w<sub>PL</sub> + w<sub>BEB</sub> + w<sub>EB</sub>){% if fpp.value is not none and fpp.value is defined %} = <span class="mono">{{ "%.3g" | format(fpp.value) }}</span>{% endif %}. Each weight is prior × geometric probability × data factor. Confusion radius {{ fpp.confusion_radius_arcsec | fmt(2) }} arcsec{% if not fpp.pixels %}, without pixel data{% endif %}.{% if not fpp.signed_off %} Provisional until the priors are reviewed.{% endif %}</p>
+    <div class="table-wrap"><table class="dossier-table">
+      <caption>Scenarios</caption>
+      <thead><tr><th scope="col">scenario</th><th scope="col" class="num">prior</th><th scope="col" class="num">geometric</th><th scope="col" class="num">data</th><th scope="col" class="num">weight</th></tr></thead>
+      <tbody>{% for sc in fpp.scenarios or [] %}<tr><th scope="row">{{ {"PL": "Planet on the target (PL)", "BEB": "Background eclipsing binary (BEB)", "EB": "Eclipsing binary on the target (EB)"}.get(sc.name, sc.name) }}</th>{% for k in ("prior", "geometric", "data", "weight") %}<td class="num mono">{{ "%.3g" | format(sc[k]) if sc[k] is number else "–" }}</td>{% endfor %}</tr>{% endfor %}</tbody>
+    </table></div>
+    {%- if fpp.neighbours %}
+    <div class="table-wrap"><table class="dossier-table">
+      <caption>Gaia neighbours bright enough to matter</caption>
+      <thead><tr><th scope="col">Gaia DR3</th><th scope="col" class="num">G</th><th scope="col" class="num">separation, arcsec</th><th scope="col" class="num">from the centroid, arcsec</th><th scope="col" class="num">flux fraction</th><th scope="col" class="num">exclusion factor</th></tr></thead>
+      <tbody>{% for n in fpp.neighbours %}<tr><td class="mono">{{ n.source_id }}</td><td class="num">{{ n.gmag | fmt(2) }}</td><td class="num">{{ n.sep_arcsec | fmt(1) }}</td><td class="num">{{ n.s_arcsec | fmt(1) }}</td><td class="num">{{ n.flux_fraction | fmt(3) }}</td><td class="num">{{ "%.3g" | format(n.exclusion) if n.exclusion is number else "–" }}</td></tr>{% endfor %}</tbody>
+    </table></div>
+    {%- endif %}
+  </div>
+</section>
+
+{% set pixel_why = (why_rows | selectattr("rung", "equalto", "rung5_pixels") | list | first) if why_rows else none %}
+<section id="pixels" class="dossier-section" aria-labelledby="pixels-title">
+  {{ section_head("04", "pixels", "Which star is dimming", (pixel_why.sentence ~ "." if pixel_why and rung5 else "The pixel check has not run for this signal, so the dip could still come from a neighbouring star whose light falls in the same photometry.")) }}
+  {%- if data.pixels %}
+  <figure class="dossier-fig">
+    <figcaption>Difference images by season: the signal-to-noise of the light lost in transit, pixel by pixel. The ring marks this star, the square the neighbour, and the cross the centroid of the lost light. The table below gives the same numbers.</figcaption>
+    <div class="pix-host" data-chart="pixmaps"></div>
+  </figure>
+  {%- elif rung5 and not notices.get("pixels") %}
+  <p class="dossier-notice" role="note">The pixel check ran, but its difference images are not stored with it, so the maps are not drawn here. The numbers are in the table.</p>
+  {%- elif not rung5 %}
+  <p class="dossier-notice" role="note">The pixel step has not run for this signal, so there are no difference images yet.</p>
+  {%- endif %}
+  {{ notice_list(notices.get("pixels", [])) }}
+  {%- if seasons %}
+  <div class="table-wrap"><table class="dossier-table pixel-table">
+    <caption>Difference-image centroid in each season</caption>
+    <thead><tr><th scope="col">season</th><th scope="col">vote</th><th scope="col">nearer</th><th scope="col" class="num">from this star, px</th><th scope="col" class="num">from the neighbour, px</th><th scope="col" class="num only-expert">centroid error along the axis, px</th><th scope="col" class="num">separation, sigma</th></tr></thead>
+    <tbody>
+    {%- for s in seasons %}
+    <tr class="{{ '' if s.voting else 'is-muted' }}"><th scope="row">{{ s.season }}</th>
+      <td>{% if s.voting %}voting{% else %}not voting: {{ s.non_voting_reason or "no reason stored" }}{% endif %}</td>
+      <td>{{ {"target": "this star", "neighbour": "the neighbour"}.get(s.nearer, s.nearer or "–") }}</td>
+      <td class="num">{{ s.dist_target_pix | fmt(2) }}{% if s.centroid_sigma_pix is number %} ± {{ s.centroid_sigma_pix | fmt(2) }}{% endif %}</td>
+      <td class="num">{{ s.dist_neighbour_pix | fmt(2) }}</td>
+      <td class="num only-expert">{{ s.centroid_sigma_axis_pix | fmt(3) }}</td>
+      <td class="num">{{ s.separation_sigma | fmt(1) }}</td></tr>
+    {%- endfor %}
+    </tbody>
+  </table></div>
+  {%- endif %}
+  {%- if close_call %}
+  <p class="dossier-caveat" role="note">{{ close_call }}</p>
+  {%- endif %}
+  {%- if rung5 and rung5.metrics %}
+  <p class="only-expert mono dossier-small">{{ rung5.metrics.n_events_used | fmt }} transits in {{ rung5.metrics.n_quarters_usable | fmt }} usable quarters{% if rung5.metrics.unusable_quarters %} · unusable quarters {{ rung5.metrics.unusable_quarters | join(", ") }}{% endif %}{% if rung5.reason %} · {{ rung5.reason }}{% endif %}</p>
+  {%- endif %}
+</section>
+
+<section id="star" class="dossier-section" aria-labelledby="star-title">
+  {{ section_head("05", "star", "The star and the planet", ("Gaia's colour and parallax make the host " ~ (("a " ~ star.spectral_type ~ " star") if star.spectral_type else "a star of unknown type") ~ ". The transit gives the planet's size relative to the star; its size in Earth radii, its orbit and its temperature follow from the star and carry its errors.") if star.route != "none" else "The star could not be characterized from Gaia photometry, so the planet's size, orbit and temperature are not given.") }}
+  {{ notice_list(notices.get("star", [])) }}
+  <div class="dossier-pair">
+    <dl class="dossier-kv">
+      <div><dt>Spectral type</dt><dd>{{ star.spectral_type or "not known" }}</dd></div>
+      <div><dt>Distance</dt><dd>{{ val(star.distance_pc, 0, "pc") }}</dd></div>
+      <div><dt>Temperature</dt><dd>{{ val(star.teff, 0, "K") }}</dd></div>
+      <div><dt>Radius</dt><dd>{{ val(star.radius, 3, "solar radii") }}</dd></div>
+      <div><dt>Mass</dt><dd>{{ val(star.mass, 3, "solar masses") }}</dd></div>
+      <div class="only-expert"><dt>Density</dt><dd>{{ val(star.density_gcc, 2, "g/cm³") }}</dd></div>
+      <div class="only-expert"><dt>Route</dt><dd class="mono">{{ star.route or "unknown" }}{% if star.abs_g is number %} · M<sub>G</sub> {{ star.abs_g | fmt(2) }}{% endif %}{% if star.abs_ks is number %} · M<sub>Ks</sub> {{ star.abs_ks | fmt(2) }}{% endif %}</dd></div>
+    </dl>
+    <dl class="dossier-kv">
+      <div><dt>Planet radius</dt><dd>{{ val(planet.rp_rearth, 2, "Earth radii") }}</dd></div>
+      <div><dt>Orbit</dt><dd>{{ val(planet.a_au, 3, "AU") }}</dd></div>
+      <div><dt>Equilibrium temperature</dt><dd>{{ val(planet.teq_k, 0, "K") }}</dd></div>
+      <div><dt>Starlight received</dt><dd>{{ val(planet.insolation_earth, 2, "times Earth's") }}</dd></div>
+      <div class="only-expert"><dt>a / R★</dt><dd>{{ val(planet.a_over_r, 1) }}</dd></div>
+      <div class="only-expert"><dt>Transit probability</dt><dd>{{ val(planet.transit_probability, 4) }}</dd></div>
+      <div class="only-expert"><dt>Habitable zone</dt><dd class="mono">{{ planet.hz_inner_au | fmt(3) }} to {{ planet.hz_outer_au | fmt(3) }} AU (optimistic {{ planet.hz_optimistic_inner_au | fmt(3) }} to {{ planet.hz_optimistic_outer_au | fmt(3) }})</dd></div>
+    </dl>
+  </div>
+  <div class="only-expert dossier-expert">
+    {%- set gx = star.gaia_cross_check %}
+    {%- if gx %}
+    <p><strong>Gaia's own values, as a cross-check.</strong> GSP-Phot Teff {{ gx.teff_gspphot | fmt(0) }} K, FLAME radius {{ gx.radius_flame | fmt(3) }} solar radii and mass {{ gx.mass_flame | fmt(3) }}, Bailer-Jones distance {{ gx.distance_bailer_jones_pc | fmt(1) }} pc. {{ gx.note or "" }}</p>
+    {%- endif %}
+    {%- if star.reddening_note %}
+    <p><strong>Reddening.</strong> {{ star.reddening_note }}</p>
+    {%- elif star.alt_radius_e02 %}
+    <p><strong>Reddening.</strong> At E(BP-RP) = 0.2 the stellar radius would be {{ val(star.alt_radius_e02, 3, "solar radii") }}.</p>
+    {%- endif %}
+    {%- for c in star.caveats or [] %}<p>{{ c }}</p>{% endfor %}
+  </div>
+</section>
+
+{% set look = data.look %}
+<section id="look" class="dossier-section" aria-labelledby="look-title">
+  {{ section_head("06", "look", "How it might look", "Nothing here is a photograph. The drawings are built only from the numbers above: the star's colour from its temperature, the planet's size from the transit, the orbit from Kepler's third law.") }}
+  {{ notice_list(notices.get("look", [])) }}
+  {%- if look %}
+  <div class="look-lead">
+    <div class="look-thumb">{{ look_svg }}</div>
+    <p class="look-sentence">{{ look_words }}.{% if look.angular_size_sun is number %} From the planet, the star would look {{ look.angular_size_sun | fmt(1) }} times as wide as the Sun does from Earth.{% endif %}</p>
+  </div>
+  <div class="look-grid">
+    <figure class="look-panel"><figcaption>The star beside the Sun, to scale. The colour follows the surface temperature.</figcaption><div class="chart-host" data-chart="look-star"></div></figure>
+    <figure class="look-panel"><figcaption>The planet beside Earth and Neptune, to scale. Its size is measured; its surface is a guess.</figcaption><div class="chart-host" data-chart="look-planet"></div></figure>
+    <figure class="look-panel"><figcaption>The orbit against the habitable zone, to scale (Kopparapu et al. 2013 edges; lighter is the optimistic zone).</figcaption><div class="chart-host" data-chart="look-orbit"></div></figure>
+    <figure class="look-panel"><figcaption>The star seen from the planet, beside the Sun seen from Earth, at the same angular scale.</figcaption><div class="chart-host" data-chart="look-sky"></div></figure>
+  </div>
+  <div class="only-expert dossier-expert">
+    <h3>The formulas behind the drawings</h3>
+    <ul class="dossier-formulas">
+      <li>Star colour by Teff: above 5,500 K pale yellow, above 4,500 K light orange, above 3,900 K orange, otherwise red-orange.</li>
+      <li>Planet radius R<sub>p</sub> = k R★, with k the fitted radius ratio; the disc colour by T<sub>eq</sub>: under 200 K ice blue, under 320 K sea green, under 700 K sand, otherwise rust.</li>
+      <li>Orbit a = (G M★ P² / 4π²)<sup>1/3</sup>; luminosity L = R★² (Teff / 5,772 K)⁴; starlight received S = L / a².</li>
+      <li>T<sub>eq</sub> = Teff (R★ / 2a)<sup>1/2</sup> (1 − A)<sup>1/4</sup> with albedo A = 0.3 and full heat redistribution.</li>
+      <li>Habitable-zone edges at the effective-flux limits of Kopparapu et al. 2013 for this Teff, d = (L / S<sub>eff</sub>)<sup>1/2</sup>.</li>
+      <li>Apparent size of the star from the planet 2 arctan(R★ / a) = {{ look.angular_size_deg | fmt(2) }} degrees, against 0.533 for the Sun from Earth.</li>
+    </ul>
+  </div>
+  {%- else %}
+  <p class="dossier-notice" role="note">The star could not be characterized, so the panel is not drawn.</p>
+  {%- endif %}
+</section>
+
+<section id="caveats" class="dossier-section" aria-labelledby="caveats-title">
+  {{ section_head("07", "caveats", "What is not yet known") }}
+  {{ notice_list(notices.get("caveats", [])) }}
+  <ul class="dossier-caveats">
+    {%- for c in data.caveats or [] %}
+    <li><strong>{{ c.title }}.</strong> {{ c.text }}</li>
+    {%- endfor %}
+  </ul>
+</section>
+
+<section id="reproduce" class="dossier-section" aria-labelledby="reproduce-title">
+  {{ section_head("08", "reproduce", "How to reproduce", "Everything here comes from public archives and the stored results. These commands rebuild it.") }}
+  <pre class="dossier-pre">{{ (prov.commands or []) | join("\n") }}</pre>
+  <p>Search version <code>{{ prov.search_version }}</code>, ladder version <code>{{ prov.ladder_version }}</code>, commit <code>{{ prov.git_commit }}</code>, {{ (prov.queries or []) | length }} logged {{ "query" if (prov.queries or []) | length == 1 else "queries" }} for this target, {{ (prov.files or []) | length }} stored {{ "file" if (prov.files or []) | length == 1 else "files" }}.</p>
+  <div class="only-expert">
+    {%- if prov.queries %}
+    <div class="table-wrap"><table class="dossier-table">
+      <caption>The query log for this target</caption>
+      <thead><tr><th scope="col">service</th><th scope="col">when</th><th scope="col" class="num">status</th><th scope="col" class="num">bytes</th><th scope="col">URL</th><th scope="col">sha256</th></tr></thead>
+      <tbody>{% for q in prov.queries %}<tr><td>{{ q.service }}</td><td class="mono">{{ (q.utc or "")[:19] }}</td><td class="num">{{ q.status | fmt }}</td><td class="num">{{ q.nbytes | fmt }}</td><td class="wrap"><code>{{ q.url }}</code></td><td class="mono">{{ (q.sha256 or "")[:16] }}</td></tr>{% endfor %}</tbody>
+    </table></div>
+    {%- endif %}
+    {%- if prov.files %}
+    <div class="table-wrap"><table class="dossier-table">
+      <caption>Stored files</caption>
+      <thead><tr><th scope="col">kind</th><th scope="col">URL</th><th scope="col" class="num">bytes</th><th scope="col">sha256</th></tr></thead>
+      <tbody>{% for f in prov.files %}<tr><td>{{ f.kind }}</td><td class="wrap"><code>{{ f.url }}</code></td><td class="num">{{ f.nbytes | fmt }}</td><td class="mono">{{ (f.sha256 or "")[:16] }}</td></tr>{% endfor %}</tbody>
+    </table></div>
+    {%- endif %}
+    {%- if prov.calibration_file %}<p class="mono dossier-small">calibration file {{ prov.calibration_file }}</p>{% endif %}
+  </div>
+  {%- if (r and r.group == "approved") or dz.pack_path %}
+  <h3 id="pack-title">The submission pack</h3>
+  <p>No portal takes a new Kepler candidate from outside a mission, so the pack holds what each route needs. Tick a step when you have done it.{% if dz.pack_path %} The pack is at <code>{{ dz.pack_path }}</code>.{% endif %}</p>
+  {% include "partials/pack_steps.html" %}
+  {%- endif %}
+</section>
+
+</div>
+</div>
+
+<div id="decision">{% include "partials/decision_bar.html" %}</div>
+{%- if payload %}
+<script id="dossier-data" type="application/json">{{ payload }}</script>
+<script src="/static/dossier.js?v={{ git_commit }}" defer></script>
+{%- endif %}
+{% endif %}
+{% endblock %}

@@ -7,6 +7,9 @@
   {%- if v.reviewer and v.reviewer != v.headline %} {{ reviewer_pill(v.reviewer) }}{% endif %}</p>
   <h2 id="dialog-title" class="verdict-head pill-{{ v.tone }}" tabindex="-1" data-dialog-focus>{{ v.headline }}</h2>
   {% with show_numbers = True %}{% include "partials/why.html" %}{% endwith %}
+  {%- if dossier %}
+  {% with fap = dossier.fap_detail or {}, fpp = dossier.fpp_detail or {}, target_id = dossier.target_id, link = True, heading_id = "probabilities-title" %}{% include "partials/probabilities.html" %}{% endwith %}
+  {%- endif %}
   <footer class="verdict-foot">
     <ul class="verdict-glossary">
       {% for line in glossary %}<li>{{ line }}</li>{% endfor %}

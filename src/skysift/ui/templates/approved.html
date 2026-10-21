@@ -19,7 +19,7 @@
   <td><a class="row-name" href="/signals/{{ r.id }}?status=all"><code>{{ r.target_id }}</code></a></td><td>{% if r.reviewer %}{{ r.reviewer }}. {% endif %}{{ r.verdict_word }}{% if r.stage %}, {{ r.stage }}{% endif %}</td>
   <td class="num">{{ r.period | fmt(4) }}</td><td class="num">{{ r.depth_ppm | fmt(0) }}</td><td class="num">{{ r.sde | fmt(1) }}</td>
   <td class="muted">{{ r.decided_at }}</td><td class="wrap desc">{{ r.note }}</td><td>{{ r.doi or '' }}</td>
-  <td class="row-actions"><button type="button" data-copy="{{ r.copy_text }}">Copy summary</button> <a href="/signals/{{ r.id }}/review.json">review JSON</a></td>
+  <td class="row-actions"><button type="button" data-copy="{{ r.copy_text }}">Copy summary</button> <a href="/signals/{{ r.id }}/review.json">review JSON</a>{% if r.target_id in dossier_targets %} <a href="/dossiers/{{ r.target_id }}">Dossier</a>{% endif %}</td>
 </tr>
 {% endfor %}
 </tbody></table></div>
@@ -33,6 +33,9 @@
   <div class="card-actions">
     <button type="button" data-copy="{{ r.copy_text }}">Copy summary</button>
     <a href="/signals/{{ r.id }}/review.json">review JSON</a>
+    {%- if r.target_id in dossier_targets %}
+    <a href="/dossiers/{{ r.target_id }}">Dossier</a>
+    {%- endif %}
   </div>
   {% endcall %}
 {% endfor %}

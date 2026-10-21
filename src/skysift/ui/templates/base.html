@@ -9,6 +9,7 @@
 <script src="/static/htmx.min.js?v={{ git_commit }}" defer></script>
 {% if plotly_url %}<script src="{{ plotly_url }}?v={{ git_commit }}" defer></script>{% endif %}
 <script src="/static/app.js?v={{ git_commit }}" defer></script>
+{% block head %}{% endblock %}
 </head>
 <body hx-headers='{"X-SkySift-Token": "{{ token }}"}' data-token="{{ token }}">
 <a class="skip" href="#main">Skip to content</a>
