@@ -581,6 +581,12 @@ def test_partial_box_sentence_names_the_star_and_lists_three_seasons():
     assert chr(0x2014) not in both
 
 
+def test_partial_box_clause_counts_the_voting_seasons_with_a_cut_box():
+    assert dossier_module.partial_box_clause([_complete(1), _partial(3, 0.3, voting=False)]) == ""
+    assert dossier_module.partial_box_clause([_partial(0, 0.1), _complete(1), _partial(2, 0.07)]) == (
+        ", 2 of them with a box cut by the stamp edge")
+
+
 def test_caveats_list_a_partial_box_after_the_close_call(env):
     rep = generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch)
     data = _with_seasons(_data(rep), [{**_partial(0, 0.10), "separation_sigma": 3.2}])

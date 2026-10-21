@@ -572,9 +572,7 @@ def abstract_text(data: dict) -> str:
         parts.append("In difference images the dip is nearer a neighbouring star than this one.")
     else:
         near = sum(1 for s in voting if s.get("nearer") == "target")
-        parts.append(f"In difference images {_seasons_phrase(near, voting, silent)}.")
-    if cut := ds.partial_box_sentence(voting):
-        parts.append(cut)
+        parts.append(f"In difference images {_seasons_phrase(near, voting, silent)}{ds.partial_box_clause(voting)}.")
     rp, a = (data.get("planet") or {}).get("rp_rearth"), (data.get("planet") or {}).get("a_au")
     if isinstance(rp, dict) and _num(rp.get("median")) is not None:
         orbit = f" on a {_num(a.get('median')):.3f} AU orbit" if isinstance(a, dict) and _num(a.get("median")) else ""

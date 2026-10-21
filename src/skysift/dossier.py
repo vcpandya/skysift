@@ -687,6 +687,13 @@ def partial_box_sentence(seasons: list[dict]) -> str:
             "is added to its error.")
 
 
+def partial_box_clause(seasons: list[dict]) -> str:
+    """The short form for a word-limited text: ", N of them with a box cut by the stamp edge", N the number of voting
+    seasons whose box is cut; "" when none is."""
+    n = len(partial_box_seasons(seasons))
+    return f", {n} of them with a box cut by the stamp edge" if n else ""
+
+
 def caveats(data: dict) -> list[dict]:
     """The section 07 list, [{"title", "text"}], by the rules of the plan in their order, each sentence built from
     the stored numbers."""

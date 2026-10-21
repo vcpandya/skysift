@@ -558,7 +558,15 @@ def test_pixel_sentence_names_a_box_cut_by_the_stamp_edge(env_with_dossier):
     text = pack_module.pixel_sentence(data)
     assert "In season 0 this star's 3 x 3 box is cut by the stamp edge" in text and "(0.10 px at most)" in text
     assert text.index("pixels from the neighbour.") < text.index(cut) < text.index("Averaged over the seasons")
-    assert cut in pack_module.abstract_text(data) and EM_DASH not in text
+    assert EM_DASH not in text
+
+
+def test_the_abstract_carries_only_a_short_clause_for_a_cut_box(env_with_dossier):
+    abstract = pack_module.abstract_text(_with_a_cut_box(env_with_dossier.data))
+    assert "in 2 of 2 seasons that voted, 1 of them with a box cut by the stamp edge." in abstract
+    assert "3 x 3 box" not in abstract and "px at most" not in abstract
+    plain = pack_module.abstract_text(_with_a_silent_season(env_with_dossier.data))
+    assert "box cut by the stamp edge" not in plain
 
 
 def test_pixel_sentence_without_box_keys_is_unchanged(env_with_dossier):
