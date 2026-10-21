@@ -29,6 +29,12 @@ same numbering derived from the quarter when it is not known (``quarter_season``
 Known limitation: the Gaussian PSF is not the Kepler PRF, so the two-source depth errors are somewhat optimistic
 when the model does not match the stars' images (on a pixel-integrated synthetic stamp a dip on the neighbour put
 2.7 sigma of depth on the target in one season).
+
+Known limitation, a follow-up: the bisector test takes the stars' WCS positions as they are. The two-source fit's
+free common shift (0.05 to 0.15 px in the KIC 6146676 study, about the size of the centroid error) is stored per
+season as ``shift_pix`` (with the fitted ``psf_sigma_pix``) so the dossier can print a caveat, but it is neither
+applied to the positions nor added to the centroid error; and the target's position (a Gaia epoch for a KBonus star)
+is not moved to the TPF epoch for proper motion. The study made the same choices.
 """
 from __future__ import annotations
 
@@ -51,6 +57,7 @@ SEASON_EVENTS_MIN = 2       # seasons with fewer events do not vote in the verdi
 TRANSITS_MIN = 3            # fewer usable transits in all leaves the rung undetermined
 VALID_FINITE_FRACTION = 0.9  # a pixel is valid when finite this often, relative to the best pixel of the quarter
 SEPARATION_SIGMA = 3.0      # pass: centroid nearer the target by more than this many sigma
+PASS_SEASONS_MIN = 2        # a pass needs at least this many voting seasons; one alone leaves it undetermined
 NEIGHBOUR_DEPTH_SIGMA = 3.0  # pass: |two-source depth on the neighbour| below this many sigma; fail: above it
 TARGET_DEPTH_SIGMA = 1.0    # fail (two-source route): depth on the target below this many sigma
 DIRECT_WEIGHT_FLOOR = 100.0  # direct-image fit weights 1 / sqrt(|direct| + floor), photon-like (study choice)
@@ -136,6 +143,8 @@ class SeasonResult:
     centroid_sigma_axis_pix: float = math.nan   # centroid error along the neighbour-to-target axis
     non_voting_reason: str | None = None        # "box incomplete: target" | "box incomplete: neighbour" |
     #                                             "centroid not measured"; None for a voting season
+    shift_pix: tuple[float, float] = _NAN2      # the two-source fit's common (col, row) shift of both stars
+    psf_sigma_pix: float = math.nan             # the two-source fit's Gaussian PSF width
 
 
 def _f(x) -> float | None:
@@ -172,6 +181,7 @@ class Localisation:
             "depth_neighbour_ppm": [_f(x) for x in s.depth_neighbour_ppm], "max_snr": _f(s.max_snr),
             "two_source": bool(s.two_source), "voting": bool(s.voting), "non_voting_reason": s.non_voting_reason,
             "pos_target": [_f(x) for x in s.pos_target], "pos_neighbour": [_f(x) for x in s.pos_neighbour],
+            "shift_pix": [_f(x) for x in s.shift_pix], "psf_sigma_pix": _f(s.psf_sigma_pix),
         } for s in self.seasons]
         # the mean centroid error of the voting seasons (of all seasons with one when none votes)
         sig = [s["centroid_sigma_pix"] for s in seasons if s["centroid_sigma_pix"] is not None and s["voting"]]
@@ -566,22 +576,46 @@ def neighbour_votes(seasons: list[SeasonResult]) -> tuple[float, int, int]:
     return k, len(neighbour), len(voting)
 
 
+def _why_not_voting(s: SeasonResult) -> str:
+    if s.non_voting_reason:
+        return s.non_voting_reason
+    return "too few events" if s.n_events < SEASON_EVENTS_MIN else "centroid not measured"
+
+
+def _disagreement(s: SeasonResult) -> str:
+    """Why a voting season that does not pass disagrees: the centroid on the neighbour's side, or (the centroid on
+    the target's side) the two-source depth on the neighbour that vetoed it."""
+    if s.separation_sigma < -SEPARATION_SIGMA:
+        return f"centroid nearer neighbour, {abs(s.separation_sigma):.1f} sigma"
+    d_n, e_n = s.depth_neighbour_ppm
+    if math.isfinite(d_n) and math.isfinite(e_n):
+        return f"neighbour depth {d_n:.0f} +/- {e_n:.0f} ppm"
+    return "neighbour depth not measured"
+
+
 def verdict(seasons: list[SeasonResult], n_events_used: int) -> tuple[str, str]:
     """Spec 4.4 over the voting seasons (both stars' 3x3 boxes on the frame, a finite centroid and error, at least
     SEASON_EVENTS_MIN events): undetermined with fewer than TRANSITS_MIN usable transits or no voting season; pass
-    when every voting season is more than SEPARATION_SIGMA on the target's side of the bisector with a neighbour
-    depth consistent with zero; fail when a majority is more than SEPARATION_SIGMA on the neighbour's side or puts
-    the depth on the neighbour; otherwise undetermined, naming the first voting season that does not pass
-    ("ambiguous" when it lies within SEPARATION_SIGMA of the bisector)."""
+    when every voting season, and at least PASS_SEASONS_MIN of them, is more than SEPARATION_SIGMA on the target's
+    side of the bisector with a neighbour depth consistent with zero (one voting season alone is undetermined, naming
+    why the others did not vote); fail when a majority is more than SEPARATION_SIGMA on the neighbour's side or puts
+    the depth on the neighbour; otherwise undetermined, naming the first voting season that does not pass and why
+    ("ambiguous" when it lies within SEPARATION_SIGMA of the bisector, else the centroid on the neighbour's side or the
+    two-source depth on the neighbour)."""
     if n_events_used < TRANSITS_MIN:
         return "undetermined", f"pixels: {n_events_used} usable transits < {TRANSITS_MIN}"
     voting = _voting(seasons)
     if not voting:
         if seasons and all(not s.on_frame for s in seasons):
             return "undetermined", "pixels: no season holds both stars on the frame"
-        return "undetermined", "pixels: no season localises the dip"
+        return "undetermined", "pixels: no season localizes the dip"
     m = len(voting)
     if all(_on_target(s) for s in voting):
+        if m < PASS_SEASONS_MIN:
+            voters = {id(s) for s in voting}
+            others = [s for s in sorted(seasons, key=lambda s: s.season) if id(s) not in voters]
+            why = "; ".join(f"season {s.season}: {_why_not_voting(s)}" for s in others) or "no other season has data"
+            return "undetermined", f"pixels: only one season could vote ({why})"
         k = min(s.separation_sigma for s in voting)
         return "pass", f"pixels: the dip is on the target in {m}/{m} seasons (centroid >= {k:.1f} sigma nearer)"
     k, n, _m = neighbour_votes(seasons)
@@ -590,8 +624,7 @@ def verdict(seasons: list[SeasonResult], n_events_used: int) -> tuple[str, str]:
     s = next(s for s in voting if not _on_target(s))
     if abs(s.separation_sigma) <= SEPARATION_SIGMA:
         return "undetermined", f"pixels: season {s.season} ambiguous ({s.separation_sigma:.1f} sigma)"
-    return "undetermined", (f"pixels: season {s.season} disagrees "
-                            f"(centroid nearer {s.nearer}, {abs(s.separation_sigma):.1f} sigma)")
+    return "undetermined", f"pixels: season {s.season} disagrees ({_disagreement(s)})"
 
 
 def localise(cube, time, quality, quarter, eph: Ephemeris, pos_target, pos_neighbour, *,
@@ -640,7 +673,8 @@ def localise_quarters(quarters: list[QuarterData], eph: Ephemeris, *,
             depth_target_ppm=fit["depth_target_ppm"], depth_neighbour_ppm=fit["depth_neighbour_ppm"],
             max_snr=max_snr, quarters=list(im.quarters), two_source=on_frame, voting=voting, on_frame=on_frame,
             pos_target=(ct, rt), pos_neighbour=(cn, rn), centroid_sigma_axis_pix=sigma_axis,
-            non_voting_reason=why))
+            non_voting_reason=why, shift_pix=tuple(float(x) for x in fit["shift_pix"]),
+            psf_sigma_pix=float(fit["psf_sigma_pix"])))
     n_used = int(sum(im.n_events for im in images))
     v, reason = verdict(seasons, n_used)
     return Localisation(seasons=seasons, n_events_used=n_used, n_quarters_usable=len(usable),

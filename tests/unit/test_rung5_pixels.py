@@ -2,6 +2,7 @@
 TPFs of the test_pixels scene (``tests/unit/synthetic_tpf``): the KBonus target on pixel (4, 4) of a 9 x 9 stamp and
 the Kepler target whose pixels hold it, five times brighter, 2.9 px away and turning about it from season to season."""
 import copy
+import hashlib
 import io
 import json
 import math
@@ -89,8 +90,8 @@ def test_rung5_passes_when_the_dip_is_on_the_target(bundle_with_tpfs):
     assert m["neighbour_kic"] == NEIGHBOUR_KIC and m["neighbour_position"] == "tpf header"
     assert len(m["leak_depth_ppm"]) == 2 and m["pixels_sha256"] is None      # no store: nothing written
     assert all(s["nearer"] == "target" and s["voting"] for s in m["seasons"])
-    assert {"two_source", "pos_target", "pos_neighbour", "non_voting_reason", "centroid_sigma_axis_pix"} <= set(
-        m["seasons"][0])
+    assert {"two_source", "pos_target", "pos_neighbour", "non_voting_reason", "centroid_sigma_axis_pix", "shift_pix",
+            "psf_sigma_pix"} <= set(m["seasons"][0])
     _strict(m)
 
 
@@ -180,6 +181,9 @@ def test_rung5_stores_the_season_arrays_once_pinned_with_the_signal(tmp_path, bu
         assert row.kind == "pixels" and row.pinned and row.url == PIXELS_URL.format(signal_id=7)
         assert row.target_id == SIGNAL.target_id
         loc = row.local_path
+    # the sha in the metrics is that of the file actually pinned: the dossier selects the npz by it
+    assert hashlib.sha256(blob.get(loc)).hexdigest() == sha
+    assert store.live_artifact(PIXELS_URL.format(signal_id=7))["sha256"] == sha
     with np.load(io.BytesIO(blob.get(loc))) as z:
         seasons = [int(v) for v in z["seasons"]]
         assert seasons == [0, 1, 2, 3] and z["seasons"].dtype.kind == "i"
@@ -280,3 +284,5 @@ def test_a_rerun_with_other_arrays_releases_the_previous_file(tmp_path):
         assert s.get(ArtifactRow, first).deleted_at is not None
         assert s.get(ArtifactRow, new).pinned and s.get(ArtifactRow, new).deleted_at is None
     assert store.live_artifact(PIXELS_URL.format(signal_id=9))["sha256"] == new
+    with store.session() as s:
+        assert hashlib.sha256(blob.get(s.get(ArtifactRow, new).local_path)).hexdigest() == new

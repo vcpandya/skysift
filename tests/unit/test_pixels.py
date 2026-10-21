@@ -252,7 +252,10 @@ def test_verdict_rules():
     weak_nb = ok[:1] + [_season(1, sep=-2.5)] + ok[2:]
     assert verdict(weak_nb, 20) == ("undetermined", "pixels: season 1 ambiguous (-2.5 sigma)")
     leak = ok[:3] + [_season(3, d_n=(400.0, 50.0))]
-    assert verdict(leak, 20) == ("undetermined", "pixels: season 3 disagrees (centroid nearer target, 10.0 sigma)")
+    # the centroid is on the target's side; the two-source depth on the neighbour vetoes the season, and says so
+    assert verdict(leak, 20) == ("undetermined", "pixels: season 3 disagrees (neighbour depth 400 +/- 50 ppm)")
+    unmeasured = ok[:3] + [_season(3, d_n=(math.nan, math.nan))]
+    assert verdict(unmeasured, 20) == ("undetermined", "pixels: season 3 disagrees (neighbour depth not measured)")
     one_nb = [_season(0, sep=-8.0)] + ok[1:]
     assert verdict(one_nb, 20) == ("undetermined",
                                    "pixels: season 0 disagrees (centroid nearer neighbour, 8.0 sigma)")
@@ -272,9 +275,9 @@ def test_verdict_rules():
     none = [_season(s, voting=False, on_frame=False) for s in range(4)]
     assert verdict(none, 20) == ("undetermined", "pixels: no season holds both stars on the frame")
     lost = [_season(s, sep=math.nan, voting=False) for s in range(4)]
-    assert verdict(lost, 20) == ("undetermined", "pixels: no season localises the dip")
+    assert verdict(lost, 20) == ("undetermined", "pixels: no season localizes the dip")
     mixed = lost[:2] + [_season(s, voting=False, on_frame=False) for s in (2, 3)]   # some on the frame, none voting
-    assert verdict(mixed, 20) == ("undetermined", "pixels: no season localises the dip")
+    assert verdict(mixed, 20) == ("undetermined", "pixels: no season localizes the dip")
 
 
 def test_leak_depth_sees_an_injected_dip_and_nothing_elsewhere():
@@ -319,7 +322,8 @@ def test_metrics_carry_the_dashboard_keys_and_strict_json():
             "centroid_sigma_pix_mean", "seasons"} <= set(m)
     keys = {"season", "quarters", "n_events", "centroid_colrow", "centroid_sigma_pix", "dist_target_pix",
             "dist_neighbour_pix", "nearer", "separation_sigma", "depth_target_ppm", "depth_neighbour_ppm", "max_snr",
-            "two_source", "pos_target", "pos_neighbour", "voting", "non_voting_reason", "centroid_sigma_axis_pix"}
+            "two_source", "pos_target", "pos_neighbour", "voting", "non_voting_reason", "centroid_sigma_axis_pix",
+            "shift_pix", "psf_sigma_pix"}
     assert all(set(s) == keys for s in m["seasons"]) and len(m["seasons"]) == 4
     assert isinstance(m["seasons"][0]["centroid_colrow"][0], float) and isinstance(m["n_events_used"], int)
     assert m["centroid_sigma_pix_mean"] == np.mean([s["centroid_sigma_pix"] for s in m["seasons"]])
@@ -433,3 +437,28 @@ def test_neighbour_votes_are_the_fail_verdicts_numbers():
     assert loc.verdict == "fail" and (n, m) == (4, 4) and f"{n}/{m} seasons ({k:.1f} sigma)" in loc.reason
     k, n, m = localise(*make_cube("target")).neighbour_votes()
     assert (n, m) == (0, 4) and math.isnan(k)
+
+
+def test_a_pass_needs_two_voting_seasons():
+    """One voting season on the target is not enough for a pass: the reason names why each other season did not
+    vote. Two are enough; a fail is not held back."""
+    silenced = []
+    for season, why in ((1, "box incomplete: target"), (2, "box incomplete: neighbour")):
+        s = _season(season, voting=False, on_frame=False); s.non_voting_reason = why; silenced.append(s)
+    few = _season(3, sep=math.nan, voting=False, n=1)
+    one = [_season(0)] + silenced + [few]
+    why = ("pixels: only one season could vote (season 1: box incomplete: target; season 2: box incomplete: "
+           "neighbour; season 3: too few events)")
+    assert verdict(one, 20) == ("undetermined", why)
+    alone = "pixels: only one season could vote (no other season has data)"
+    assert verdict([_season(0)], 20) == ("undetermined", alone)
+    assert verdict([_season(0), _season(2)] + silenced[:1], 20)[0] == "pass"
+    assert verdict([_season(0, sep=-8.0)] + silenced, 20)[0] == "fail"
+
+
+def test_the_two_source_shift_is_stored_per_season():
+    loc = localise(*make_cube("target"))
+    m = loc.metrics(); json.dumps(m, allow_nan=False)
+    for s in m["seasons"]:
+        assert len(s["shift_pix"]) == 2 and all(x is not None and abs(x) <= 1.0 for x in s["shift_pix"])
+        assert 0.3 <= s["psf_sigma_pix"] <= 3.0
