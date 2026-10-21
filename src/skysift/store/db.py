@@ -129,6 +129,7 @@ class RecheckRow(Base):
 
 
 REVIEWER_DECIDED_REASON = "reviewer decided meanwhile"     # a step whose signal a reviewer decided on while it ran
+CHILD_EXISTS_REASON = "child already exists"     # a P/2 step that lost the race with an overlapping recheck
 
 
 @dataclass
@@ -170,13 +171,32 @@ def _latest_per_rung(tests) -> dict:
     return {rung: t for rung, (_key, t) in out.items()}
 
 
+# the undetermined reasons only the pixels can settle (recheck.PIXEL_REASON_PREFIXES, which sends them to step 4; a
+# test holds the two equal, as recheck imports this module)
+PIXEL_SETTLED_PREFIXES = ("season-dependent depth", "aperture-dependent depth", "systematic_alias", "period matches")
+
+
+def pixels_settle(latest: dict) -> bool:
+    """Spec 4.3: a pixel pass promotes a signal that was undetermined only for reasons the pixels settle. True when
+    the latest ``rung5_pixels`` row passed and every other latest row that gave no verdict gave one of those."""
+    pixels = latest.get("rung5_pixels")
+    if pixels is None or str(_get(pixels, "status")) != "pass":
+        return False
+    return all(str((t.get("reason") if isinstance(t, dict) else t.reason) or "").startswith(PIXEL_SETTLED_PREFIXES)
+               for rung, t in latest.items() if rung != "rung5_pixels" and str(_get(t, "status")) == "undetermined")
+
+
 def status_from_tests(tests: list[dict] | list[TestRow]) -> str:
     """The engine outcome the latest row of each rung gives: "fail" if any failed, else "undetermined" if any gave
-    no verdict, else "pass"; "pending" when the signal has no test rows."""
-    statuses = {str(_get(t, "status")) for t in _latest_per_rung(tests).values()}
+    no verdict (unless a pixel pass settles every such row, ``pixels_settle``), else "pass"; "pending" when the
+    signal has no test rows."""
+    latest = _latest_per_rung(tests)
+    statuses = {str(_get(t, "status")) for t in latest.values()}
     if not statuses:
         return "pending"
-    return "fail" if "fail" in statuses else "undetermined" if "undetermined" in statuses else "pass"
+    if "fail" in statuses:
+        return "fail"
+    return "undetermined" if "undetermined" in statuses and not pixels_settle(latest) else "pass"
 
 
 def final_status_for(outcome: str, tests) -> str:
@@ -506,7 +526,10 @@ class Store:
         child, a running run or a rechecks row without its tests for the next run to mistake for done work. When a
         reviewer decided on the signal while the step ran (any decision: approve, needs_data or reject; the queue
         leaves out every decided signal, as the recheck's ``_decided`` does), only a rechecks row "skipped" with
-        ``REVIEWER_DECIDED_REASON`` is written. Returns {"recheck_id", "child_id", "status", "written"}."""
+        ``REVIEWER_DECIDED_REASON`` is written. When the step derives a signal and the signal already has a child on
+        that branch (two rechecks overlapped: the other one committed its P/2 signal after this one decided to make
+        it), only a rechecks row "skipped" with ``CHILD_EXISTS_REASON`` is written, so one parent never has two P/2
+        children. Returns {"recheck_id", "child_id", "status", "written"}."""
         with self.session() as s:
             sig = s.get(SignalRow, write.signal_id)
             if sig is None:
@@ -520,6 +543,13 @@ class Store:
             child = run = None
             if write.child is not None:
                 c = write.child
+                twin = s.scalar(select(SignalRow.id).where(SignalRow.parent_signal_id == sig.id,
+                                                           SignalRow.branch == c.branch).limit(1))
+                if twin is not None:
+                    row = RecheckRow(signal_id=sig.id, step=write.step, ladder_version=write.ladder_version,
+                                     outcome="skipped", reason=CHILD_EXISTS_REASON)
+                    s.add(row); s.flush()
+                    return {"recheck_id": row.id, "child_id": None, "status": sig.final_status, "written": False}
                 for old in s.scalars(select(RunRow).where(RunRow.job_key == c.job_key, RunRow.status == "running")):
                     old.status, old.error, old.finished = "error", "superseded", utcnow()
                 run = RunRow(job_key=c.job_key, target_id=c.signal.target_id, detector=c.signal.detector,

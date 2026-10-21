@@ -15,12 +15,19 @@ stage-1 candidate of the current search version that no reviewer has decided on,
 A step computes everything first and touches the store not at all: it returns a ``StepWrite`` (its ``rechecks`` row
 with the outcome, "skipped" and why when it could not run, the test rows that point back to it, and the P/2 signal
 with its run) or None when it does not apply. ``Store.commit_recheck_step`` writes that in one transaction and derives
-the statuses again, so the dashboard shows rechecks in the same ladder and a failure never leaves half a step."""
+the statuses again, so the dashboard shows rechecks in the same ladder and a failure never leaves half a step.
+
+The work list starts as the queue and grows: a P/2 signal the period step makes joins it right after its parent, so
+it gets its catalogue and pixel steps in the same run. Each signal is rechecked under its own search window
+(``extra["search_window"]``, the sweep's ``--min-period/--max-period``). Follow-up: a long recheck after a sweep shows
+no progress on the dashboard's Live page (only the log lines); feeding ``say`` to the sweep's progress callback is
+left for later."""
 from __future__ import annotations
 
 import logging
 import math
 import time
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
@@ -44,6 +51,8 @@ from skysift.pipeline import (
     search_version,
 )
 from skysift.store.db import (
+    CHILD_EXISTS_REASON,
+    PIXEL_SETTLED_PREFIXES,
     RECHECK_JOB_PREFIX,
     REVIEWER_DECIDED_REASON,
     ChildWrite,
@@ -63,8 +72,10 @@ from skysift.vetting.rung5_pixels import Rung5Pixels
 
 logger = logging.getLogger(__name__)
 
-# undetermined reasons only the pixels can settle (spec 4.2): the pixel stage takes these and every stage-1 candidate
-PIXEL_REASON_PREFIXES = ("season-dependent depth", "aperture-dependent depth", "systematic_alias", "period matches")
+# undetermined reasons only the pixels can settle (spec 4.2): the pixel stage takes these and every stage-1 candidate.
+# One tuple with the status rule: a pixel pass on a signal undetermined only for these reasons promotes it to stage 2
+# (spec 4.3; ``store.db.pixels_settle``, used by ``status_from_tests``)
+PIXEL_REASON_PREFIXES = PIXEL_SETTLED_PREFIXES
 OPEN_STATUSES = ("undetermined", "candidate_stage1")         # what the queue holds; a step that settles it ends it
 PERIOD_BRANCH = "recheck:P/2"
 HALVING_REASON = "equal secondary at phase 0.5"              # rung 2's period-halving reason starts with this
@@ -294,21 +305,29 @@ STEPS: tuple[tuple[str, Callable[[RecheckContext, StoredSignal], StepWrite | Non
     ("catalogue", step_catalogue, wants_catalogue))
 
 
-def _commit(store: Store, say, sig: StoredSignal, write: StepWrite) -> bool:
+@dataclass
+class Committed:
+    """What one commit did: whether the step ran (wrote a row other than a skip) and the P/2 signal it made."""
+    ran: bool
+    child_id: int | None = None
+
+
+def _commit(store: Store, say, sig: StoredSignal, write: StepWrite) -> Committed:
     """Write a step through ``Store.commit_recheck_step``; a skip identical to the step's last row is not written
-    again, so a signal that stays stuck does not add a row at every sweep. Returns whether the step ran."""
+    again, so a signal that stays stuck does not add a row at every sweep."""
     if write.outcome == "skipped":
         rows = [r for r in store.rechecks(sig.id) if r["step"] == write.step]
         if rows and rows[-1]["outcome"] == "skipped" and rows[-1]["reason"] == write.reason:
-            return False
+            return Committed(False)
     done = store.commit_recheck_step(write)
     if not done["written"]:
-        say(f"recheck {sig.id} ({sig.signal.target_id}) {write.step}: skipped, {REVIEWER_DECIDED_REASON}")
-        return False
+        why = CHILD_EXISTS_REASON if write.child is not None and not _decided(store, sig.id) else REVIEWER_DECIDED_REASON
+        say(f"recheck {sig.id} ({sig.signal.target_id}) {write.step}: skipped, {why}")
+        return Committed(False)
     note = f", {write.reason}" if write.reason else ""
     child = f", signal {done['child_id']}" if done["child_id"] is not None else ""
     say(f"recheck {sig.id} ({sig.signal.target_id}) {write.step}: {write.outcome}{note}{child}")
-    return write.outcome != "skipped"
+    return Committed(write.outcome != "skipped", done["child_id"])
 
 
 def _stored(store: Store, signal_id: int) -> tuple[StoredSignal, dict | None]:
@@ -327,39 +346,77 @@ def _decided(store: Store, signal_id: int) -> bool:
         return s.scalar(select(DecisionRow.id).where(DecisionRow.signal_id == signal_id).limit(1)) is not None
 
 
+def signal_settings(settings: Settings, sig: StoredSignal) -> Settings:
+    """``settings`` with the signal's own search window (``extra["search_window"]``, stored by the sweep that found
+    it), so a standalone recheck after a ``--min-period/--max-period`` sweep compares and re-vets each signal under
+    the search version it was found with; a signal without one (none should be) keeps ``settings`` and says so."""
+    window = sig.signal.extra.get("search_window") or {}
+    lo, hi = window.get("min_period_days"), window.get("max_period_days")
+    if lo is None or hi is None:
+        logger.info("recheck of signal %s: no stored search window; using the configured %g to %g d", sig.id,
+                    settings.thresholds.min_period_days, settings.thresholds.max_period_days)
+        return settings
+    th = settings.thresholds
+    if (float(lo), float(hi)) == (th.min_period_days, th.max_period_days):
+        return settings
+    th = th.model_copy(update={"min_period_days": float(lo), "max_period_days": float(hi)})
+    return settings.model_copy(update={"thresholds": th})
+
+
+@dataclass
+class SignalDone:
+    """One signal's recheck: its outcome for the report, the P/2 signals it made (they join the work list), and
+    whether its pixel step settled (its pixel files can go)."""
+    outcome: str
+    children: list[int] = field(default_factory=list)
+    pixels_settled: bool = False
+
+
 def _recheck_one(store: Store, blob, settings: Settings, loader: LightCurveLoader, sig: StoredSignal,
                  target: dict | None, *, fetch, pixels: bool, with_novelty: bool, tpf_loader, say,
-                 report: RecheckReport) -> str:
-    """One signal through the steps; returns its outcome for the report (its status, or "skipped" when it was left
-    alone: another search version, or no light curve)."""
+                 report: RecheckReport, cache: dict) -> SignalDone:
+    """One signal through the steps. ``cache`` keeps the last target's light curve and whitened flux, so a P/2
+    signal checked right after its parent loads and whitens nothing again."""
+    settings = signal_settings(settings, sig)
     current = search_version(get_detector(sig.signal.detector), settings.thresholds)
     if sig.signal.detector_version != current:
         _commit(store, say, sig, _write(sig, "ladder", "skipped", "search version differs: signal of search version "
                                         f"{sig.signal.detector_version}, not the current {current}"))
-        return "skipped"
+        return SignalDone("skipped")
     tests, status = store.latest_tests(sig.id), store.signal_status(sig.id)
     if not (any(wants(store, sig, tests, with_novelty) for _name, _step, wants in STEPS)
             or (pixels and wants_pixels(store, sig, tests, status))):
-        return status                       # nothing applies: the light curve is not loaded
-    try:
-        if target is None:
-            raise LookupError(f"no target row for {sig.signal.target_id}")
-        lc = loader.load(target)
-    except Exception as e:                  # an outage, a changed archive file, a parser error: the signal waits
-        logger.warning("recheck of signal %s: light curve unavailable", sig.id, exc_info=True)
-        _commit(store, say, sig, _write(sig, "ladder", "skipped", f"light curve unavailable: {e}"))
-        return "skipped"
+        return SignalDone(status)           # nothing applies: the light curve is not loaded
+    key = (sig.signal.target_id, settings.thresholds.model_dump_json())
+    if cache.get("key") == key:
+        lc = cache["lc"]
+    else:
+        try:
+            if target is None:
+                raise LookupError(f"no target row for {sig.signal.target_id}")
+            lc = loader.load(target)
+        except Exception as e:              # an outage, a changed archive file, a parser error: the signal waits
+            logger.warning("recheck of signal %s: light curve unavailable", sig.id, exc_info=True)
+            _commit(store, say, sig, _write(sig, "ladder", "skipped", f"light curve unavailable: {e}"))
+            return SignalDone("skipped")
+        cache.clear(); cache.update(key=key, lc=lc, base=None)
     ctx = RecheckContext(store, blob, settings, fetch, lc,
                          Target(**{k: target[k] for k in TARGET_FIELDS if target.get(k) is not None},
                                 meta=target["meta"]),
-                         with_novelty=with_novelty, tpf_loader=tpf_loader, say=say)
+                         with_novelty=with_novelty, tpf_loader=tpf_loader, say=say, _base=cache.get("base"))
+    done = SignalDone(status)
     for name, step, _wants in STEPS:
         if store.signal_status(sig.id) not in OPEN_STATUSES:
             break
         try:
             write = step(ctx, sig)
-            if write is not None and _commit(store, say, sig, write):
+            if write is None:
+                continue
+            result = _commit(store, say, sig, write)
+            if result.ran:
                 report.steps[name] += 1
+            if result.child_id is not None:
+                done.children.append(result.child_id)
         except Exception as e:              # a broken step leaves the signal as it is for a person
             logger.exception("recheck step %s failed for signal %s", name, sig.id)
             _commit(store, say, sig, _write(sig, name, "skipped", f"exception: {type(e).__name__}"))
@@ -368,28 +425,34 @@ def _recheck_one(store: Store, blob, settings: Settings, loader: LightCurveLoade
         if pixels and wants_pixels(store, sig, store.latest_tests(sig.id)):
             try:
                 write = step_pixels(ctx, sig)
-                if write is not None and _commit(store, say, sig, write):
+                if write is not None and _commit(store, say, sig, write).ran:
                     report.steps["pixels"] += 1
+                    done.pixels_settled = not write.reason.startswith(("outage:", "exception:"))
             except Exception as e:          # a broken step leaves the signal as it is for a person
                 logger.exception("recheck step pixels failed for signal %s", sig.id)
                 _commit(store, say, sig, _write(sig, "pixels", "skipped", f"exception: {type(e).__name__}"))
-    return store.signal_status(sig.id)
+    cache["base"] = ctx._base
+    done.outcome = store.signal_status(sig.id)
+    return done
 
 
 def recheck(store: Store, blob, settings: Settings, *, fetch=net.fetch, signal_ids: list[int] | None = None,
             pixels: bool = True, detector_version: str | None = None, log=None, with_novelty: bool = True,
-            tpf_loader: Callable | None = fetch_tpfs,
-            stop_requested: Callable[[], bool] | None = None) -> RecheckReport:
+            tpf_loader: Callable | None = fetch_tpfs, stop_requested: Callable[[], bool] | None = None,
+            retention=None) -> RecheckReport:
     """Recheck the open signals of ``detector_version`` (default: the search version of the newest finished sweep
     run), or only those of ``signal_ids`` among them. A signal one of the steps applies to has its light curve
     loaded through ``LightCurveLoader`` (the kept raw file, else a verified re-fetch); steps 1 to 3 run in order
     while the signal stays open, then the pixel stage when ``pixels`` and the signal qualifies (``wants_pixels``),
-    its pixel files through ``tpf_loader`` (``fetch_tpfs``; None means the same).
+    its pixel files through ``tpf_loader`` (``fetch_tpfs``; None means the same). A P/2 signal made by the period
+    step is rechecked right after its parent, in the same run. Each signal is compared and re-vetted under its own
+    search window (``signal_settings``).
     ``fetch`` serves the catalogues (the target id is bound into every request); ``with_novelty=False`` leaves rung 4
-    out, as in a sweep run without it. ``stop_requested`` is polled before each signal: once it answers True the
-    recheck returns the report so far with ``stopped`` set (every finished step is committed). A signal a reviewer
-    decided on after the queue was read is passed over. ``log`` receives one line per signal and step, which also
-    goes to the logger at INFO."""
+    out, as in a sweep run without it. ``retention`` (a ``Retention``; None keeps every file) releases a target's
+    pixel files in stream mode once its pixel step is written and no signal of that target is left in the work
+    list. ``stop_requested`` is polled before each signal: once it answers True the recheck returns the report so far
+    with ``stopped`` set (every finished step is committed). A signal a reviewer decided on after the queue was read
+    is passed over. ``log`` receives one line per signal and step, which also goes to the logger at INFO."""
     started = time.time()
     report = RecheckReport()
 
@@ -406,19 +469,35 @@ def recheck(store: Store, blob, settings: Settings, *, fetch=net.fetch, signal_i
     if signal_ids is not None:
         wanted = set(signal_ids)
         queue = [q for q in queue if q["id"] in wanted]
+    work: deque[tuple[int, str]] = deque((q["id"], q["target_id"]) for q in queue)
     loader = LightCurveLoader(store, blob)
-    for i, item in enumerate(queue):
+    cache: dict = {}
+    settled: set[str] = set()               # targets whose pixel step settled, waiting for their files to go
+    while work:
         if stop_requested is not None and stop_requested():
             report.stopped = True
-            say(f"recheck: stop requested, {len(queue) - i} signals left for the next recheck")
+            say(f"recheck: stop requested, {len(work)} signals left for the next recheck")
             break
-        if _decided(store, item["id"]):
+        signal_id, target_id = work.popleft()
+        if _decided(store, signal_id):
             continue
         report.considered += 1
-        sig, target = _stored(store, item["id"])
-        outcome = _recheck_one(store, blob, settings, loader, sig, target, fetch=fetch, pixels=pixels,
-                               with_novelty=with_novelty, tpf_loader=tpf_loader, say=say, report=report)
-        report.outcomes[outcome] = report.outcomes.get(outcome, 0) + 1
+        sig, target = _stored(store, signal_id)
+        done = _recheck_one(store, blob, settings, loader, sig, target, fetch=fetch, pixels=pixels,
+                            with_novelty=with_novelty, tpf_loader=tpf_loader, say=say, report=report, cache=cache)
+        report.outcomes[done.outcome] = report.outcomes.get(done.outcome, 0) + 1
+        for child_id in reversed(done.children):            # right after the parent, in the order they were made
+            if store.signal_status(child_id) in OPEN_STATUSES:
+                work.appendleft((child_id, target_id))
+        if done.pixels_settled:
+            settled.add(target_id)
+        if retention is not None:
+            pending = {t for _i, t in work}
+            for tid in sorted(settled - pending):
+                freed = retention.release_pixel_files(tid)
+                if freed:
+                    say(f"recheck: released {freed} bytes of pixel files of {tid}")
+                settled.discard(tid)
     report.seconds = time.time() - started
     say(f"recheck: {report.considered} signals, steps {report.steps}, outcomes {report.outcomes}")
     return report

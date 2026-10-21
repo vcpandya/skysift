@@ -432,7 +432,10 @@ def halved_signal(sig: Signal, lc: LightCurve, fnorm) -> Signal | None:
     m = measure_at(lc.time, fnorm, period, sig.t0, sig.duration)
     if not (math.isfinite(m.depth_ppm) and math.isfinite(m.depth_err_ppm) and math.isfinite(m.snr)):
         return None
-    extra = {**copy.deepcopy(sig.extra), "parent_period": sig.period, "sde_inherited": True,
+    # the parent's alias note does not hold for the child: a parent multiplied from X d by the detector would read
+    # "period multiplied by 2 from X d" on a child that sits at X d
+    inherited = {k: v for k, v in copy.deepcopy(sig.extra).items() if k != "alias_resolved"}
+    extra = {**inherited, "parent_period": sig.period, "sde_inherited": True,
              "halving": "rung2 suggested_period", "depth_err_ppm": m.depth_err_ppm}
     return sig.model_copy(update={"period": period, "depth_ppm": m.depth_ppm, "snr": m.snr, "n_events": m.n_events,
                                   "extra": extra})
@@ -552,7 +555,7 @@ _cpu_pool, _terminate_workers = cpu_pool, terminate_workers     # the former pri
 
 def run(source, store: Store, blob: Blob, settings: Settings, filter: dict, detector_name: str = "box_dip",
         max_targets: int | None = None, progress=None, with_novelty: bool = True, fetch_module: str | None = None,
-        stop_requested: Callable[[], bool] | None = None, recheck: bool = True) -> dict:
+        stop_requested: Callable[[], bool] | None = None, recheck: bool = True, pixels: bool = True) -> dict:
     """Bounded two-pool scheduler: at most 2*workers_io fetches (fetched light curves waiting for a CPU slot
     included) and 2*workers_cpu CPU jobs are in flight, so memory and disk stay flat however long the sweep.
 
@@ -562,8 +565,10 @@ def run(source, store: Store, blob: Blob, settings: Settings, filter: dict, dete
     sweep to supersede. An exception (Ctrl+C a second time, a disk budget breach) is the hard stop: in-flight work is
     dropped and the interrupted runs are superseded when redone.
 
-    ``recheck`` runs the stage-2 recheck (``skysift.recheck``) after the sweep, with the sweep's search version and
-    fetch and without the pixel stage, and puts its report under ``summary["recheck"]``; a stopped sweep skips it. The
+    ``recheck`` runs the stage-2 recheck (``skysift.recheck``) after the sweep, all four steps of spec 4.3 (the pixel
+    stage unless ``pixels`` is False), with the sweep's search version, fetch and retention (stream mode releases a
+    signal's pixel files once its pixel step is written), and puts its report under ``summary["recheck"]``; a
+    stopped sweep skips it. The
     recheck polls ``stop_requested`` between signals and reports ``"stopped": true`` when it ends early; a hard stop
     (KeyboardInterrupt) during the recheck still returns the sweep's summary, every finished step being committed."""
     det = get_detector(detector_name)
@@ -699,21 +704,25 @@ def run(source, store: Store, blob: Blob, settings: Settings, filter: dict, dete
     summary["seconds"] = time.time() - start
     if recheck and not summary.get("stopped"):
         summary["recheck"] = _recheck_after_sweep(store, blob, settings, fetch_module, version, with_novelty,
-                                                  stop_requested)
+                                                  stop_requested, pixels=pixels, retention=retention)
     return summary
 
 
 def _recheck_after_sweep(store: Store, blob: Blob, settings: Settings, fetch_module: str | None, version: str,
-                         with_novelty: bool, stop_requested: Callable[[], bool]) -> dict:
-    """The stage-2 recheck at the end of a sweep: the same fetch as the sweep's rungs, its search version, no pixel
-    files, the sweep's stop check. The sweep's results are committed by now, so a recheck that crashes is logged and
+                         with_novelty: bool, stop_requested: Callable[[], bool], *, pixels: bool = True,
+                         retention: Retention | None = None) -> dict:
+    """The stage-2 recheck at the end of a sweep: the same fetch as the sweep's rungs (the pixel files too, through
+    ``fetch_tpfs``), its search version, its retention, the sweep's stop check. The sweep's results are committed by
+    now, so a recheck that crashes is logged and
     reported, never raised, and a hard stop during it ends the recheck, not the summary (each step is one
     transaction, so nothing is left half-written)."""
     from skysift import recheck as stage2  # imported here: the recheck module imports this one
+    from skysift.lc.tpf import fetch_tpfs
     fetch = importlib.import_module(fetch_module).fetch if fetch_module else net.fetch
     try:
-        return stage2.recheck(store, blob, settings, fetch=fetch, pixels=False, detector_version=version,
-                              with_novelty=with_novelty, stop_requested=stop_requested).as_dict()
+        return stage2.recheck(store, blob, settings, fetch=fetch, pixels=pixels, tpf_loader=fetch_tpfs,
+                              detector_version=version, with_novelty=with_novelty, stop_requested=stop_requested,
+                              retention=retention).as_dict()
     except KeyboardInterrupt:
         log.warning("recheck interrupted: every finished step is committed; the next sweep or recheck goes on")
         return {"stopped": True, "error": "interrupted"}

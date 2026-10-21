@@ -231,6 +231,31 @@ def test_status_from_tests_uses_the_latest_row_per_rung():
     assert final_status_for("pass", rows + [{"id": 4, "rung": "rung5_pixels", "status": "pass"}]) == "candidate_stage2"
 
 
+def test_a_pixel_pass_promotes_a_signal_undetermined_only_for_pixel_reasons():
+    """Spec 4.3: the pixels settle season- and aperture-dependent depth, a systematic alias and a catalogue period
+    match on a neighbour, so a pixel pass makes such a signal a stage 2 candidate; any other open question stays."""
+    from skysift.recheck import PIXEL_REASON_PREFIXES
+    from skysift.store.db import PIXEL_SETTLED_PREFIXES
+    assert PIXEL_SETTLED_PREFIXES == PIXEL_REASON_PREFIXES
+    rows = [{"id": 1, "rung": "rung1_detection", "status": "pass", "reason": ""},
+            {"id": 2, "rung": "rung3_stability", "status": "undetermined",
+             "reason": "aperture-dependent depth (3.9 sigma)"},
+            {"id": 3, "rung": "rung4_novelty", "status": "undetermined",
+             "reason": "period matches cumulative K01234.01 but epoch differs (5.1 h)"}]
+    assert status_from_tests(rows) == "undetermined"                           # no pixel row yet
+    passed = [*rows, {"id": 4, "rung": "rung5_pixels", "status": "pass", "reason": "the dip is on the target"}]
+    assert status_from_tests(passed) == "pass" and final_status_for("pass", passed) == "candidate_stage2"
+    undet = [*rows, {"id": 4, "rung": "rung5_pixels", "status": "undetermined", "reason": "pixels: no neighbour"}]
+    assert status_from_tests(undet) == "undetermined"
+    other = [*passed, {"id": 5, "rung": "rung2_shape", "status": "undetermined", "reason": "too few odd/even events"}]
+    assert status_from_tests(other) == "undetermined"                          # not a question the pixels answer
+    failed = [*passed, TestRow(id=6, rung="rung2_shape", status="fail", reason="odd_even 4.2 sigma")]
+    assert status_from_tests(failed) == "fail"
+    orm = [TestRow(id=1, rung="rung3_stability", status="undetermined", reason="systematic_alias"),
+           TestRow(id=2, rung="rung5_pixels", status="pass", reason="")]
+    assert status_from_tests(orm) == "pass"
+
+
 def test_status_from_tests_precedence_and_orm_rows():
     rows = [TestRow(id=1, rung="rung2_shape", status="fail"),
             TestRow(id=2, rung="rung4_novelty", status="undetermined")]

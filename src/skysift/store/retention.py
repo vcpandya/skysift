@@ -53,6 +53,20 @@ class Retention:
             return 0
         return sum(self._delete(a) for a in self.store.unpinned_artifacts(target_id, kind="raw"))
 
+    def release_pixel_files(self, target_id: str) -> int:
+        """Stream mode: delete the target's target pixel files (kind "tpf", about 50 MB a signal), pinned or not, once
+        the recheck's pixel step is written. The signal's ``pixels.npz`` (kind "pixels", pinned) holds every array
+        the dossier draws, so the files are not needed again; a later pixel step fetches them anew. Keep mode keeps
+        them, and budget mode evicts them like any unpinned file. Returns the bytes freed."""
+        if self.policy.mode != "stream":
+            return 0
+        with self.store.session() as s:
+            rows = [{"sha256": a.sha256, "nbytes": a.nbytes, "local_path": a.local_path}
+                    for a in s.scalars(select(ArtifactRow).where(ArtifactRow.target_id == target_id,
+                                                                 ArtifactRow.kind == "tpf",
+                                                                 ArtifactRow.deleted_at.is_(None)))]
+        return sum(self._delete(a) for a in rows)
+
     def cached_bytes(self) -> int:
         return sum(a["nbytes"] for a in self.store.unpinned_artifacts()) + self._pinned_bytes()
 

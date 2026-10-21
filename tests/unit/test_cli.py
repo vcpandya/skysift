@@ -325,7 +325,10 @@ class _EmptySource:
 def cli_env(settings, monkeypatch):
     from skysift import cli
     monkeypatch.setattr(cli, "_source", lambda name, store, blob: _EmptySource())
-    return settings
+    lowered = []
+    monkeypatch.setattr(cli, "_lower_own_priority", lambda: lowered.append(1) or True)   # never the test process
+    from types import SimpleNamespace
+    return SimpleNamespace(settings=settings, lowered=lowered)
 
 
 runner = CliRunner()
@@ -346,6 +349,10 @@ def test_recheck_command_passes_signal_ids_and_pixels(cli_env, monkeypatch):
     assert seen["signal_ids"] == [4, 9] and seen["pixels"] is True and json.loads(r.stdout)["considered"] == 2
     runner.invoke(app, ["recheck", "--no-pixels"])
     assert seen["signal_ids"] is None and seen["pixels"] is False
+    assert cli_env.lowered == [1, 1]                         # every standalone recheck runs below normal priority
+    assert seen["retention"].policy.mode == "stream"         # the configured retention releases pixel files
+    runner.invoke(app, ["recheck", "--retention", "keep"])
+    assert seen["retention"].policy.mode == "keep"
 
 
 def test_run_calls_the_recheck_unless_disabled(cli_env, monkeypatch):
@@ -353,10 +360,38 @@ def test_run_calls_the_recheck_unless_disabled(cli_env, monkeypatch):
     calls = []; monkeypatch.setattr("skysift.recheck.recheck", lambda *a, **k: calls.append(k) or RecheckReport())
     r = runner.invoke(app, ["run", "--source", "fake", "--limit", "1"]); assert calls
     assert r.exit_code == 0, r.output
-    assert calls[0]["pixels"] is False and json.loads(r.stdout)["recheck"]["considered"] == 0
+    assert calls[0]["pixels"] is True and json.loads(r.stdout)["recheck"]["considered"] == 0      # all four steps
+    assert calls[0]["tpf_loader"].__name__ == "fetch_tpfs" and calls[0]["retention"].policy.mode == "stream"
     assert "recheck: considered 0" in r.stderr
     r = runner.invoke(app, ["run", "--source", "fake", "--limit", "1", "--no-recheck"]); assert len(calls) == 1
     assert r.exit_code == 0 and "recheck" not in json.loads(r.stdout) and "recheck:" not in r.stderr
+    r = runner.invoke(app, ["run", "--source", "fake", "--limit", "1", "--no-pixels", "--retention", "keep"])
+    assert r.exit_code == 0 and calls[1]["pixels"] is False and calls[1]["retention"].policy.mode == "keep"
+
+
+def test_the_standalone_recheck_lowers_its_own_priority(monkeypatch):
+    import ctypes
+    import os
+
+    from skysift import cli
+    niced = []
+    monkeypatch.setattr(os, "nice", lambda n: niced.append(n) or n, raising=False)       # absent on Windows
+    assert cli._lower_own_priority(platform="linux") and niced == [cli.RECHECK_NICE]
+    classes = []
+
+    class Kernel32:
+        def GetCurrentProcess(self):
+            return -1
+
+        def SetPriorityClass(self, handle, cls):
+            classes.append((handle, cls)); return 1
+    monkeypatch.setattr(ctypes, "windll", type("WinDLL", (), {"kernel32": Kernel32()})(), raising=False)
+    assert cli._lower_own_priority(platform="win32") and classes == [(-1, cli.BELOW_NORMAL_PRIORITY_CLASS)]
+
+    def refuse(n):
+        raise OSError("not permitted")
+    monkeypatch.setattr(os, "nice", refuse, raising=False)
+    assert cli._lower_own_priority(platform="linux") is False
 
 
 def test_the_recheck_line_says_when_the_recheck_stopped():

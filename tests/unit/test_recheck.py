@@ -4,6 +4,7 @@ The store is seeded the way the sweep writes it (``record_results``), with the r
 back by the ``fake`` source's parser (the pickled curve). Pre-whitening is off in this environment: the whitener
 removes the 23rd to 49th harmonics of a synthetic box transit, which no restore puts back, so a clean planet would be
 vetted on a distorted flux and the outcomes would test the whitener, not the recheck."""
+import copy
 import dataclasses
 import math
 import pickle
@@ -62,13 +63,16 @@ class Env:
     def seed_signal(self, ladder_version: str = "4", tests=(), metrics: dict | None = None, raw_file: bool = True,
                     source_down: bool = False, lc=None, period: float = 10.0, t0: float = 140.0,
                     duration: float = 0.12, depth_ppm: float = 3000.0, version: str | None = None,
-                    prewhitening: dict | None = None, tpfs: str | None = None, status: str | None = None) -> int:
+                    prewhitening: dict | None = None, tpfs: str | None = None, status: str | None = None,
+                    window: tuple[float, float] | None = (0.5, 200.0), doubled: bool = False) -> int:
         """One target's sweep result, written by ``record_results``: every light-curve rung passes unless ``tests``
         ((rung, status, reason) tuples, with ``metrics`` per rung) says otherwise. Without ``raw_file`` the curve must
         be re-fetched, which the ``fake`` source cannot do (it has no live adapter: ``source_down``). ``tpfs`` ("target"
         or "neighbour") makes the target a KBonus star in the pixels of a Kepler target of its own whose synthetic
         pixel files put the dip on that star, the signal at the scene's ephemeris; ``status``, when given, is the
-        status the seeded rows must give."""
+        status the seeded rows must give. ``window`` is the search window the sweep ran with (its search version and
+        ``extra["search_window"]``; None stores no window); ``doubled`` stores the signal at twice the injected
+        period, with rung 2's period-halving row."""
         assert raw_file or source_down, "the fake source has no live adapter: a signal without its file is unloadable"
         self.n += 1
         tid = f"t{self.n}"
@@ -77,9 +81,18 @@ class Env:
             kic, period, t0, duration = 6146000 + self.n, EPH.period, EPH.t0, EPH.duration
             meta = {"tpf_org": 7146000 + self.n}
             self.tpfs[meta["tpf_org"]] = (tpfs, (10.0 + self.n, 20.0))
+        if version is None and window not in (None, (0.5, 200.0)):
+            th = self.settings.thresholds.model_copy(update={"min_period_days": window[0],
+                                                             "max_period_days": window[1]})
+            version = pipeline.search_version(get_detector("box_dip"), th)
         version = version or self.version
         lc = lc if lc is not None else inject_transit(make_lightcurve(noise_ppm=400, seed=3), period, t0, duration,
                                                       depth_ppm)
+        if doubled:
+            halving = f"equal secondary at phase 0.5: true period may be P / 2 ({period:g} d)"
+            tests = [*tests, ("rung2_shape", "undetermined", halving)]
+            metrics = {**(metrics or {}), "rung2_shape": {"suggested_period": period}}
+            period = 2 * period
         self.store.upsert_target(Target(source="fake", target_id=tid, ra=10.0 + self.n, dec=20.0, gmag=16.5, kic=kic,
                                         meta=meta))
         lc = dataclasses.replace(lc, meta={**lc.meta, "target_id": tid})      # one raw file per target, never shared
@@ -92,7 +105,8 @@ class Env:
         sig = Signal(target_id=tid, detector="box_dip", detector_version=version, period=period, t0=t0,
                      duration=duration, depth_ppm=depth_ppm, snr=40.0, sde=20.0, n_events=int(1400 / period),
                      extra={"detrend": pipeline.detrend_settings(),
-                            "search_window": {"min_period_days": 0.5, "max_period_days": 200.0},
+                            **({"search_window": {"min_period_days": window[0], "max_period_days": window[1]}}
+                               if window is not None else {}),
                             **({"prewhitening": prewhitening} if prewhitening is not None else {})})
         rows = {rung: TestResult(rung=rung, status=TestStatus.PASS) for rung in LC_RUNGS}
         for rung, st, reason in tests:
@@ -490,12 +504,13 @@ def test_pixel_step_does_not_run_for_outage_reasons(env):
 
 
 def test_a_settled_pixel_step_is_not_run_again(env):
-    """An undetermined signal whose pixels put the dip on the target stays undetermined (rung 3 still disagrees) and
-    in the queue; the next recheck does not fetch or localize it again."""
+    """An undetermined signal whose only open question is one the pixels settle (season-dependent depth) and whose
+    pixels put the dip on the target becomes a stage 2 candidate (spec 4.3, ``store.db.pixels_settle``); the next
+    recheck does not fetch or localize it again."""
     sid = env.seed_signal(tests=[("rung3_stability", "undetermined", "season-dependent depth (p=5.7e-04)")],
                           tpfs="target")
     rep = recheck(env.store, env.blob, env.settings, fetch=fake_fetch.fetch, tpf_loader=env.tpf_loader)
-    assert rep.steps["pixels"] == 1 and env.store.signal_status(sid) == "undetermined"
+    assert rep.steps["pixels"] == 1 and env.store.signal_status(sid) == "candidate_stage2"
     assert env.store.latest_tests(sid)[-1]["status"] == "pass"
     before, rows = env.store.counts(), env.store.rechecks(sid)
     rep = recheck(env.store, env.blob, env.settings, fetch=fake_fetch.fetch, tpf_loader=env.tpf_loader)
@@ -569,3 +584,89 @@ def test_the_pixel_step_end_to_end_through_fetch_tpfs(env):
         assert npz.pinned and npz.url == f"skysift://pixels/{sid}" and npz.sha256 == rung5["metrics"]["pixels_sha256"]
         mast_queries = s.scalars(select(QueryRow).where(QueryRow.service == "mast")).all()
         assert len(mast_queries) == 6 and {q.target_id for q in mast_queries} == {tid}
+
+
+def test_a_p2_child_joins_the_work_list_and_reaches_stage_2_in_one_run(env):
+    """The period step's child is rechecked right after its parent, in the same run: its pixel step runs there, so
+    a period-doubled planet reaches stage 2 in one recheck; a second recheck writes nothing new."""
+    sid = env.seed_signal(tpfs="target", doubled=True)
+    rep = recheck(env.store, env.blob, env.settings, fetch=fake_fetch.fetch, tpf_loader=env.tpf_loader)
+    child = env.store.children(sid)[0]
+    assert rep.steps["period"] == 1 and rep.steps["pixels"] == 1 and rep.considered == 2
+    assert env.store.signal_status(sid) == "superseded" and child["final_status"] == "candidate_stage2"
+    assert [(r["step"], r["outcome"]) for r in env.store.rechecks(child["id"])] == [("pixels", "pass")]
+    assert rep.outcomes["superseded"] == 1 and rep.outcomes["candidate_stage2"] == 1
+    before, rows = env.store.counts(), {i: env.store.rechecks(i) for i in (sid, child["id"])}
+    rep = recheck(env.store, env.blob, env.settings, fetch=fake_fetch.fetch, tpf_loader=env.tpf_loader)
+    assert rep.considered == 0 and env.store.counts() == before
+    assert {i: env.store.rechecks(i) for i in (sid, child["id"])} == rows and len(env.tpf_calls) == 1
+
+
+def test_two_overlapping_rechecks_make_one_p2_child(env, monkeypatch):
+    """Another recheck commits the same P/2 signal after this one decided to make it: the store writes one child and
+    records the loser as skipped, inside the transaction."""
+    sid = env.seed_doubled_planet()
+    real = Store.commit_recheck_step
+    raced = []
+
+    def overlapping(self, write):
+        if write.child is not None and not raced:
+            raced.append(real(self, copy.deepcopy(write)))      # the other recheck lands first
+        return real(self, write)
+    monkeypatch.setattr(Store, "commit_recheck_step", overlapping)
+    rep = recheck(env.store, env.blob, env.settings, fetch=fake_fetch.fetch, pixels=False)
+    assert raced[0]["written"] and len(env.store.children(sid)) == 1 and rep.steps["period"] == 0
+    assert [(r["step"], r["outcome"], r["reason"]) for r in env.store.rechecks(sid)] == [
+        ("period", "superseded", "re-measured at 8 d: candidate_stage1"), ("period", "skipped", "child already exists")]
+    assert env.store.signal_status(sid) == "superseded"
+    with env.store.session() as s:
+        assert len(s.scalars(select(RunRow).where(RunRow.job_key.like("recheck:%"))).all()) == 1
+
+
+def test_a_standalone_recheck_uses_each_signals_own_search_window(env, caplog):
+    """A sweep run with --min-period 5 --max-period 40 writes signals of another search version than the default
+    window; a standalone recheck (default settings) rechecks them under their stored window instead of skipping
+    them. A signal without a stored window uses the configured one and the log says so."""
+    windowed = env.seed_signal(window=(5.0, 40.0),
+                               tests=[("rung4_novelty", "undetermined", "outage:exoarchive: HTTP 403")])
+    rep = recheck(env.store, env.blob, env.settings, fetch=fake_fetch.fetch, pixels=False)
+    assert rep.considered == 1 and rep.outcomes["skipped"] == 0 and rep.steps["catalogue"] == 1
+    assert [(r["step"], r["outcome"]) for r in env.store.rechecks(windowed)] == [("catalogue", "pass")]
+    bare = env.seed_signal(window=None, tests=[("rung4_novelty", "undetermined", "outage:exoarchive: HTTP 403")])
+    with caplog.at_level("INFO", logger="skysift.recheck"):
+        rep = recheck(env.store, env.blob, env.settings, fetch=fake_fetch.fetch, pixels=False,
+                      detector_version=env.version)
+    assert [(r["step"], r["outcome"]) for r in env.store.rechecks(bare)] == [("catalogue", "pass")]
+    assert any("no stored search window" in r.getMessage() for r in caplog.records)
+
+
+@pytest.mark.parametrize("mode", ["stream", "keep"])
+def test_stream_retention_releases_the_pixel_files_after_the_pixel_step(env, mode):
+    """Stream mode deletes the target's pixel files once the pixel step is written (the pinned pixels.npz holds what
+    the dossier draws); keep mode keeps them."""
+    from skysift.lc.tpf import tpf_listing_url
+    from skysift.store.retention import Retention, RetentionPolicy
+    sid = env.seed_signal(tpfs="target")
+    kic, (scene, radec) = next(iter(env.tpfs.items()))
+    files = {tpf_name(kic, b.quarter): b for b in tpf_quarters(scene, target_radec=radec, kic=kic)}
+    mast = FakeMast({tpf_listing_url(kic): listing_html(kic, sorted(files)), **files}, other=fake_fetch.fetch)
+    retention = Retention(RetentionPolicy.parse(mode), env.store, env.blob)
+    recheck(env.store, env.blob, env.settings, fetch=mast, retention=retention)
+    assert env.store.signal_status(sid) == "candidate_stage2"
+    with env.store.session() as s:
+        tpfs = s.scalars(select(ArtifactRow).where(ArtifactRow.kind == "tpf")).all()
+        npz = s.scalars(select(ArtifactRow).where(ArtifactRow.url == f"skysift://pixels/{sid}")).one()
+        assert len(tpfs) == 5 and npz.pinned and npz.deleted_at is None and env.blob.exists(npz.local_path)
+        released = [a.deleted_at is not None and not env.blob.exists(a.local_path) for a in tpfs]
+        assert released == [mode == "stream"] * 5
+
+
+def test_the_p2_child_does_not_inherit_the_parents_alias_note():
+    parent = Signal(target_id="t", detector="box_dip", detector_version="v", period=16.0, t0=140.0, duration=0.1,
+                    depth_ppm=2500, snr=30, sde=20, n_events=80,
+                    extra={"alias_resolved": {"from_period": 8.0, "factor": 2}, "mask": [[1.0, 2.0]],
+                           "search_window": {"min_period_days": 0.5, "max_period_days": 200.0}})
+    lc = inject_transit(make_lightcurve(noise_ppm=400, seed=7), 8.0, 140.0, 0.1, 2500.0)
+    child = pipeline.halved_signal(parent, lc, lc.flux)
+    assert "alias_resolved" not in child.extra and child.extra["mask"] == [[1.0, 2.0]]
+    assert child.extra["search_window"] == parent.extra["search_window"] and "alias_resolved" in parent.extra
