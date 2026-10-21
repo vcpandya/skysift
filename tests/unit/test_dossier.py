@@ -552,8 +552,50 @@ def test_a_voting_season_near_three_sigma_gets_the_monte_carlo_caveat(env, seaso
         assert "200 Monte Carlo draws" in found[0]["text"] and "—" not in found[0]["text"]
 
 
+def _partial(season: int, bias: float, *, target: int = 6, neighbour: int = 9, voting: bool = True) -> dict:
+    return {"season": season, "voting": voting, "separation_sigma": 8.0, "box_partial": True,
+            "box_pixels_target": target, "box_pixels_neighbour": neighbour, "edge_bias_pix": bias}
+
+
+def _complete(season: int) -> dict:
+    return {"season": season, "voting": True, "separation_sigma": 8.0, "box_partial": False,
+            "box_pixels_target": 9, "box_pixels_neighbour": 9, "edge_bias_pix": 0.0}
+
+
+def test_partial_box_sentence_names_the_seasons_and_the_largest_allowance():
+    seasons = [_partial(0, 0.10), _complete(1), _partial(2, 0.07), _partial(3, 0.30, voting=False)]
+    assert dossier_module.partial_box_sentence(seasons) == (
+        "In seasons 0 and 2 this star's 3 x 3 box is cut by the stamp edge; the centroid there is measured on the "
+        "pixels present and the shift the cut would give a point source (0.10 px at most) is added to its error.")
+    assert dossier_module.partial_box_sentence([_complete(1)]) == ""
+    assert dossier_module.partial_box_sentence([{"season": 0, "voting": True}]) == ""       # stored before the keys
+    assert dossier_module.partial_box_seasons(seasons) == [seasons[0], seasons[2]]
+
+
+def test_partial_box_sentence_names_the_star_and_lists_three_seasons():
+    assert dossier_module.partial_box_sentence([_partial(0, 0.1, target=9, neighbour=4)]).startswith(
+        "In season 0 the neighbour's 3 x 3 box is cut by the stamp edge;")
+    both = dossier_module.partial_box_sentence([_partial(0, 0.1), _partial(2, 0.1, target=9, neighbour=3),
+                                         _partial(3, 0.1, target=5, neighbour=5)])
+    assert both.startswith("In seasons 0, 2 and 3 both stars' 3 x 3 boxes are cut by the stamp edge;")
+    assert chr(0x2014) not in both
+
+
+def test_caveats_list_a_partial_box_after_the_close_call(env):
+    rep = generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch)
+    data = _with_seasons(_data(rep), [{**_partial(0, 0.10), "separation_sigma": 3.2}])
+    found = [c for c in caveats(data) if c.get("key") == "partial_box"]
+    assert len(found) == 1 and found[0]["title"] == "A season's box is cut by the stamp edge"
+    assert found[0]["text"] == dossier_module.partial_box_sentence(data["tests"][0]["metrics"]["seasons"])
+    keys = [c.get("key") for c in caveats(data)]
+    assert keys.index("close_call") + 1 == keys.index("partial_box")
+    plain = [c.get("key") for c in caveats(_with_seasons(_data(rep), [_partial(0, 0.10)]))]
+    assert "partial_box" in plain and "close_call" not in plain
+    assert "partial_box" not in [c.get("key") for c in caveats(_with_seasons(_data(rep), [_complete(0)]))]
+
+
 REPO = Path(__file__).resolve().parents[2]
-HAND_BUILT = REPO / "docs" / "candidates" / "kic-006146676" / "dossier_data.json"
+HAND_BUILT =REPO / "docs" / "candidates" / "kic-006146676" / "dossier_data.json"
 GENERATED = REPO / "tests" / "golden" / "kic-006146676-generated.json"     # tools/dossier_compare.py --write-golden
 
 

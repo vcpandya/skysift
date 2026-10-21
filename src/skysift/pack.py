@@ -416,6 +416,9 @@ def pixel_sentence(data: dict) -> str:
     if dt and dn:
         text += (f" The centroid sits a median {np.median(dt):.2f} pixels from this star and {np.median(dn):.2f} "
                  "pixels from the neighbour.")
+    cut = ds.partial_box_sentence(seasons)
+    if cut:
+        text += f" {cut}"
     off = ds.centroid_offset(row.get("metrics") or {})
     if off is not None:
         text += f" Averaged over the seasons it is {off[0]:.2f} ± {off[1]:.2f} arcsec from the star."
@@ -570,6 +573,8 @@ def abstract_text(data: dict) -> str:
     else:
         near = sum(1 for s in voting if s.get("nearer") == "target")
         parts.append(f"In difference images {_seasons_phrase(near, voting, silent)}.")
+    if cut := ds.partial_box_sentence(voting):
+        parts.append(cut)
     rp, a = (data.get("planet") or {}).get("rp_rearth"), (data.get("planet") or {}).get("a_au")
     if isinstance(rp, dict) and _num(rp.get("median")) is not None:
         orbit = f" on a {_num(a.get('median')):.3f} AU orbit" if isinstance(a, dict) and _num(a.get("median")) else ""
