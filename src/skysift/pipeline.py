@@ -342,15 +342,35 @@ def _restore_recorded(time, fn, record: dict, stored: dict, sig: Signal, detecti
     return fn if out is None else out[0]
 
 
-def revet_flux(lc: LightCurve, th: Thresholds, sig: Signal) -> tuple:
+def restore_from(time, base: SweepFlux, detections) -> tuple:
+    """``base``'s primary and secondary flux with the harmonics of ``detections`` (``(frequency, depth_ppm)`` pairs)
+    put back by the sweep's own selector, ``restore_harmonics`` (integer harmonics only, none deeper than the
+    detection), and the primary's pre-whitening record: (primary, secondary, record). The record lists the restored
+    components under ``restored`` and the detections under ``restored_for``, as the sweep stores it; when nothing is
+    restored the fluxes and record are ``base``'s own."""
+    dets = [(float(f), float(d)) for f, d in detections]
+    out = restore_harmonics(time, base.fn, base.record, dets) if dets else None
+    if out is None:
+        return base.fn, base.alt, base.record
+    fn, record = out
+    return fn, _restore_alt(time, base.alt, base.alt_record, dets), {**record, "restored_for": [list(d) for d in dets]}
+
+
+def revet_flux(lc: LightCurve, th: Thresholds, sig: Signal, restored_for=None, base: SweepFlux | None = None) -> tuple:
     """The flux a stored signal was vetted on, rebuilt from its light curve: (primary, secondary or None, detrended
-    primary before pre-whitening). Built by ``_sweep_flux`` as in the sweep; when the signal's
-    ``extra["prewhitening"]`` records a restoration, the restored components go back in the primary flux
-    (``_restore_recorded``) and the harmonics of the detections the restore came from (``restored_for``) in the
-    secondary. A signal swept before ``restored_for`` was stored gets its own ``(1 / period, depth)`` as the only
-    detection, which differs from the sweep on a target with two detections. ``revet`` and the recheck's P/2 step
-    both vet on this."""
-    flux = _sweep_flux(lc, th)
+    primary before pre-whitening). Built by ``_sweep_flux`` as in the sweep (``base``, when given, is that result
+    already built for this light curve and thresholds); when the signal's ``extra["prewhitening"]`` records a
+    restoration, the restored components go back in the primary flux (``_restore_recorded``) and the harmonics of
+    the detections the restore came from (``restored_for``) in the secondary. A signal swept before ``restored_for``
+    was stored gets its own ``(1 / period, depth)`` as the only detection, which differs from the sweep on a target
+    with two detections. ``restored_for``, when given, replaces the record: the harmonics of those ``(frequency,
+    depth_ppm)`` detections are restored (``restore_from``), as the recheck's P/2 step does for a signal at half its
+    parent's period, whose own harmonics are not the parent's (the parent's odd harmonics are half-integer harmonics
+    of the child, which the sweep never restores)."""
+    flux = base if base is not None else _sweep_flux(lc, th)
+    if restored_for is not None:
+        fn, alt, _record = restore_from(lc.time, flux, restored_for)
+        return fn, alt, flux.detrended
     stored = sig.extra.get("prewhitening") or {}
     if not stored.get("restored"):
         return flux.fn, flux.alt, flux.detrended
@@ -380,8 +400,8 @@ def revet(lc: LightCurve, target: Target, th: Thresholds, sig: Signal, ladder: L
     (``_bundle``, then ``_vetting_bundle`` for a second-pass signal's mask). ``fetch`` and ``store`` go to the rungs
     as in the worker (rung 4's catalogue queries, logged through ``store.log_query`` with this target's id).
     ``on_result(result, seconds)`` is called after each rung. ``flux``, when given, is ``revet_flux``'s triple for
-    this light curve and signal, already built (the recheck builds it once per signal for all its steps; a P/2
-    signal carries its parent's record, so its flux is the parent's). Returns the ladder's (outcome, results). Raises
+    this light curve and signal, already built (the recheck builds the whitening once per signal for all its steps,
+    and a P/2 signal's flux restored at its own harmonics). Returns the ladder's (outcome, results). Raises
     ValueError for a signal of another search version: the flux would not be the one it was found and vetted on
     (spec 4.3 rechecks the current search version only)."""
     current = search_version(get_detector(sig.detector), th)
@@ -396,11 +416,12 @@ def revet(lc: LightCurve, target: Target, th: Thresholds, sig: Signal, ladder: L
 
 def halved_signal(sig: Signal, lc: LightCurve, fnorm) -> Signal | None:
     """The signal at half its period, for rung 2's ``suggested_period`` (an equal secondary at phase 0.5): ``t0`` and
-    ``duration`` kept, depth, snr and event count measured on ``fnorm`` (the whitened flux the signal was vetted on,
-    ``revet_flux``) by ``measure_at``, whose depth error goes in ``extra["depth_err_ppm"]``. The SDE is the parent's
-    (no search ran at P/2) and ``extra`` says so, with the parent's period and why it was halved. None when the depth
-    cannot be measured (too few points in or around the transit): the recheck then writes a rechecks row with
-    ``outcome="skipped"`` and the reason "half period: too few points in transit" instead of a signal."""
+    ``duration`` kept, depth, snr and event count measured on ``fnorm`` (the whitened flux the half-period signal is
+    vetted on: the recheck restores it at the half period's own harmonics, ``revet_flux(..., restored_for=...)``) by
+    ``measure_at``, whose depth error goes in ``extra["depth_err_ppm"]``. The SDE is the parent's (no search ran at
+    P/2) and ``extra`` says so, with the parent's period and why it was halved. None when the depth cannot be measured
+    (too few points in or around the transit): the recheck then writes a rechecks row with ``outcome="skipped"`` and
+    the reason "half period not measurable" instead of a signal."""
     period = sig.period / 2.0
     m = measure_at(lc.time, fnorm, period, sig.t0, sig.duration)
     if not (math.isfinite(m.depth_ppm) and math.isfinite(m.depth_err_ppm) and math.isfinite(m.snr)):
@@ -536,7 +557,9 @@ def run(source, store: Store, blob: Blob, settings: Settings, filter: dict, dete
     dropped and the interrupted runs are superseded when redone.
 
     ``recheck`` runs the stage-2 recheck (``skysift.recheck``) after the sweep, with the sweep's search version and
-    fetch and without the pixel stage, and puts its report under ``summary["recheck"]``; a stopped sweep skips it."""
+    fetch and without the pixel stage, and puts its report under ``summary["recheck"]``; a stopped sweep skips it. The
+    recheck polls ``stop_requested`` between signals and reports ``"stopped": true`` when it ends early; a hard stop
+    (KeyboardInterrupt) during the recheck still returns the sweep's summary, every finished step being committed."""
     det = get_detector(detector_name)
     if stop_requested is None:
         stop_path = stop_request_path(settings.data_dir)
@@ -669,19 +692,25 @@ def run(source, store: Store, blob: Blob, settings: Settings, filter: dict, dete
     io_pool.shutdown(); workers.shutdown()
     summary["seconds"] = time.time() - start
     if recheck and not summary.get("stopped"):
-        summary["recheck"] = _recheck_after_sweep(store, blob, settings, fetch_module, version, with_novelty)
+        summary["recheck"] = _recheck_after_sweep(store, blob, settings, fetch_module, version, with_novelty,
+                                                  stop_requested)
     return summary
 
 
 def _recheck_after_sweep(store: Store, blob: Blob, settings: Settings, fetch_module: str | None, version: str,
-                         with_novelty: bool) -> dict:
+                         with_novelty: bool, stop_requested: Callable[[], bool]) -> dict:
     """The stage-2 recheck at the end of a sweep: the same fetch as the sweep's rungs, its search version, no pixel
-    files. The sweep's results are committed by now, so a recheck that crashes is logged and reported, never raised."""
+    files, the sweep's stop check. The sweep's results are committed by now, so a recheck that crashes is logged and
+    reported, never raised, and a hard stop during it ends the recheck, not the summary (each step is one
+    transaction, so nothing is left half-written)."""
     from skysift import recheck as stage2  # imported here: the recheck module imports this one
     fetch = importlib.import_module(fetch_module).fetch if fetch_module else net.fetch
     try:
         return stage2.recheck(store, blob, settings, fetch=fetch, pixels=False, detector_version=version,
-                              with_novelty=with_novelty).as_dict()
+                              with_novelty=with_novelty, stop_requested=stop_requested).as_dict()
+    except KeyboardInterrupt:
+        log.warning("recheck interrupted: every finished step is committed; the next sweep or recheck goes on")
+        return {"stopped": True, "error": "interrupted"}
     except Exception as e:
         log.exception("the recheck after the sweep failed")
         return {"error": repr(e)}

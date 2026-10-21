@@ -191,10 +191,11 @@ def run(source: str = typer.Option(...), gmag_max: float = 19.0,
 def _recheck_line(report: dict) -> str:
     """One line for a recheck report: signals considered, the steps that ran and the outcomes that occurred."""
     if "error" in report:
-        return f"failed, {report['error']}"
+        return f"{'stopped' if report.get('stopped') else 'failed'}, {report['error']}"
     steps = ", ".join(f"{k} {v}" for k, v in report.get("steps", {}).items() if v) or "no step ran"
     outcomes = ", ".join(f"{k} {v}" for k, v in report.get("outcomes", {}).items() if v) or "none"
-    return f"considered {report.get('considered', 0)}; steps: {steps}; outcomes: {outcomes}"
+    stopped = "; stopped early, the next recheck takes the rest" if report.get("stopped") else ""
+    return f"considered {report.get('considered', 0)}; steps: {steps}; outcomes: {outcomes}{stopped}"
 
 
 @app.command()

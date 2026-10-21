@@ -357,3 +357,13 @@ def test_run_calls_the_recheck_unless_disabled(cli_env, monkeypatch):
     assert "recheck: considered 0" in r.stderr
     r = runner.invoke(app, ["run", "--source", "fake", "--limit", "1", "--no-recheck"]); assert len(calls) == 1
     assert r.exit_code == 0 and "recheck" not in json.loads(r.stdout) and "recheck:" not in r.stderr
+
+
+def test_the_recheck_line_says_when_the_recheck_stopped():
+    from skysift.cli import _recheck_line
+    from skysift.recheck import RecheckReport
+    rep = RecheckReport(considered=1, stopped=True); rep.steps["catalogue"] = 1; rep.outcomes["candidate_stage1"] = 1
+    assert _recheck_line(rep.as_dict()) == ("considered 1; steps: catalogue 1; outcomes: candidate_stage1 1; "
+                                            "stopped early, the next recheck takes the rest")
+    assert _recheck_line({"stopped": True, "error": "interrupted"}) == "stopped, interrupted"
+    assert _recheck_line({"error": "RuntimeError('x')"}) == "failed, RuntimeError('x')"

@@ -4,9 +4,11 @@ The store is seeded the way the sweep writes it (``record_results``), with the r
 back by the ``fake`` source's parser (the pickled curve). Pre-whitening is off in this environment: the whitener
 removes the 23rd to 49th harmonics of a synthetic box transit, which no restore puts back, so a clean planet would be
 vetted on a distorted flux and the outcomes would test the whitener, not the recheck."""
+import dataclasses
 import math
 import pickle
 
+import numpy as np
 import pytest
 from sqlalchemy import select
 
@@ -14,6 +16,7 @@ from skysift import pipeline
 from skysift import recheck as recheck_mod
 from skysift.config import load_settings
 from skysift.detectors.base import get_detector
+from skysift.lc.prewhiten import prewhiten_model
 from skysift.models import Signal, Target, TestResult, TestStatus
 from skysift.net import ServiceUnavailable
 from skysift.recheck import PIXEL_REASON_PREFIXES, RecheckReport, pixels_qualify, recheck
@@ -21,7 +24,7 @@ from skysift.sources import PARSERS
 from skysift.store.blob import blob_from_url
 from skysift.store.db import QueryRow, RunRow, SignalRow, Store, make_job_key, status_from_tests
 from skysift.vetting.rung2_shape import Rung2Shape
-from tests.synthetic import inject_transit, make_lightcurve
+from tests.synthetic import _with_dip, inject_transit, make_lightcurve
 from tests.unit import fake_fetch
 
 LC_RUNGS = ("rung1_detection", "rung1_events", "rung2_shape", "rung3_stability", "rung4_novelty")
@@ -46,7 +49,8 @@ class Env:
 
     def seed_signal(self, ladder_version: str = "4", tests=(), metrics: dict | None = None, raw_file: bool = True,
                     source_down: bool = False, lc=None, period: float = 10.0, t0: float = 140.0,
-                    duration: float = 0.12, depth_ppm: float = 3000.0, version: str | None = None) -> int:
+                    duration: float = 0.12, depth_ppm: float = 3000.0, version: str | None = None,
+                    prewhitening: dict | None = None) -> int:
         """One target's sweep result, written by ``record_results``: every light-curve rung passes unless ``tests``
         ((rung, status, reason) tuples, with ``metrics`` per rung) says otherwise. Without ``raw_file`` the curve must
         be re-fetched, which the ``fake`` source cannot do (it has no live adapter: ``source_down``)."""
@@ -57,6 +61,7 @@ class Env:
         lc = lc if lc is not None else inject_transit(make_lightcurve(noise_ppm=400, seed=3), period, t0, duration,
                                                       depth_ppm)
         self.store.upsert_target(Target(source="fake", target_id=tid, ra=10.0 + self.n, dec=20.0, gmag=16.5))
+        lc = dataclasses.replace(lc, meta={**lc.meta, "target_id": tid})      # one raw file per target, never shared
         if raw_file:
             data = pickle.dumps(lc)
             sha, loc = self.blob.put(data, f"{tid}.fits")
@@ -66,7 +71,8 @@ class Env:
         sig = Signal(target_id=tid, detector="box_dip", detector_version=version, period=period, t0=t0,
                      duration=duration, depth_ppm=depth_ppm, snr=40.0, sde=20.0, n_events=int(1400 / period),
                      extra={"detrend": pipeline.detrend_settings(),
-                            "search_window": {"min_period_days": 0.5, "max_period_days": 200.0}})
+                            "search_window": {"min_period_days": 0.5, "max_period_days": 200.0},
+                            **({"prewhitening": prewhitening} if prewhitening is not None else {})})
         rows = {rung: TestResult(rung=rung, status=TestStatus.PASS) for rung in LC_RUNGS}
         for rung, status, reason in tests:
             rows[rung] = TestResult(rung=rung, status=TestStatus(status), reason=reason,
@@ -78,7 +84,7 @@ class Env:
         with self.store.session() as s:
             return s.scalar(select(SignalRow.id).where(SignalRow.run_id == rid))
 
-    def seed_doubled_planet(self, child_reason: str | None = None, lc=None) -> int:
+    def seed_doubled_planet(self, child_reason: str | None = None, lc=None, prewhitening: dict | None = None) -> int:
         """An 8 d, 2500 ppm, 0.1 d planet stored as a 16 d signal whose rung 2 found the equal secondary at phase 0.5.
         ``child_reason`` makes rung 2 give that undetermined reason on the P/2 signal (a fold that is still equal)."""
         if child_reason is not None:
@@ -93,7 +99,7 @@ class Env:
         if lc is None:
             lc = inject_transit(make_lightcurve(noise_ppm=400, seed=7), 8.0, 140.0, 0.1, 2500.0)
         return self.seed_signal(lc=lc, period=16.0, t0=140.0, duration=0.1, depth_ppm=2500.0,
-                                tests=[("rung2_shape", "undetermined", HALVING)],
+                                prewhitening=prewhitening, tests=[("rung2_shape", "undetermined", HALVING)],
                                 metrics={"rung2_shape": {"suggested_period": 8.0}})
 
     def seed_doubled_binary(self) -> int:
@@ -156,10 +162,13 @@ def test_halving_does_not_supersede_when_the_half_period_is_undetermined_for_the
     assert env.store.rechecks(sid)[-1]["outcome"] == "undetermined"
     child = env.store.children(sid)[0]
     assert child["final_status"] == "undetermined"
-    # the next recheck neither halves the parent again nor the child (it is a P/2 signal already)
+    # the next recheck neither halves the parent again nor the child (it is a P/2 signal already), and writes nothing
+    rows = {i: env.store.rechecks(i) for i in (sid, child["id"])}
+    before = env.store.counts()
     rep = recheck(env.store, env.blob, env.settings, fetch=fake_fetch.fetch, pixels=False)
     assert rep.steps["period"] == 0 and len(env.store.children(sid)) == 1 and env.store.children(child["id"]) == []
-    assert env.store.rechecks(child["id"])[-1]["reason"] == "already re-measured at half the period"
+    assert {i: env.store.rechecks(i) for i in (sid, child["id"])} == rows and env.store.counts() == before
+    assert rows[child["id"]] == []
 
 
 def test_halving_skips_when_the_half_period_cannot_be_measured(env, monkeypatch):
@@ -218,11 +227,16 @@ def test_recheck_skips_signals_with_a_reviewer_decision(env):
 
 
 def test_recheck_is_idempotent(env):
-    env.seed_signal(ladder_version="3")
-    recheck(env.store, env.blob, env.settings, fetch=fake_fetch.fetch, pixels=False)
-    before = env.store.counts()
+    """A second recheck writes nothing on the ladder, P/2 (superseded) and catalogue paths: no test, run or signal
+    row (``counts``) and no rechecks row (which ``counts`` does not count)."""
+    ids = [env.seed_signal(ladder_version="3"), env.seed_doubled_planet(),
+           env.seed_signal(tests=[("rung4_novelty", "undetermined", "outage:exoarchive: HTTP 403")])]
+    first = recheck(env.store, env.blob, env.settings, fetch=fake_fetch.fetch, pixels=False)
+    assert first.steps == {"ladder": 1, "period": 1, "catalogue": 1, "pixels": 0}
+    before, rows = env.store.counts(), {i: env.store.rechecks(i) for i in ids}
     rep = recheck(env.store, env.blob, env.settings, fetch=fake_fetch.fetch, pixels=False)
     assert rep.steps == {"ladder": 0, "period": 0, "catalogue": 0, "pixels": 0} and env.store.counts() == before
+    assert {i: env.store.rechecks(i) for i in ids} == rows
 
 
 def test_recheck_takes_only_the_named_signals(env):
@@ -243,7 +257,7 @@ def test_report_as_dict_is_plain_json():
     d = rep.as_dict()
     assert d == {"considered": 2, "steps": {"ladder": 1, "period": 0, "catalogue": 0, "pixels": 0},
                  "outcomes": {"candidate_stage1": 0, "candidate_stage2": 0, "undetermined": 0, "rejected": 0,
-                              "superseded": 0, "skipped": 1}, "seconds": 0.0}
+                              "superseded": 0, "skipped": 1}, "seconds": 0.0, "stopped": False}
     d["steps"]["ladder"] = 9
     assert rep.steps["ladder"] == 1 and math.isfinite(d["seconds"])
 
@@ -263,9 +277,156 @@ def test_pixel_stage_takes_stage_1_candidates_and_pixel_reasons_only():
 def test_the_pixel_step_is_a_hook_that_writes_nothing_yet(env, monkeypatch):
     sid = env.seed_signal()
     seen = []
-    monkeypatch.setattr(recheck_mod, "step_pixels", lambda ctx, sig: seen.append((sig.id, ctx.tpf_loader)) or False)
+    monkeypatch.setattr(recheck_mod, "step_pixels", lambda ctx, sig: seen.append((sig.id, ctx.tpf_loader)) or None)
     rep = recheck(env.store, env.blob, env.settings, fetch=fake_fetch.fetch, pixels=True, tpf_loader="loader")
     assert seen == [(sid, "loader")] and rep.steps == STEPS_NONE and env.store.rechecks(sid) == []
     seen.clear()
     recheck(env.store, env.blob, env.settings, fetch=fake_fetch.fetch, pixels=False)
     assert seen == []
+
+
+@pytest.mark.parametrize("seed", ["ladder", "period"])
+def test_a_step_that_fails_while_writing_leaves_nothing_and_is_redone(env, monkeypatch, seed):
+    """One transaction per step: a failure inside the write leaves no rechecks row of the step, no P/2 signal and no
+    run row (only the crash is recorded, as a skip with the exception's class name); the next recheck redoes it."""
+    sid = env.seed_signal(ladder_version="3") if seed == "ladder" else env.seed_doubled_planet()
+    before = env.store.counts()
+    real = Store._add_test_row
+    calls = []
+
+    def flaky(self, *a, **kw):
+        calls.append(1)
+        if len(calls) == 3:
+            raise RuntimeError("database went away at 0x7f00")
+        return real(self, *a, **kw)
+    monkeypatch.setattr(Store, "_add_test_row", flaky)
+    rep = recheck(env.store, env.blob, env.settings, fetch=fake_fetch.fetch, pixels=False)
+    def written(counts):            # the catalogue requests the re-vet made are logged either way: provenance
+        return {k: v for k, v in counts.items() if k != "queries"}
+    assert rep.steps == STEPS_NONE and written(env.store.counts()) == written(before) and env.store.children(sid) == []
+    assert [(r["step"], r["outcome"], r["reason"]) for r in env.store.rechecks(sid)] == [
+        (seed, "skipped", "exception: RuntimeError")]
+    assert all(t["recheck_id"] is None for t in env.store.latest_tests(sid))
+    monkeypatch.setattr(Store, "_add_test_row", real)
+    rep = recheck(env.store, env.blob, env.settings, fetch=fake_fetch.fetch, pixels=False)
+    assert rep.steps[seed] == 1 and env.store.rechecks(sid)[-1]["step"] == seed
+    assert env.store.rechecks(sid)[-1]["outcome"] != "skipped"
+    if seed == "period":
+        assert env.store.signal_status(sid) == "superseded" and len(env.store.children(sid)) == 1
+        with env.store.session() as s:
+            assert [r.status for r in s.scalars(select(RunRow).where(RunRow.job_key.like("recheck:%")))] == ["done"]
+
+
+def test_a_stop_request_ends_the_recheck_between_signals(env):
+    first = env.seed_signal(tests=[("rung4_novelty", "undetermined", "outage:exoarchive: HTTP 403")])
+    second = env.seed_signal(tests=[("rung4_novelty", "undetermined", "outage:exoarchive: HTTP 403")])
+    rep = recheck(env.store, env.blob, env.settings, fetch=fake_fetch.fetch, pixels=False,
+                  stop_requested=lambda: bool(env.store.rechecks(first)))
+    assert rep.stopped and rep.as_dict()["stopped"] is True and rep.considered == 1
+    assert len(env.store.rechecks(first)) == 1 and env.store.rechecks(second) == []
+    rep = recheck(env.store, env.blob, env.settings, fetch=fake_fetch.fetch, pixels=False)
+    assert not rep.stopped and env.store.signal_status(second) == "candidate_stage1"
+
+
+class _NoTargets:
+    name = "fake"
+
+    def list_targets(self, flt):
+        return []
+
+
+def test_the_sweep_passes_its_stop_check_to_the_recheck_and_keeps_its_summary(env, monkeypatch):
+    first = env.seed_signal(tests=[("rung4_novelty", "undetermined", "outage:exoarchive: HTTP 403")])
+    env.seed_signal(tests=[("rung4_novelty", "undetermined", "outage:exoarchive: HTTP 403")])
+    out = pipeline.run(_NoTargets(), env.store, env.blob, env.settings, filter={}, fetch_module="tests.unit.fake_fetch",
+                       stop_requested=lambda: bool(env.store.rechecks(first)))
+    assert out["processed"] == 0 and "stopped" not in out                # the sweep itself ran to its end
+    assert out["recheck"]["stopped"] is True and out["recheck"]["considered"] == 1
+
+    def hard_stop(*a, **kw):
+        raise KeyboardInterrupt
+    monkeypatch.setattr(recheck_mod, "recheck", hard_stop)
+    out = pipeline.run(_NoTargets(), env.store, env.blob, env.settings, filter={}, stop_requested=lambda: False)
+    assert out["processed"] == 0 and out["recheck"] == {"stopped": True, "error": "interrupted"}
+
+
+def test_without_novelty_the_catalogue_retry_does_not_run(env):
+    sid = env.seed_signal(tests=[("rung4_novelty", "undetermined", "outage:exoarchive: HTTP 403")])
+    calls = []
+    rep = recheck(env.store, env.blob, env.settings, fetch=lambda *a, **k: calls.append(1), pixels=False,
+                  with_novelty=False)
+    assert rep.steps == STEPS_NONE and calls == [] and env.store.rechecks(sid) == []
+
+
+def test_a_signal_no_step_applies_to_is_not_loaded(env, monkeypatch):
+    from skysift.lc.loader import LightCurveLoader
+    sid = env.seed_signal(raw_file=False, source_down=True)       # ladder 4, every rung passed
+    loads = []
+    monkeypatch.setattr(LightCurveLoader, "load", lambda self, target, pin=True: loads.append(target) or None)
+    rep = recheck(env.store, env.blob, env.settings, fetch=fake_fetch.fetch, pixels=False)
+    assert loads == [] and env.store.rechecks(sid) == [] and rep.outcomes["candidate_stage1"] == 1
+
+
+def test_a_reject_during_the_step_is_kept(env):
+    """A reviewer rejects the signal while its catalogue retry runs: the step writes only a skipped row."""
+    sid = env.seed_signal(tests=[("rung4_novelty", "undetermined", "outage:exoarchive: HTTP 403")])
+
+    def deciding_fetch(url, **kw):
+        if not env.store.decisions(sid):
+            env.store.decide(sid, "reject", "a blend: the neighbour is the source")
+        return fake_fetch.fetch(url, **kw)
+    recheck(env.store, env.blob, env.settings, fetch=deciding_fetch, pixels=False)
+    assert [(r["step"], r["outcome"], r["reason"]) for r in env.store.rechecks(sid)] == [
+        ("catalogue", "skipped", "reviewer decided meanwhile")]
+    assert env.store.signal_status(sid) == "rejected"
+    assert all(t["recheck_id"] is None for t in env.store.latest_tests(sid))
+
+
+def test_the_half_period_signal_is_restored_at_its_own_harmonics(env, monkeypatch):
+    """A 1 d, 2500 ppm planet stored as a 2 d signal, with a 600 ppm stellar wave at 3.5 per day: the whitener removed
+    the wave and the sweep's restore for the 2 d detection put it back (its seventh harmonic, shallower than the
+    transit). At 1 d that wave is a half-integer harmonic and changes sign between consecutive transits. Vetted on the
+    parent's replay, the P/2 signal fails rung 2 as odd_even; the recheck restores the child at its own harmonics
+    only, so the wave stays removed and the child passes and supersedes the parent. The whitener is stood in for (it
+    removes exactly this wave): the real one also strips a short transit's harmonics above the eighth, which no
+    restore puts back, in the sweep as here."""
+    th = env.settings.thresholds
+    period, t0, duration, depth, f = 1.0, 140.0, 0.08, 2500.0, 3.5
+    w0 = 2 * np.pi * f * t0
+    comp = {"frequency": f, "amplitude_ppm": 600.0, "snr": 80.0,
+            "coef": [0.0, 600e-6 * np.cos(w0), 600e-6 * np.sin(w0), 0.0, 0.0]}
+    planet = inject_transit(make_lightcurve(noise_ppm=400, seed=7), period, t0, duration, depth)
+    lc = _with_dip(planet, 1.0 + prewhiten_model(planet.time, [comp]))
+    real = pipeline._sweep_flux
+
+    def whitened(lc_, th_):
+        flux = real(lc_, th_)                                    # whitening is off in this environment
+        model = prewhiten_model(lc_.time, [comp])
+        record = {"n": 1, "components": [comp], "skipped": [], "capped": False}
+        return flux._replace(fn=flux.fn - model, record=record, alt=flux.alt - model, alt_record=record)
+    monkeypatch.setattr(recheck_mod, "_sweep_flux", whitened)
+    base = whitened(lc, th)
+    _fn, _alt, stored = pipeline.restore_from(lc.time, base, [(1 / (2 * period), depth)])     # the sweep at 2 d
+    assert [r["frequency"] for r in stored["restored"]] == [f]
+    halving = "equal secondary at phase 0.5: true period may be P / 2 (1 d)"
+    sid = env.seed_signal(lc=lc, period=2 * period, t0=t0, duration=duration, depth_ppm=depth, prewhitening=stored,
+                          tests=[("rung2_shape", "undetermined", halving)],
+                          metrics={"rung2_shape": {"suggested_period": period}})
+
+    # the trap: the P/2 signal vetted on the parent's restore replay
+    with env.store.session() as s:
+        row = s.get(SignalRow, sid)
+        parent = Signal(**{k: getattr(row, k) for k in Signal.model_fields})
+    replay = pipeline.revet_flux(lc, th, parent, base=base)
+    old_child = pipeline.halved_signal(parent, lc, replay[0])
+    _outcome, old = pipeline.revet(lc, Target(source="fake", target_id=parent.target_id, ra=11.0, dec=20.0),
+                                   th, old_child, pipeline.build_ladder(), fetch=fake_fetch.fetch, flux=replay)
+    assert old[2].rung == "rung2_shape" and old[2].reason.startswith("odd_even"), old
+
+    rep = recheck(env.store, env.blob, env.settings, fetch=fake_fetch.fetch, pixels=False)
+    child = env.store.children(sid)[0]
+    rung2 = env.store.latest_tests(child["id"])[2]
+    assert rep.steps["period"] == 1 and rung2["rung"] == "rung2_shape" and rung2["status"] == "pass", rung2
+    assert child["final_status"] == "candidate_stage1" and env.store.signal_status(sid) == "superseded"
+    record = child["extra"]["prewhitening"]
+    assert not record.get("restored") and [c["frequency"] for c in record["components"]] == [f]

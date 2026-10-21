@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from sqlalchemy import (
@@ -124,6 +125,32 @@ class RecheckRow(Base):
     reason: Mapped[str] = mapped_column(Text, default="")
     new_signal_id: Mapped[int | None] = mapped_column(ForeignKey("signals.id"))   # the P/2 signal a period step made
     utc: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+REVIEWER_DECIDED_REASON = "reviewer decided meanwhile"     # a step whose signal a reviewer rejected while it ran
+
+
+@dataclass
+class ChildWrite:
+    """The signal a recheck step derived (the P/2 re-measure), with its own run and its test rows."""
+    job_key: str
+    signal: Signal
+    ladder_version: str
+    branch: str
+    tests: list[tuple[TestResult, float]] = field(default_factory=list)
+
+
+@dataclass
+class StepWrite:
+    """Everything one recheck step writes, computed before the store is touched: its rechecks row, the test rows on
+    the signal, and the derived signal when there is one (``Store.commit_recheck_step`` writes it all at once)."""
+    signal_id: int
+    step: str
+    ladder_version: str
+    outcome: str
+    reason: str = ""
+    tests: list[tuple[TestResult, float]] = field(default_factory=list)
+    child: ChildWrite | None = None
 
 
 def _get(t, key: str):
@@ -468,6 +495,52 @@ class Store:
             row = RecheckRow(signal_id=signal_id, step=step, ladder_version=ladder_version, outcome=outcome,
                              reason=reason, new_signal_id=new_signal_id)
             s.add(row); s.flush(); return row.id
+
+    def commit_recheck_step(self, write: StepWrite) -> dict:
+        """Write one recheck step in ONE transaction: the derived signal's run, the signal itself and its tests (the
+        run finished "done"), the rechecks row (naming the derived signal), the signal's test rows pointing at it,
+        and both statuses derived again. Either all of it lands or none does, so a failure never leaves a pending
+        child, a running run or a rechecks row without its tests for the next run to mistake for done work. When a
+        reviewer rejected the signal while the step ran, only a rechecks row "skipped" with
+        ``REVIEWER_DECIDED_REASON`` is written. Returns {"recheck_id", "child_id", "status", "written"}."""
+        with self.session() as s:
+            sig = s.get(SignalRow, write.signal_id)
+            if sig is None:
+                raise KeyError(write.signal_id)
+            last = s.scalar(select(DecisionRow.decision).where(DecisionRow.signal_id == sig.id)
+                            .order_by(DecisionRow.id.desc()).limit(1))
+            if last == "reject":
+                row = RecheckRow(signal_id=sig.id, step=write.step, ladder_version=write.ladder_version,
+                                 outcome="skipped", reason=REVIEWER_DECIDED_REASON)
+                s.add(row); s.flush()
+                return {"recheck_id": row.id, "child_id": None, "status": sig.final_status, "written": False}
+            child = run = None
+            if write.child is not None:
+                c = write.child
+                for old in s.scalars(select(RunRow).where(RunRow.job_key == c.job_key, RunRow.status == "running")):
+                    old.status, old.error, old.finished = "error", "superseded", utcnow()
+                run = RunRow(job_key=c.job_key, target_id=c.signal.target_id, detector=c.signal.detector,
+                             detector_version=c.signal.detector_version, ladder_version=c.ladder_version)
+                s.add(run); s.flush()
+                child = SignalRow(run_id=run.id, parent_signal_id=sig.id, ladder_version=c.ladder_version,
+                                  branch=c.branch, **c.signal.model_dump())
+                s.add(child); s.flush()
+            row = RecheckRow(signal_id=sig.id, step=write.step, ladder_version=write.ladder_version,
+                             outcome=write.outcome, reason=write.reason,
+                             new_signal_id=None if child is None else child.id)
+            s.add(row); s.flush()
+            for r, dt in write.tests:
+                self._add_test_row(s, sig.id, r, dt, row.id)
+            if child is not None:
+                for r, dt in write.child.tests:
+                    self._add_test_row(s, child.id, r, dt, row.id)
+                s.flush()
+                self._refresh_status(s, child)
+                run.status, run.finished = "done", utcnow()
+            s.flush()
+            status = self._refresh_status(s, sig)
+            return {"recheck_id": row.id, "child_id": None if child is None else child.id, "status": status,
+                    "written": True}
 
     def rechecks(self, signal_id: int) -> list[dict]:
         """A signal's recheck history, oldest first."""
