@@ -1,6 +1,6 @@
 {
  "dossier_version": "1",
- "generated": "2026-10-21T04:20:14.358159+00:00",
+ "generated": "2026-10-21T06:20:57.909089+00:00",
  "target": {
   "target_id": "kic-006146676",
   "source": "kbonus_bkg",
@@ -40,6 +40,14 @@
   "versions": [
    "5+42061727"
   ],
+  "k_by_kind": {
+   "inverted": 11,
+   "scrambled": 0
+  },
+  "n_by_kind": {
+   "inverted": 999,
+   "scrambled": 999
+  },
   "one_in": 170,
   "words": "1 in 170",
   "sde": 50.501758,
@@ -60,18 +68,18 @@
     "source_id": "2073896294004902144",
     "sep_arcsec": 7.1422442,
     "gmag": 19.771944,
-    "centroid_sep_arcsec": 6.3621263,
-    "s_arcsec": 6.3621263,
+    "centroid_sep_arcsec": 6.3802651,
+    "s_arcsec": 6.3802651,
     "flux_fraction": 0.037107518,
     "bright_enough": true,
-    "exclusion": 1.5117388e-265
+    "exclusion": 1.3405536e-221
    },
    {
     "source_id": "2073896289692192128",
     "sep_arcsec": 10.941229,
     "gmag": 17.895601,
-    "centroid_sep_arcsec": 10.161111,
-    "s_arcsec": 10.161111,
+    "centroid_sep_arcsec": 10.17925,
+    "s_arcsec": 10.17925,
     "flux_fraction": 0.17829435,
     "bright_enough": true,
     "exclusion": 0.0
@@ -80,8 +88,8 @@
     "source_id": "2073896190925687296",
     "sep_arcsec": 11.452381,
     "gmag": 12.806441,
-    "centroid_sep_arcsec": 10.672263,
-    "s_arcsec": 10.672263,
+    "centroid_sep_arcsec": 10.690402,
+    "s_arcsec": 10.690402,
     "flux_fraction": 0.95927529,
     "bright_enough": true,
     "exclusion": 0.0
@@ -90,8 +98,8 @@
     "source_id": "2073896190926955520",
     "sep_arcsec": 12.965638,
     "gmag": 19.735788,
-    "centroid_sep_arcsec": 12.18552,
-    "s_arcsec": 12.18552,
+    "centroid_sep_arcsec": 12.203659,
+    "s_arcsec": 12.203659,
     "flux_fraction": 0.038315893,
     "bright_enough": true,
     "exclusion": 0.0
@@ -100,8 +108,8 @@
     "source_id": "2073896190921609600",
     "sep_arcsec": 13.513456,
     "gmag": 19.379517,
-    "centroid_sep_arcsec": 12.733338,
-    "s_arcsec": 12.733338,
+    "centroid_sep_arcsec": 12.751477,
+    "s_arcsec": 12.751477,
     "flux_fraction": 0.052417001,
     "bright_enough": true,
     "exclusion": 0.0
@@ -110,8 +118,8 @@
     "source_id": "2073896289692177024",
     "sep_arcsec": 18.624956,
     "gmag": 18.883438,
-    "centroid_sep_arcsec": 17.844838,
-    "s_arcsec": 17.844838,
+    "centroid_sep_arcsec": 17.862977,
+    "s_arcsec": 17.862977,
     "flux_fraction": 0.080336935,
     "bright_enough": true,
     "exclusion": 0.0
@@ -141,15 +149,15 @@
     "name": "BEB",
     "prior": 0.084,
     "geometric": 0.020218597,
-    "data": 2.5195646e-266,
-    "weight": 4.2791331e-269,
+    "data": 2.234256e-222,
+    "weight": 3.7945758e-225,
     "factors": {
      "f_EB": 0.014,
      "n_bright": 6,
      "a_2P_au": 0.46001907,
-     "X_mean": 2.5195646e-266,
+     "X_mean": 2.234256e-222,
      "r_c_arcsec": 2.0,
-     "centroid_sigma_arcsec": 0.12491068
+     "centroid_sigma_arcsec": 0.137343
     }
    },
    {
@@ -199,45 +207,48 @@
      "sep_arcsec": 7.1422442,
      "gmag": 19.771944,
      "bp_rp": 1.813982,
-     "centroid_sep_arcsec": 6.3621263
+     "centroid_sep_arcsec": 6.3802651
     },
     {
      "source_id": "2073896289692192128",
      "sep_arcsec": 10.941229,
      "gmag": 17.895601,
      "bp_rp": 1.664362,
-     "centroid_sep_arcsec": 10.161111
+     "centroid_sep_arcsec": 10.17925
     },
     {
      "source_id": "2073896190925687296",
      "sep_arcsec": 11.452381,
      "gmag": 12.806441,
      "bp_rp": 0.80157375,
-     "centroid_sep_arcsec": 10.672263
+     "centroid_sep_arcsec": 10.690402
     },
     {
      "source_id": "2073896190926955520",
      "sep_arcsec": 12.965638,
      "gmag": 19.735788,
      "bp_rp": null,
-     "centroid_sep_arcsec": 12.18552
+     "centroid_sep_arcsec": 12.203659
     },
     {
      "source_id": "2073896190921609600",
      "sep_arcsec": 13.513456,
      "gmag": 19.379517,
      "bp_rp": 1.5326786,
-     "centroid_sep_arcsec": 12.733338
+     "centroid_sep_arcsec": 12.751477
     },
     {
      "source_id": "2073896289692177024",
      "sep_arcsec": 18.624956,
      "gmag": 18.883438,
      "bp_rp": 2.6226044,
-     "centroid_sep_arcsec": 17.844838
+     "centroid_sep_arcsec": 17.862977
     }
    ],
-   "centroid_sigma_arcsec": 0.12491068
+   "centroid_sigma_arcsec": 0.137343,
+   "sigma_c_stat_arcsec": 0.137343,
+   "sigma_c_scatter_arcsec": 0.090046479,
+   "sigma_c_source": "statistical"
   },
   "sentence_not_covered": "This counts the common impostors with simple priors. It is not a vespa or a Kepler DR25 false-positive probability, and it has no radial-velocity or imaging input."
  },
@@ -684,6 +695,15 @@
  ],
  "provenance": {
   "search_version": "5+6cfe4cf4",
-  "git_commit": "2f05c16"
+  "ladder_version": "4",
+  "ladder_versions": {
+   "rung1_detection": "4",
+   "rung1_events": "4",
+   "rung2_shape": "4",
+   "rung3_stability": "4",
+   "rung4_novelty": "3",
+   "rung5_pixels": "4"
+  },
+  "git_commit": "f431ed0"
  }
 }

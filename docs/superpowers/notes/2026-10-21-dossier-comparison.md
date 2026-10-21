@@ -9,12 +9,19 @@ for its FPP factor table.
 
 ## Headline
 
-Every quantity with a value on both sides agrees with the hand-built study within the study's quoted error: period,
-SDE, depth, duration, odd and even depths, the secondary, Teff, stellar radius and mass, distance, Rp, a, a/R*, Teq,
-the transit probability, the four rung 3 season depths, the eight per-season centroid distances (all within 0.1
-pixel, the largest 0.057 pixel) and the six two-source depths (36 of 38 rows). The two rows without a generated value
+Every quantity with a value on both sides agrees with the hand-built study within the tolerances the tool applies (the
+study's quoted error where it gives one, else the stated tolerance): period, SDE, depth, duration, odd and even
+depths, the secondary, Teff, stellar radius and mass, distance, Rp, a, a/R*, Teq, the transit probability, the four
+rung 3 season depths, the eight per-season centroid distances (all within 0.1 pixel, the largest 0.057 pixel) and the
+six two-source depths (36 of 38 rows). The two rows without a generated value
 are the two-source depths of archive season 3, which did not vote. The habitable-zone flags read as expected
 (conservative False, optimistic True) and the insolation is 1.22 (-0.12 +0.14) Earth.
+
+Two rung 2 rows differ most from the study, though inside its error. The secondary at phase 0.5 reads 24 ppm above the
+study (95.4 ppm, 0.30 of the study's error) because rung 2 takes the mean of the per-event depths at the search t0,
+while the study stacked the phase 0.5 window at a t0 refined by 2.6 minutes (135.7901 against 135.7883 BKJD). The even
+depth reads 38 ppm above the study (2,153 ppm, 0.22 of its error) for the same reason: per-event means at the search t0
+against a stack of the even transits at the refined t0 in a 3.0 h box.
 
 The real pixel verdict for KIC 6146676 is a pass: "the dip is on the target in 3/3 seasons (centroid >= 17.5 sigma
 nearer)", with `n_seasons_voting` / `n_seasons` = 3 / 4 and `tpf_missing` empty (18 of 18 pixel files of KIC 6146666
@@ -22,7 +29,8 @@ read). The signal moved from stage 1 to stage 2 on the copy.
 
 Four things did not hold on real data and are findings below: the Gaia star query failed with HTTP 400 until it was
 fixed, archive season 3 does not vote, the FAP is "1 in 170" and not the "0 of 1,716" the spec quoted, and the pack
-builder fails on the real rung 5 row.
+builder failed on the real rung 5 row (since fixed in the pack round). The fix round of the same day (appendix) changed
+the centroid error and the provenance, and the numbers in this note come from its run.
 
 ## What ran
 
@@ -41,7 +49,7 @@ Every engine command ran with `SKYSIFT_DATA_DIR=.superpowers/dossier-run`,
 `SKYSIFT_BLOB_URL=file://.superpowers/sample-run/blobs`, `SKYSIFT_DATABASE_URL=sqlite:///.superpowers/dossier-run/engine.db`
 and `PYTHONUTF8=1`. The dossier and pack commands ran below normal priority (`start /belownormal`).
 
-## Network calls (the copy's `queries` table, rows 3137 to 3167)
+## Network calls (the copy's `queries` table, rows 3137 to 3171)
 
 | Rows | Service | Status | What | Bytes |
 | --- | --- | --- | --- | --- |
@@ -53,6 +61,7 @@ and `PYTHONUTF8=1`. The dossier and pack commands ran below normal priority (`st
 | 3161, 3165 | gaia | 200 | the Bailer-Jones distance | 57, 58 |
 | 3162, 3166 | gaia | 200 | the 2MASS Ks cross-match | 29, 29 |
 | 3163, 3167 | gaia | 200 | the neighbour cone again | 608, 527 |
+| 3168 to 3171 | gaia | 200 | fix round: the four queries of KIC 6146676 again, from the clean tree at f431ed0 (06:20:51 to 06:20:57 UTC) | 359, 57, 29, 608 |
 
 Nothing else reached the network: no catalogue query (rung 4 was left out of the ladder recheck), no light curve
 download (both raw files were in the blob store) and no Zenodo call (no token).
@@ -60,13 +69,20 @@ download (both raw files were in the blob store) and no Zenodo call (no token).
 Files written to the shared blob store `.superpowers/sample-run/blobs` (recorded only in the copy, so the live database
 does not know them): the 18 pixel files `kplr006146666-*_lpd-targ.fits.gz` (49.4 MB, kind `tpf`, unpinned) and
 `7e/7e207f54...ca219e_pixels.npz` (8,904 bytes, kind `pixels`, pinned, the signal's rung 5 arrays).
+A note for Vikram: these files stay in the shared blob store. They are content-addressed, so a later live pixel step
+for KIC 6146676 writes the same names, but until then the live database's retention and budget accounting do not see
+the 49.4 MB.
 
 ## Findings
 
 **1. The Gaia star query failed with HTTP 400 on real data.** `stars.Q_SOURCE` asked `gaiadr3.gaia_source` for
 `radius_flame` and `mass_flame`, which live in `gaiadr3.astrophysical_parameters`. The unit tests answer every query
 from a fake fetch, so the column error never surfaced. The first two dossiers therefore had no star (route "none"), no
-planet radius and an FPP built on the 0.5 Rsun fallback (KIC 6146676 at 0.062 percent, KIC 5689121 at 3.1 percent).
+planet radius and an FPP built on the 0.5 Rsun fallback (KIC 6146676 at 0.062 percent, KIC 5689121 at 3.1 percent),
+and the command exited 0 with a caveat that advised a retry. Since the fix round each failed Gaia query is logged at
+warning level and printed ("Gaia query failed: ..."), a refused one (HTTP 4xx) gets its own caveat ("A Gaia query was
+refused (HTTP 400): the star block comes from the fallback route"), and `skysift dossier` exits 3 while still writing
+the dossier.
 The query now joins the two tables (`LEFT OUTER JOIN gaiadr3.astrophysical_parameters AS ap ON ap.source_id =
 g.source_id`), and the routing keys of the fake fetch in `test_stars.py` and `test_dossier.py` follow it. The numbers
 below are from the second run.
@@ -109,34 +125,46 @@ Rsun). The archive gives Ks 13.055 and the dossier seed is 20261021, so R is 0.5
 **7. The FAP is "1 in 170", not "0 of 1,716".** 11 of the 1,998 null searches reached SDE 50.5, all of them inverted
 light curves (148.1 at the top). None of the 999 scrambled searches came near it, so the scrambled set alone would read
 "1 in 1,000". The calibration matched the signal's search: the sweep version 5+6cfe4cf4 maps to calibration version
-5+42061727 and every row carries it (`version_matches` true). I think the inverted null is not a fair null for a dip
-on a quiet M dwarf: inverting a light curve turns every brightening (flares, or the bumps of a pulsator) into dips, and
-11 of the 999 calibration stars give a box-shaped peak above 50 that way. KIC 5689121 reads "1 in 51" (38 of 1,998; 37
+5+42061727 and every row carries it (`version_matches` true). The dossier's FAP block now carries the split (`k_by_kind`
+inverted 11, scrambled 0; `n_by_kind` 999 each). The page text is unchanged and the Expert view does not show the split
+yet, since the dashboard templates were outside the fix round. I think the inverted null is not a fair null for a dip on
+a quiet M dwarf: inverting a light curve turns every brightening (flares, or the bumps of a pulsator) into dips, and 11
+of the 999 calibration stars give a box-shaped peak above 50 that way. KIC 5689121 reads "1 in 51" (38 of 1,998; 37
 inverted, 1 scrambled at 20.2). Which nulls count is a decision for the FAP rule, not something to tune here.
 
 **8. Both FPPs fall below the 1 to 60 percent band of spec 4.2.** KIC 6146676 reads 0.0139 percent ("under 1
 percent"), KIC 5689121 0.90 percent without pixel data ("under 1 percent", label "no pixel data yet"). For KIC 6146676
-the background binary term vanishes (X_mean 2.5e-266): the season-averaged centroid error is 0.125 arcsec (the inverse
-variance mean of the four seasons, 0.031 pixel), so the nearest bright neighbour at 6.36 arcsec from the centroid sits
-35 sigma outside the 2.0 arcsec confusion radius. The spec expected about 4.6 sigma, which is the study's multi-quarter
-offset error (0.9 arcsec), not the per-season Monte Carlo error. The on-target binary term is held down by the
-secondary limit (S_sec 0.168) and the odd/even limit (S_oe 0.0149). This is the sign-off item already in the ledger,
-and the factor tables are below. One more point for that review: `dossier.centroid_offset` averages all seasons with a
-centroid, including season 3, which did not vote.
+the background binary term vanishes (X_mean 2.2e-222). Since the fix round the averaged centroid uses the three voting
+seasons only, and its error sigma_c is the larger of two numbers: the error of the inverse-variance weighted mean
+(0.1373 arcsec, 0.0345 pixel) and the seasons' RMS scatter about that mean over sqrt(3) (0.0900 arcsec). The
+statistical error wins, so sigma_c is 0.1373 arcsec and the confusion radius stays at its 2.0 arcsec floor. The target
+sits 0.762 arcsec (about 5.5 sigma_c) from the averaged centroid, and the nearest bright neighbour, 6.38 arcsec from it,
+sits 32 sigma outside the confusion radius. Before the fix round all four seasons were averaged (sigma_c 0.125 arcsec,
+X_mean 2.5e-266), and the FPP did not move (0.0139 percent both ways). The spec expected about 4.6 sigma, which is the
+study's multi-quarter offset error (0.9 arcsec), not the per-season Monte Carlo error. With 0.9 arcsec the confusion
+radius would be 2.7 arcsec, X_mean 4.2e-5 and the FPP 0.0174 percent, still "under 1 percent". So the miss of the band
+comes from the on-target binary term (2.9e-7), held down by the secondary limit (S_sec 0.168) and the odd/even limit
+(S_oe 0.0149). This is the sign-off item already in the ledger, and the factor tables are below. Rung 5's own
+`centroid_sigma_pix_mean` (0.0641 pixel) is a different number on purpose: the plain mean of the voting seasons' errors,
+kept as the rung reports it, while the FPP needs the error of the averaged centroid.
 
-**9. The pack builder fails on the real rung 5 row.** `pack.pixel_sentence` takes the median of the per-season
-two-source depths, and a season that did not vote stores `depth_target_ppm` as `[null, null]`, so `np.median` raises
-`TypeError: '<' not supported between instances of 'NoneType' and 'float'`. The crash leaves a half-written folder,
-and the retry then stops with "is not empty and is not a submission pack; choose another --out". `pack.py` is under
-the pack fix round, so it is reported here and not changed.
+**9. The pack builder failed on the real rung 5 row (fixed in the pack round).** `pack.pixel_sentence` takes the median
+of the per-season two-source depths, and a season that did not vote stores `depth_target_ppm` as `[null, null]`, so
+`np.median` raises `TypeError: '<' not supported between instances of 'NoneType' and 'float'`. The crash leaves a
+half-written folder, and the retry then stops with "is not empty and is not a submission pack; choose another --out".
+The pack round (581be67, e2d334a) now leaves the non-voting seasons out of the median and swaps the pack folder into
+place.
 
 **10. "Season" means two numberings on one page.** Rung 3 groups quarters as quarter mod 4 (season 0 is Q4, Q8, Q12,
 Q16), as the study's `lc_analysis.py` did. Rung 5 uses the archive SEASON (season 0 is Q2, Q6, Q10, Q14). Both agree
-with their counterpart in the study, but a reader of one dossier sees two different "season 0". The dashboard seed in
-progress also marks season 0 of KIC 6146676 as the one that does not vote, while on real data it is season 3.
+with their counterpart in the study, but a reader of one dossier sees two different "season 0". The committed
+dashboard seed now marks season 3 as the one that does not vote, as on real data, and the dossier's pixel section takes
+the season and its quarters from rung 5 (the npz `seasons` key and the rung metrics), never from the quarter numbers.
 
 **11. Smaller points.** The ladder recheck wrote rows at ladder version 4 but left the signal row's `ladder_version`
-null, so the dossier's provenance prints a null ladder version. `lc.pixels._epoch_dt` casts NaN times to int64 (16
+null, so the first dossiers printed a null ladder version. The provenance now gives the ladder of each rung (from the
+rechecks row a test row points to, else the signal's, else the run's) and the effective one, "4"; the rung 4 row is
+from the 19 October sweep under ladder 3 (table below). `lc.pixels._epoch_dt` casts NaN times to int64 (16
 RuntimeWarnings "invalid value encountered in cast" in the recheck log). The cadences involved have NaN time and are
 dropped later, but the cast is noisy.
 
@@ -168,7 +196,7 @@ dropped later, but the cast is noisy.
 - `stars.py` changed (finding 1). Without it the comparison of Rp, a, Teq and the stellar parameters was impossible.
 - Step 4 of the brief (the dashboard on port 8769 with screenshots) was not run: the controller ruled the ports 8765 to
   8769 out of bounds for this task.
-- The golden block lives at `tests/golden/kic-006146676-generated.json` (17.3 kB), as the controller asked, and not
+- The golden block lives at `tests/golden/kic-006146676-generated.json` (17.7 kB), as the controller asked, and not
   under `docs/superpowers/notes/`. `python -m tools.dossier_compare --write-golden` writes it from the dossier JSON.
 
 ## Reproduce
@@ -180,12 +208,12 @@ python -m tools.dossier_compare --data .superpowers/dossier-run/dossiers/kic-006
     --out .superpowers/dossier-run/comparison.md --write-golden tests/golden/kic-006146676-generated.json
 ```
 
-The same tables come out of the committed golden block (`--data tests/golden/kic-006146676-generated.json`). The
-tool's output follows.
+The same tables come out of the committed golden block (`--data tests/golden/kic-006146676-generated.json --out <scratch
+file>`; without `--out` the tool writes into the current directory, never beside `--data`). The tool's output follows.
 
 ### Comparison: KIC 6146676 generated against the hand-built study
 
-36 of 38 rows agree; disagreements: none; without a value on one side: two-source depth on KIC 6146676, season 3, two-source depth on KIC 6146666, season 3.
+36 of 38 rows agree within the tolerances the tool applies (the study's quoted error where it gives one, else the stated tolerance); disagreements: none; compared without an error to judge by: none; missing a value on one side: two-source depth on KIC 6146676, season 3, two-source depth on KIC 6146666, season 3.
 
 | Quantity | Unit | Generated | Hand-built | Difference | Error used | Difference / error | Agree |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -239,16 +267,29 @@ tool's output follows.
 
 Rung 5: pass, "the dip is on the target in 3/3 seasons (centroid >= 17.5 sigma nearer)"; n_seasons_voting / n_seasons = 3 / 4; tpf_missing = []; 18 pixel files of KIC 6146666; unusable quarters [0, 1, 17] (hand-built [0, 17]); events used 34 (hand-built 35).
 
+### Provenance
+
+Search version 5+6cfe4cf4, effective ladder version 4, git f431ed0.
+
+| Rung | Status | Ladder version | Written |
+| --- | --- | --- | --- |
+| rung1_detection | pass | 4 | 2026-10-21T04:06:15.455019 |
+| rung1_events | pass | 4 | 2026-10-21T04:06:15.455019 |
+| rung2_shape | pass | 4 | 2026-10-21T04:06:15.455019 |
+| rung3_stability | pass | 4 | 2026-10-21T04:06:15.455019 |
+| rung4_novelty | pass | 3 | 2026-10-19T21:08:04.353497 |
+| rung5_pixels | pass | 4 | 2026-10-21T04:07:27.287189 |
+
 ### Probabilities
 
-False alarm: "1 in 170", 11 of 1998 null searches at or above SDE 50.5, calibration version 5+42061727 (signal search 5+6cfe4cf4, version matches True).
+False alarm: "1 in 170", 11 of 1998 null searches at or above SDE 50.5 (by null kind: inverted 11 of 999, scrambled 0 of 999), calibration version 5+42061727 (signal search 5+6cfe4cf4, version matches True).
 
-**KIC 6146676**: FPP 0.000139 ("under 1 percent", label "False positive", pixels True, signed off False), confusion radius 2 arcsec.
+**KIC 6146676**: FPP 0.000139 ("under 1 percent", label "False positive", pixels True, signed off False), confusion radius 2 arcsec. Centroid error sigma_c 0.1373 arcsec, the statistical one of statistical 0.1373 and scatter 0.09005 arcsec.
 
 | Scenario | Prior | Geometric | Data | Weight | Share of the total |
 | --- | --- | --- | --- | --- | --- |
 | PL | 0.1604 | 0.01284 | 0.9976 | 0.002054 | 0.9999 |
-| BEB | 0.084 | 0.02022 | 2.52e-266 | 4.279e-269 | 2.083e-266 |
+| BEB | 0.084 | 0.02022 | 2.234e-222 | 3.795e-225 | 1.847e-222 |
 | EB | 0.01074 | 0.0106 | 0.002509 | 2.856e-07 | 0.000139 |
 
 | Scenario | Factor | Value |
@@ -266,9 +307,9 @@ False alarm: "1 in 170", 11 of 1998 null searches at or above SDE 50.5, calibrat
 | BEB | f_EB | 0.014 |
 | BEB | n_bright | 6 |
 | BEB | a_2P_au | 0.46 |
-| BEB | X_mean | 2.52e-266 |
+| BEB | X_mean | 2.234e-222 |
 | BEB | r_c_arcsec | 2 |
-| BEB | centroid_sigma_arcsec | 0.1249 |
+| BEB | centroid_sigma_arcsec | 0.1373 |
 | EB | class | M |
 | EB | f_bin | 0.26 |
 | EB | g_P | 0.04132 |
@@ -287,12 +328,12 @@ False alarm: "1 in 170", 11 of 1998 null searches at or above SDE 50.5, calibrat
 
 | Gaia DR3 neighbour | Separation (arcsec) | G | Flux fraction | Bright enough | s from the centroid (arcsec) | Exclusion X_i |
 | --- | --- | --- | --- | --- | --- | --- |
-| 2073896294004902144 | 7.142 | 19.77 | 0.03711 | yes | 6.362 | 1.512e-265 |
-| 2073896289692192128 | 10.94 | 17.9 | 0.1783 | yes | 10.16 | 0 |
-| 2073896190925687296 | 11.45 | 12.81 | 0.9593 | yes | 10.67 | 0 |
-| 2073896190926955520 | 12.97 | 19.74 | 0.03832 | yes | 12.19 | 0 |
-| 2073896190921609600 | 13.51 | 19.38 | 0.05242 | yes | 12.73 | 0 |
-| 2073896289692177024 | 18.62 | 18.88 | 0.08034 | yes | 17.84 | 0 |
+| 2073896294004902144 | 7.142 | 19.77 | 0.03711 | yes | 6.38 | 1.341e-221 |
+| 2073896289692192128 | 10.94 | 17.9 | 0.1783 | yes | 10.18 | 0 |
+| 2073896190925687296 | 11.45 | 12.81 | 0.9593 | yes | 10.69 | 0 |
+| 2073896190926955520 | 12.97 | 19.74 | 0.03832 | yes | 12.2 | 0 |
+| 2073896190921609600 | 13.51 | 19.38 | 0.05242 | yes | 12.75 | 0 |
+| 2073896289692177024 | 18.62 | 18.88 | 0.08034 | yes | 17.86 | 0 |
 
 **KIC 5689121**: FPP 0.008954 ("under 1 percent", label "False positive (no pixel data yet)", pixels False, signed off False), confusion radius 3.98 arcsec.
 
@@ -343,3 +384,42 @@ False alarm: "1 in 170", 11 of 1998 null searches at or above SDE 50.5, calibrat
 | 2103792393108242176 | 16.34 | 19.13 | 0.06765 | yes | 16.34 | 2.264e-20 |
 | 2103792427462012544 | 17.96 | 19.96 | 0.03261 | yes | 17.96 | 7.754e-26 |
 | 2103792427462012032 | 18.98 | 20.58 | 0.01878 | yes | 18.98 | 1.23e-29 |
+
+## Appendix: fix round 1 (21 October 2026)
+
+The Task 7 review asked for five changes and a set of minors. All of them are in the commit that carries this note.
+
+1. The centroid uses the voting seasons only. `dossier.centroid_estimate` takes the inverse-variance weighted mean of
+   `dist_target_pix` over the seasons that voted (a legacy row without the `voting` flag votes when `nearer` names a
+   star), and the FPP inputs come from it. For KIC 6146676 that is seasons 0, 1 and 2: offset 0.762 arcsec.
+2. The centroid error is the larger of the error of the weighted mean (0.1373 arcsec) and the RMS scatter of the
+   voting seasons about the mean over sqrt(n) (0.0900 arcsec). `fpp.inputs` records `sigma_c_stat_arcsec`,
+   `sigma_c_scatter_arcsec` and `sigma_c_source` ("statistical" here); `FppInputs` accepts the three keys with
+   defaults and the FPP ignores them. r_c = max(3 sigma_c, 2.0) is unchanged, so r_c is 2.0 arcsec. Result: sigma_c
+   0.1373 arcsec, X_mean 2.23e-222, BEB weight 3.8e-225, FPP 0.000139 (0.0139 percent, "under 1 percent"), with the
+   EB term at 2.86e-7 (S_sec 0.168, S_oe 0.0149). The miss of the 1 to 60 percent band is an EB-term matter, and the
+   sign-off item stands.
+3. The provenance gives the ladder version of each rung from the test row's `recheck_id` (the rechecks row's version,
+   else the signal's, else the run's), and the dossiers row stores the effective version ("4"). Rung 4's row is from
+   the 19 October sweep under ladder 3.
+4. `calibrate.FalseAlarm` gains `k_by_kind` and `n_by_kind`, and the dossier's FAP block carries both (inverted 11 of
+   999, scrambled 0 of 999). The page text is unchanged, and the dashboard (`ui/`) does not show the split yet.
+5. Gaia errors are loud: each is logged at warning level and printed by the CLI, a 4xx gets the "gaia_refused" caveat,
+   and `skysift dossier` exits 3 when any Gaia query failed, while still writing the dossier (also on a later run that
+   finds the dossier current).
+
+Minors: the compare tool writes into the current directory unless `--out` says otherwise; a rung 3 season with no
+generated value is listed as missing; rows with both values but no error are counted as compared without an error;
+the headline uses the tool's tolerance wording; the two rung 2 differences have a sentence each; `git_commit` carries
+a "-dirty" suffix when the tree has changes; a test pins `stars.Q_SOURCE` to the DR3 tables; "localized" is spelled
+with a z; the 18 unpinned pixel files are listed above as a note for Vikram. Two additions from the dashboard task:
+`tests/unit/ui_seed.py` writes the same FAP keys as `generate` and the sigma_c keys, and `dossier.pixels_section` takes
+the season and its quarters from rung 5 (archive SEASON, so Q1 and Q5 are season 3) instead of the quarter number.
+
+The golden block was regenerated from a clean worktree at f431ed0 (the same code as this commit, without the note and
+the golden itself), so its `git_commit` reads f431ed0 with no "-dirty" suffix. That run made 4 Gaia calls (rows 3168 to
+3171, all 200) for KIC 6146676 only. The KIC 5689121 dossier was not regenerated: it has no pixel data, so its FPP
+does not depend on the centroid, and its FAP split is 37 inverted and 1 scrambled of 38, with 999 searches of each kind.
+
+Tests: `tests/unit/test_dossier.py`, `test_stars.py`, `test_fap.py`, `test_fpp.py` and `test_cli.py -k dossier` pass
+(the `test_cli.py` selection is empty; the dossier CLI tests live in `test_dossier.py`). Ruff is clean.

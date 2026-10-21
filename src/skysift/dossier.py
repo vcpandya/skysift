@@ -52,6 +52,8 @@ from skysift.store.db import (
     CandidateRow,
     DecisionRow,
     QueryRow,
+    RecheckRow,
+    RunRow,
     SignalRow,
     Store,
     TargetRow,
@@ -90,6 +92,8 @@ FPP_NOT_COVERED = ("This counts the common impostors with simple priors. It is n
                    "false-positive probability, and it has no radial-velocity or imaging input.")
 SECTIONS = ("The signal", "Does it repeat", "The checks", "Which star is dimming", "The star and the planet",
             "How it might look", "What is not yet known", "How to reproduce")
+GAIA_STAR, GAIA_CONE = "star row", "neighbour cone"      # the two Gaia query groups, as error prefixes
+_HTTP_4XX = re.compile(r"HTTP (4\d\d)\b")
 RELEASED_REMEDY = "re-run the sweep for this target with --retention keep"
 # what a broken section raises: a missing or unreadable file, a bad archive, a missing array, a mis-shaped array
 SECTION_ERRORS = (OSError, ValueError, KeyError, IndexError, zipfile.BadZipFile)
@@ -117,6 +121,7 @@ class DossierReport:
     fpp: Fpp
     stale_reason: str | None        # why the stored dossier was regenerated; None when nothing was written
     comparison: dict = field(default_factory=dict)      # filled by Task 7's comparison tool
+    gaia_errors: list[str] = field(default_factory=list)   # the Gaia queries that failed (the CLI then exits 3)
 
     def as_dict(self) -> dict:
         fap = None if self.fap is None else {"words": self.fap.words(), "fap": self.fap.fap, "k": self.fap.k,
@@ -126,7 +131,7 @@ class DossierReport:
             "generated": self.generated, "stale_reason": self.stale_reason, "fap": fap,
             "fpp": {"value": self.fpp.value, "words": self.fpp.words(), "label": self.fpp.label(),
                     "pixels": self.fpp.pixels},
-            "comparison": self.comparison})
+            "comparison": self.comparison, "gaia_errors": list(self.gaia_errors)})
 
 
 # ---------------------------------------------------------------------------------------------------- small helpers
@@ -181,9 +186,13 @@ def _metrics(tests: list[dict], rung: str) -> dict:
 
 
 def _git_commit() -> str:
+    """The short commit of the code that built the dossier, with "-dirty" when the tree has uncommitted changes to
+    tracked files (``git describe --always --dirty``); "unknown" outside a checkout."""
     try:
-        return subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, timeout=5,
-                              cwd=Path(__file__).resolve().parents[2], check=False).stdout.strip() or "unknown"
+        out = subprocess.run(["git", "describe", "--always", "--dirty", "--abbrev=7", "--match=NO-TAGS"],
+                             capture_output=True, text=True, timeout=10, cwd=Path(__file__).resolve().parents[2],
+                             check=False).stdout.strip()
+        return out or "unknown"
     except (OSError, subprocess.SubprocessError):
         return "unknown"
 
@@ -372,18 +381,53 @@ def _pixel_seasons(metrics: dict) -> list[dict]:
     return [s for s in metrics.get("seasons") or [] if isinstance(s, dict)]
 
 
-def centroid_offset(rung5_metrics: dict) -> tuple[float, float] | None:
-    """(offset, error) in arcsec of the season-averaged difference centroid from the target: the inverse-variance
-    mean of the seasons' ``dist_target_pix`` and its error, at ``PIXEL_ARCSEC`` per pixel. None without a usable
-    season."""
+@dataclass(frozen=True)
+class CentroidEstimate:
+    """The season-averaged difference centroid of rung 5's voting seasons, in arcsec. ``offset`` is the
+    inverse-variance weighted mean of the seasons' scalar distances from the target (``dist_target_pix``; a distance,
+    not a 2-D vector, because each season's frame is rolled against the others). ``sigma`` is the larger of
+    ``sigma_stat`` (the error of that weighted mean) and ``sigma_scatter`` (the seasons' RMS scatter about it divided
+    by sqrt(n)), since the statistical error alone leaves out the systematics (star positions, WCS, the PRF of a
+    bright neighbour) that show up as season-to-season scatter; ``source`` names the one that won."""
+    offset: float
+    sigma: float
+    sigma_stat: float
+    sigma_scatter: float
+    source: str                     # "statistical" | "scatter"
+    n_seasons: int
+
+
+def season_votes(season: dict) -> bool:
+    """Whether a rung 5 season voted: its ``voting`` flag; a row written before rung 5 stored the flag votes when
+    its ``nearer`` names a star."""
+    if "voting" in season:
+        return season["voting"] is True
+    return season.get("nearer") in ("target", "neighbour")
+
+
+def centroid_estimate(rung5_metrics: dict) -> CentroidEstimate | None:
+    """The ``CentroidEstimate`` of the seasons that voted (``season_votes``) with a distance and a positive error, at
+    ``PIXEL_ARCSEC`` per pixel; None when no season voted, so the FPP falls back to the no-pixel rule."""
     rows = [(d, e) for s in _pixel_seasons(rung5_metrics)
-            if (d := _num(s, "dist_target_pix")) is not None and (e := _num(s, "centroid_sigma_pix")) is not None
-            and e > 0]
+            if season_votes(s) and (d := _num(s, "dist_target_pix")) is not None
+            and (e := _num(s, "centroid_sigma_pix")) is not None and e > 0]
     if not rows:
         return None
     w = np.array([1.0 / e ** 2 for _d, e in rows])
     d = np.array([d for d, _e in rows])
-    return float(np.sum(w * d) / np.sum(w)) * PIXEL_ARCSEC, float(1.0 / math.sqrt(np.sum(w))) * PIXEL_ARCSEC
+    mean = float(np.sum(w * d) / np.sum(w))
+    stat = float(1.0 / math.sqrt(np.sum(w)))
+    scatter = float(math.sqrt(np.mean((d - mean) ** 2)) / math.sqrt(len(rows)))
+    source = "scatter" if scatter > stat else "statistical"
+    return CentroidEstimate(offset=mean * PIXEL_ARCSEC, sigma=max(stat, scatter) * PIXEL_ARCSEC,
+                            sigma_stat=stat * PIXEL_ARCSEC, sigma_scatter=scatter * PIXEL_ARCSEC, source=source,
+                            n_seasons=len(rows))
+
+
+def centroid_offset(rung5_metrics: dict) -> tuple[float, float] | None:
+    """(offset, error) in arcsec of ``centroid_estimate``, or None without a voting season."""
+    est = centroid_estimate(rung5_metrics)
+    return None if est is None else (est.offset, est.sigma)
 
 
 def _grid(a: np.ndarray, valid: np.ndarray, nd: int) -> list[list]:
@@ -408,11 +452,13 @@ def _season_arrays(z, season: int) -> dict:
     return a
 
 
-def pixels_section(store: Store, blob, signal_id: int, rung5_metrics: dict, lc: LightCurve | None) -> list[dict] | None:
+def pixels_section(store: Store, blob, signal_id: int, rung5_metrics: dict) -> list[dict] | None:
     """Section 04's per-season arrays from rung 5's ``pixels.npz`` artifact (``seasons``, an int array, and per season
     ``s`` the keys of ``_season_arrays``) and its metrics, or None when the signal has no such artifact. Each season
-    keeps its own frame shape. The S/N map is ``diff / sqrt(var)`` on valid pixels with a positive variance, None
-    elsewhere. An artifact that cannot be read, or lacks a key, raises one of ``SECTION_ERRORS``."""
+    keeps its own frame shape. Seasons are the Kepler archive SEASON (0 to 3; Q1 and Q5 are season 3) as rung 5 wrote
+    them, from the npz ``seasons`` key, and a season's quarters are the ones its rung 5 metrics list; they are never
+    worked out again from the quarter numbers (an empty list when the metrics do not name them). The S/N map is
+    ``diff / sqrt(var)`` on valid pixels with a positive variance, None elsewhere. An artifact that cannot be read, or lacks a key, raises one of ``SECTION_ERRORS``."""
     with store.session() as s:
         row = s.scalars(select(ArtifactRow).where(ArtifactRow.url == PIXELS_URL.format(signal_id=signal_id),
                                                   ArtifactRow.deleted_at.is_(None))
@@ -424,7 +470,6 @@ def pixels_section(store: Store, blob, signal_id: int, rung5_metrics: dict, lc: 
         seasons = [int(v) for v in np.asarray(z["seasons"]).ravel()]
         frames = {season: _season_arrays(z, season) for season in seasons}
     by_season = {int(s["season"]): s for s in _pixel_seasons(rung5_metrics) if s.get("season") is not None}
-    observed = sorted({int(v) for v in lc.quarter}) if lc is not None else []
     out = []
     for season in seasons:
         a = frames[season]
@@ -433,7 +478,7 @@ def pixels_section(store: Store, blob, signal_id: int, rung5_metrics: dict, lc: 
         ok = valid & (var > 0) & np.isfinite(diff)
         snr = np.where(ok, diff / np.sqrt(np.where(var > 0, var, 1.0)), np.nan)
         m = by_season.get(season, {})
-        quarters = m.get("quarters") or [qq for qq in observed if qq % 4 == season]
+        quarters = m.get("quarters") or []
         out.append({"season": season, "quarters": [int(x) for x in quarters], "shape": list(diff.shape),
                     "snr": _grid(snr, ok, 2), "direct": _grid(direct, valid, 1), "valid": valid.tolist(),
                     "pos_target": a["pos_target"].astype(float).ravel().tolist(),
@@ -483,9 +528,17 @@ def _depth_fraction(signal: dict, shape: dict) -> float:
     return float(signal["depth_ppm"]) / 1e6
 
 
+def gaia_refused(error: str) -> str | None:
+    """The HTTP status of a Gaia error the archive refused (4xx: the query itself is wrong, a retry cannot help), or
+    None for an outage (5xx, a timeout, an empty answer)."""
+    m = _HTTP_4XX.search(error)
+    return m.group(1) if m else None
+
+
 def _lookup(target: Target, signal: dict, tests: list[dict], *, fetch, store: Store):
-    """``stars.lookup`` with each query group caught: a Gaia outage on the star's own row gives route "none", one on
-    the neighbour cone gives no neighbours; either is reported in the returned error list."""
+    """``stars.lookup`` with each query group caught: a failed query on the star's own row gives route "none", one on
+    the neighbour cone gives no neighbours; each is logged at warning level and returned in the error list as
+    "<group>: <error>" (``GAIA_STAR`` or ``GAIA_CONE``)."""
     shape = _metrics(tests, "rung2_shape")
     depth = _depth_fraction(signal, shape)
     fit_k = _num(shape, "fit_k") if shape.get("fit_ok") is True else None
@@ -494,7 +547,8 @@ def _lookup(target: Target, signal: dict, tests: list[dict], *, fetch, store: St
         gaia = stars.query_gaia(target, fetch=fetch, store=store)
     except ServiceUnavailable as e:
         gaia = None
-        errors.append(str(e))
+        errors.append(f"{GAIA_STAR}: {e}")
+        log.warning("Gaia query for the star of %s failed: %s", target.target_id, e)
     cone_target = target
     if target.gmag is None and gaia is not None and gaia.gmag is not None:
         cone_target = target.model_copy(update={"gmag": gaia.gmag})
@@ -502,24 +556,26 @@ def _lookup(target: Target, signal: dict, tests: list[dict], *, fetch, store: St
         neighbours = stars.query_neighbours(cone_target, depth, fetch=fetch, store=store)
     except ServiceUnavailable as e:
         neighbours = []
-        errors.append(str(e))
+        errors.append(f"{GAIA_CONE}: {e}")
+        log.warning("Gaia neighbour cone for %s failed: %s", target.target_id, e)
     star, planet = stars.derive(gaia, float(signal["period"]), fit_k, depth, np.random.default_rng(STARS_SEED))
     return star, planet, neighbours, gaia, errors
 
 
 def fpp_inputs(signal: dict, tests: list[dict], star: stars.StarParams, planet: stars.PlanetParams,
                neighbours: list[Neighbour], gmag: float | None) -> FppInputs:
-    """The FPP inputs from the signal, rung 2, the star and, when a rung 5 row has usable seasons, the centroid: each
-    Gaia neighbour's ``centroid_sep_arcsec`` is then its separation less the centroid's offset from the target (the
-    nearest the centroid can sit to it, since the cone gives no position angle), floored at zero."""
+    """The FPP inputs from the signal, rung 2, the star and, when a rung 5 row has voting seasons, the centroid
+    (``centroid_estimate``): each Gaia neighbour's ``centroid_sep_arcsec`` is then its separation less the centroid's
+    offset from the target (the nearest the centroid can sit to it, since the cone gives no position angle), floored
+    at zero, and the centroid error with the two numbers it was chosen from goes into the inputs record."""
     shape = _metrics(tests, "rung2_shape")
     fit_ok = shape.get("fit_ok") is True
     odd, even, parity = _num(shape, "odd_ppm"), _num(shape, "even_ppm"), _num(shape, "parity_sigma")
     odd_even_err = abs(odd - even) / parity if odd is not None and even is not None and parity else None
-    centroid = centroid_offset(_metrics(tests, "rung5_pixels")) if _rung(tests, "rung5_pixels") else None
+    centroid = centroid_estimate(_metrics(tests, "rung5_pixels")) if _rung(tests, "rung5_pixels") else None
     if centroid is not None:
-        offset = centroid[0]
-        neighbours = [dataclasses.replace(n, centroid_sep_arcsec=max(0.0, n.sep_arcsec - offset)) for n in neighbours]
+        neighbours = [dataclasses.replace(n, centroid_sep_arcsec=max(0.0, n.sep_arcsec - centroid.offset))
+                      for n in neighbours]
     if gmag is None:
         neighbours = []         # no target G: no neighbour can be judged bright enough
     return FppInputs(
@@ -532,7 +588,10 @@ def fpp_inputs(signal: dict, tests: list[dict], star: stars.StarParams, planet: 
         fit_a_over_r=_num(shape, "fit_a_over_r") if fit_ok else None,
         secondary_ppm=_num(shape, "secondary_ppm"), secondary_err_ppm=_num(shape, "control_rms_ppm"),
         odd_ppm=odd, even_ppm=even, odd_even_err_ppm=odd_even_err, neighbours=tuple(neighbours),
-        centroid_sigma_arcsec=centroid[1] if centroid is not None else None)
+        centroid_sigma_arcsec=centroid.sigma if centroid is not None else None,
+        sigma_c_stat_arcsec=centroid.sigma_stat if centroid is not None else None,
+        sigma_c_scatter_arcsec=centroid.sigma_scatter if centroid is not None else None,
+        sigma_c_source=centroid.source if centroid is not None else None)
 
 
 def fpp_from_inputs(inputs: dict) -> Fpp:
@@ -598,8 +657,17 @@ def caveats(data: dict) -> list[dict]:
         out.append({"title": "A grazing or diluted eclipsing binary is not fully excluded by photometry alone",
                     "text": text})
     for err in star.get("gaia_errors") or []:
-        out.append({"title": "Gaia could not be reached",
-                    "text": f"Gaia could not be reached: {err}. Generate the dossier again when the archive answers."})
+        refused = gaia_refused(err)
+        if refused is None:
+            out.append({"title": "Gaia could not be reached",
+                        "text": f"Gaia could not be reached: {err}. Generate the dossier again when the archive "
+                                "answers."})
+            continue
+        what = ("the neighbours are left out of the false-positive estimate" if err.startswith(GAIA_CONE) else
+                "the star block comes from the fallback route")
+        out.append({"key": "gaia_refused", "title": "A Gaia query was refused",
+                    "text": f"A Gaia query was refused (HTTP {refused}): {what}. The archive rejected the query "
+                            f"itself, so asking again gives the same answer ({err})."})
     route = star.get("route")
     if route == "none":
         why = "; ".join(star.get("caveats") or []) or "no Gaia row for this star"
@@ -664,8 +732,27 @@ def _offline_factory(target_id: str, signal_id: int):
     return factory
 
 
+def ladder_versions(store: Store, signal: dict, tests: list[dict]) -> tuple[str | None, dict[str, str | None]]:
+    """(the effective ladder version, the version per rung). A test row written by a recheck carries the rechecks
+    row's ladder version; any other row is the sweep's, the signal row's ``ladder_version`` or, when that is empty
+    (signals vetted before migration 002, and every signal the recheck brought up to date, which records its version
+    in ``rechecks`` only), the run's. The effective version is the latest rechecks row's, else the sweep's."""
+    with store.session() as s:
+        rechecks = {r.id: r.ladder_version for r in
+                    s.scalars(select(RecheckRow).where(RecheckRow.signal_id == signal["id"]).order_by(RecheckRow.id))}
+        sweep = signal.get("ladder_version")
+        if sweep is None and signal.get("run_id") is not None:
+            run = s.get(RunRow, signal["run_id"])
+            sweep = run.ladder_version if run is not None else None
+    per_rung = {t["rung"]: rechecks.get(t.get("recheck_id"), sweep) if t.get("recheck_id") is not None else sweep
+                for t in tests}
+    effective = rechecks[max(rechecks)] if rechecks else sweep
+    return effective, per_rung
+
+
 def _provenance(store: Store, signal: dict, target: dict, calibration: Path) -> dict:
     tid = target["target_id"]
+    ladder, per_rung = ladder_versions(store, signal, store.latest_tests(signal["id"]))
     with store.session() as s:
         queries = [{"service": q.service, "url": q.url, "params": _params(q.params), "status": q.status,
                     "nbytes": q.nbytes, "sha256": q.sha256, "error": q.error, "utc": _iso(q.utc),
@@ -680,8 +767,8 @@ def _provenance(store: Store, signal: dict, target: dict, calibration: Path) -> 
     commands = [f"skysift vet --source {source} --target-id {tid}",
                 f"skysift calibrate --source {source}",
                 f"skysift dossier --target {tid} --signal {signal['id']} --force"]
-    return {"search_version": signal.get("detector_version"), "ladder_version": signal.get("ladder_version"),
-            "git_commit": _git_commit(), "queries": queries, "files": files,
+    return {"search_version": signal.get("detector_version"), "ladder_version": ladder,
+            "ladder_versions": per_rung, "git_commit": _git_commit(), "queries": queries, "files": files,
             "calibration_file": str(calibration) if calibration.is_file() else None, "commands": commands}
 
 
@@ -710,9 +797,11 @@ def _stored_report(data_path: Path, signal_id: int, target_id: str) -> DossierRe
     data = json.loads(data_path.read_text(encoding="utf-8"))
     f = data.get("fap") or {}
     fap = (FalseAlarm(k=f["k"], n=f["n"], fap=f["fap"], calibrated=f["calibrated"],
-                      version_matches=f["version_matches"], versions=tuple(f["versions"]))
+                      version_matches=f["version_matches"], versions=tuple(f["versions"]),
+                      k_by_kind=dict(f.get("k_by_kind") or {}), n_by_kind=dict(f.get("n_by_kind") or {}))
            if {"k", "n", "fap", "calibrated", "version_matches", "versions"} <= set(f) else None)
-    return DossierReport(target_id, signal_id, data_path, False, fap, fpp_from_inputs(data["fpp"]["inputs"]), None)
+    return DossierReport(target_id, signal_id, data_path, False, fap, fpp_from_inputs(data["fpp"]["inputs"]), None,
+                         gaia_errors=list((data.get("star") or {}).get("gaia_errors") or []))
 
 
 def _stale_reason(old: dict | None, signal: dict, force: bool, fp: str) -> str:
@@ -781,10 +870,12 @@ def generate(store: Store, blob, settings, target_id: str, *, signal_id: int | N
     errors: dict[str, dict] = {}
     periodogram = _section("periodogram", errors, lambda: _periodogram(store, blob, target_id))
     plots = plot_arrays(lc, fnorm, signal, tests, periodogram=periodogram)
-    pixels = _section("pixels", errors, lambda: pixels_section(store, blob, sid, _metrics(tests, "rung5_pixels"), lc))
+    pixels = _section("pixels", errors, lambda: pixels_section(store, blob, sid, _metrics(tests, "rung5_pixels")))
     say("asking Gaia for the star and its neighbours")
     tgt = Target(**{k: target[k] for k in TARGET_FIELDS if target.get(k) is not None}, meta=target.get("meta") or {})
     star, planet, neighbours, gaia, gaia_errors = _lookup(tgt, signal, tests, fetch=fetch, store=store)
+    for err in gaia_errors:
+        say(f"Gaia query failed: {err}")
     gmag = target.get("gmag") if target.get("gmag") is not None else (gaia.gmag if gaia is not None else None)
     inputs = fpp_inputs(signal, tests, star, planet, neighbours, gmag)
     fpp = compute(inputs)
@@ -803,11 +894,11 @@ def generate(store: Store, blob, settings, target_id: str, *, signal_id: int | N
     # export_path is cleared: an earlier export was rendered from the earlier JSON
     store.upsert_dossier(target_id=target_id, signal_id=sid, generated=utcnow().replace(tzinfo=None),
                          data_path=str(data_path), search_version=signal["detector_version"],
-                         ladder_version=signal.get("ladder_version"), dossier_version=DOSSIER_VERSION,
+                         ladder_version=ladder_versions(store, signal, tests)[0], dossier_version=DOSSIER_VERSION,
                          fap=fap.fap, fpp=fpp.value, fap_detail=data["fap"], fpp_detail=data["fpp"],
                          tests_fingerprint=fp, status_at_generation=signal["final_status"], export_path="")
     say(f"wrote {data_path}")
-    return DossierReport(target_id, sid, data_path, True, fap, fpp, stale)
+    return DossierReport(target_id, sid, data_path, True, fap, fpp, stale, gaia_errors=list(gaia_errors))
 
 
 def status_label(verdict) -> tuple[str, str | None]:

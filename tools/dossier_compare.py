@@ -9,7 +9,7 @@ spec 4.2 for the sign-off.
 
 ``--data`` is a generated ``dossier_data.json`` or the slim block ``--write-golden`` extracts from one (the keys the
 comparison and the golden test read: target, signal, ephemeris, fap, fpp, star, planet, look and the rung 2, 3, 4 and
-5 rows). The tables are printed and written to ``--out`` (default: beside ``--data``, ``<stem>.comparison.md``).
+5 rows). The tables are printed and written to ``--out`` (default: ``<stem>.comparison.md`` in the current directory).
 
 The two pages name the stars differently: the engine's "target" is the candidate star KIC 6146676 (the hand-built
 "candidate") and its "neighbour" is the Kepler target KIC 6146666 whose pixels hold it (the hand-built "target").
@@ -57,6 +57,11 @@ class Row:
         return d / self.error
 
     @property
+    def compared(self) -> bool:
+        """Both values are present (whether or not there is an error to judge the difference by)."""
+        return self.difference is not None
+
+    @property
     def agree(self) -> bool | None:
         s = self.sigma
         return None if s is None else abs(s) <= self.tolerance_sigma
@@ -102,7 +107,8 @@ def golden_block(data: dict) -> dict:
                      ("id", "target_id", "detector", "detector_version", "period", "t0", "duration", "depth_ppm", "snr",
                       "sde", "n_events", "final_status")}
     out["tests"] = [t for t in data.get("tests") or [] if t.get("rung") in GOLDEN_RUNGS]
-    out["provenance"] = {k: _get(data, "provenance", k) for k in ("search_version", "git_commit")}
+    out["provenance"] = {k: _get(data, "provenance", k)
+                         for k in ("search_version", "ladder_version", "ladder_versions", "git_commit")}
     return out
 
 
@@ -168,9 +174,7 @@ def season_depth_rows(gen: dict, ref: dict) -> list[Row]:
     depths, errs = stab.get("season_depths") or {}, stab.get("season_errs") or {}
     out = []
     for s, r in sorted((ref.get("season_depths") or {}).items(), key=lambda kv: int(kv[0])):
-        g = _num(depths.get(str(s)))
-        if g is None:
-            continue
+        g = _num(depths.get(str(s)))       # a season rung 3 did not measure stays in the table as n/a
         err = math.hypot(_num(r.get("err_ppm")) or 0.0, _num(errs.get(str(s))) or 0.0) or None
         out.append(Row(f"rung 3 depth, season {s} (quarter mod 4)", "ppm", g, _num(r.get("depth_ppm")), err,
                        "both errors in quadrature"))
@@ -275,6 +279,11 @@ def factor_table(data: dict) -> str:
              f"{_fmt(_num(f.get('confusion_radius_arcsec')))} arcsec."), "",
              "| Scenario | Prior | Geometric | Data | Weight | Share of the total |",
              "| --- | --- | --- | --- | --- | --- |"]
+    inputs = f.get("inputs") or {}
+    if inputs.get("sigma_c_source"):
+        lines[0] += (f" Centroid error sigma_c {_fmt(_num(inputs.get('centroid_sigma_arcsec')))} arcsec, the "
+                     f"{inputs['sigma_c_source']} one of statistical {_fmt(_num(inputs.get('sigma_c_stat_arcsec')))} "
+                     f"and scatter {_fmt(_num(inputs.get('sigma_c_scatter_arcsec')))} arcsec.")
     for s in scen:
         w = _num(s.get("weight")) or 0.0
         lines.append(f"| {s.get('name')} | {_fmt(_num(s.get('prior')))} | {_fmt(_num(s.get('geometric')))} | "
@@ -294,20 +303,39 @@ def factor_table(data: dict) -> str:
     return "\n".join(lines)
 
 
+def provenance_table(data: dict) -> str:
+    """The search version, the effective ladder version and the ladder each latest test row was vetted under."""
+    prov = data.get("provenance") or {}
+    per_rung = prov.get("ladder_versions") or {}
+    lines = [(f"Search version {prov.get('search_version')}, effective ladder version {prov.get('ladder_version')}, "
+              f"git {prov.get('git_commit')}."), "",
+             "| Rung | Status | Ladder version | Written |", "| --- | --- | --- | --- |"]
+    for t in data.get("tests") or []:
+        lines.append(f"| {t.get('rung')} | {t.get('status')} | {per_rung.get(t.get('rung'))} | {t.get('created')} |")
+    return "\n".join(lines)
+
+
 def report(gen: dict, ref: dict, fpp_data: list[dict]) -> str:
     items = rows(gen, ref)
     n_yes = sum(1 for r in items if r.agree)
     n_no = [r.quantity for r in items if r.agree is False]
-    n_na = [r.quantity for r in items if r.agree is None]
+    n_missing = [r.quantity for r in items if not r.compared]
+    n_no_error = [r.quantity for r in items if r.compared and r.agree is None]
     fap = gen.get("fap") or {}
+    split = ", ".join(f"{kind} {k} of {(fap.get('n_by_kind') or {}).get(kind)}"
+                      for kind, k in (fap.get("k_by_kind") or {}).items())
     parts = [f"## Comparison: {_get(gen, 'target', 'name')} generated against the hand-built study", "",
-             (f"{n_yes} of {len(items)} rows agree; disagreements: {', '.join(n_no) or 'none'}; without a value on "
-             f"one side: {', '.join(n_na) or 'none'}."), "",
+             (f"{n_yes} of {len(items)} rows agree within the tolerances the tool applies (the study's quoted error "
+              f"where it gives one, else the stated tolerance); disagreements: {', '.join(n_no) or 'none'}; compared "
+              f"without an error to judge by: {', '.join(n_no_error) or 'none'}; missing a value on one side: "
+              f"{', '.join(n_missing) or 'none'}."), "",
              comparison_table(items), "", "## Pixel step per season", "", seasons_table(gen, ref), "",
+             "## Provenance", "", provenance_table(gen), "",
              "## Probabilities", "",
              (f"False alarm: \"{fap.get('words')}\", {fap.get('k')} of {fap.get('n')} null searches at or above SDE "
-             f"{_fmt(_num(fap.get('sde')))}, calibration version {fap.get('calibration_version')} (signal search "
-             f"{fap.get('signal_search_version')}, version matches {fap.get('version_matches')})."), ""]
+              f"{_fmt(_num(fap.get('sde')))} (by null kind: {split or 'not recorded'}), calibration version "
+              f"{fap.get('calibration_version')} (signal search {fap.get('signal_search_version')}, version matches "
+              f"{fap.get('version_matches')})."), ""]
     for d in [gen, *fpp_data]:
         parts += [factor_table(d), ""]
     return "\n".join(parts)
@@ -319,14 +347,15 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--reference", required=True, type=Path, help="the hand-built dossier_data.json")
     ap.add_argument("--fpp", action="append", default=[], type=Path,
                     help="another generated dossier whose FPP factor table is printed too (repeatable)")
-    ap.add_argument("--out", type=Path, help="the markdown file (default <data stem>.comparison.md beside --data)")
+    ap.add_argument("--out", type=Path, help="the markdown file (default <data stem>.comparison.md in the current "
+                    "directory, never beside --data)")
     ap.add_argument("--write-golden", type=Path, help="also write the slim block of --data here")
     args = ap.parse_args(argv)
     gen = json.loads(args.data.read_text(encoding="utf-8"))
     ref = json.loads(args.reference.read_text(encoding="utf-8"))
     others = [json.loads(p.read_text(encoding="utf-8")) for p in args.fpp]
     text = report(gen, ref, others)
-    out = args.out or args.data.with_name(f"{args.data.stem}.comparison.md")
+    out = args.out or Path.cwd() / f"{args.data.stem}.comparison.md"
     out.write_text(text, encoding="utf-8", newline="\n")
     if args.write_golden:
         args.write_golden.write_text(json.dumps(golden_block(gen), indent=1, sort_keys=False) + "\n",

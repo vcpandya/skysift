@@ -118,8 +118,8 @@ def _stage2_season(season: int, target, neighbour, offset, sigma, sep, voting=Tr
                    quarters: bool = False) -> dict:
     """One season of rung 5's metrics in the shape ``Localisation.metrics()`` and the rung write: positions as
     season-frame (col, row), the archive SEASON as its label. ``quarters`` adds the season's quarters by the archive
-    SEASON (Q2, Q6, Q10, Q14 are season 0); the seed leaves them out, since the dossier's own tests read the quarters
-    of the seeded seasons by quarter mod 4."""
+    SEASON (Q2, Q6, Q10, Q14 are season 0; Q1 and Q5 are season 3); the seeded rows leave them out, and the dossier
+    then shows no quarters for a season (it never works them out from the quarter numbers)."""
     col, row = target[0] + offset[0], target[1] + offset[1]
     d_t = (offset[0] ** 2 + offset[1] ** 2) ** 0.5
     d_n = ((col - neighbour[0]) ** 2 + (row - neighbour[1]) ** 2) ** 0.5
@@ -316,7 +316,8 @@ def _seed_probabilities(period: float, sde: float) -> tuple[dict, dict]:
     inputs = {"period": period, "depth": 0.0022, "gmag": 16.2, "teff": 3653.0, "radius": 0.509, "mass": 0.507,
               "rp_rearth": 2.61, "fit_k": 0.047, "fit_b": 0.31, "fit_a_over_r": None, "secondary_ppm": 15.0,
               "secondary_err_ppm": 65.0, "odd_ppm": 2202.0, "even_ppm": 2115.0, "odd_even_err_ppm": 290.0,
-              "neighbours": neighbours, "centroid_sigma_arcsec": 0.1}
+              "neighbours": neighbours, "centroid_sigma_arcsec": 0.1, "sigma_c_stat_arcsec": 0.1,
+              "sigma_c_scatter_arcsec": 0.05, "sigma_c_source": "statistical"}
     scenarios = [{"name": name, "prior": prior, "geometric": geo, "data": dat, "weight": prior * geo * dat,
                   "factors": {}} for name, prior, geo, dat in
                  (("PL", 0.165, 0.0129, 1.0), ("BEB", 0.014, 0.0202, 0.0), ("EB", 0.0107, 0.0107, 0.0574))]
@@ -326,6 +327,7 @@ def _seed_probabilities(period: float, sde: float) -> tuple[dict, dict]:
                            "exclusion": 0.0}],
            "scenarios": scenarios, "inputs": inputs, "sentence_not_covered": ds.FPP_NOT_COVERED}
     fap = {"k": 0, "n": 1699, "fap": 1 / 1700, "calibrated": True, "version_matches": True, "versions": [VERSION],
+           "k_by_kind": {"inverted": 0, "scrambled": 0}, "n_by_kind": {"inverted": 850, "scrambled": 849},
            "one_in": 1700, "words": "1 in 1,700", "sde": sde, "signal_search_version": VERSION,
            "calibration_version": VERSION, "min_nulls": 200, "sentence_not_covered": ds.FAP_NOT_COVERED}
     return fap, fpp
@@ -383,6 +385,7 @@ def seed_dossier(store: Store, data_dir, target_id: str = STAGE2_TARGET) -> dict
     cand = {"status": sig["candidate_status"]} if sig.get("candidate_status") else None
     verdict = explain.verdict(sig, tests, cand, decisions)
     label, label_text = ds.status_label(verdict)
+    ladder, per_rung = ds.ladder_versions(store, sig, tests)
     data = {
         "dossier_version": ds.DOSSIER_VERSION, "generated": "2026-10-21T09:00:00+00:00",
         "sections": [{"number": f"{i:02d}", "title": title} for i, title in enumerate(ds.SECTIONS, 1)],
@@ -403,8 +406,8 @@ def seed_dossier(store: Store, data_dir, target_id: str = STAGE2_TARGET) -> dict
         "rechecks": store.rechecks(sid), "children": store.children(sid), "fap": fap, "fpp": fpp,
         "pixels": _seed_pixels(), "star": star, "planet": planet, "look": look, "caveats": [],
         "section_errors": {},
-        "provenance": {"search_version": sig["detector_version"], "ladder_version": sig["ladder_version"],
-                       "git_commit": "seed", "queries": [], "files": [],
+        "provenance": {"search_version": sig["detector_version"], "ladder_version": ladder,
+                       "ladder_versions": per_rung, "git_commit": "seed", "queries": [], "files": [],
                        "calibration_file": str(Path(data_dir) / "calibration" / "kbonus_bkg.jsonl"),
                        "commands": [f"skysift vet --source kbonus_bkg --target-id {target_id}",
                                     "skysift calibrate --source kbonus_bkg",
@@ -418,7 +421,7 @@ def seed_dossier(store: Store, data_dir, target_id: str = STAGE2_TARGET) -> dict
     decision = decisions[0]["decision"] if decisions else None
     store.upsert_dossier(target_id=target_id, signal_id=sid, generated=datetime(2026, 10, 21, 9, 0),
                          data_path=str(path), search_version=sig["detector_version"],
-                         ladder_version=sig["ladder_version"], dossier_version=ds.DOSSIER_VERSION, fap=fap["fap"],
+                         ladder_version=ladder, dossier_version=ds.DOSSIER_VERSION, fap=fap["fap"],
                          fpp=fpp["value"], fap_detail=fap, fpp_detail=fpp,
                          tests_fingerprint=ds.fingerprint(tests, sig["final_status"], decision),
                          status_at_generation=sig["final_status"])

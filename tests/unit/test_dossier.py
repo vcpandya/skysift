@@ -4,6 +4,8 @@ Gaia fetch and a synthetic null calibration."""
 import hashlib
 import io
 import json
+import logging
+import math
 import re
 from pathlib import Path
 from types import SimpleNamespace
@@ -26,8 +28,10 @@ from skysift.dossier import (
     NoSignal,
     calibration_version_for,
     caveats,
+    centroid_estimate,
     export_html,
     fingerprint,
+    gaia_refused,
     generate,
     pick_signal,
     rank_key,
@@ -35,13 +39,23 @@ from skysift.dossier import (
 )
 from skysift.fpp import FppInputs, compute
 from skysift.models import Signal, TestResult, TestStatus
+from skysift.net import ServiceUnavailable
 from skysift.pipeline import search_version
+from skysift.priors import PIXEL_ARCSEC
 from skysift.sources import PARSERS
 from skysift.store.blob import blob_from_url
 from skysift.store.db import PERIODOGRAM_URL, QueryRow, SignalRow, Store, make_job_key
 from skysift.ui import explain
 from tests.synthetic import inject_model, make_lightcurve
-from tests.unit.ui_seed import STAGE1_TARGET, STAGE2_TARGET, VERSION, add_older_version, seed, seed_dossier
+from tests.unit.ui_seed import (
+    STAGE1_TARGET,
+    STAGE2_TARGET,
+    VERSION,
+    add_older_version,
+    seed,
+    seed_dossier,
+    stage2_pixel_metrics,
+)
 
 EM_DASH = chr(0x2014)
 STATIC_DIR = Path(__file__).resolve().parents[2] / "src" / "skysift" / "ui" / "static"
@@ -292,7 +306,8 @@ def test_pixels_section_comes_from_the_npz_artifact(env_with_npz):
     assert len(data["pixels"]) == 2 and data["pixels"][0]["snr"][0][0] is None   # an invalid pixel
     p = data["pixels"][1]
     assert p["season"] == 2 and p["nearer"] == "target" and p["depth_target_ppm"] == [2213, 78]
-    assert p["pos_target"] == [3.0, 4.0] and p["quarters"] and all(q % 4 == 2 for q in p["quarters"])
+    assert p["pos_target"] == [3.0, 4.0]
+    assert p["quarters"] == []      # the seeded metrics name no quarters; none are worked out from quarter mod 4
     assert p["valid"][0][0] is True and data["pixels"][0]["direct"][0][0] is None
 
 
@@ -522,8 +537,97 @@ def test_hand_built_values_agree_within_errors():
     assert rung5["status"] == "pass" and rung5["metrics"]["tpf_missing"] == []
     for s in rung5["metrics"]["seasons"]:
         assert abs(s["dist_target_pix"] - to_candidate[str(s["season"])]) <= 0.1
-    # the FPP band of spec 4.2 (1 to 60 percent) did not survive Task 2: with the spec's priors the localised BEB term
+    # the FPP band of spec 4.2 (1 to 60 percent) did not survive Task 2: with the spec's priors the localized BEB term
     # vanishes and the on-target EB term is killed by the secondary and odd/even limits, so KIC 6146676 reads
     # "under 1 percent"; the number is a sign-off item (ledger), and this test pins reproducibility, not the band
     assert gen["fpp"]["value"] == pytest.approx(compute(FppInputs(**gen["fpp"]["inputs"])).value, rel=1e-6)
     assert gen["fpp"]["signed_off"] is False
+
+
+# ---------------------------------------------------------------------------------------------------- Task 7 fix round
+
+def _season(season: int, dist: float, sigma: float, voting: bool = True) -> dict:
+    return {"season": season, "dist_target_pix": dist, "centroid_sigma_pix": sigma, "voting": voting,
+            "nearer": "target" if voting else "unknown"}
+
+
+def test_the_centroid_estimate_uses_the_voting_seasons_and_the_larger_error():
+    est = centroid_estimate({"seasons": [_season(0, 0.2, 0.05), _season(1, 0.2, 0.05), _season(3, 2.0, 0.01, False)]})
+    assert est.n_seasons == 2 and est.offset == pytest.approx(0.2 * PIXEL_ARCSEC)     # season 3 would pull it to 1.9
+    assert est.source == "statistical" and est.sigma_scatter == pytest.approx(0.0, abs=1e-12)
+    assert est.sigma == est.sigma_stat == pytest.approx(0.05 / math.sqrt(2) * PIXEL_ARCSEC)
+    spread = centroid_estimate({"seasons": [_season(0, 0.1, 0.01), _season(1, 0.5, 0.01)]})
+    # mean 0.3 px, RMS scatter 0.2 px, over sqrt(2): 0.141 px against a statistical 0.0071 px
+    assert spread.source == "scatter" and spread.sigma == pytest.approx(0.2 / math.sqrt(2) * PIXEL_ARCSEC)
+    assert spread.sigma_stat == pytest.approx(0.01 / math.sqrt(2) * PIXEL_ARCSEC)
+    assert centroid_estimate({"seasons": [_season(3, 0.2, 0.05, voting=False)]}) is None
+
+
+def test_the_fpp_inputs_record_how_the_centroid_error_was_chosen(env):
+    data = _data(generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch))
+    inputs = data["fpp"]["inputs"]
+    assert inputs["sigma_c_source"] in ("statistical", "scatter")
+    assert inputs["centroid_sigma_arcsec"] == pytest.approx(max(inputs["sigma_c_stat_arcsec"],
+                                                                inputs["sigma_c_scatter_arcsec"]))
+    assert compute(FppInputs(**inputs)).value == pytest.approx(data["fpp"]["value"], rel=1e-6)
+
+
+def test_provenance_gives_the_ladder_of_each_rung(env):
+    data = _data(generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch))
+    prov = data["provenance"]
+    # the seed sweeps under ladder "1" and its pixel recheck row is ladder "4"
+    assert prov["ladder_version"] == "4" and prov["ladder_versions"]["rung5_pixels"] == "4"
+    assert prov["ladder_versions"]["rung2_shape"] == "1"
+    assert env.store.dossier(STAGE2_TARGET)["ladder_version"] == "4"
+
+
+def test_the_fap_block_splits_the_counts_by_null_kind(env):
+    fap = _data(generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch))["fap"]
+    assert set(fap["k_by_kind"]) == set(fap["n_by_kind"]) == {"inverted", "scrambled"}
+    assert sum(fap["k_by_kind"].values()) == fap["k"] and fap["n_by_kind"] == {"inverted": 220, "scrambled": 220}
+
+
+def _refusing(fetch):
+    """``fetch`` with the Gaia star query refused as the archive refused the old one (HTTP 400)."""
+    def refuse(url, *, params=None, service, store=None, target_id=None, **kw):
+        if "WHERE g.source_id" in (params or {}).get("query", ""):
+            raise ServiceUnavailable(f"{service} {url} -> HTTP 400")
+        return fetch(url, params=params, service=service, store=store, target_id=target_id, **kw)
+    return refuse
+
+
+def test_a_refused_gaia_query_is_loud_and_gets_its_own_caveat(env, caplog):
+    lines = []
+    with caplog.at_level(logging.WARNING, logger="skysift.dossier"):
+        rep = generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=_refusing(env.fetch), log=lines.append)
+    assert rep.gaia_errors and rep.gaia_errors[0].startswith("star row: gaia ") and "HTTP 400" in rep.gaia_errors[0]
+    assert any("HTTP 400" in r.getMessage() for r in caplog.records if r.levelno == logging.WARNING)
+    assert any(line.startswith("Gaia query failed: star row:") for line in lines)
+    data = _data(rep)
+    refused = [c for c in data["caveats"] if c.get("key") == "gaia_refused"]
+    assert len(refused) == 1 and refused[0]["text"].startswith(
+        "A Gaia query was refused (HTTP 400): the star block comes from the fallback route.")
+    assert not any("when the archive answers" in c["text"] for c in data["caveats"])
+    assert gaia_refused("neighbour cone: gaia x -> HTTP 503") is None and gaia_refused(rep.gaia_errors[0]) == "400"
+    assert rep.as_dict()["gaia_errors"] == rep.gaia_errors
+
+
+def test_cli_dossier_exits_3_when_a_gaia_query_failed(cli_env, monkeypatch):
+    monkeypatch.setattr(net, "fetch", _refusing(cli_env.fetch))
+    r = CliRunner().invoke(app, ["dossier", "--target", STAGE2_TARGET])
+    assert r.exit_code == 3 and "Gaia query failed: star row:" in r.output and "Traceback" not in r.output
+    assert cli_env.store.dossier(STAGE2_TARGET)["data_path"]                # the dossier is still written
+    again = CliRunner().invoke(app, ["dossier", "--target", STAGE2_TARGET])   # current, but still incomplete
+    assert again.exit_code == 3 and "Gaia query failed: star row:" in again.output
+
+
+def test_pixel_seasons_are_the_archive_seasons_rung_5_wrote(env):
+    frames = {0: ((7, 9), (2.0, 3.0), (4.5, 3.6)), 3: ((5, 7), (0.7, 3.0), (3.5, 2.2))}
+    _store_pixels(env, _pixels_npz(frames))
+    env.store.add_test(env.ids["stage2"], TestResult(rung="rung5_pixels", status="pass",
+                                                     metrics=stage2_pixel_metrics(quarters=True)), 1.0)
+    pixels = _data(generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch))["pixels"]
+    by_season = {p["season"]: p for p in pixels}
+    assert set(by_season) == {0, 3}
+    assert by_season[0]["quarters"] == [2, 6, 10, 14] and by_season[3]["quarters"] == [1, 5, 9, 13]   # Q1, Q5: season 3
+    assert by_season[3]["nearer"] == "unknown"                     # the seeded archive season 3 does not vote

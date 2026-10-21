@@ -16,7 +16,7 @@ import pickle
 import time
 from collections.abc import Callable
 from concurrent.futures import FIRST_COMPLETED, wait
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
@@ -256,6 +256,9 @@ class FalseAlarm:
     calibrated: bool            # n >= MIN_NULLS
     version_matches: bool       # every row's search_version == version
     versions: tuple[str, ...]   # the search versions seen, sorted
+    # k and n split by null kind ({"inverted": ..., "scrambled": ...}), so which nulls set the number shows
+    k_by_kind: dict[str, int] = field(default_factory=dict)
+    n_by_kind: dict[str, int] = field(default_factory=dict)
 
     def one_in(self) -> int | None:
         """1 / fap rounded to two significant figures, and to a whole number below 10 (1 / 0.55 is 2, not 1.8);
@@ -274,15 +277,19 @@ class FalseAlarm:
 def false_alarm(rows: list[dict], sde: float, version: str) -> FalseAlarm:
     """The false-alarm probability of a peak of ``sde`` against the null searches (each kind in NULLS of every row):
     ``k`` of the ``n`` finite null tops sit at or above it, and FAP = (k + 1) / (n + 1), the add-one rule, so a peak
-    above every null reads as "1 in n + 1", never zero. Rows of another search version are still counted; the result
-    notes the mismatch. Below MIN_NULLS null searches the FAP is None."""
-    tops = [v for r in rows for kind in NULLS if (v := _top(r, kind)) is not None and math.isfinite(v)]
-    n = len(tops)
-    k = sum(v >= sde for v in tops)
+    above every null reads as "1 in n + 1", never zero. ``k_by_kind`` and ``n_by_kind`` split both counts by null
+    kind. Rows of another search version are still counted; the result notes the mismatch. Below MIN_NULLS null
+    searches the FAP is None."""
+    by_kind = {kind: [v for r in rows if (v := _top(r, kind)) is not None and math.isfinite(v)]
+               for kind in sorted(NULLS)}
+    n_by_kind = {kind: len(tops) for kind, tops in by_kind.items()}
+    k_by_kind = {kind: sum(v >= sde for v in tops) for kind, tops in by_kind.items()}
+    n, k = sum(n_by_kind.values()), sum(k_by_kind.values())
     calibrated = n >= MIN_NULLS
     versions = tuple(sorted({str(r.get("search_version")) for r in rows}))
     return FalseAlarm(k=k, n=n, fap=(k + 1) / (n + 1) if calibrated else None, calibrated=calibrated,
-                      version_matches=all(str(r.get("search_version")) == version for r in rows), versions=versions)
+                      version_matches=all(str(r.get("search_version")) == version for r in rows), versions=versions,
+                      k_by_kind=k_by_kind, n_by_kind=n_by_kind)
 
 
 def summarise(rows: list[dict], sde_min: float, all_versions: bool = False) -> dict:

@@ -11,7 +11,7 @@ import pytest
 from skysift import stars
 from skysift.models import Target
 from skysift.net import ServiceUnavailable
-from skysift.stars import derive, lookup, mamajek_table, query_gaia, query_neighbours, zero_point
+from skysift.stars import Q_SOURCE, derive, lookup, mamajek_table, query_gaia, query_neighbours, zero_point
 from skysift.store.db import Store
 
 # KIC 6146676 = Gaia DR3 2073896294004902272. nu_eff_used_in_astrometry and ecl_lat are the archived Gaia DR3 values
@@ -272,3 +272,21 @@ def test_data_files_ship_with_the_package():
     data = importlib.resources.files("skysift.data")
     assert data.joinpath("mamajek_dwarf_table.txt").is_file()
     assert not data.joinpath("gaia_zpt").is_dir()     # LGPL: the zero point is imported, never vendored
+
+
+# Gaia DR3 columns the star query may take from each table (Gaia DR3 data model, gaiadr3.gaia_source and
+# gaiadr3.astrophysical_parameters); asking gaia_source for a FLAME column is an HTTP 400 from the archive
+GAIA_SOURCE_COLUMNS = {"source_id", "ra", "dec", "parallax", "parallax_error", "phot_g_mean_mag", "bp_rp", "ruwe",
+                       "nu_eff_used_in_astrometry", "pseudocolour", "ecl_lat", "astrometric_params_solved",
+                       "teff_gspphot"}
+ASTROPHYSICAL_COLUMNS = {"radius_flame", "mass_flame"}
+
+
+def test_the_star_query_takes_each_column_from_its_dr3_table():
+    select, rest = Q_SOURCE.split(" FROM ", 1)
+    columns = [c.strip() for c in select.removeprefix("SELECT ").split(",")]
+    by_table = {alias: {c.split(".", 1)[1] for c in columns if c.startswith(alias + ".")} for alias in ("g", "ap")}
+    assert len(by_table["g"]) + len(by_table["ap"]) == len(columns)          # every column is qualified
+    assert by_table["g"] <= GAIA_SOURCE_COLUMNS and by_table["ap"] == ASTROPHYSICAL_COLUMNS
+    assert rest.startswith("gaiadr3.gaia_source AS g LEFT OUTER JOIN gaiadr3.astrophysical_parameters AS ap "
+                           "ON ap.source_id = g.source_id WHERE g.source_id = {id}")

@@ -294,6 +294,10 @@ def dossier(target: str = typer.Option(..., "--target", help="The target id, e.g
         _console().print(t)
     else:
         _plain(_console(), jsonutil.dumps(report, indent=1))
+    if rep.gaia_errors:             # the dossier is written, but its star or neighbours are incomplete
+        for err in rep.gaia_errors if not rep.generated else ():      # a fresh run printed them as they came
+            _plain(console, f"Gaia query failed: {err}")
+        raise typer.Exit(3)
 
 
 @app.command("pack")

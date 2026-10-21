@@ -71,6 +71,10 @@ class FppInputs:
     odd_even_err_ppm: float | None
     neighbours: tuple[Neighbour, ...]
     centroid_sigma_arcsec: float | None  # season-averaged centroid error; None without a pixel stage
+    # the record of how centroid_sigma_arcsec was chosen (the dossier's centroid_offset); compute does not read them
+    sigma_c_stat_arcsec: float | None = None      # the error of the inverse-variance weighted mean of the seasons
+    sigma_c_scatter_arcsec: float | None = None   # the seasons' RMS scatter about that mean / sqrt(n seasons)
+    sigma_c_source: str | None = None             # "statistical" | "scatter": the larger of the two
 
     def __post_init__(self) -> None:
         """Neighbours given as dicts (a dossier's stored ``fpp.inputs``) become ``Neighbour`` again, so

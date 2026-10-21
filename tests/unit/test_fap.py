@@ -70,3 +70,10 @@ def test_one_in_rounds_to_two_significant_figures_and_words_use_thousands_separa
 def test_false_alarm_with_no_rows_is_not_calibrated():
     fa = false_alarm([], 50.0, "v")
     assert (fa.k, fa.n, fa.fap, fa.calibrated, fa.versions) == (0, 0, None, False, ())
+
+
+def test_false_alarm_splits_both_counts_by_null_kind():
+    tops = [60.0, 8.0] * 100 + [8.0, 55.0] * 3 + [8.0, 8.0] * 97      # 100 inverted and 3 scrambled tops above
+    fa = false_alarm(rows(200, tops, "v"), sde=50.0, version="v")
+    assert fa.k_by_kind == {"inverted": 100, "scrambled": 3} and fa.n_by_kind == {"inverted": 200, "scrambled": 200}
+    assert (fa.k, fa.n) == (103, 400) and fa.fap == pytest.approx(104 / 401)
