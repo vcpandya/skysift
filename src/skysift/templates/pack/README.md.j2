@@ -19,14 +19,27 @@ This pack was built on {{ f.built_words }} by SkySift (pack format {{ f.pack_ver
 
 | quantity | value |
 |---|---|
-| period | {{ n.period }} d |
-| first mid-transit | BJD_TDB {{ n.t0_bjd }} (BKJD {{ n.t0_bkjd }}) |
-| duration | {{ n.duration }} h |
-| depth | {{ n.depth }} ppm |
+| period | {{ n.period_pm }} d{{ n.period_note }} |
+| first mid-transit (epoch 0) | BJD_TDB {{ n.t0_bjd_pm }} (BKJD {{ n.t0_bkjd }}) |
+{% if n.t_ref_bjd %}
+| reference mid-transit (epoch {{ n.epoch_ref }}, the centre of the series) | BJD_TDB {{ n.t_ref_bjd_pm }} |
+| transit times | {{ n.n_used }} of {{ n.n_measured }} timed transits fit the linear ephemeris, rms {{ n.rms_min }} min |
+{% endif %}
+| duration | {{ n.duration_pm }} h{{ n.duration_note }} |
+| depth | {{ n.depth_pm }} ppm{{ n.depth_note }} |
 | transits | {{ n.n_events }} |
 | signal detection efficiency (SDE) | {{ n.sde }} |
 | signal-to-noise ratio | {{ n.snr }} |
+{% if n.odd_text %}
+| odd and even depths | {{ n.odd_text }} and {{ n.even_text }} ({{ n.parity_sigma_text }} sigma apart) |
+{% endif %}
+{% if n.secondary_pm %}
+| secondary eclipse (phase 0.5) | {{ n.secondary_pm }} ppm{% if n.secondary_limit %}, 3-sigma upper limit {{ n.secondary_limit }} ppm{% endif %} |
+{% endif %}
 {% for row in n.param_rows %}
+| {{ row.parameter }} | {{ row.text }} |
+{% endfor %}
+{% for row in n.dilution_rows %}
 | {{ row.parameter }} | {{ row.text }} |
 {% endfor %}
 
@@ -38,7 +51,7 @@ The two numbers answer different questions and are never combined: the first is 
 
 ## Why there are five steps
 
-No portal accepts a new Kepler candidate from someone outside a mission team. The NASA Exoplanet Archive takes planets from the refereed literature and adds candidates only when a mission delivers them. ExoFOP (run by NExScI) is the community follow-up site: registered users upload files and notes there, and Kepler and K2 follow-up now sits in ExoFOP-TESS, which takes a KIC id directly. A community TESS Object of Interest needs TESS evidence, which this candidate does not have. So the record goes out in five steps, in this order. The engine can do part of step 1 for you; every other step needs your own account and your own click, and the engine never posts to ExoFOP, arXiv or a journal.
+No portal accepts a new Kepler candidate from someone outside a mission team. The NASA Exoplanet Archive takes planets from the refereed literature and adds candidates only when a mission delivers them. ExoFOP (run by NExScI) is the community follow-up site: registered users upload files, notes and stellar parameters there, and Kepler and K2 follow-up now sits in ExoFOP-TESS, which takes a KIC id directly. Planet parameters attach only to a TESS Object of Interest, a community TOI or a confirmed planet, and a community TOI needs a peer-reviewed paper. So the record goes out in five steps, in this order. The engine can do part of step 1 for you; every other step needs your own account and your own click, and the engine never posts to ExoFOP, arXiv or a journal.
 
 ## Step 1. {{ titles["1"] }}
 
@@ -74,7 +87,9 @@ Files: ExoFOP enforces no file name. The pack names its copies `<target>_<UTC da
 - `exofop/{{ name }}`: {{ what }}
 {% endfor %}
 
-What to write: paste `exofop/note.txt` into the upload's description. It gives the ephemeris, both probabilities, the pixel result and the Zenodo DOI.
+What ExoFOP takes now: any registered user can attach files, notes and stellar parameters to a KIC or TIC page, so the files above, the upload note and `exofop/{{ f.exofop_params[0] }}` go up now. Planet parameters attach only to a TOI, a community TOI or a confirmed planet, and a community TOI needs a paper in a peer-reviewed journal (a Research Note qualifies only when the method it rests on was published before), so `exofop/{{ f.exofop_params[1] }}` waits until such a paper is accepted. Its target reads `TIC{{ f.tic or "<TIC-TO-FILL>" }}.01`{% if not f.tic %} until the pack is built with `--tic`{% endif %}, and its paper URL and notes are placeholders to fill in then.{% if f.other_signals %} {{ f.other_signals }}{% endif %}{{ "" }}
+
+What to write: paste `exofop/note.txt` into the upload's description. It gives the ephemeris with its errors, both probabilities, the pixel result and the Zenodo DOI.
 
 Who sees it: uploads are public at once. ExoFOP offers a 12-month proprietary period only to members of the TESS Follow-up Observing Program Working Group (TFOP WG), so upload after the Zenodo record is published.
 
@@ -92,14 +107,14 @@ The limits (AAS research note guidelines): at most {{ "{:,}".format(f.limits.tot
 3. Read every sentence against `dossier.html`; the note is built from the stored numbers and says nothing the dossier does not.
 4. Compile it with AASTeX v7 (aastex7.cls) and pdflatex; Overleaf has the AAS template. The UAT keywords can be changed in the submission form. {% if f.png %}The figure is `note/figure1.pdf`.{% else %}matplotlib could not be imported when this pack was built, so there is no PDF figure: convert `note/figure1.svg` to PDF first (Inkscape: `inkscape figure1.svg --export-type=pdf`).{% endif %}
 
-5. Submit it as a Research Note of the AAS. The editor reviews it for fit (there is no full peer review) and it gets a DOI when published.
+5. Submit it as a Research Note of the AAS. The Note is moderated by an editor for fit, not refereed, and it gets a DOI when published.
 6. After acceptance, post the same text to arXiv in astro-ph.EP.
 
 ## Step 4. {{ titles["4"] }}
 
 Account: none beyond an email address. The NASA Exoplanet Archive takes messages through its help desk form ({{ f.helpdesk_url }}). The engine cannot send it.
 
-When: after the Research Note is published, since the archive adds objects from the literature. Paste this paragraph (also in `archive_email.txt`), with the two DOIs filled in:
+When: only once a refereed paper on this candidate is accepted. The archive takes planet parameters from accepted refereed papers, so it adds objects from a refereed paper, not from the Research Note: the Note gives a DOI and a citable ephemeris, but alone it does not open this route. When the paper is accepted, paste this paragraph (also in `archive_email.txt`), with the DOIs filled in:
 
 > {{ archive_paragraph }}
 
@@ -107,7 +122,15 @@ When: after the Research Note is published, since the archive adds objects from 
 
 Account: whatever the person asks through (ExoFOP messages, email). The engine cannot reply for you.
 
-Observers who plan a transit ask for the ephemeris first. Send `data/ephemeris.csv` and say: mid-transit times are T = {{ n.t0_bjd }} + E x {{ n.period }} (BJD_TDB, E a whole number of orbits), the transit lasts {{ n.duration }} h, and the dossier carries no formal error on the period or the first mid-transit (the box search does not give one), so a window of at least one transit duration either side of each predicted time is needed, more for times years after 2013. Send `data/lightcurve.csv` and `data/events.csv` to anyone checking the depth, and `dossier.html` to anyone who wants the full vetting. Point every request at the Zenodo DOI, so everyone works from the same frozen files.
+{% if n.t_ref_bjd %}
+Observers who plan a transit ask for the ephemeris first. Send `data/ephemeris.csv` and `data/transit_times.csv` and say: mid-transit times are T = {{ n.t_ref_bjd }} + (E - {{ n.epoch_ref }}) x {{ n.period }} (BJD_TDB, E a whole number of orbits, E = 0 at BJD_TDB {{ n.t0_bjd }}), with 1-sigma errors of {{ n.t_ref_err }} d on the reference time and {{ n.period_err }} d on the period, and the transit lasts {{ n.duration_pm }} h. The prediction error grows with the distance from epoch {{ n.epoch_ref }}: the reference error and the period error times the number of orbits, in quadrature. The next three transits after {{ f.after_words }}, each with its 1-sigma window:
+
+{% for t in n.next_transits %}
+- {{ t.text }}
+{% endfor %}
+
+Send{% else %}
+Observers who plan a transit ask for the ephemeris first. Send `data/ephemeris.csv` and say: mid-transit times are T = {{ n.t0_bjd }} + E x {{ n.period }} (BJD_TDB, E a whole number of orbits) and the transit lasts {{ n.duration }} h. The dossier carries no formal error on the period or the first mid-transit (the transits could not be timed one by one), so a window of at least one transit duration either side of each predicted time is needed, more for times years after 2013. Send{% endif %} `data/lightcurve.csv` and `data/events.csv` to anyone checking the depth, and `dossier.html` to anyone who wants the full vetting. Point every request at the Zenodo DOI, so everyone works from the same frozen files.
 
 ## What is not yet known
 
@@ -130,7 +153,7 @@ There is no centroid figure: the pixel step has not run for this signal, or its 
 
 ## Provenance
 
-`provenance/versions.json` names the pack format, the dossier format, the search and ladder versions and the git commit. The note's authors and the Zenodo creators came from {{ f.creators_source }}. `provenance/queries.json` lists every catalogue and data request made for this target (URL, time, status, SHA-256). `provenance/calibration.json` holds the null-search counts behind the false-alarm probability. `provenance/hashes.json` holds the SHA-256 of every other file in the pack. To rebuild the dossier from the archive files:
+`provenance/versions.json` names the pack format, the dossier format, the search and ladder versions and the git commit. Software: {{ n.software_line }}; {{ n.code_sentence }}. The note's authors and the Zenodo creators came from {{ f.creators_source }}. `provenance/queries.json` lists every catalogue and data request made for this target (URL, time, status, SHA-256). `provenance/calibration.json` holds the null-search counts behind the false-alarm probability. `provenance/hashes.json` holds the SHA-256 of every other file in the pack. To rebuild the dossier from the archive files:
 
 {% for c in n.commands %}
     {{ c }}

@@ -150,9 +150,12 @@ def probability_sentences(data: dict) -> tuple[str, str]:
 
 def metadata_from(data: dict, citation: dict | None) -> dict:
     """The deposition metadata from a dossier's JSON and the parsed ``CITATION.cff`` (None when there is none):
-    a dataset titled "SkySift candidate <name>: ...", creators from the citation's authors, the summary, both
+    a dataset titled "SkySift candidate <name>: ...", creators from the citation's authors, the summary, the ephemeris
+    with its errors (``pack.ephemeris_sentence``, the sentence the ExoFOP note and the archive email quote), both
     probabilities and the caveats as the description, keywords, open access under CC BY 4.0, and the KBonus HLSP DOI
     as the data it is derived from."""
+    from skysift.pack import ephemeris_sentence  # pack imports this module, so the import waits for the call
+
     target, eph = data.get("target") or {}, data.get("ephemeris") or {}
     name = target.get("name") or target.get("target_id") or "unknown target"
     period = eph.get("period_days")
@@ -160,7 +163,8 @@ def metadata_from(data: dict, citation: dict | None) -> dict:
     what += " in Kepler photometry"
     creators = [c for a in (citation or {}).get("authors") or [] if isinstance(a, dict) and (c := _creator(a))]
     fap_text, fpp_text = probability_sentences(data)
-    paragraphs = [data.get("summary") or "", f"{fap_text} {fpp_text}",
+    ephemeris = ephemeris_sentence(data)
+    paragraphs = [data.get("summary") or "", f"Ephemeris: {ephemeris}." if ephemeris else "", f"{fap_text} {fpp_text}",
                   ("This record is the submission pack of a transit candidate found by the SkySift engine in the "
                    "KBonus Kepler Background light curves: the detrended light curve, the ephemeris and parameters "
                    "with their errors, the per-event depths, the vetting metrics, the figures, the standalone "

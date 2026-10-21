@@ -314,8 +314,9 @@ def pack_command(target: str = typer.Option(..., "--target", help="The target id
                                                    "the token in SKYSIFT_ZENODO_TOKEN; it is never published."),
                  zenodo_live: bool = typer.Option(False, "--zenodo-live", help="Make the Zenodo draft on zenodo.org "
                                                   "instead of the sandbox (implies --zenodo); refused before a "
-                                                  "reviewer approves the candidate and while the false-positive "
-                                                  "estimate is provisional.")):
+                                                  "reviewer approves the candidate, while the false-positive "
+                                                  "estimate is provisional, and while the stored dossier's "
+                                                  "ephemeris or transit shape carries no error.")):
     """Build the submission pack from the target's stored dossier: the README's five steps, the Research Note draft,
     the data files, figures, provenance and the ExoFOP copies, and a zip. With --zenodo, also a Zenodo draft
     deposition holding the zip, made after every file is written; publishing it is your click on Zenodo. Prints the
@@ -340,7 +341,7 @@ def pack_command(target: str = typer.Option(..., "--target", help="The target id
         _plain(console, str(e))
         raise typer.Exit(1) from None
     except (ds.LightCurveReleased, pk.PackError) as e:
-        _plain(console, str(e))
+        _plain(console, str(e))            # a refused live draft names every problem (pack.gate_problems)
         raise typer.Exit(2) from None
     except zn.ZenodoError as e:
         _plain(console, str(e))            # names the built pack and any unfinished draft

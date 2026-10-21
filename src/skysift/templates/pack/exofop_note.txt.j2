@@ -8,7 +8,7 @@ SkySift transit candidate on {{ n.name }}{% if n.gaia_id %} = Gaia DR3 {{ n.gaia
 
 Found in the KBonus Kepler Background light curve (Martinez-Palomera, Hedges and Dotson 2023, AJ 166, 265; data doi:10.17909/7jbr-w430); Kepler recorded this star only in other targets' pixels.
 
-Ephemeris: P = {{ n.period }} d, T0 = BJD_TDB {{ n.t0_bjd }}, duration {{ n.duration }} h, depth {{ n.depth }} ppm, {{ n.n_events }} transits, SDE {{ n.sde }}, S/N {{ n.snr }}. No formal error on P or T0 yet; allow at least one duration either side of a predicted time.
+Ephemeris: {{ n.ephemeris_text }}; {{ n.n_events }} transits, SDE {{ n.sde }}, S/N {{ n.snr }}.{% if n.t_ref_bjd %} Reference mid-transit BJD_TDB {{ n.t_ref_bjd_pm }} at epoch {{ n.epoch_ref }}; {{ n.n_used }} of {{ n.n_measured }} timed transits fit the linear ephemeris with an rms of {{ n.rms_min }} min.{% else %} Allow at least one duration either side of a predicted time.{% endif %} Found by SkySift (search version {{ n.search_version }}, commit {{ n.commit }}).
 {% if n.rp_text %}
 Planet radius {{ n.rp_text }} Earth radii on a {{ n.a_text }} AU orbit{% if n.teq_text %}, Teq {{ n.teq_text }} K{% endif %}; host {{ n.host_text }}.
 {% endif %}
@@ -18,6 +18,6 @@ Pixels: {{ n.pixel_plain }}
 {{ n.fap_text }}
 {{ n.fpp_text }}
 
-Files: the detrended light curve (CSV: time BKJD, relative flux and error in ppm, quarter), the ephemeris and parameters with errors (CSV), the folded, odd and even, periodogram{% if f.pixels_figure %} and centroid{% endif %} figures, and the standalone dossier (HTML, all vetting numbers).
+Files: the detrended light curve (CSV: time BKJD, relative flux and error in ppm, quarter), the ephemeris and parameters with errors (CSV), the stellar parameters in ExoFOP's template, the folded, odd and even, periodogram{% if f.pixels_figure %} and centroid{% endif %} figures, and the standalone dossier (HTML, all vetting numbers).
 
 Frozen record: doi:{{ f.doi_shown }}. This is a candidate until independent follow-up confirms it.
