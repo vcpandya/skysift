@@ -47,7 +47,8 @@ CAPTIONS = {
                        "eclipsing each other."),
     "plot-periodogram": ("How far each trial period stands above the others. The dotted line is the threshold and the "
                          "dashed lines mark aliases and spacecraft rhythms."),
-    "plot-seasons": "The depth of the dip on each detector. A real transit is equally deep on all of them.",
+    "plot-seasons": ("The depth of the dip in each quarter group (quarter mod 4, how the stability check groups "
+                     "the quarters). A real transit is equally deep in all of them."),
 }
 # the detrend of every signal stored before signals carried their detrend settings (DETREND_VERSION 1)
 LEGACY_DETREND = {"version": 1, "edge_mask_days": 0.0, "edge_gap_days": GAP_EDGE_TRIGGER_DAYS, "median_mode": "nearest"}

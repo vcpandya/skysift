@@ -345,3 +345,75 @@ def test_the_waiting_queue_rejected_tile_and_signals_agree_with_the_chips(tmp_pa
     assert {r["id"] for r in waiting} == {ids["legacy"], ids["stage2"]}
     assert t["signals"] == counts["all"] == 6                                     # pending is in no queue
     assert counts["rejected"] == 2 and t["rejected"] == 1                         # the tile counts failed checks only
+
+
+# ---- the stage-2 recheck in the readers (recheck, task 6)
+
+def _recheck_run(store, status="done", version=VERSION, target_id="kic-005689121") -> int:
+    """A run the recheck starts for a P/2 signal (job key ``recheck:...``), finished just now unless ``status`` is
+    "running": a sweep reader must not take it for a sweep."""
+    from skysift.store.db import RECHECK_JOB_PREFIX
+    rid = store.start_run(f"{RECHECK_JOB_PREFIX}P/2:{target_id}", target_id, "box_dip", version, "4")
+    if status != "running":
+        store.finish_run(rid, status)
+    return rid
+
+
+def test_signal_detail_carries_rechecks_latest_rows_and_the_pair(tmp_path, settings):
+    from tests.unit.ui_seed import add_superseded_pair
+    store, _blob, ids = _env(tmp_path, settings)
+    d = queries.signal_detail(store, ids["stage2"])
+    assert [r["step"] for r in d["rechecks"]] == ["pixels"] and d["children"] == [] and d["parent"] is None
+    assert [t["rung"] for t in d["latest_tests"]][-1] == "rung5_pixels" and len(d["latest_tests"]) == 6
+    assert all(isinstance(t["created"], str) for t in d["latest_tests"])           # the review JSON stays strict
+    pair = add_superseded_pair(store)
+    parent, child = (queries.signal_detail(store, pair[k]) for k in ("superseded", "halved_child"))
+    assert [c["id"] for c in parent["children"]] == [pair["halved_child"]] and parent["parent"] is None
+    assert child["parent"]["id"] == pair["superseded"] and child["parent"]["period"] == 18.195
+    assert child["parent"]["final_status"] == "superseded" and child["rechecks"] == []
+
+
+def test_dashboard_statuses_come_from_the_engine():
+    from skysift.store import db
+    assert set(queries.ENGINE_STATUSES) == set(db.ENGINE_STATUSES) - {"pending"}
+    assert queries.ENGINE_STATUSES == tuple(s for s in db.ENGINE_STATUSES if s != "pending")
+
+
+def test_run_time_totals_leave_recheck_runs_out(tmp_path, settings):
+    store, _blob, _ids = _env(tmp_path, settings)
+    before = queries.run_time_totals(store)
+    _recheck_run(store)
+    assert queries.run_time_totals(store) == before
+
+
+def test_current_search_version_leaves_recheck_runs_out(tmp_path, settings):
+    store, _blob, _ids = _env(tmp_path, settings)
+    _recheck_run(store, version="9+recheck")
+    assert queries.current_search_version(store) == VERSION
+
+
+def test_the_sweep_window_leaves_recheck_runs_out(tmp_path, settings):
+    store, _blob, _ids = _env(tmp_path, settings)
+    before = queries.last_sweep(store)
+    tonight = queries.tonight(store, VERSION)
+    _recheck_run(store, target_id="gaia-dr3-2101234567890123499")
+    assert queries.last_sweep(store) == before
+    after = queries.tonight(store, VERSION)
+    assert (after["scanned"], after["signals"], after["last_sweep"]) == (tonight["scanned"], tonight["signals"],
+                                                                         tonight["last_sweep"])
+    assert queries.done_since(store, datetime.now(UTC) - timedelta(minutes=1)) == 0
+
+
+def test_external_sweep_leaves_recheck_runs_out(tmp_path, settings):
+    store, _blob, _ids = _env(tmp_path, settings)
+    _recheck_run(store)                                                    # finished just now
+    _recheck_run(store, status="running", target_id="gaia-dr3-2101234567890123457")
+    assert queries.external_sweep(store) is None
+
+
+def test_recent_runs_leave_recheck_runs_out(tmp_path, settings):
+    store, _blob, _ids = _env(tmp_path, settings)
+    before = queries.recent_runs(store, limit=10)
+    rid = _recheck_run(store)
+    after = queries.recent_runs(store, limit=10)
+    assert rid not in {r["run_id"] for r in after} and after == before

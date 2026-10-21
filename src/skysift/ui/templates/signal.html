@@ -23,6 +23,7 @@
     {%- if v.stage %}<span class="hero-stage">{{ v.stage }}</span>{% endif %}
     <button type="button" class="btn hero-copy" data-copy="{{ copy_text }}">Copy summary</button>
   </div>
+  {% include "partials/lineage.html" %}
   <div class="tiles hero-stats">
     {{ stat("period, days", s.period, "Time from one dip to the next." if simple, 4) }}
     {{ stat("depth, ppm", s.depth_ppm, "Share of the star's light the dip takes, in parts per million." if simple, 0) }}
@@ -31,7 +32,7 @@
   </div>
   <p class="hero-facts muted">
     {% for label, href in links %}<a href="{{ href }}" target="_blank" rel="noopener">{{ label }}</a> · {% endfor %}
-    G {{ d.target.gmag | fmt(2) }}<span class="only-expert"> · RA {{ d.target.ra | fmt(5) }} Dec {{ d.target.dec | fmt(5) }} · source {{ d.target.source }} · detector {{ s.detector }} {{ s.detector_version }}</span>{% set pw = (s.extra or {}).get('prewhitening') %}<span class="only-expert">{% if pw and pw.n %} · whitened: {{ pw.n }} wave{{ 's' if pw.n != 1 else '' }} removed{% if pw.components %} (strongest P = {{ (1 / pw.components[0].frequency) | fmt(4) }} d, {{ pw.components[0].amplitude_ppm | fmt(0) }} ppm){% endif %}{% endif %}{% if pw and pw.restored %} · {{ pw.restored | length }} wave{{ 's' if pw.restored | length != 1 else '' }} put back at the detection's harmonics{% endif %}{% set ar = (s.extra or {}).get('alias_resolved') %}{% if ar %} · period multiplied by {{ ar.get('factor', 2) }} from {{ ar.from_period | fmt(5) }} d{% endif %}{% if s.extra and s.extra.get('pass') == 2 %} · second pass, found after masking the {% set mp = s.extra.masked_period %}{% if mp is sequence and mp is not string %}{% for p in mp %}{{ p | fmt(4) }} d{% if not loop.last %}{{ ' and ' if loop.revindex == 2 else ', ' }}{% endif %}{% endfor %} signal{{ 's' if mp | length > 1 else '' }}{% else %}{{ mp | fmt(4) }} d signal{% endif %}{% endif %}</span>{% for t in d.tests %}{% set m = t.metrics or {} %}{% if m.get('suggested_period') %} · the secondary matches the primary; the true period may be {{ m.suggested_period | fmt(4) }} d (half the detected period){% endif %}{% if m.get('occultation_exception') %} · secondary consistent with a planet occultation (albedo {{ m.occultation_albedo | fmt(2) }}){% endif %}{% endfor %}<span class="only-expert">{% if d.run %} · run #{{ d.run.id }} {{ d.run.finished or '' }}{% endif %}</span>
+    G {{ d.target.gmag | fmt(2) }}<span class="only-expert"> · RA {{ d.target.ra | fmt(5) }} Dec {{ d.target.dec | fmt(5) }} · source {{ d.target.source }} · detector {{ s.detector }} {{ s.detector_version }}</span>{% set pw = (s.extra or {}).get('prewhitening') %}<span class="only-expert">{% if pw and pw.n %} · whitened: {{ pw.n }} wave{{ 's' if pw.n != 1 else '' }} removed{% if pw.components %} (strongest P = {{ (1 / pw.components[0].frequency) | fmt(4) }} d, {{ pw.components[0].amplitude_ppm | fmt(0) }} ppm){% endif %}{% endif %}{% if pw and pw.restored %} · {{ pw.restored | length }} wave{{ 's' if pw.restored | length != 1 else '' }} put back at the detection's harmonics{% endif %}{% set ar = (s.extra or {}).get('alias_resolved') %}{% if ar %} · period multiplied by {{ ar.get('factor', 2) }} from {{ ar.from_period | fmt(5) }} d{% endif %}{% if s.extra and s.extra.get('pass') == 2 %} · second pass, found after masking the {% set mp = s.extra.masked_period %}{% if mp is sequence and mp is not string %}{% for p in mp %}{{ p | fmt(4) }} d{% if not loop.last %}{{ ' and ' if loop.revindex == 2 else ', ' }}{% endif %}{% endfor %} signal{{ 's' if mp | length > 1 else '' }}{% else %}{{ mp | fmt(4) }} d signal{% endif %}{% endif %}</span>{% for t in d.latest_tests %}{% set m = t.metrics or {} %}{% if m.get('suggested_period') %} · the secondary matches the primary; the true period may be {{ m.suggested_period | fmt(4) }} d (half the detected period){% endif %}{% if m.get('occultation_exception') %} · secondary consistent with a planet occultation (albedo {{ m.occultation_albedo | fmt(2) }}){% endif %}{% endfor %}<span class="only-expert">{% if d.run %} · run #{{ d.run.id }} {{ d.run.finished or '' }}{% endif %}</span>
   </p>
 </header>
 
@@ -54,6 +55,21 @@
        data-marks='{{ marks | tojson }}' data-captions='{{ captions | tojson }}' class="plots-grid"></div>
 </section>
 <script src="/static/plots.js?v={{ git_commit }}" defer></script>
+
+{%- if pixel_figures %}
+<section class="signal-section" aria-labelledby="pixels-title">
+  <h2 id="pixels-title">Which star is dimming</h2>
+  <figure class="pixel-figure">
+    <img src="{{ pixel_figures.src }}" loading="lazy"
+         alt="Where the lost light sits in each season, beside this star and the neighbour">
+    <figcaption>One panel per archive season (the Kepler archive's SEASON, not the quarter groups of the stability
+      check). The ring is this star, the square
+      the neighbour whose pixels hold it, and the cross the centroid of the light lost in transit, with circles at 1
+      and 3 times its error. A greyed panel did not vote{% if mode == "expert" %}; the sigma is the centroid's signed
+      distance from the line halfway between the two stars, positive on this star's side{% endif %}.</figcaption>
+  </figure>
+</section>
+{%- endif %}
 
 <div id="decision">{% include "partials/decision_bar.html" %}</div>
 {% endblock %}

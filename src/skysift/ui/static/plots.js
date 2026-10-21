@@ -113,10 +113,10 @@
     if (!s) return;
     Plotly.newPlot(figure(root, "plot-seasons"), [
       { x: s.season, y: s.depth_ppm, error_y: { type: "data", array: s.err_ppm, visible: true, color: c.data }, mode: "markers",
-        marker: { color: c.data, size: 8 }, name: "season depth" },
+        marker: { color: c.data, size: 8 }, name: "quarter group depth" },
       { x: [Math.min(...s.season) - 0.5, Math.max(...s.season) + 0.5], y: [s.mean_ppm, s.mean_ppm], mode: "lines",
         line: { color: c.model, dash: "dot" }, name: "weighted mean" }],
-      layout(c, { title: "Depth per season", xaxis: { title: "season (quarter mod 4)", dtick: 1 }, yaxis: { title: "depth (ppm)" } }), cfg);
+      layout(c, { title: "Depth per quarter group", xaxis: { title: "quarter group (quarter mod 4)", dtick: 1 }, yaxis: { title: "depth (ppm)" } }), cfg);
   };
 
   const draw = () => {

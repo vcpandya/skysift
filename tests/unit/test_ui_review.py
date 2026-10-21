@@ -1,4 +1,5 @@
 import json
+import re
 
 import pytest
 from sqlalchemy import text
@@ -6,7 +7,7 @@ from sqlalchemy import text
 from skysift.ui import explain
 from skysift.ui.routes.api import sparkline_key, sparkline_paths
 from tests.unit.test_ui_pages import make_seeded_app
-from tests.unit.ui_seed import add_older_version
+from tests.unit.ui_seed import add_older_version, add_superseded_pair
 
 
 def test_queue_page_defaults_and_filters(settings, tmp_path):
@@ -918,3 +919,140 @@ def test_chart_titles_use_the_text_colour(seeded):
     js = client.get("/static/plots.js").text
     title = js[js.index("title: { ...template.title"):].split("\n")[0]
     assert "color: c.text" in title and "c.data" not in title
+
+
+# ---- stage 2 in the dashboard (recheck, task 6)
+
+@pytest.fixture
+def seeded_pair(settings, tmp_path):
+    """The seeded dashboard with the superseded 18.19 d signal and its 9.10 d child added (``add_superseded_pair``)."""
+    client, app, ids, _launcher = make_seeded_app(settings, tmp_path)
+    return client, {**ids, **add_superseded_pair(app.state.store)}
+
+
+def _season_panels(svg: str) -> dict[str, str]:
+    """Each season panel of the pixels picture by its season label."""
+    starts = [(m.start(), m.group(1)) for m in re.finditer(r'<g class="season[^"]*" data-season="(\d+)"', svg)]
+    ends = [s for s, _ in starts[1:]] + [len(svg)]
+    return {season: svg[start:end] for (start, season), end in zip(starts, ends, strict=True)}
+
+
+def test_verdict_popup_lists_recheck_history_and_uses_latest_rows(seeded):
+    client, ids = seeded
+    html = client.get(f"/partials/signals/{ids['stage2']}/verdict").text
+    assert "Pixels checked" in html and "stage 2" in html and html.count('class="why-row') == 6
+    history = html[html.index('class="why-history"'):]
+    assert "Pixels checked: passed" in history and "3 of 3 seasons" in history
+    assert "Pixels checked" not in client.get(f"/partials/signals/{ids['candidate']}/verdict").text
+
+
+def test_why_rows_follow_a_newer_row_of_a_rung(seeded):
+    from skysift.models import TestResult, TestStatus
+    client, ids = seeded
+    store = client.app.state.store
+    store.add_test(ids["undetermined"], TestResult(rung="rung4_novelty", status=TestStatus.PASS,
+                                                   metrics={"cumulative": 0, "toi": 0}), 0.01)
+    store.refresh_status(ids["undetermined"])
+    html = client.get(f"/partials/signals/{ids['undetermined']}/verdict").text
+    assert "What was missing" not in html and html.count('class="why-row') == 6 and "stage 1" in html
+
+
+def test_pixels_svg_renders_one_panel_per_season(seeded):
+    client, ids = seeded
+    r = client.get(f"/api/signals/{ids['stage2']}/pixels.svg")
+    assert r.status_code == 200 and r.text.count("<g class=\"season") == 4 and "nearer target" in r.text
+    assert client.get(f"/api/signals/{ids['candidate']}/pixels.svg").status_code == 404
+
+
+def test_pixels_svg_greys_a_season_that_does_not_vote_and_signs_the_separation(seeded):
+    import xml.etree.ElementTree as ET
+    client, ids = seeded
+    r = client.get(f"/api/signals/{ids['stage2']}/pixels.svg")
+    assert r.headers["content-type"].startswith("image/svg+xml")
+    ET.fromstring(r.text)                                                      # well-formed
+    panels = _season_panels(r.text)
+    assert list(panels) == ["0", "1", "2", "3"]
+    assert 'class="season non-voting"' in panels["3"] and "not voting: box incomplete: target" in panels["3"]
+    assert "nearer" not in panels["3"] and "Archive season 3" in panels["3"]
+    assert "nearer target, +40.9 sigma" in panels["0"] and "non-voting" not in panels["0"]
+    assert "—" not in r.text
+    assert client.get("/api/signals/999999/pixels.svg").status_code == 404
+
+
+def test_pixels_svg_keeps_archive_season_order_and_names_the_neighbour_side(seeded):
+    from tests.unit.ui_seed import stage2_pixel_metrics
+    client, ids = seeded
+    m = stage2_pixel_metrics(quarters=True)
+    m["seasons"] = list(reversed(m["seasons"]))
+    m["seasons"][1] = {**m["seasons"][1], "nearer": "neighbour", "separation_sigma": -4.1}      # season 2
+    _set_metrics(client.app, ids["stage2"], "rung5_pixels", m)
+    panels = _season_panels(client.get(f"/api/signals/{ids['stage2']}/pixels.svg").text)
+    assert list(panels) == ["0", "1", "2", "3"] and "nearer neighbour, -4.1 sigma" in panels["2"]
+    assert "Archive season 0 · Q2, Q6, Q10, Q14" in panels["0"]          # the archive SEASON, not quarter mod 4
+
+
+def test_pixels_svg_of_a_rung5_row_without_seasons_says_so(seeded):
+    client, ids = seeded
+    _set_metrics(client.app, ids["stage2"], "rung5_pixels", {"neighbour_kic": 6146666, "n_tpf": 0})
+    r = client.get(f"/api/signals/{ids['stage2']}/pixels.svg")
+    assert r.status_code == 200 and '<g class="season' not in r.text and "No season to draw" in r.text
+
+
+def test_signal_page_shows_the_pixel_figures_only_with_a_rung5_row(seeded):
+    client, ids = seeded
+    for mode in ("simple", "expert"):
+        html = client.get(f"/signals/{ids['stage2']}?mode={mode}").text
+        assert f'src="/api/signals/{ids["stage2"]}/pixels.svg"' in html and 'id="pixels-title"' in html, mode
+    assert "pixels.svg" not in client.get(f"/signals/{ids['candidate']}").text
+    html = client.get(f"/signals/{ids['stage2']}").text
+    assert "Rechecks" in html and "Pixels checked: passed" in html
+
+
+def test_signal_page_links_superseded_pairs(seeded_pair):
+    client, ids = seeded_pair
+    assert f"/signals/{ids['halved_child']}" in client.get(f"/signals/{ids['superseded']}").text
+    assert "Superseded" in client.get(f"/partials/signals/{ids['superseded']}/verdict").text
+
+
+def test_superseded_popup_names_the_child_and_the_child_links_back(seeded_pair):
+    client, ids = seeded_pair
+    popup = client.get(f"/partials/signals/{ids['superseded']}/verdict").text
+    assert "Superseded by" in popup and f'href="/signals/{ids["halved_child"]}"' in popup and "9.0975 d" in popup
+    assert "Re-vetted at half the period: superseded" in popup
+    child = client.get(f"/signals/{ids['halved_child']}").text
+    assert "Supersedes" in child and f'href="/signals/{ids["superseded"]}"' in child and "18.195 d" in child
+    child_popup = client.get(f"/partials/signals/{ids['halved_child']}/verdict").text
+    assert "Rejected: failed the check" in child_popup and "Supersedes" in child_popup
+    assert "now superseded" not in child_popup                       # a superseded parent is not said twice
+    for page in (popup, child, child_popup):
+        assert "—" not in page and "discover" not in page.lower()
+
+
+def test_recheck_history_shows_a_skipped_step_with_its_reason(seeded):
+    client, ids = seeded
+    store = client.app.state.store
+    store.add_recheck(ids["candidate"], "ladder", "4", "skipped", "light curve unavailable: HTTP 503")
+    store.add_recheck(ids["candidate"], "catalogue", "4", "pass", "")
+    html = client.get(f"/partials/signals/{ids['candidate']}/verdict").text
+    history = html[html.index('class="why-history"'):]
+    assert "Re-vetted under ladder 4: skipped, the light curve could not be loaded (HTTP 503)" in history
+    assert "Catalogue asked again: passed" in history
+    assert history.index("Re-vetted under ladder 4") < history.index("Catalogue asked again")   # oldest first
+
+
+def test_rung3_groups_and_rung5_seasons_never_share_a_label(seeded):
+    """Rung 3 groups quarters by quarter mod 4 and rung 5 by the Kepler archive SEASON (Q1 and Q5 are season 3), so
+    the two are never both called "season N" on one page."""
+    client, ids = seeded
+    for page in (f"/signals/{ids['stage2']}?mode=expert", f"/partials/signals/{ids['stage2']}/verdict"):
+        html = client.get(page).text
+        assert "quarter group 0:" in html and "archive season 0:" in html and "archive season 3: not voting" in html
+        assert not re.search(r"(?<!archive )season \d:", html), page
+    assert "Archive season 0" in client.get(f"/api/signals/{ids['stage2']}/pixels.svg").text
+
+
+def test_superseded_popup_says_the_half_period_step_was_taken(seeded_pair):
+    client, ids = seeded_pair
+    popup = client.get(f"/partials/signals/{ids['superseded']}/verdict").text
+    assert "Rechecked on" in popup and "superseded by the signal at 9.0975 d, now rejected" in popup
+    assert "Re-vet at the suggested period" not in popup

@@ -2,7 +2,8 @@
 candidate with four passing rungs, one undetermined signal (rung 4 outage), one failed signal, raw artifacts for two
 of them and three logged queries. Then a legacy candidate (pre-M3 metrics), a stage-2 candidate with a passing pixel
 rung, an approved stage-1 candidate and a pending signal with no test rows (no artifacts, no queries). Every run is
-moved five minutes into the past, so the seed reads as a finished sweep, not one still writing results."""
+moved five minutes into the past, so the seed reads as a finished sweep, not one still writing results. Opt-in extras:
+``add_older_version`` and ``add_superseded_pair`` (a signal the recheck superseded and its P/2 child)."""
 import json
 
 from skysift.models import Signal, Target, TestResult, TestStatus
@@ -110,11 +111,52 @@ def _legacy_tests() -> list[TestResult]:
             TestResult(rung="rung4_novelty", status=TestStatus.PASS, metrics={"cumulative": 0})]
 
 
+STAGE2_PIXEL_REASON = "the dip is on the target in 3/3 seasons (centroid >= 17.5 sigma nearer)"
+
+
+def _stage2_season(season: int, target, neighbour, offset, sigma, sep, voting=True, why=None,
+                   quarters: bool = False) -> dict:
+    """One season of rung 5's metrics in the shape ``Localisation.metrics()`` and the rung write: positions as
+    season-frame (col, row), the archive SEASON as its label. ``quarters`` adds the season's quarters by the archive
+    SEASON (Q2, Q6, Q10, Q14 are season 0); the seed leaves them out, since the dossier's own tests read the quarters
+    of the seeded seasons by quarter mod 4."""
+    col, row = target[0] + offset[0], target[1] + offset[1]
+    d_t = (offset[0] ** 2 + offset[1] ** 2) ** 0.5
+    d_n = ((col - neighbour[0]) ** 2 + (row - neighbour[1]) ** 2) ** 0.5
+    out = {"season": season, "n_events": 9 if voting else 1, "centroid_colrow": [col, row],
+           "centroid_sigma_pix": sigma, "centroid_sigma_axis_pix": sigma * 1.1, "dist_target_pix": round(d_t, 3),
+           "dist_neighbour_pix": round(d_n, 3), "nearer": "target" if voting else "unknown",
+           "separation_sigma": sep, "depth_target_ppm": [2213.0, 78.0], "depth_neighbour_ppm": [-21.0, 25.0],
+           "max_snr": 12.4, "two_source": voting, "voting": voting, "non_voting_reason": why,
+           "pos_target": list(target), "pos_neighbour": list(neighbour)}
+    if quarters:
+        out["quarters"] = [q for q in range(1, 18) if (q - 2) % 4 == season][:4]
+    return out
+
+
+def stage2_pixel_metrics(quarters: bool = False) -> dict:
+    """Rung 5's metrics for KIC 6146676 at 40.29 d in the shape the committed rung writes and as the real run found
+    them: four seasons in archive SEASON order, seasons 0, 1 and 2 voting at 40.9, 20.5 and 17.5 sigma with the
+    centroid 0.10 to 0.20 px from this star and about 2.8 px from the neighbour, archive season 3 not voting (this
+    star's box half off the stamp), 18 pixel files read."""
+    seasons = [
+        _stage2_season(0, (4.2, 5.1), (6.9, 5.9), (0.10, -0.08), 0.05, 40.9, quarters=quarters),
+        _stage2_season(1, (5.3, 3.8), (4.5, 6.6), (0.04, 0.10), 0.07, 20.5, quarters=quarters),
+        _stage2_season(2, (3.1, 4.4), (0.4, 3.6), (-0.15, 0.12), 0.08, 17.5, quarters=quarters),
+        _stage2_season(3, (0.6, 4.1), (3.4, 4.9), (0.12, 0.06), 0.06, 39.0, voting=False,
+                       why="box incomplete: target", quarters=quarters),
+    ]
+    return {"seasons": seasons, "n_events_used": 28, "n_quarters_usable": 15, "unusable_quarters": [0, 17],
+            "verdict": "pass", "reason": f"pixels: {STAGE2_PIXEL_REASON}", "centroid_sigma_pix_mean": 0.057,
+            "leak_depth_ppm": [14.0, 31.0], "tpf_manifest": [f"kplr006146666-q{q:02d}_lpd-targ.fits.gz"
+                                                             for q in range(18)],
+            "n_tpf": 18, "neighbour_kic": 6146666, "neighbour_position": "catalogue", "n_seasons": 4,
+            "n_seasons_voting": 3, "seasons_silenced": {"box incomplete: target": 1}, "pixels_sha256": None,
+            "tpf_missing": []}
+
+
 def _stage2_tests() -> list[TestResult]:
     """The four light-curve rungs with today's metrics and a passing pixel rung (KIC 6146676 at 40.29 d)."""
-    seasons = [{"season": s, "nearer": "target", "dist_target_pix": 0.15, "dist_neighbour_pix": 2.9,
-                "centroid_sigma_pix": 0.05, "separation_sigma": 55.0, "depth_target_ppm": [2213, 78],
-                "depth_neighbour_ppm": [-21, 25]} for s in range(4)]
     return [
         TestResult(rung="rung1_detection", status=TestStatus.PASS,
                    metrics={"sde": 50.5, "snr": 64.2, "n_events": 34, "duration_ratio": 0.82, "t_circ_days": 0.21,
@@ -140,8 +182,8 @@ def _stage2_tests() -> list[TestResult]:
         TestResult(rung="rung4_novelty", status=TestStatus.PASS,
                    metrics={"cumulative": 0, "q1_q17_dr25_tce": 0, "toi": 0, "kepler_eb": 0,
                             "other_period_objects": []}),
-        TestResult(rung="rung5_pixels", status=TestStatus.PASS,
-                   metrics={"seasons": seasons, "n_events_used": 35, "n_quarters_usable": 16}),
+        TestResult(rung="rung5_pixels", status=TestStatus.PASS, reason=STAGE2_PIXEL_REASON,
+                   metrics=stage2_pixel_metrics()),
     ]
 
 
@@ -168,7 +210,7 @@ def _seed_more(store: Store) -> dict:
         with store.session() as s:
             ids[role] = s.query(SignalRow.id).filter(SignalRow.run_id == rid).scalar()
         for pixels in (r for r in tests if r.rung == "rung5_pixels"):
-            recheck = store.add_recheck(ids[role], "pixels", "4", pixels.status.value)
+            recheck = store.add_recheck(ids[role], "pixels", "4", pixels.status.value, pixels.reason)
             store.add_test(ids[role], pixels, 0.01, recheck_id=recheck)
             store.refresh_status(ids[role])
     store.set_signal_status(ids["pending"], "pending")
@@ -195,6 +237,47 @@ def add_older_version(store: Store, target_id: str = "kic-005689121", period: fl
         run = s.get(RunRow, rid)
         run.started = min(r.started for r in s.query(RunRow).filter(RunRow.id != rid)) - timedelta(days=1)
         return s.query(SignalRow.id).filter(SignalRow.run_id == rid).scalar()
+
+
+PAIR_TARGET = "kic-006271633"      # the half-period role: 18.19 d superseded by a 9.10 d child rejected odd/even
+
+
+def add_superseded_pair(store: Store) -> dict:
+    """A signal the recheck superseded and the P/2 child it made, written the way the recheck writes them: the sweep
+    stores the 18.19 d signal undetermined (an equal secondary at phase 0.5), then one ``commit_recheck_step`` adds
+    the period row (outcome "superseded"), the 9.0975 d child in its own ``recheck:`` run with its tests (rejected
+    odd/even), and both statuses. Not part of ``seed`` so the seeded counts stay as they are. Returns
+    {"superseded", "halved_child", "pair_recheck_run"}."""
+    from skysift.store.db import RECHECK_JOB_PREFIX, ChildWrite, RunRow, StepWrite
+    t = _target(PAIR_TARGET, kic=6271633, gaia="2101234567890123463", gmag=15.1)
+    store.upsert_targets([t])
+    rid = store.start_run(make_job_key(t.target_id, "box_dip", VERSION, "4"), t.target_id, "box_dip", VERSION, "4")
+    parent = _signal(t.target_id, 18.195, 24.0, depth=4100.0)
+    r1 = TestResult(rung="rung1_detection", status=TestStatus.PASS,
+                    metrics={"sde": 24.0, "snr": 31.2, "n_events": 70, "duration_ratio": 1.1})
+    r2 = TestResult(rung="rung2_shape", status=TestStatus.UNDETERMINED,
+                    reason="equal secondary at phase 0.5: true period may be P / 2 (9.0975 d)",
+                    metrics={"depth_ppm": 4100.0, "odd_ppm": 4080.0, "even_ppm": 4120.0, "parity_sigma": 0.2,
+                             "secondary_ppm": 3990.0, "secondary_sigma": 21.0, "suggested_period": 9.0975})
+    item = {"signal": parent.model_dump(), "outcome": "undetermined", "tests": [r.model_dump() for r in (r1, r2)],
+            "timings": [0.01, 0.01]}
+    store.record_results(rid, t.target_id, [item], [], pin_evidence=False)
+    with store.session() as s:
+        pid = s.query(SignalRow.id).filter(SignalRow.run_id == rid).scalar()
+    child = _signal(t.target_id, 9.0975, 26.5, depth=4100.0).model_copy(update={"t0": 136.3, "extra": {
+        "halving": {"from_period": 18.195}}})
+    c1 = TestResult(rung="rung1_detection", status=TestStatus.PASS,
+                    metrics={"sde": 26.5, "snr": 33.0, "n_events": 140, "duration_ratio": 1.0})
+    c2 = TestResult(rung="rung2_shape", status=TestStatus.FAIL, reason="odd_even 4.1 sigma",
+                    metrics={"depth_ppm": 4100.0, "odd_ppm": 4420.0, "even_ppm": 3780.0, "parity_sigma": 4.1})
+    done = store.commit_recheck_step(StepWrite(
+        signal_id=pid, step="period", ladder_version="4", outcome="superseded",
+        reason="re-measured at 9.0975 d: rejected",
+        child=ChildWrite(job_key=f"{RECHECK_JOB_PREFIX}P/2:{pid}", signal=child, ladder_version="4",
+                         branch="recheck:P/2", tests=[(c1, 0.01), (c2, 0.01)])))
+    with store.session() as s:
+        run = s.query(RunRow).filter(RunRow.job_key == f"{RECHECK_JOB_PREFIX}P/2:{pid}").one().id
+    return {"superseded": pid, "halved_child": done["child_id"], "pair_recheck_run": run}
 
 
 def _v(median, minus, plus, source="seed"):

@@ -10,15 +10,16 @@ from __future__ import annotations
 import math
 import re
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime
 
 from skysift.config import Thresholds
+from skysift.store.db import REVIEWER_DECIDED_REASON
 
 LADDER_ORDER = ["rung1_detection", "rung1_events", "rung2_shape", "rung3_stability", "rung4_novelty", "rung5_pixels"]
 RUNG_NAMES = {"rung1_detection": "Detected above the noise", "rung1_events": "Seen in every transit with data",
-              "rung2_shape": "Transit shape", "rung3_stability": "Stable across seasons and apertures",
-              "rung4_novelty": "Not already known", "rung5_pixels": "Pixels show the dip on this star"}
+              "rung2_shape": "Transit shape", "rung3_stability": "Stable across quarter groups and apertures",
+              "rung4_novelty": "Not already known", "rung5_pixels": "On this star, not a neighbour"}
 
 STATUS_GLOSSARY = [
     ("Candidate, stage 1", "Every light-curve check reached a verdict and all of them passed. The engine decides."),
@@ -67,6 +68,10 @@ PIXELS = "pixel stage"
 RETRY = "retry the catalogue"
 PERSON = "needs a person"
 FAILED = "no recheck: a failed check is final"
+# the pixel stage runs once per signal (an archive outage aside), so what its own "no verdict" leaves is for a person
+PIXELS_SAID = "a person reads the pixel figures"
+PIXELS_NONE = "a person decides without the pixels"
+PIXELS_RETRY = "ask the pixel archive again"
 
 # (matcher, in words, next step), first match wins, in the order of the spec 4.2 table. A named group ``detail`` is the
 # part of the reason that carries its numbers; ``why`` adds it to the sentence.
@@ -78,7 +83,7 @@ REASONS: list[tuple[re.Pattern, str, str]] = [(re.compile(p), w, n) for p, w, n 
     (r"^(season|aperture)-dependent depth(?: \((?P<detail>[^)]*)\))?",
      "The depth changes with the detector or the aperture, which a real transit does not do", PIXELS),
     (r"^systematic_alias", "The period sits on a known spacecraft rhythm", PIXELS),
-    (r"^outage:\s*(?P<detail>mast\b.*)", "The pixel archive did not answer when we asked", PIXELS),
+    (r"^outage:\s*(?P<detail>mast\b.*)", "The pixel archive did not answer when we asked", PIXELS_RETRY),
     (r"^outage:\s*(?P<detail>.*)", "A catalogue did not answer when we asked", RETRY),
     (r"^schema:(?P<detail>.*)", "A catalogue answered in a form we could not read", RETRY),
     (r"^period matches (?P<detail>.+?) but epoch differs",
@@ -86,7 +91,24 @@ REASONS: list[tuple[re.Pattern, str, str]] = [(re.compile(p), w, n) for p, w, n 
     (r"^exception:\s*(?P<detail>.*)", "The check crashed",
      "re-vet under the current ladder; stays flagged for a person if it crashes again"),
     (r"^free_secondary_undetermined", "The search for a second dip away from phase 0.5 had too few points", PERSON),
-    (r"^pixels:\s*(?P<detail>.*)", "The pixels could not show which star the dip is on", PIXELS),
+    (r"^pixels: (?P<detail>\d+ usable transits? < \d+)", "The pixels could not show which star the dip is on",
+     PIXELS_SAID),
+    (r"^pixels: no season holds both stars on the frame",
+     "No season's pixel stamp holds both this star and the neighbour, so the dip cannot be placed between them",
+     PIXELS_SAID),
+    (r"^pixels: no season localises the dip",
+     "No season's difference image places the dip well enough to vote on which star dims", PIXELS_SAID),
+    (r"^pixels: (?P<detail>season \d+ ambiguous.*)",
+     "In one season the centroid of the lost light sits too close to the line between the two stars to call",
+     PIXELS_SAID),
+    (r"^pixels: (?P<detail>season \d+ disagrees.*)",
+     "One season does not agree with the others on which star dims", PIXELS_SAID),
+    (r"^pixels: no pixel files for this star",
+     "The archive has no pixel files for the Kepler star whose pixels hold this one", PIXELS_NONE),
+    (r"^pixels: no neighbour to test against",
+     "This star is itself the Kepler target, so there is no neighbour in its pixels to test the dip against",
+     PIXELS_NONE),
+    (r"^pixels:\s*(?P<detail>.*)", "The pixels could not show which star the dip is on", PIXELS_SAID),
     (r"^the dip is on a neighbouring star(?P<detail>.*)", "The pixels put the dip on a neighbouring star", FAILED),
 ]]
 _TH = Thresholds()
@@ -128,7 +150,15 @@ FAILS: list[tuple[re.Pattern, Callable[[re.Match], str]]] = [(re.compile(p), w) 
     (r"^V-shaped or deep \(k \+ b = ([-\d.]+) > ([-\d.]+)",
      lambda g: f"The dip is V-shaped, as a grazing eclipse is (k + b = {g[1]}, limit {g[2]})"),
     (r"^known:([^:]+):(.+)", lambda g: f"Already known: {g[2]} in {g[1]}"),
+    (r"^the dip is on a neighbouring star \(([-\d.]+) sigma, (\d+)/(\d+) seasons\)",
+     lambda g: f"The pixels put the dip on a neighbouring star in {g[2]} of {g[3]} seasons ({g[1]} sigma)"),
     (r"^the dip is on a neighbouring star(.*)", lambda g: f"The pixels put the dip on a neighbouring star{g[1]}"),
+]]
+# (matcher, sentence) for the reasons a check passes with (only the pixel rung gives one)
+PASSES: list[tuple[re.Pattern, Callable[[re.Match], str]]] = [(re.compile(p), w) for p, w in [
+    (r"^(?:pixels: )?the dip is on the target in (\d+)/(\d+) seasons \(centroid >= ([-\d.]+) sigma nearer\)",
+     lambda g: f"The dip is on this star in {g[1]} of {g[2]} seasons, the centroid at least {g[3]} sigma nearer it "
+               "than the neighbour"),
 ]]
 
 
@@ -233,12 +263,14 @@ def _stability(m: dict) -> tuple[str, str]:
     p, chi2, dof = _num(m, "p_value"), _num(m, "chi2"), _num(m, "dof")
     ratio = _num(m, "sap_psf_ratio") if _num(m, "aperture_ratio") is None else _num(m, "aperture_ratio")
     az = _num(m, "aperture_z")
-    parts = [f"Depth agrees across {len(depths)} seasons (p = {p:.2g})" if depths and p is not None
-             else "Season depths were not recorded"]
+    parts = [f"Depth agrees across {len(depths)} quarter groups (p = {p:.2g})" if depths and p is not None
+             else "Depths per quarter group were not recorded"]
     if ratio is not None:
         parts.append(f"the two apertures agree (ratio {ratio:.2f})")
-    seasons = [f"season {s}: {_ppm(_num(depths, s))}" + (f" ± {_ppm(_num(errs, s))}" if s in errs else "") + " ppm"
-               for s in sorted(depths, key=str)]
+    # rung 3 groups the quarters by quarter mod 4, which is not the archive SEASON rung 5 labels its seasons by, so
+    # its groups are "quarter group N" wherever rung 5's are "archive season N"
+    seasons = [f"quarter group {s}: {_ppm(_num(depths, s))}" + (f" ± {_ppm(_num(errs, s))}" if s in errs else "")
+               + " ppm" for s in sorted(depths, key=str)]
     fit = chi2 is not None and dof is not None and p is not None and f"χ² {chi2:.1f} on {dof:.0f} dof, p = {p:.2g}"
     aperture = ratio is not None and f"aperture ratio {ratio:.2f}" + (f", {az:.1f} σ" if az is not None else "")
     return _join(parts, " and "), _join([*seasons, fit, aperture], "; ")
@@ -262,20 +294,51 @@ def _novelty(m: dict) -> tuple[str, str]:
     return sentence, _join([*hits, _join([f"{c} {_num(m, c):.0f}" for c in asked])], "; ")
 
 
-def _pixels(m: dict) -> tuple[str, str]:
+def season_votes(s: dict) -> bool:
+    """Whether a stored season voted in rung 5's verdict: its ``voting`` flag, or for a row stored before the flag,
+    a nearer star named."""
+    return bool(s["voting"]) if "voting" in s else s.get("nearer") in ("target", "neighbour")
+
+
+def pixel_seasons(m: dict) -> list[dict]:
+    """Rung 5's stored seasons in archive SEASON order (a season without a label last)."""
     seasons = [s for s in m.get("seasons") or [] if isinstance(s, dict)]
-    on_target = sum(1 for s in seasons if s.get("nearer") == "target")
-    sentence = (f"The dip sits on this star in {on_target} of {len(seasons)} seasons" if seasons
-                else "Pixel offsets were not recorded")
+    return sorted(seasons, key=lambda s: (_num(s, "season") is None, _num(s, "season") or 0.0))
+
+
+NEARER = {"target": "the star", "neighbour": "the neighbour"}
+
+
+def _pixels(m: dict) -> tuple[str, str]:
+    seasons = pixel_seasons(m)
+    voting = [s for s in seasons if season_votes(s)]
+    on_target = sum(1 for s in voting if s.get("nearer") == "target")
+    if voting:
+        sentence = f"The dip sits on this star in {on_target} of {len(voting)} seasons that could vote"
+    else:
+        sentence = "No season could vote on which star dims" if seasons else "Pixel offsets were not recorded"
+    if voting and len(voting) < len(seasons):
+        sentence += f"; {len(seasons) - len(voting)} could not"
     rows = []
     for s in seasons:
+        if not season_votes(s):
+            rows.append(f"archive season {s.get('season')}: not voting "
+                        f"({s.get('non_voting_reason') or 'no reason stored'})")
+            continue
         d_star, d_nbr, err = (_num(s, k) for k in ("dist_target_pix", "dist_neighbour_pix", "centroid_sigma_pix"))
-        rows.append(f"season {s.get('season')}: " + _join([
+        sep = _num(s, "separation_sigma")
+        rows.append(f"archive season {s.get('season')}: " + _join([
             d_star is not None and f"{d_star:.2f}" + (f" ± {err:.2f}" if err is not None else "") + " px from the star",
-            d_nbr is not None and f"{d_nbr:.2f} from the neighbour"]))
+            d_nbr is not None and f"{d_nbr:.2f} from the neighbour",
+            sep is not None and s.get("nearer") in NEARER and f"{abs(sep):.1f} σ nearer {NEARER[s['nearer']]}"]))
     n_ev, n_q = _num(m, "n_events_used"), _num(m, "n_quarters_usable")
-    return sentence, _join([*rows, n_ev is not None and n_q is not None
-                            and f"{n_ev:.0f} transits in {n_q:.0f} quarters"], "; ")
+    leak = m.get("leak_depth_ppm")
+    leak = [_num({"x": x}, "x") for x in leak] if isinstance(leak, list) and len(leak) == 2 else [None, None]
+    used = n_ev is not None and n_q is not None and f"{n_ev:.0f} transits in {n_q:.0f} quarters"
+    return sentence, _join([*rows, used,
+                            leak[0] is not None and leak[1] is not None
+                            and f"the neighbour's own light at the transits: {leak[0]:,.0f} ± {leak[1]:,.0f} ppm"],
+                 "; ")
 
 
 BUILDERS: dict[str, Callable[[dict], tuple[str, str]]] = {
@@ -298,6 +361,17 @@ def _failed_in_words(reason: str) -> str:
     return f"Failed: {reason}" if reason else "Failed"
 
 
+def _passed_in_words(reason: str) -> str | None:
+    for pattern, words in PASSES:
+        g = pattern.match(reason or "")
+        if g:
+            return words(g)
+    return None
+
+
+_ARCHIVE_SEASON = re.compile(r"\bseason (?=\d)")
+
+
 def _row(rung: str, row: dict) -> Why:
     status, reason, m = row.get("status") or "", row.get("reason") or "", row.get("metrics") or {}
     passed, numbers = BUILDERS.get(rung, lambda _m: ("Passed", ""))(m)
@@ -308,9 +382,11 @@ def _row(rung: str, row: dict) -> Why:
         missing, nxt = reason_in_words(reason)
         hit = _match_reason(reason)
         detail = hit[0].groupdict().get("detail") if hit else None
+        if detail and rung == "rung5_pixels":         # rung 5 names the Kepler archive SEASON, not quarter mod 4
+            detail = _ARCHIVE_SEASON.sub("archive season ", detail)
         sentence = f"No verdict: {missing[:1].lower()}{missing[1:]}" + (f" ({detail.strip()})" if detail else "")
     else:
-        sentence = passed
+        sentence = _passed_in_words(reason) or passed
     return Why(rung, RUNG_NAMES.get(rung, rung), status, sentence, numbers, missing, nxt, _when(row))
 
 
@@ -384,6 +460,133 @@ def verdict(signal: dict, tests: list[dict], decision: dict | None, decisions: l
     if status == "superseded":
         return Verdict("Superseded", None, "muted", "Superseded: a recheck replaced this signal", reviewer)
     return Verdict("Not vetted yet", None, "muted", "Not vetted yet: no check has run", reviewer)
+
+
+# ---- the stage-2 recheck in words: the history lines and the links between a signal and its P/2 signal ----------
+
+# a rechecks row's step (recheck.STEPS and the pixel stage) and outcome in words
+STEP_WORDS = {"ladder": "Re-vetted under ladder {ladder}", "period": "Re-vetted at half the period",
+              "catalogue": "Catalogue asked again", "pixels": "Pixels checked"}
+OUTCOME_WORDS = {"pass": "passed", "fail": "failed", "undetermined": "no verdict", "skipped": "skipped",
+                 "superseded": "superseded"}
+# a final status as the history and the links say it: "that signal was rejected", "(now a stage 1 candidate)"
+STATUS_NOW = {"candidate_stage1": "a stage 1 candidate", "candidate_stage2": "a stage 2 candidate",
+              "undetermined": "undetermined", "rejected": "rejected", "superseded": "superseded",
+              "pending": "not vetted yet"}
+STATUS_PAST = {"candidate_stage1": "became a stage 1 candidate", "candidate_stage2": "became a stage 2 candidate",
+               "undetermined": "stayed undetermined", "rejected": "was rejected", "superseded": "was superseded",
+               "pending": "was not vetted"}
+# (matcher, words) for why a step was skipped, from the reasons recheck.py writes
+SKIPPED: list[tuple[re.Pattern, Callable[[re.Match], str]]] = [(re.compile(p), w) for p, w in [
+    (rf"^{re.escape(REVIEWER_DECIDED_REASON)}$", lambda g: "a reviewer decided on the signal while the step ran"),
+    (r"^search version differs: signal of search version (\S+), not the current (\S+)",
+     lambda g: f"the signal comes from search version {g[1]}, not the current {g[2]}"),
+    (r"^light curve unavailable: (.+)", lambda g: f"the light curve could not be loaded ({g[1]})"),
+    (r"^exception: (.+)", lambda g: f"the step crashed ({g[1]})"),
+    (r"^half period not measurable", lambda g: "the half period could not be measured"),
+]]
+_RUNG_PREFIX = re.compile(r"^rung\w+: ")
+_REMEASURED = re.compile(r"^re-measured at [-\d.e+]+ d: (\w+)")
+
+
+def _lower_first(text: str) -> str:
+    """The sentence as a clause: its first letter lowered, unless it starts an abbreviation (SDE, SNR)."""
+    first = text.split(" ", 1)[0]
+    return text if not text or (len(first) > 1 and first[:2].isupper()) else text[:1].lower() + text[1:]
+
+
+def _date(utc) -> str | None:
+    when = _as_utc(utc)
+    return f"{when.day} {when:%b %Y}" if when is not None else None
+
+
+def _step_detail(outcome: str, reason: str) -> str:
+    """The reason of a rechecks row as a clause after its outcome."""
+    reason = reason or ""
+    if outcome == "skipped":
+        for pattern, words in SKIPPED:
+            g = pattern.match(reason)
+            if g:
+                return words(g)
+        return reason
+    if outcome == "superseded":
+        g = _REMEASURED.match(reason)
+        return f"that signal {STATUS_PAST.get(g[1], 'became ' + g[1])}" if g else reason
+    reason = _RUNG_PREFIX.sub("", reason)
+    if not reason:
+        return ""
+    if outcome == "fail":
+        return _lower_first(_failed_in_words(reason))
+    if outcome == "undetermined":
+        hit = _match_reason(reason)
+        return _lower_first(hit[1]) if hit else reason
+    passed = _passed_in_words(reason)
+    return _lower_first(passed) if passed else reason
+
+
+def recheck_history(rechecks: list[dict], children: list[dict] | None = None) -> list[dict]:
+    """The popup's and the signal page's recheck lines, oldest first, from ``Store.rechecks``: the date, the step in
+    words ("Re-vetted under ladder 4", "Re-vetted at half the period", "Catalogue asked again", "Pixels checked"),
+    the outcome in words, the reason as a clause (``detail``, a skipped step's reason too) and, for a period step,
+    the P/2 signal it made (``link_id``, with ``link_period`` from ``children``)."""
+    periods = {c.get("id"): c.get("period") for c in children or []}
+    out = []
+    for r in rechecks:
+        step = STEP_WORDS.get(r.get("step"), str(r.get("step"))).format(ladder=r.get("ladder_version") or "?")
+        outcome = r.get("outcome") or ""
+        out.append({"date": _date(r.get("utc")), "step": step, "outcome": OUTCOME_WORDS.get(outcome, outcome),
+                    "detail": _step_detail(outcome, r.get("reason") or ""), "link_id": r.get("new_signal_id"),
+                    "link_period": periods.get(r.get("new_signal_id"))})
+    return out
+
+
+# the next step a rechecks row of this step has taken (the period step is the one whose outcome replaces the signal)
+STEP_OF_NEXT = {HALVE: "period"}
+
+
+def with_recheck_state(rows: list[Why], rechecks: list[dict], children: list[dict] | None = None) -> list[Why]:
+    """The Why rows with each undetermined row's next step given its state once the recheck has taken it ("rechecked
+    on 21 Oct 2026: superseded by the signal at 40.2899 d, now a stage 1 candidate"); other rows as they are."""
+    status = {c.get("id"): c.get("final_status") for c in children or []}
+    history = recheck_history(rechecks, children)
+    out = []
+    for w in rows:
+        step = STEP_OF_NEXT.get(w.next_step or "")
+        done = [h for r, h in zip(rechecks, history, strict=True) if step and r.get("step") == step
+                and r.get("outcome") != "skipped"]
+        if w.status != "undetermined" or not done:
+            out.append(w)
+            continue
+        h = done[-1]
+        text = f"rechecked on {h['date']}: {h['outcome']}"
+        if h["link_id"] is not None:
+            period = f"{h['link_period']:g} d" if isinstance(h["link_period"], int | float) else "half the period"
+            now = STATUS_NOW.get(status.get(h["link_id"]))
+            text += (" by" if h["outcome"] == "superseded" else ",") + f" the signal at {period}"
+            text += f", now {now}" if now else ""
+        out.append(replace(w, next_step=text))
+    return out
+
+
+def _link(words: str, other: dict) -> dict:
+    status = other.get("final_status")
+    return {"words": words, "id": other.get("id"), "period": other.get("period"), "status": status,
+            "status_words": STATUS_NOW.get(status, status)}
+
+
+def lineage(signal: dict, parent: dict | None, children: list[dict]) -> list[dict]:
+    """The links between a signal and the signals the recheck measured from it at half the period: "Superseded by"
+    the child of a superseded signal, "Supersedes" the superseded parent of a child, and "Measured again at half the
+    period as" / "Measured at half the period of" when the P/2 signal did not settle it (the parent stays open)."""
+    out = []
+    if parent is not None:
+        words = "Supersedes" if parent.get("final_status") == "superseded" else "Measured at half the period of"
+        out.append(_link(words, parent))
+    for child in children:
+        words = ("Superseded by" if signal.get("final_status") == "superseded"
+                 else "Measured again at half the period as")
+        out.append(_link(words, child))
+    return out
 
 
 def _plural(x: float, unit: str) -> str:

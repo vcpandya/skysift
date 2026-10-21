@@ -105,11 +105,25 @@ def _glossary(v: explain.Verdict) -> list[str]:
 
 
 def _explained(d: dict, signal_id: int) -> dict:
-    """What the popup and the signal page's Why section share: the verdict, one row per rung, the expert's raw rows,
-    the glossary footer and where the pill opens the popup."""
-    v = explain.verdict(d["signal"], d["tests"], d["candidate"], d["decisions"])
-    return {"v": v, "rows": explain.why(d["tests"]), "ladder": _ladder_rows(d["tests"]), "glossary": _glossary(v),
-            "recheck_history": [], "verdict_src": f"/partials/signals/{signal_id}/verdict"}
+    """What the popup and the signal page's Why section share, all from the latest row of each rung: the verdict, one
+    row per rung, the expert's raw rows, the recheck history, the links to and from the signal's P/2 signal, the
+    glossary footer and where the pill opens the popup."""
+    latest = d["latest_tests"]
+    v = explain.verdict(d["signal"], latest, d["candidate"], d["decisions"])
+    rows = explain.with_recheck_state(explain.why(latest), d["rechecks"], d["children"])
+    return {"v": v, "rows": rows, "ladder": _ladder_rows(latest), "glossary": _glossary(v),
+            "recheck_history": explain.recheck_history(d["rechecks"], d["children"]),
+            "lineage": explain.lineage(d["signal"], d["parent"], d["children"]),
+            "verdict_src": f"/partials/signals/{signal_id}/verdict"}
+
+
+def _pixel_figures(d: dict, signal_id: int) -> dict | None:
+    """The signal page's pixel section when rung 5 has a row: where its picture is and the row's sentence."""
+    row = next((t for t in d["latest_tests"] if t["rung"] == "rung5_pixels"), None)
+    if row is None:
+        return None
+    return {"src": f"/api/signals/{signal_id}/pixels.svg", "status": row["status"],
+            "n_seasons": len(explain.pixel_seasons(row.get("metrics") or {}))}
 
 
 VERSIONS = ("current", "all")
@@ -192,7 +206,8 @@ def signal_page(request: Request, signal_id: int):
                   summary=explain.summary_sentence(d["signal"], d["target"], d["tests"]),
                   copy_text=explain.copy_summary(d["signal"], d["target"], ex["v"],
                                                  f"{request.base_url}signals/{signal_id}"),
-                  pixel_figures=None, plot_layout=plots.LAYOUT, marks=plots.MARKS, captions=plots.CAPTIONS,
+                  pixel_figures=_pixel_figures(d, signal_id), plot_layout=plots.LAYOUT, marks=plots.MARKS,
+                  captions=plots.CAPTIONS,
                   prev_url=f"/signals/{prev_id}{qs}" if prev_id else None,
                   next_url=f"/signals/{next_id}{qs}" if next_id else None, view=view, queue_qs=_qs(view),
                   signal_id=signal_id, error=None)

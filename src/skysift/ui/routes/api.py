@@ -14,7 +14,7 @@ from skysift import jsonutil
 from skysift.detectors.periodogram import PeriodogramSummary
 from skysift.net import ServiceUnavailable
 from skysift.store.db import ArtifactRow, SignalRow, TestRow
-from skysift.ui import queries, sparkline
+from skysift.ui import pixel_figure, queries, sparkline
 from skysift.ui.plots import IntegrityError, LightCurveLoader, build_plots, whitened_fnorm
 
 log = logging.getLogger(__name__)
@@ -115,6 +115,19 @@ def sparkline_svg(request: Request, signal_id: int):
     svg = sparkline.render_svg(sparkline.fold_points(lc, d["signal"], d["tests"]), d["signal"]["depth_ppm"])
     _cache(path, svg)
     return Response(svg, media_type=SVG, headers={"Cache-Control": SPARKLINE_MAX_AGE})
+
+
+@router.get("/api/signals/{signal_id}/pixels.svg")
+def pixels_svg(request: Request, signal_id: int):
+    """The pixel stage's season panels (``pixel_figure.render_svg``), drawn from the latest ``rung5_pixels`` row's
+    metrics alone; 404 when the signal is unknown or has no such row. Not cached: a recheck may write a newer row."""
+    store = request.app.state.store
+    row = next((t for t in store.latest_tests(signal_id) if t["rung"] == "rung5_pixels"), None)
+    if row is None:
+        return JSONResponse({"error": "not found", "detail": f"no pixel check for signal {signal_id}"},
+                            status_code=404)
+    svg = pixel_figure.render_svg(row["metrics"] or {}, signal_id, row["reason"] or "")
+    return Response(svg, media_type=SVG, headers={"Cache-Control": "no-store"})
 
 
 def _cache(path: Path, text: str) -> None:

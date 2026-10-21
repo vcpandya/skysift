@@ -1,0 +1,12 @@
+{# The links between a signal and the signal the recheck measured from it at half the period (explain.lineage):
+   "Superseded by", "Supersedes", or "Measured again at half the period as" when the P/2 signal did not settle it.
+   Context: lineage. #}
+{%- if lineage %}
+<ul class="lineage">
+  {%- for l in lineage %}
+  {%- set p = "%g" | format(l.period) if l.period is number else "?" %}
+  <li>{{ l.words }} <a href="/signals/{{ l.id }}">the signal at {{ p }} d</a>
+  {%- if l.status_words and l.words != "Supersedes" %}, now {{ l.status_words }}{% endif %}.</li>
+  {%- endfor %}
+</ul>
+{%- endif %}

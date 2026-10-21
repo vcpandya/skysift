@@ -31,8 +31,10 @@ def test_every_rung_reason_maps_to_words_and_a_next_step(reason):
 @pytest.mark.parametrize(("reason", "step"), [
     ("free_secondary_undetermined", "needs a person"), ("schema:toi:missing pl_orbper", "retry the catalogue"),
     ("exception: rung returned NoneType", explain.REVET + "; stays flagged for a person if it crashes again"),
-    ("pixels: 2 usable transits < 3", "pixel stage"), ("pixels: season 2 disagrees (4.1 sigma)", "pixel stage"),
-    ("the dip is on a neighbouring star (3 of 4 seasons)", explain.FAILED), ("outage:mast: HTTP 503", "pixel stage")])
+    ("pixels: 2 usable transits < 3", explain.PIXELS_SAID),
+    ("pixels: season 2 disagrees (4.1 sigma)", explain.PIXELS_SAID),
+    ("the dip is on a neighbouring star (3 of 4 seasons)", explain.FAILED),
+    ("outage:mast: HTTP 503", explain.PIXELS_RETRY), ("season-dependent depth (p=5.7e-04)", "pixel stage")])
 def test_the_other_reasons_the_rungs_emit_map_too(reason, step):
     missing, nxt = explain.reason_in_words(reason)
     assert missing != reason and nxt == step and "—" not in missing + nxt
@@ -43,7 +45,7 @@ def test_reason_table_reproduces_the_spec_words():
     assert explain.reason_in_words("outage:vizier: HTTP 503") == ("A catalogue did not answer when we asked",
                                                                   "retry the catalogue")
     assert explain.reason_in_words("systematic_alias")[1] == "pixel stage"
-    assert explain.reason_in_words("pixels: no neighbour to test against")[1] == "pixel stage"
+    assert explain.reason_in_words("pixels: no neighbour to test against")[1] == explain.PIXELS_NONE
 
 
 def test_unknown_reason_falls_back_to_the_raw_text():
@@ -81,7 +83,13 @@ def test_why_sentences_carry_the_deciding_numbers(seed_detail):
     assert "0.3 sigma" in rows["rung2_shape"].sentence and "2,202" in rows["rung2_shape"].numbers
     assert "p = 0.9" in rows["rung3_stability"].sentence
     assert "No match in 4 catalogues" in rows["rung4_novelty"].sentence
-    assert "4 of 4 seasons" in rows["rung5_pixels"].sentence and rows["rung5_pixels"].status == "pass"
+    assert "3 of 3 seasons" in rows["rung5_pixels"].sentence and rows["rung5_pixels"].status == "pass"
+    numbers = rows["rung5_pixels"].numbers
+    assert "archive season 3: not voting (box incomplete: target)" in numbers
+    assert ("archive season 0: 0.13 ± 0.05 px from the star, 2.75 from the neighbour, 40.9 σ nearer the star"
+            in numbers)
+    assert "quarter group 0: 2,150 ± 110 ppm" in rows["rung3_stability"].numbers           # rung 3: quarter mod 4
+    assert "4 quarter groups" in rows["rung3_stability"].sentence and "season" not in rows["rung3_stability"].numbers
 
 
 def _detection_row(sde):
@@ -212,3 +220,112 @@ def test_time_in_words():
     assert explain.ago("2026-10-20T11:15:00+00:00", now) == "45 minutes ago"
     assert explain.ago("not a time", now) == explain.ago(None, now) == "at an unknown time"
     assert explain.time_left(20) == "under a minute left" and explain.time_left(2400) == "about 40 minutes left"
+
+
+# ---- the pixel stage and the recheck history in words (recheck, task 6)
+
+@pytest.mark.parametrize("reason", ["pixels: 2 usable transits < 3",
+                                    "pixels: season 2 disagrees (centroid nearer neighbour, 4.1 sigma)",
+                                    "pixels: no neighbour to test against", "outage:mast: HTTP 503"])
+def test_pixel_reasons_map_to_words(reason):
+    missing, nxt = explain.reason_in_words(reason)
+    assert missing != reason and nxt != "needs a person"
+
+
+@pytest.mark.parametrize(("reason", "words", "step"), [
+    ("pixels: no season holds both stars on the frame", "No season's pixel stamp holds both", "PIXELS_SAID"),
+    ("pixels: no season localises the dip", "No season's difference image places the dip", "PIXELS_SAID"),
+    ("pixels: season 2 ambiguous (1.4 sigma)", "too close to the line between the two stars", "PIXELS_SAID"),
+    ("pixels: season 1 disagrees (centroid nearer neighbour, 4.1 sigma)", "One season does not agree",
+     "PIXELS_SAID"),
+    ("pixels: no pixel files for this star", "no pixel files", "PIXELS_NONE"),
+    ("pixels: no neighbour to test against", "no neighbour in its pixels", "PIXELS_NONE"),
+    ("pixels: 2 usable transits < 3", "The pixels could not show which star the dip is on", "PIXELS_SAID"),
+    ("outage:mast: 3 of 16 pixel files unreachable", "The pixel archive did not answer", "PIXELS_RETRY"),
+    ("outage:mast: HTTP 503", "The pixel archive did not answer", "PIXELS_RETRY"),
+    ("outage:exoarchive: HTTP 503", "A catalogue did not answer", "RETRY")])
+def test_each_pixel_reason_has_its_own_words_and_next_step(reason, words, step):
+    missing, nxt = explain.reason_in_words(reason)
+    assert words in missing and nxt == getattr(explain, step) and "—" not in missing + nxt
+
+
+def test_an_undetermined_pixel_row_carries_its_detail():
+    row = {"rung": "rung5_pixels", "status": "undetermined", "reason": "pixels: season 2 ambiguous (1.4 sigma)",
+           "metrics": {}}
+    w = explain.why([row])[5]
+    assert w.sentence.startswith("No verdict: ") and "(archive season 2 ambiguous (1.4 sigma))" in w.sentence
+    assert w.next_step == explain.PIXELS_SAID
+
+
+def test_the_pixel_pass_and_fail_sentences():
+    passed = {"rung": "rung5_pixels", "status": "pass",
+              "reason": "the dip is on the target in 3/3 seasons (centroid >= 38.2 sigma nearer)", "metrics": {}}
+    assert explain.why([passed])[5].sentence == ("The dip is on this star in 3 of 3 seasons, the centroid at least "
+                                                 "38.2 sigma nearer it than the neighbour")
+    failed = {"rung": "rung5_pixels", "status": "fail",
+              "reason": "the dip is on a neighbouring star (4.1 sigma, 3/4 seasons)", "metrics": {}}
+    assert explain.why([failed])[5].sentence == ("The pixels put the dip on a neighbouring star in 3 of 4 seasons "
+                                                 "(4.1 sigma)")
+    assert explain.RUNG_NAMES["rung5_pixels"] == "On this star, not a neighbour"
+
+
+def test_recheck_history_in_words():
+    rows = [{"id": 1, "step": "ladder", "ladder_version": "4", "outcome": "skipped", "new_signal_id": None,
+             "reason": "search version differs: signal of search version 1+old, not the current 2+new",
+             "utc": "2026-10-20T03:04:05"},
+            {"id": 2, "step": "period", "ladder_version": "4", "outcome": "superseded", "new_signal_id": 9,
+             "reason": "re-measured at 9.0975 d: rejected", "utc": "2026-10-21T01:00:00"},
+            {"id": 3, "step": "catalogue", "ladder_version": "4", "outcome": "undetermined", "new_signal_id": None,
+             "reason": "outage:vizier: HTTP 503", "utc": "2026-10-21T01:00:00"},
+            {"id": 4, "step": "pixels", "ladder_version": "4", "outcome": "fail", "new_signal_id": None,
+             "reason": "the dip is on a neighbouring star (4.1 sigma, 3/4 seasons)", "utc": "2026-10-21T01:00:00"},
+            {"id": 5, "step": "ladder", "ladder_version": "4", "outcome": "fail", "new_signal_id": None,
+             "reason": "rung2_shape: odd_even 4.2 sigma", "utc": "2026-10-21T01:00:00"},
+            {"id": 6, "step": "pixels", "ladder_version": "4", "outcome": "skipped", "new_signal_id": None,
+             "reason": "reviewer decided meanwhile", "utc": "2026-10-21T01:00:00"}]
+    children = [{"id": 9, "period": 9.0975, "final_status": "rejected"}]
+    h = explain.recheck_history(rows, children)
+    assert [x["step"] for x in h] == ["Re-vetted under ladder 4", "Re-vetted at half the period",
+                                      "Catalogue asked again", "Pixels checked", "Re-vetted under ladder 4",
+                                      "Pixels checked"]
+    assert h[0]["date"] == "20 Oct 2026" and h[0]["outcome"] == "skipped"
+    assert h[0]["detail"] == "the signal comes from search version 1+old, not the current 2+new"
+    assert (h[1]["outcome"], h[1]["link_id"], h[1]["link_period"]) == ("superseded", 9, 9.0975)
+    assert h[1]["detail"] == "that signal was rejected"
+    assert h[2]["outcome"] == "no verdict" and h[2]["detail"] == "a catalogue did not answer when we asked"
+    assert h[3]["outcome"] == "failed" and "neighbouring star in 3 of 4 seasons" in h[3]["detail"]
+    assert h[4]["detail"] == "odd and even transits differ by 4.2 sigma, above the usual limit of 3"
+    assert h[5]["detail"] == "a reviewer decided on the signal while the step ran"
+    assert all("—" not in f"{x['step']} {x['outcome']} {x['detail']}" for x in h)
+    assert explain.recheck_history([], []) == []
+
+
+def test_lineage_words():
+    parent = {"id": 3, "period": 18.195, "final_status": "superseded"}
+    child = {"id": 9, "period": 9.0975, "final_status": "rejected", "branch": "recheck:P/2"}
+    assert explain.lineage({"final_status": "superseded"}, None, [child]) == [
+        {"words": "Superseded by", "id": 9, "period": 9.0975, "status": "rejected", "status_words": "rejected"}]
+    assert explain.lineage({"final_status": "rejected"}, parent, []) == [
+        {"words": "Supersedes", "id": 3, "period": 18.195, "status": "superseded", "status_words": "superseded"}]
+    # a P/2 child that did not settle it: the parent stays open, so the words say measured again, not superseded
+    assert explain.lineage({"final_status": "undetermined"}, None, [{**child, "final_status": "undetermined"}]) == [
+        {"words": "Measured again at half the period as", "id": 9, "period": 9.0975, "status": "undetermined",
+         "status_words": "undetermined"}]
+    assert explain.lineage({"final_status": "undetermined"}, {**parent, "final_status": "undetermined"}, []) == [
+        {"words": "Measured at half the period of", "id": 3, "period": 18.195, "status": "undetermined",
+         "status_words": "undetermined"}]
+    assert explain.lineage({"final_status": "candidate_stage1"}, None, []) == []
+    assert explain.lineage({"final_status": "superseded"}, None, [{**child, "final_status": "candidate_stage2"}])[0][
+        "status_words"] == "a stage 2 candidate"
+
+
+def test_next_step_says_when_the_recheck_already_took_it():
+    row = {"rung": "rung2_shape", "status": "undetermined", "metrics": {},
+           "reason": "equal secondary at phase 0.5: true period may be P / 2 (9.0975 d)"}
+    rows = explain.why([row])
+    period = {"id": 2, "step": "period", "ladder_version": "4", "outcome": "superseded", "new_signal_id": 9,
+              "reason": "re-measured at 9.0975 d: rejected", "utc": "2026-10-21T01:00:00"}
+    done = explain.with_recheck_state(rows, [period], [{"id": 9, "period": 9.0975, "final_status": "rejected"}])
+    assert done[2].next_step == "rechecked on 21 Oct 2026: superseded by the signal at 9.0975 d, now rejected"
+    assert done[2].missing == rows[2].missing and done[0] == rows[0]
+    assert explain.with_recheck_state(rows, [], []) == rows                         # not yet: the plain next step

@@ -1,7 +1,8 @@
 {# One row per check in ladder order, shared by the verdict popup and the signal page's Why section: the status word
    with its icon, the check's name and the plain sentence. show_numbers adds the deciding numbers; a check that could
    not decide adds what was missing and what happens next; expert mode adds the key and raw metrics and the seconds
-   the rung took. Context: rows (explain.why), ladder (the expert rows by rung), recheck_history, mode. #}
+   the rung took; then the recheck history, oldest first. Context: rows (explain.why), ladder (the expert rows by
+   rung), recheck_history (explain.recheck_history), mode. #}
 {% from "partials/pill.html" import pill %}
 {% set STATUS = {"pass": ("pass", "passed"), "fail": ("fail", "failed"), "undetermined": ("undetermined", "no verdict"),
                  "skipped": ("muted", "not run")} %}
@@ -36,6 +37,10 @@
 {% if recheck_history %}
 <h3 class="why-history-title">Rechecks</h3>
 <ul class="why-history">
-  {% for h in recheck_history %}<li>{{ h.get("date") }}, {{ h.get("step") }}: {{ h.get("outcome") }}</li>{% endfor %}
+  {% for h in recheck_history %}<li>{{ h.date or "undated" }}, {{ h.step }}: {{ h.outcome }}
+  {%- if h.link_id %}{{ " by" if h.outcome == "superseded" else "," }} <a href="/signals/{{ h.link_id }}">the signal at
+  {{- " " ~ "%g" | format(h.link_period) ~ " d" if h.link_period is number else " half the period" }}</a>{% endif %}
+  {%- if h.detail %}, {{ h.detail }}{% endif %}</li>
+  {% endfor %}
 </ul>
 {% endif %}

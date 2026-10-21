@@ -8,7 +8,9 @@ from pathlib import Path
 
 from sqlalchemy import func, select
 
+from skysift.store import db
 from skysift.store.db import (
+    RECHECK_JOB_PREFIX,
     ArtifactRow,
     CandidateRow,
     DecisionRow,
@@ -25,11 +27,14 @@ from skysift.ui import explain
 SORT_COLUMNS = {"sde": SignalRow.sde, "snr": SignalRow.snr, "period": SignalRow.period, "depth_ppm": SignalRow.depth_ppm,
                 "duration": SignalRow.duration, "n_events": SignalRow.n_events, "detected": SignalRow.id,
                 "target_id": SignalRow.target_id}
+# the engine's statuses (the store's list, the one source) less "pending": a pending signal is still being vetted, so it
+# is in no queue; "all" is these
+ENGINE_STATUSES = tuple(s for s in db.ENGINE_STATUSES if s != "pending")
 # the Candidates page's filters, in chip order: the stage 1 and 2 candidates nobody has decided (Tonight's "waiting"),
 # the engine's statuses, then the reviewer's decisions, then everything
-QUEUE_STATUSES = ("waiting", "candidate_stage1", "candidate_stage2", "undetermined", "rejected", "superseded",
-                  "approved", "needs_data", "all")
-ENGINE_STATUSES = QUEUE_STATUSES[1:6]      # "all" is these; a pending signal is still being vetted, so in no queue
+QUEUE_STATUSES = ("waiting", *ENGINE_STATUSES, "approved", "needs_data", "all")
+# a run the stage-2 recheck started (a P/2 signal's run) is no sweep: every sweep reader below leaves it out
+SWEEP_RUN = RunRow.job_key.not_like(f"{RECHECK_JOB_PREFIX}%")
 
 
 def _iso(dt) -> str | None:
@@ -37,15 +42,16 @@ def _iso(dt) -> str | None:
 
 
 def run_time_totals(store: Store) -> tuple[int, float]:
-    """(number of finished runs, their total wall seconds) from one aggregate, so the Live page's poll never loads
-    every run into Python. SQLite has no interval type, hence the julianday arithmetic."""
+    """(number of finished sweep runs, their total wall seconds) from one aggregate, so the Live page's poll never
+    loads every run into Python; recheck runs are left out. SQLite has no interval type, hence the julianday
+    arithmetic."""
     if store.engine.dialect.name == "sqlite":
         seconds = func.sum((func.julianday(RunRow.finished) - func.julianday(RunRow.started)) * 86400.0)
     else:
         seconds = func.sum(func.extract("epoch", RunRow.finished - RunRow.started))
     with store.session() as s:
         n, total = s.execute(select(func.count(), seconds)
-                             .where(RunRow.status == "done", RunRow.finished.is_not(None))).one()
+                             .where(RunRow.status == "done", RunRow.finished.is_not(None), SWEEP_RUN)).one()
     return int(n), float(total or 0.0)
 
 
@@ -121,10 +127,10 @@ def _last_test_subquery():
 
 
 def current_search_version(store: Store) -> str | None:
-    """The detector version of the most recently started finished run: the search code the queue should show by
-    default (None before the first run)."""
+    """The detector version of the most recently started finished sweep run (recheck runs left out): the search code
+    the queue should show by default (None before the first run)."""
     with store.session() as s:
-        return s.scalar(select(RunRow.detector_version).where(RunRow.status == "done")
+        return s.scalar(select(RunRow.detector_version).where(RunRow.status == "done", SWEEP_RUN)
                         .order_by(RunRow.started.desc(), RunRow.id.desc()).limit(1))
 
 
@@ -267,8 +273,8 @@ def _latest_sweep(s, launched: tuple[datetime, datetime] | None) -> tuple[dateti
     ``launched`` is the dashboard's last sweep (its history record's started and finished), used when the newest done
     run belongs to it. Otherwise the done runs are grouped by gaps: walking back from the newest, a run that finished
     more than SWEEP_GAP before the group's first start belongs to an earlier sweep. Only the latest sweep's rows are
-    read, not every run."""
-    latest = s.scalar(select(func.max(RunRow.started)).where(RunRow.status == "done"))
+    read, not every run. Recheck runs are no sweep and are left out."""
+    latest = s.scalar(select(func.max(RunRow.started)).where(RunRow.status == "done", SWEEP_RUN))
     if latest is None:
         return None, None
     if launched is not None:
@@ -276,7 +282,7 @@ def _latest_sweep(s, launched: tuple[datetime, datetime] | None) -> tuple[dateti
         if start <= latest <= end:
             return start, end
     start = latest
-    rows = s.execute(select(RunRow.started, RunRow.finished).where(RunRow.status == "done")
+    rows = s.execute(select(RunRow.started, RunRow.finished).where(RunRow.status == "done", SWEEP_RUN)
                      .order_by(RunRow.started.desc()).execution_options(yield_per=500))
     for started, finished in rows:
         if start - (finished or started) > SWEEP_GAP:
@@ -288,14 +294,15 @@ def _latest_sweep(s, launched: tuple[datetime, datetime] | None) -> tuple[dateti
 def _window(s, since: datetime | None, launched: tuple[datetime, datetime] | None = None) -> dict:
     """The sweep window: from ``since`` (a running sweep's start) on, or else the latest sweep (``_latest_sweep``).
     The targets with a finished run started in it, their signals by status, and the window's first start and last
-    finish (None before the first run)."""
+    finish (None before the first run). Recheck runs are left out: the signals a recheck derived are not the sweep's."""
     if since is not None:
         start, end = _naive_utc(since), None
     else:
         start, end = _latest_sweep(s, launched)
     out = {"start": start, "scanned": 0, "first": None, "last": None, "found": {}}
     if start is not None:
-        window = [RunRow.status == "done", RunRow.started >= start, *([RunRow.started <= end] if end else [])]
+        window = [RunRow.status == "done", SWEEP_RUN, RunRow.started >= start,
+                  *([RunRow.started <= end] if end else [])]
         out["scanned"], out["first"], out["last"] = s.execute(
             select(func.count(func.distinct(RunRow.target_id)), func.min(RunRow.started), func.max(RunRow.finished))
             .where(*window)).one()
@@ -370,18 +377,19 @@ RUNNING_STALE = timedelta(hours=1)         # a run marked running for longer tha
 def external_sweep(store: Store, after: datetime | None = None) -> dict | None:
     """A sweep the dashboard did not start (``skysift run`` on the command line), seen in the store: a run marked
     running that started in the last hour, or a done run that finished in the last three minutes. ``after`` (when the
-    dashboard's own last sweep ended) discounts that sweep's rows. Its stars done in the last hour, or None."""
+    dashboard's own last sweep ended) discounts that sweep's rows. Its stars done in the last hour, or None. A run the
+    recheck started is no sweep and is left out."""
     now = datetime.now(UTC).replace(tzinfo=None)
     floor = _naive_utc(after) if after is not None else None
     since_running, since_fresh = now - RUNNING_STALE, now - EXTERNAL_FRESH
     with store.session() as s:
         running = s.scalar(select(func.count()).select_from(RunRow).where(
-            RunRow.status == "running", RunRow.started >= max(since_running, floor or since_running)))
-        fresh = s.scalar(select(func.max(RunRow.finished)).where(RunRow.status == "done"))
+            RunRow.status == "running", SWEEP_RUN, RunRow.started >= max(since_running, floor or since_running)))
+        fresh = s.scalar(select(func.max(RunRow.finished)).where(RunRow.status == "done", SWEEP_RUN))
         if not running and (fresh is None or fresh < max(since_fresh, floor or since_fresh)):
             return None
         done = s.scalar(select(func.count(func.distinct(RunRow.target_id)))
-                        .where(RunRow.status == "done", RunRow.finished >= now - timedelta(hours=1)))
+                        .where(RunRow.status == "done", SWEEP_RUN, RunRow.finished >= now - timedelta(hours=1)))
     return {"running": running, "done_last_hour": done}
 
 
@@ -398,11 +406,12 @@ OUTCOMES = (("candidate", "pass"), ("undetermined", "undetermined"), ("rejected"
 
 def recent_runs(store: Store, limit: int = 10) -> list[dict]:
     """The last ``limit`` finished targets, newest first, each with its outcome in one word: candidate, undetermined,
-    rejected, no signal, or error. A run superseded by a later one is not an outcome and is left out."""
+    rejected, no signal, or error. A run superseded by a later one is not an outcome and is left out, and so is a run
+    the recheck started (no target was swept)."""
     with store.session() as s:
         runs = s.execute(select(RunRow.id, RunRow.target_id, RunRow.finished, RunRow.status)
                          .where(RunRow.finished.is_not(None), RunRow.status.in_(("done", "error")),
-                                RunRow.error != "superseded")
+                                RunRow.error != "superseded", SWEEP_RUN)
                          .order_by(RunRow.finished.desc(), RunRow.id.desc()).limit(limit)).all()
         statuses: dict[int, set] = {}
         if runs:
@@ -433,6 +442,10 @@ def neighbours(store: Store, signal_id: int, status: str, sort: str, desc: bool,
 
 
 def signal_detail(store: Store, signal_id: int) -> dict | None:
+    """The signal with its target, run, every test row (in id order, for the plots), the latest row of each rung
+    (``latest_tests``, what the verdict and the Why rows read), the candidate row and decisions, its recheck history
+    (``rechecks``, oldest first), the signals a recheck derived from it (``children``) and the one it was derived
+    from (``parent``: id, period, final status and branch), or None."""
     with store.session() as s:
         sig = s.get(SignalRow, signal_id)
         if sig is None:
@@ -448,10 +461,15 @@ def signal_detail(store: Store, signal_id: int) -> dict | None:
                  "periodogram_sha256": run.periodogram_sha256} if run else None
         cand_d = {"status": cand.status, "note": cand.note, "decided_at": _iso(cand.decided_at),
                   "branch": cand.branch} if cand else None
-        return {"signal": signal, "target": target, "run": run_d,
-                "tests": [{"rung": x.rung, "status": x.status, "reason": x.reason, "duration_s": x.duration_s,
-                           "metrics": x.metrics} for x in tests],
-                "candidate": cand_d, "decisions": store.decisions(signal_id)}
+        up = s.get(SignalRow, sig.parent_signal_id) if sig.parent_signal_id is not None else None
+        parent = ({"id": up.id, "period": up.period, "final_status": up.final_status, "branch": up.branch}
+                  if up is not None else None)
+        all_tests = [{"rung": x.rung, "status": x.status, "reason": x.reason, "duration_s": x.duration_s,
+                      "metrics": x.metrics} for x in tests]
+    latest = [{**t, "created": _iso(t["created"])} for t in store.latest_tests(signal_id)]   # strict JSON for review
+    return {"signal": signal, "target": target, "run": run_d, "tests": all_tests, "latest_tests": latest,
+            "candidate": cand_d, "decisions": store.decisions(signal_id), "rechecks": store.rechecks(signal_id),
+            "children": store.children(signal_id), "parent": parent}
 
 
 def _decided_select(cols, status: str, version: str | None):
