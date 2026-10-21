@@ -387,10 +387,28 @@ def _grid(a: np.ndarray, valid: np.ndarray, nd: int) -> list[list]:
             for row, vrow in zip(a.tolist(), valid.tolist(), strict=True)]
 
 
+PIXEL_KEYS = ("diff", "var", "direct", "valid", "pos_target", "pos_neighbour")
+
+
+def _season_arrays(z, season: int) -> dict:
+    """One season's arrays from the npz: ``diff_<s>``, ``var_<s>``, ``direct_<s>`` and ``valid_<s>`` on the season's
+    own frame (seasons are union grids of different shapes, so they are never stacked) and ``pos_target_<s>``,
+    ``pos_neighbour_<s>`` as season-frame (col, row). A missing key raises KeyError, a mis-shaped array ValueError."""
+    a = {k: np.asarray(z[f"{k}_{season}"]) for k in PIXEL_KEYS}
+    shape = a["diff"].shape
+    if len(shape) != 2 or any(a[k].shape != shape for k in ("var", "direct", "valid")):
+        raise ValueError(f"season {season}: the diff, var, direct and valid frames differ in shape or are not 2-D")
+    for k in ("pos_target", "pos_neighbour"):
+        if a[k].size != 2:
+            raise ValueError(f"season {season}: {k} is not a (col, row) pair")
+    return a
+
+
 def pixels_section(store: Store, blob, signal_id: int, rung5_metrics: dict, lc: LightCurve | None) -> list[dict] | None:
-    """Section 04's per-season arrays from rung 5's ``pixels.npz`` artifact and its metrics, or None when the signal
-    has no such artifact. The S/N map is ``diff / sqrt(var)`` on valid pixels with a positive variance, None
-    elsewhere. An artifact that cannot be read raises one of ``SECTION_ERRORS``."""
+    """Section 04's per-season arrays from rung 5's ``pixels.npz`` artifact (``seasons``, an int array, and per season
+    ``s`` the keys of ``_season_arrays``) and its metrics, or None when the signal has no such artifact. Each season
+    keeps its own frame shape. The S/N map is ``diff / sqrt(var)`` on valid pixels with a positive variance, None
+    elsewhere. An artifact that cannot be read, or lacks a key, raises one of ``SECTION_ERRORS``."""
     with store.session() as s:
         row = s.scalars(select(ArtifactRow).where(ArtifactRow.url == PIXELS_URL.format(signal_id=signal_id),
                                                   ArtifactRow.deleted_at.is_(None))
@@ -399,23 +417,23 @@ def pixels_section(store: Store, blob, signal_id: int, rung5_metrics: dict, lc: 
     if loc is None:
         return None
     with np.load(io.BytesIO(blob.get(loc))) as z:
-        arrays = {k: np.asarray(z[k]) for k in ("diff", "var", "direct", "valid", "seasons", "pos_target",
-                                                "pos_neighbour")}
+        seasons = [int(v) for v in np.asarray(z["seasons"]).ravel()]
+        frames = {season: _season_arrays(z, season) for season in seasons}
     by_season = {int(s["season"]): s for s in _pixel_seasons(rung5_metrics) if s.get("season") is not None}
     observed = sorted({int(v) for v in lc.quarter}) if lc is not None else []
     out = []
-    for i, season in enumerate(int(v) for v in arrays["seasons"]):
-        diff, var = arrays["diff"][i].astype(float), arrays["var"][i].astype(float)
-        direct, valid = arrays["direct"][i].astype(float), arrays["valid"][i].astype(bool)
+    for season in seasons:
+        a = frames[season]
+        diff, var = a["diff"].astype(float), a["var"].astype(float)
+        direct, valid = a["direct"].astype(float), a["valid"].astype(bool)
         ok = valid & (var > 0) & np.isfinite(diff)
         snr = np.where(ok, diff / np.sqrt(np.where(var > 0, var, 1.0)), np.nan)
-        pos_t, pos_n = arrays["pos_target"], arrays["pos_neighbour"]
         m = by_season.get(season, {})
         quarters = m.get("quarters") or [qq for qq in observed if qq % 4 == season]
         out.append({"season": season, "quarters": [int(x) for x in quarters], "shape": list(diff.shape),
                     "snr": _grid(snr, ok, 2), "direct": _grid(direct, valid, 1), "valid": valid.tolist(),
-                    "pos_target": (pos_t[i] if pos_t.ndim == 2 else pos_t).astype(float).tolist(),
-                    "pos_neighbour": (pos_n[i] if pos_n.ndim == 2 else pos_n).astype(float).tolist(),
+                    "pos_target": a["pos_target"].astype(float).ravel().tolist(),
+                    "pos_neighbour": a["pos_neighbour"].astype(float).ravel().tolist(),
                     "centroid": m.get("centroid_colrow"), "centroid_sigma": m.get("centroid_sigma_pix"),
                     "nearer": m.get("nearer"), "dist_target_pix": m.get("dist_target_pix"),
                     "dist_neighbour_pix": m.get("dist_neighbour_pix"),

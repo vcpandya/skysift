@@ -136,19 +136,36 @@ def env_no_gaia(settings, monkeypatch):
     return _make_env(settings, monkeypatch, {**RESPONSES, "gaia_source WHERE source_id": GAIA_HEADER})
 
 
-@pytest.fixture
-def env_with_npz(env):
-    sid = env.ids["stage2"]
-    shape = (2, 5, 5)
+SEASON_FRAMES = {0: ((7, 9), (2.0, 3.0), (4.5, 3.6)), 2: ((9, 9), (3.0, 4.0), (5.5, 4.6))}   # shape, target, nbr
+
+
+def _pixels_npz(frames=SEASON_FRAMES, drop: str | None = None) -> bytes:
+    """rung 5's pixels.npz: ``seasons`` and, per season, its own frame (union grids differ in shape), the first pixel
+    of season 0 invalid; ``drop`` leaves one key out."""
     rng = np.random.default_rng(9)
-    valid = np.ones(shape, bool); valid[0, 0, 0] = False
+    arrays = {"seasons": np.array(sorted(frames))}
+    for s, (shape, pos_t, pos_n) in frames.items():
+        valid = np.ones(shape, bool)
+        if s == 0:
+            valid[0, 0] = False
+        arrays.update({f"diff_{s}": rng.normal(0, 1, shape), f"var_{s}": np.full(shape, 0.25),
+                       f"direct_{s}": rng.uniform(10, 20, shape), f"valid_{s}": valid,
+                       f"pos_target_{s}": np.array(pos_t), f"pos_neighbour_{s}": np.array(pos_n)})
+    arrays.pop(drop, None)
     buf = io.BytesIO()
-    np.savez_compressed(buf, diff=rng.normal(0, 1, shape), var=np.full(shape, 0.25), direct=rng.uniform(10, 20, shape),
-                        valid=valid, seasons=np.array([0, 2]), pos_target=np.array([2.0, 2.0]),
-                        pos_neighbour=np.array([4.5, 2.6]))
-    data = buf.getvalue()
+    np.savez_compressed(buf, **arrays)
+    return buf.getvalue()
+
+
+def _store_pixels(env, data: bytes) -> None:
+    sid = env.ids["stage2"]
     sha, loc = env.blob.put(data, f"pixels_{sid}.npz")
     env.store.add_artifact(sha, len(data), f"skysift://pixels/{sid}", loc, STAGE2_TARGET, pinned=True, kind="pixels")
+
+
+@pytest.fixture
+def env_with_npz(env):
+    _store_pixels(env, _pixels_npz())
     return env
 
 
@@ -273,8 +290,38 @@ def test_pixels_section_comes_from_the_npz_artifact(env_with_npz):
     assert len(data["pixels"]) == 2 and data["pixels"][0]["snr"][0][0] is None   # an invalid pixel
     p = data["pixels"][1]
     assert p["season"] == 2 and p["nearer"] == "target" and p["depth_target_ppm"] == [2213, 78]
-    assert p["pos_target"] == [2.0, 2.0] and p["quarters"] and all(q % 4 == 2 for q in p["quarters"])
+    assert p["pos_target"] == [3.0, 4.0] and p["quarters"] and all(q % 4 == 2 for q in p["quarters"])
     assert p["valid"][0][0] is True and data["pixels"][0]["direct"][0][0] is None
+
+
+def test_pixel_seasons_keep_their_own_frame_shapes(env_with_npz):
+    env = env_with_npz
+    data = _data(generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch))
+    assert "pixels" not in data["section_errors"]
+    for p in data["pixels"]:
+        shape, pos_t, pos_n = SEASON_FRAMES[p["season"]]
+        assert p["shape"] == list(shape) and p["pos_target"] == list(pos_t) and p["pos_neighbour"] == list(pos_n)
+        for key in ("snr", "direct", "valid"):
+            assert len(p[key]) == shape[0] and all(len(row) == shape[1] for row in p[key])
+    assert [p["shape"] for p in data["pixels"]] == [[7, 9], [9, 9]]
+
+
+@pytest.mark.parametrize("drop", ["seasons", "var_2", "pos_neighbour_0"])
+def test_a_missing_pixel_key_becomes_a_section_error(env, drop):
+    _store_pixels(env, _pixels_npz(drop=drop))
+    data = _data(generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch))
+    assert data["pixels"] is None and data["section_errors"]["pixels"]["error"]
+
+
+def test_a_mis_shaped_pixel_frame_becomes_a_section_error(env):
+    with np.load(io.BytesIO(_pixels_npz())) as z:
+        arrays = {k: z[k] for k in z.files}
+    arrays["var_0"] = np.full((9, 9), 0.25)                        # not the 7x9 frame of season 0
+    buf = io.BytesIO()
+    np.savez_compressed(buf, **arrays)
+    _store_pixels(env, buf.getvalue())
+    out = _data(generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch))
+    assert out["pixels"] is None and "season 0" in out["section_errors"]["pixels"]["error"]
 
 
 def test_every_query_in_provenance_belongs_to_the_target(env):
