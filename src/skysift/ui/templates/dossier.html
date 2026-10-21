@@ -7,6 +7,13 @@
 <span class="mono">{{ v.median | fmt(digits) }}</span>{% if v.plus is not none and v.minus is not none %}<span class="pm"> +{{ v.plus | fmt(digits) }} −{{ v.minus | fmt(digits) }}</span>{% endif %}{% if unit %} {{ unit }}{% endif %}
 {%- else -%}<span class="muted">not known</span>{%- endif -%}
 {%- endmacro %}
+{#- An error as " ± e" or, when its two sides differ at these digits, " +p −m": a number or {"minus", "plus"} -#}
+{% macro pm_err(err, digits=2) -%}
+{%- if err is mapping and err.minus is number and err.plus is number -%}
+{%- set p = err.plus | fmt(digits) %}{% set m = err.minus | fmt(digits) -%}
+{%- if p == m %} ± {{ p }}{% else %} +{{ p }} −{{ m }}{% endif -%}
+{%- elif err is number %} ± {{ err | fmt(digits) }}{%- endif -%}
+{%- endmacro %}
 {% macro notice_list(items) -%}
 {%- for name, text in items %}
 <p class="dossier-notice" role="note">The {{ name }} part of this dossier could not be built: {{ text }}.</p>
@@ -43,6 +50,7 @@
 {% set planet = data.planet or {} %}
 {% set status = data.status or {} %}
 {% set prov = data.provenance or {} %}
+{% set timing = data.timing %}
 {% set tests_by = {} %}{% for t in data.tests or [] %}{% set _ = tests_by.update({t.rung: t}) %}{% endfor %}
 <nav class="signal-nav" aria-label="Dossier">
   <a href="/dossiers">← Dossiers</a> · <a href="/signals/{{ signal_id }}">Open in the candidate queue</a>
@@ -76,9 +84,9 @@
   <p class="dossier-notice" role="alert">{{ dz.data_error[:1] | upper }}{{ dz.data_error[1:] }}. Generate the dossier again to rebuild it.</p>
   {%- endif %}
   <div class="tiles dossier-tiles">
-    <div class="tile"><div class="stat-value">{{ e.period_days | fmt(4) }}</div><div class="stat-label">period, days</div><p class="stat-gloss only-simple">Time from one dip to the next.</p></div>
-    <div class="tile"><div class="stat-value">{{ e.depth_ppm | fmt(0) }}</div><div class="stat-label">depth, ppm</div><p class="stat-gloss only-simple">Share of the star's light the dip takes.</p></div>
-    <div class="tile"><div class="stat-value">{{ e.duration_h | fmt(2) }}</div><div class="stat-label">duration, hours</div><p class="stat-gloss only-simple">How long each dip lasts.</p></div>
+    <div class="tile"><div class="stat-value">{{ e.period_days | fmt(4) }}{% if e.period_err_days is number %}<span class="only-expert pm"> ± {{ e.period_err_days | fmt(err_digits(e.period_err_days)) }}</span>{% endif %}</div><div class="stat-label">period, days</div><p class="stat-gloss only-simple">Time from one dip to the next.</p></div>
+    <div class="tile"><div class="stat-value">{{ e.depth_ppm | fmt(0) }}{% if e.depth_ppm_err is number %}<span class="only-expert pm">{{ pm_err(e.depth_ppm_err, 0) }}</span>{% endif %}</div><div class="stat-label">depth, ppm</div><p class="stat-gloss only-simple">Share of the star's light the dip takes.</p></div>
+    <div class="tile"><div class="stat-value">{{ e.duration_h | fmt(2) }}{% if e.duration_h_err %}<span class="only-expert pm">{{ pm_err(e.duration_h_err, 2) }}</span>{% endif %}</div><div class="stat-label">duration, hours</div><p class="stat-gloss only-simple">How long each dip lasts.</p></div>
     <div class="tile"><div class="stat-value">{{ e.sde | fmt(1) }}</div><div class="stat-label">SDE</div><p class="stat-gloss only-simple">How far the signal stands above the noise.</p></div>
   </div>
 </header>
@@ -106,15 +114,28 @@
       <div class="chart-host" data-chart="spectrum"></div>
     </figure>
     <dl class="dossier-kv">
-      <div><dt>Period</dt><dd class="mono">{{ e.period_days | fmt(6) }} d</dd></div>
-      <div><dt>Mid-transit T0</dt><dd class="mono">BKJD {{ e.t0_bkjd | fmt(4) }} (BJD {{ e.t0_bjd | fmt(4) }})</dd></div>
-      <div><dt>Duration (search box)</dt><dd class="mono">{{ e.duration_h | fmt(2) }} h</dd></div>
-      <div><dt>Depth</dt><dd class="mono">{{ e.depth_ppm | fmt(0) }} ppm</dd></div>
+      {%- set pd = [6, err_digits(e.period_err_days)] | max %}
+      {%- set td = [4, err_digits(e.t0_bkjd_err)] | max %}
+      <div><dt>Period</dt><dd class="mono">{{ e.period_days | fmt(pd) }}{{ pm_err(e.period_err_days, pd) }} d{% if e.period_source %} <span class="muted">({{ e.period_source }})</span>{% endif %}</dd></div>
+      <div><dt>Mid-transit T0</dt><dd class="mono">BKJD {{ e.t0_bkjd | fmt(td) }} (BJD {{ e.t0_bjd | fmt(td) }}){{ pm_err(e.t0_bkjd_err, td) }}{% if e.t0_bkjd_err is number %} d{% endif %}</dd></div>
+      {%- if e.t_ref_bjd is number %}
+      {%- set rd = [4, err_digits(e.t_ref_err_days)] | max %}
+      <div><dt>T_ref (BJD_TDB)</dt><dd class="mono">{{ e.t_ref_bjd | fmt(rd) }}{{ pm_err(e.t_ref_err_days, rd) }} d, epoch {{ e.epoch_ref }}</dd></div>
+      <div><dt>T_ref (BKJD)</dt><dd class="mono">{{ e.t_ref_bkjd | fmt(rd) }}{{ pm_err(e.t_ref_err_days, rd) }} d</dd></div>
+      {%- endif %}
+      <div><dt>Duration ({{ e.duration_source or "search box" }})</dt><dd class="mono">{{ e.duration_h | fmt(2) }}{{ pm_err(e.duration_h_err, 2) }} h</dd></div>
+      <div><dt>Depth</dt><dd class="mono">{{ e.depth_ppm | fmt(0) }}{{ pm_err(e.depth_ppm_err, 0) }} ppm{% if e.depth_source %} <span class="muted">({{ e.depth_source }})</span>{% endif %}</dd></div>
+      {%- if timing %}
+      <div><dt>Transit timing</dt><dd>{% if timing.ok %}<span class="mono">{{ timing.n_used }} of {{ timing.n_measured }} timed transits used, rms {{ timing.rms_min | fmt(1) }} min</span>{% if timing.n_outliers %}, {{ timing.n_outliers }} dropped as {{ "outliers" if timing.n_outliers != 1 else "an outlier" }}{% endif %}{% else %}No ephemeris error: {{ timing.reason }}{% endif %}</dd></div>
+      {%- endif %}
       <div><dt>SDE, SNR</dt><dd class="mono">{{ e.sde | fmt(1) }}, {{ e.snr | fmt(1) }}</dd></div>
       <div><dt>Transits in the baseline</dt><dd class="mono">{{ e.n_events | fmt }}</dd></div>
       {%- set pw = ((data.signal or {}).extra or {}).get("prewhitening") %}
       <div><dt>Pre-whitening</dt><dd>{% if pw and pw.n %}{{ pw.n }} wave{{ "s" if pw.n != 1 else "" }} removed before the search{% if pw.components %}, the strongest at {{ (1 / pw.components[0].frequency) | fmt(4) }} d and {{ pw.components[0].amplitude_ppm | fmt(0) }} ppm{% endif %}{% else %}none recorded{% endif %}</dd></div>
     </dl>
+    {%- if timing and timing.method %}
+    <p class="dossier-small">The period and T0 come from a {{ timing.method }}. T_ref is the mid-transit time at the centre of the series, where its error is smallest.{% if timing.template_reason %} {{ timing.template_reason[:1] | upper }}{{ timing.template_reason[1:] }}.{% endif %}</p>
+    {%- endif %}
   </div>
 </section>
 
@@ -143,6 +164,37 @@
       <div class="chart-host" data-chart="seasons"></div>
     </figure>
   </div>
+  {%- set par, sec = data.parity, data.secondary %}
+  {%- set r2 = (tests_by.get("rung2_shape") or {}).get("metrics") or {} %}
+  {%- if par or sec %}
+  <div class="dossier-pair">
+    {%- if par %}
+    <div>
+      <h3>Odd and even</h3>
+      <dl class="dossier-kv">
+        {%- for name, side in (("Odd transits", par.odd), ("Even transits", par.even)) %}
+        <div><dt>{{ name }}</dt><dd class="mono">{% if side and side.depth_ppm is number %}{{ side.depth_ppm | fmt(0) }}{{ pm_err(side.err_ppm, 0) }} ppm, {{ side.n }} transit{{ "s" if side.n != 1 else "" }}{% else %}not measured{% endif %}</dd></div>
+        {%- endfor %}
+        <div><dt>Difference</dt><dd class="mono">{% if par.difference_sigma is number %}{{ par.difference_sigma | fmt(1) }} sigma{% else %}not measured{% endif %}</dd></div>
+      </dl>
+      {%- if par.difference_sigma is number and r2.parity_sigma is number and (par.difference_sigma - r2.parity_sigma) | abs > 0.5 %}
+      <p class="dossier-small">Odd and even differ by {{ par.difference_sigma | fmt(1) }} sigma here and by {{ r2.parity_sigma | fmt(1) }} sigma in the vetting check: {% if r2.stacked %}the vetting number is the stacked fold's; the reporting number is from the per-event depths{% else %}the vetting number uses the scaled per-event errors; the reporting number inflates each parity's error by its own scatter{% endif %}.</p>
+      {%- endif %}
+    </div>
+    {%- endif %}
+    {%- if sec %}
+    <div>
+      <h3>Secondary eclipse</h3>
+      <dl class="dossier-kv">
+        <div><dt>Depth at phase 0.5</dt><dd class="mono">{{ sec.depth_ppm | fmt(0) }}{{ pm_err(sec.err_ppm, 0) }} ppm</dd></div>
+        <div><dt>3-sigma limit</dt><dd class="mono">{{ sec.limit_3sigma_ppm | fmt(0) }} ppm</dd></div>
+        <div><dt>Strongest secondary</dt><dd class="mono">{% if sec.strongest_ppm is number %}{{ sec.strongest_ppm | fmt(0) }} ppm at phase {{ sec.strongest_phase | fmt(2) }} ({{ sec.strongest_sigma | fmt(1) }} sigma){% else %}not searched{% endif %}</dd></div>
+        <div><dt>Geometric albedo limit</dt><dd>{% if sec.albedo_limit is number %}{% if sec.albedo_limit > 1 %}<span class="mono">{{ sec.albedo_limit | fmt(1) }}</span>, above 1, so no constraint{% else %}below <span class="mono">{{ sec.albedo_limit | fmt(2) }}</span>{% endif %}{% else %}not known without a transit fit{% endif %}</dd></div>
+      </dl>
+    </div>
+    {%- endif %}
+  </div>
+  {%- endif %}
   {{ notice_list(notices.get("repeat", [])) }}
   <div class="only-expert">
     <figure class="dossier-fig">
@@ -191,6 +243,23 @@
       <thead><tr><th scope="col">Gaia DR3</th><th scope="col" class="num">G</th><th scope="col" class="num">separation, arcsec</th><th scope="col" class="num">from the centroid, arcsec</th><th scope="col" class="num">flux fraction</th><th scope="col" class="num">exclusion factor</th></tr></thead>
       <tbody>{% for n in fpp.neighbours %}<tr><td class="mono">{{ n.source_id }}</td><td class="num">{{ n.gmag | fmt(2) }}</td><td class="num">{{ n.sep_arcsec | fmt(1) }}</td><td class="num">{{ n.s_arcsec | fmt(1) }}</td><td class="num">{{ n.flux_fraction | fmt(3) }}</td><td class="num">{{ "%.3g" | format(n.exclusion) if n.exclusion is number else "–" }}</td></tr>{% endfor %}</tbody>
     </table></div>
+    {%- endif %}
+    {%- set sh = data.shape %}
+    {%- if sh %}
+    <h3>Shape with errors</h3>
+    <p>{{ sh.method[:1] | upper }}{{ sh.method[1:] }}: {{ sh.n_converged | fmt }} of {{ sh.n_boot | fmt }} resamples converged. The value is the fit to the whole light curve; minus and plus are the spread of the resamples (16th to 50th and 50th to 84th percentile) about their own median.{% if not sh.ok %} No bootstrap errors: {{ sh.reason }}.{% endif %}</p>
+    {%- if sh.degenerate %}
+    <p class="dossier-caveat">The fit is degenerate ({{ sh.degeneracy_reason }}).</p>
+    {%- endif %}
+    {%- set shape_rows = [("k, radius ratio", sh.k, 4), ("b, impact parameter", sh.b, 2), ("a / R★", sh.a_over_r, 1), ("T14, hours", sh.t14_h, 2), ("model depth, ppm", sh.model_depth_ppm, 0), ("box depth, ppm", sh.box_depth_ppm, 0), ("box duration, hours", sh.box_duration_h, 2)] | selectattr(1) | list %}
+    {%- if shape_rows or sh.ingress_min is number %}
+    <div class="table-wrap"><table class="dossier-table">
+      <caption>Shape with errors</caption>
+      <thead><tr><th scope="col">parameter</th><th scope="col" class="num">value</th><th scope="col" class="num">minus</th><th scope="col" class="num">plus</th><th scope="col" class="num">bootstrap median</th></tr></thead>
+      <tbody>{% for name, v, nd in shape_rows %}<tr><th scope="row">{{ name }}</th><td class="num mono">{{ v.median | fmt(nd) }}</td><td class="num mono">{{ v.minus | fmt(nd) }}</td><td class="num mono">{{ v.plus | fmt(nd) }}</td><td class="num mono">{{ v.boot_median | fmt(nd) }}</td></tr>{% endfor %}
+      {%- if sh.ingress_min is number %}<tr><th scope="row">ingress, minutes</th><td class="num mono">{{ sh.ingress_min | fmt(1) }}</td><td class="num">–</td><td class="num">–</td><td class="num">–</td></tr>{% endif %}</tbody>
+    </table></div>
+    {%- endif %}
     {%- endif %}
   </div>
 </section>

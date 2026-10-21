@@ -36,6 +36,15 @@
   const isNum = (x) => typeof x === "number" && Number.isFinite(x);
   const fmt = (x, d = 0) => (isNum(x) ? x.toLocaleString("en-GB", { maximumFractionDigits: d, minimumFractionDigits: d }) : "–");
   const pm = (v, e, d = 0) => `${fmt(v, d)} ± ${fmt(e, d)}`;
+  // an error as " ± e", or " +p −m" when its two sides differ at these decimals: a number or {minus, plus}
+  const pmErr = (err, d = 2) => {
+    if (isNum(err)) return ` ± ${fmt(err, d)}`;
+    if (!err || !isNum(err.minus) || !isNum(err.plus)) return "";
+    const p = fmt(err.plus, d), m = fmt(err.minus, d);
+    return p === m ? ` ± ${p}` : ` +${p} −${m}`;
+  };
+  // the decimals that print an error to two significant figures (as the dashboard's err_digits)
+  const errDigits = (err) => (isNum(err) && err > 0 ? Math.max(0, 1 - Math.floor(Math.log10(err))) : 2);
   const el = (tag, attrs, parent) => {
     const n = document.createElementNS(NS, tag);
     for (const k in attrs || {}) n.setAttribute(k, attrs[k]);
@@ -397,8 +406,14 @@
     head.append(h("p", "dossier-kicker", `Candidate dossier · ${(D.target || {}).target_id || ""}`), h("h1", null, name),
       h("p", "hero-summary", D.summary), h("p", "dossier-status", st.headline || st.label || ""), toggle);
     const tiles = h("div", "tiles dossier-tiles");
-    [["period, days", fmt(E.period_days, 4)], ["depth, ppm", fmt(E.depth_ppm)], ["duration, hours", fmt(E.duration_h, 2)], ["SDE", fmt(E.sde, 1)]]
-      .forEach(([k, v]) => { const t = h("div", "tile"); t.append(h("div", "stat-value", v), h("div", "stat-label", k)); tiles.appendChild(t); });
+    [["period, days", fmt(E.period_days, 4), isNum(E.period_err_days) ? ` ± ${fmt(E.period_err_days, errDigits(E.period_err_days))}` : ""],
+      ["depth, ppm", fmt(E.depth_ppm), pmErr(E.depth_ppm_err, 0)], ["duration, hours", fmt(E.duration_h, 2), pmErr(E.duration_h_err, 2)],
+      ["SDE", fmt(E.sde, 1), ""]]
+      .forEach(([k, v, err]) => {
+        const t = h("div", "tile"), value = h("div", "stat-value", v);
+        if (err) value.appendChild(h("span", "only-expert pm", err));
+        t.append(value, h("div", "stat-label", k)); tiles.appendChild(t);
+      });
     head.appendChild(tiles);
     app.appendChild(head);
     const ids = ["signal", "repeat", "checks", "pixels", "star", "look", "caveats", "reproduce"];
@@ -419,8 +434,8 @@
       sec(i).appendChild(f);
     };
     const para = (i, words, cls) => { if (words) sec(i).appendChild(h("p", cls || null, words)); };
-    const list = (i, items) => {
-      const ul = h("ul", "dossier-caveats");
+    const list = (i, items, extra) => {
+      const ul = h("ul", `dossier-caveats${extra ? ` ${extra}` : ""}`);
       items.forEach(([b, rest, cls]) => { const li = h("li", cls || null); li.append(h("strong", null, b), document.createTextNode(` ${rest || ""}`)); ul.appendChild(li); });
       sec(i).appendChild(ul);
     };
@@ -428,12 +443,50 @@
     para(0, `Every ${fmt(E.period_days, 2)} days the star dims by ${fmt(E.depth_ppm)} parts per million for ${fmt(E.duration_h, 1)} hours.`, "lede");
     fig(0, "fold", "The folded light curve: single cadences, their bins and the model.");
     fig(0, "spectrum", "The detection spectrum, with the aliases of the period marked.", true);
+    const T = D.timing;
+    const pd = Math.max(6, errDigits(E.period_err_days)), td = Math.max(4, errDigits(E.t0_bkjd_err));
+    const rd = Math.max(4, errDigits(E.t_ref_err_days));
+    const eph = [["Period", `${fmt(E.period_days, pd)}${pmErr(E.period_err_days, pd)} d${E.period_source ? ` (${E.period_source})` : ""}`],
+      ["Mid-transit T0", `BKJD ${fmt(E.t0_bkjd, td)} (BJD ${fmt(E.t0_bjd, td)})${pmErr(E.t0_bkjd_err, td)}${isNum(E.t0_bkjd_err) ? " d" : ""}`]];
+    if (isNum(E.t_ref_bjd)) {
+      eph.push(["T_ref (BJD_TDB)", `${fmt(E.t_ref_bjd, rd)}${pmErr(E.t_ref_err_days, rd)} d, epoch ${E.epoch_ref}`],
+        ["T_ref (BKJD)", `${fmt(E.t_ref_bkjd, rd)}${pmErr(E.t_ref_err_days, rd)} d`]);
+    }
+    eph.push([`Duration (${E.duration_source || "search box"})`, `${fmt(E.duration_h, 2)}${pmErr(E.duration_h_err, 2)} h`],
+      ["Depth", `${fmt(E.depth_ppm)}${pmErr(E.depth_ppm_err, 0)} ppm${E.depth_source ? ` (${E.depth_source})` : ""}`]);
+    if (T) {
+      eph.push(["Transit timing", T.ok ? `${T.n_used} of ${T.n_measured} timed transits used, rms ${fmt(T.rms_min, 1)} min.`
+        : `No ephemeris error: ${T.reason}.`]);
+    }
+    list(0, eph.map(([k, val]) => [`${k}:`, val]), "only-expert");
+    if (T && T.method) para(0, `The period and T0 come from a ${T.method}. T_ref is the mid-transit time at the centre of the series, where its error is smallest.`, "only-expert dossier-small");
     para(1, `${(P.events || []).length} transits with data were measured one by one.`, "lede");
     fig(1, "events", "The depth of every transit, measured on its own.");
     fig(1, "gallery", "Every transit, one by one, with the model.");
     fig(1, "oddeven", "Odd and even transits, folded apart.");
     fig(1, "seasons", "The depth in each Kepler season.");
     fig(1, "series", "The whole light curve in time bins.", true);
+    const PAR = D.parity, SEC = D.secondary;
+    const side = (x) => (x && isNum(x.depth_ppm) ? `${fmt(x.depth_ppm)}${pmErr(x.err_ppm, 0)} ppm, ${x.n} transit${x.n === 1 ? "" : "s"}` : "not measured");
+    if (PAR) {
+      sec(1).appendChild(h("h3", null, "Odd and even"));
+      list(1, [["Odd transits:", side(PAR.odd)], ["Even transits:", side(PAR.even)],
+        ["Difference:", isNum(PAR.difference_sigma) ? `${fmt(PAR.difference_sigma, 1)} sigma` : "not measured"]]);
+      const vet = metrics("rung2_shape");
+      if (isNum(PAR.difference_sigma) && isNum(vet.parity_sigma) && Math.abs(PAR.difference_sigma - vet.parity_sigma) > 0.5) {
+        para(1, `Odd and even differ by ${fmt(PAR.difference_sigma, 1)} sigma here and by ${fmt(vet.parity_sigma, 1)} sigma in the vetting check: ${vet.stacked
+          ? "the vetting number is the stacked fold's; the reporting number is from the per-event depths"
+          : "the vetting number uses the scaled per-event errors; the reporting number inflates each parity's error by its own scatter"}.`, "dossier-small");
+      }
+    }
+    if (SEC) {
+      const albedo = !isNum(SEC.albedo_limit) ? "not known without a transit fit"
+        : SEC.albedo_limit > 1 ? `${fmt(SEC.albedo_limit, 1)}, above 1, so no constraint` : `below ${fmt(SEC.albedo_limit, 2)}`;
+      sec(1).appendChild(h("h3", null, "Secondary eclipse"));
+      list(1, [["Depth at phase 0.5:", `${fmt(SEC.depth_ppm)}${pmErr(SEC.err_ppm, 0)} ppm`], ["3-sigma limit:", `${fmt(SEC.limit_3sigma_ppm)} ppm`],
+        ["Strongest secondary:", isNum(SEC.strongest_ppm) ? `${fmt(SEC.strongest_ppm)} ppm at phase ${fmt(SEC.strongest_phase, 2)} (${fmt(SEC.strongest_sigma, 1)} sigma)` : "not searched"],
+        ["Geometric albedo limit:", albedo]]);
+    }
     para(2, st.headline ? `${st.headline}.` : "", "lede");
     list(2, (D.why || []).map((w) => [`${w.name}: ${w.status}.`, w.sentence]));
     const fap = D.fap || {}, fpp = D.fpp || {};
@@ -442,6 +495,18 @@
     const kinds = Object.keys(fap.k_by_kind || {}).sort();
     if (kinds.length) para(2, kinds.map((kind, i) => `${kind}${i ? "" : " nulls"} ${fmt(fap.k_by_kind[kind])} of ${fmt((fap.n_by_kind || {})[kind])}`).join(", "), "prob-split");
     if (isNum(fap.n)) para(2, `${fmt(fap.k)} of ${fmt(fap.n)} null searches reached SDE ${fmt(fap.sde, 1)}.`, "only-expert mono");
+    const SH = D.shape;
+    if (SH) {
+      sec(2).appendChild(h("h3", "only-expert", "Shape with errors"));
+      const method = SH.method ? `${SH.method[0].toUpperCase()}${SH.method.slice(1)}` : "Bootstrap over transits";
+      para(2, `${method}: ${fmt(SH.n_converged)} of ${fmt(SH.n_boot)} resamples converged. The value is the fit to the whole light curve; minus and plus are the spread of the resamples about their own median.${SH.ok ? "" : ` No bootstrap errors: ${SH.reason}.`}`, "only-expert");
+      if (SH.degenerate) para(2, `The fit is degenerate (${SH.degeneracy_reason}).`, "only-expert dossier-caveat");
+      const row = (name, x, d) => (x && isNum(x.median) ? [`${name}:`, `${fmt(x.median, d)}${pmErr(x, d)}${isNum(x.boot_median) ? `, bootstrap median ${fmt(x.boot_median, d)}` : ""}`] : null);
+      const rows = [row("k, radius ratio", SH.k, 4), row("b, impact parameter", SH.b, 2), row("a / R★", SH.a_over_r, 1),
+        row("T14, hours", SH.t14_h, 2), row("model depth, ppm", SH.model_depth_ppm, 0), row("box depth, ppm", SH.box_depth_ppm, 0),
+        row("box duration, hours", SH.box_duration_h, 2), isNum(SH.ingress_min) ? ["ingress, minutes:", fmt(SH.ingress_min, 1)] : null];
+      list(2, rows.filter(Boolean), "only-expert");
+    }
     if (D.pixels) fig(3, "pixmaps", "Difference images by season: the ring marks this star, the square the neighbour, the cross the centroid.");
     else para(3, "The pixel step has not produced difference images for this signal.");
     const r5 = metrics("rung5_pixels");

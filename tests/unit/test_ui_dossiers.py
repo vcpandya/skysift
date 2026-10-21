@@ -718,3 +718,44 @@ def test_pixel_undecided_signals_join_the_page_but_other_undetermined_ones_do_no
     assert queries.pixels_undecided([{"rung": "rung2_shape", "status": "undetermined", "reason": "equal secondary"},
                                      {"rung": "rung5_pixels", "status": "undetermined", "reason": "pixels: x"}]) is False
     assert queries.pixels_undecided([{"rung": "rung5_pixels", "status": "undetermined", "reason": "outage:mast: 1"}]) is False
+
+
+# ---- the errors (dossier version 3, 22 October 2026)
+
+def test_dossier_page_prints_the_ephemeris_errors_in_expert(seeded_dossier):
+    client, _app, _ids, data = seeded_dossier
+    client.cookies.set("skysift_mode", "expert")
+    html = client.get(f"/dossiers/{STAGE2_TARGET}").text
+    hero = html.split('class="tiles dossier-tiles"')[1].split("</header>")[0]
+    assert '<span class="only-expert pm"> ± 0.000091</span>' in hero                    # the period, two figures
+    assert '<span class="only-expert pm"> +0.07 −0.06</span>' in hero                   # the duration, asymmetric
+    signal = html.split('id="signal"')[1].split('id="repeat"')[0]
+    assert "T_ref (BJD_TDB)" in signal and "T_ref (BKJD)" in signal and "± 0.00041" in signal
+    assert "linear fit of 32 transit times" in signal and "32 of 33 timed transits used" in signal
+    assert "rms 7.9 min" in signal and data["timing"]["method"] in signal and "fitted T14" in signal
+    repeat = html.split('id="repeat"')[1].split('id="checks"')[0]
+    assert "Odd and even" in repeat and "2,196 ± 70 ppm" in repeat and "Secondary eclipse" in repeat
+    assert "3-sigma limit" in repeat and "210 ppm" in repeat and "phase 0.62" in repeat
+    assert "the vetting number is the stacked fold's" not in repeat.lower()          # 0.4 and 0.3 sigma agree
+    checks = html.split('id="checks"')[1].split('id="pixels"')[0]
+    assert "Shape with errors" in checks and "20 of 20 resamples converged" in checks
+    assert "ingress shorter than the cadence" in checks and "ingress, minutes" in checks
+    assert "—" not in html
+
+
+def test_the_page_prints_both_parity_numbers_when_they_differ(seeded_dossier, settings):
+    from pathlib import Path
+    client, app, _ids, data = seeded_dossier
+    path = Path(app.state.store.dossier(STAGE2_TARGET)["data_path"])
+    path.write_text(json.dumps({**data, "parity": {**data["parity"], "difference_sigma": 1.4}}), encoding="utf-8")
+    repeat = client.get(f"/dossiers/{STAGE2_TARGET}").text.split('id="repeat"')[1].split('id="checks"')[0]
+    assert "1.4 sigma" in repeat and "0.3 sigma" in repeat
+
+
+def test_dossier_export_carries_the_same_errors(seeded_dossier):
+    client, _app, _ids, _data = seeded_dossier
+    export = client.get(f"/dossiers/{STAGE2_TARGET}/export.html").text
+    assert '"period_err_days":' in export and '"timing":{' in export and '"shape":{' in export
+    for words in ("T_ref (BJD_TDB)", "Odd and even", "3-sigma limit", "Shape with errors", "Secondary eclipse",
+                  " ± "):
+        assert words in export, words                    # dossier.js writes them into the standalone page

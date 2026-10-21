@@ -27,7 +27,8 @@ router = APIRouter()
 VERSIONS = ("current", "all")
 SECTION_IDS = ("signal", "repeat", "checks", "pixels", "star", "look", "caveats", "reproduce")
 # where a section_errors entry shows its notice; any other name shows in the caveats section
-ERROR_SECTION = {"periodogram": "signal", "pixels": "pixels", "plots": "repeat", "star": "star", "look": "look"}
+ERROR_SECTION = {"periodogram": "signal", "pixels": "pixels", "plots": "repeat", "star": "star", "look": "look",
+                 "ephemeris": "signal"}
 VOTE_WORDS = {True: "voting", False: "not voting", None: "vote not recorded"}
 BUSY = "another dossier job is running"
 STOP_POLLING = 286                # htmx swaps a 286 answer and stops the element's polling
@@ -164,6 +165,13 @@ def pixel_seasons(data: dict) -> tuple[list[dict], str | None]:
     return rows, close
 
 
+def err_digits(err) -> int:
+    """The decimals that print ``err`` to two significant figures (2 for a missing or non-positive error), so a value
+    printed at the same decimals ends where its error does."""
+    e = _num(err)
+    return 2 if e is None or e <= 0 else max(0, 1 - math.floor(math.log10(e)))
+
+
 def _section_notices(data: dict) -> dict[str, list[tuple[str, str]]]:
     out: dict[str, list[tuple[str, str]]] = {}
     for name, err in (data.get("section_errors") or {}).items():
@@ -201,7 +209,7 @@ def dossier_page(request: Request, target_id: str):
     return render(request, "dossier.html", dz=dz, data=data, target_id=target_id, r=rows[0] if rows else None,
                   page_title=(data.get("target") or {}).get("name") or target_id,
                   why_rows=data.get("why") or [], ladder=_ladder_rows(data.get("tests") or []),
-                  seasons=seasons, close_call=close, notices=_section_notices(data),
+                  seasons=seasons, close_call=close, notices=_section_notices(data), err_digits=err_digits,
                   payload=_payload(data) if data else None, sections=SECTION_IDS,
                   look_svg=Markup(planet_svg(look, 180)) if look else None,
                   look_words=look_sentence(look, look) if look else None,

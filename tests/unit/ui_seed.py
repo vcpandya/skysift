@@ -310,6 +310,44 @@ def _seed_star() -> tuple[dict, dict, dict]:
     return star, planet, look
 
 
+def _seed_errors(period: float, t0: float) -> dict:
+    """The version-3 blocks of a dossier (the timing, shape, parity and secondary blocks of ``dossier.ephemeris_blocks``
+    and the ephemeris keys they give), hand-made for a 40.29 d candidate: 32 of 33 timed transits, a degenerate shape
+    fit (ingress shorter than the cadence) with 20 of 20 resamples converged."""
+    from skysift import ephemeris as eph
+    p_fit, p_err, e_ref, t_ref_err, t0_err = period + 4e-6, 9.1e-5, 16, 0.00041, 0.0016
+    t_ref = t0 + 0.0002 + e_ref * p_fit
+    t0_fit = t_ref - e_ref * p_fit
+    times = [{"epoch": e, "t_bkjd": t0_fit + e * p_fit, "t_bjd": t0_fit + e * p_fit + 2454833.0, "err_days": 0.0024,
+              "chi2_red": 1.02, "n_in": 4, "n_out": 18, "used": e != 7, "reason": "outlier (6.2 MAD)" if e == 7 else None}
+             for e in range(33)]
+    timing = {"ok": True, "reason": None, "method": eph.EPHEMERIS_METHOD, "period": p_fit, "period_err": p_err,
+              "t_ref": t_ref, "t_ref_bjd": t_ref + 2454833.0, "t_ref_err": t_ref_err, "epoch_ref": e_ref,
+              "cov": 1.2e-9, "t0": t0_fit, "t0_bjd": t0_fit + 2454833.0, "t0_err": t0_err, "chi2": 31.4, "dof": 30,
+              "inflation": 1.023, "rms_min": 7.9, "n_used": 32, "n_measured": 33, "n_outliers": 1, "times": times,
+              "template": "fit", "template_reason": None}
+
+    def spread(median, minus, plus, boot):
+        return {"median": median, "minus": minus, "plus": plus, "boot_median": boot}
+    shape = {"ok": True, "reason": None, "method": eph.SHAPE_METHOD, "n_boot": 20, "n_converged": 20,
+             "seed": eph.BOOT_SEED, "k": spread(0.047, 0.0004, 0.0003, 0.0471),
+             "b": spread(0.31, None, None, None), "a_over_r": spread(74.0, None, None, None),
+             "t14_h": spread(4.16, 0.06, 0.07, 4.17), "model_depth_ppm": spread(2150.0, 36.0, 26.0, 2160.0),
+             "box_depth_ppm": {"median": 2166.0, "minus": 52.0, "plus": 52.0}, "box_duration_h": None,
+             "ingress_min": 12.3, "degenerate": True, "degeneracy_reason": eph.DEGENERACY_REASON}
+    parity = {"odd": {"depth_ppm": 2196.0, "err_ppm": 70.0, "n": 16, "inflation": 1.1},
+              "even": {"depth_ppm": 2160.0, "err_ppm": 72.0, "n": 16, "inflation": 1.0}, "difference_sigma": 0.36}
+    secondary = {"depth_ppm": 15.0, "err_ppm": 65.0, "limit_3sigma_ppm": 210.0, "strongest_ppm": 40.0,
+                 "strongest_phase": 0.62, "strongest_sigma": 1.4, "albedo_limit": None}
+    extra = {"period_days": p_fit, "t0_bkjd": t0_fit, "t0_bjd": t0_fit + 2454833.0, "period_err_days": p_err,
+             "t0_bkjd_err": t0_err, "t0_bjd_err": t0_err, "t_ref_bkjd": t_ref, "t_ref_bjd": t_ref + 2454833.0,
+             "t_ref_err_days": t_ref_err, "epoch_ref": e_ref, "period_source": "linear fit of 32 transit times",
+             "duration_h": 4.16, "duration_h_err": {"minus": 0.06, "plus": 0.07}, "duration_source": "fitted T14",
+             "depth_ppm": 2180.0, "depth_ppm_err": 60.0, "depth_source": "per-event weighted mean of the box depth",
+             "ephemeris_method": eph.EPHEMERIS_METHOD, "shape_method": eph.SHAPE_METHOD}
+    return {"ephemeris_extra": extra, "timing": timing, "shape": shape, "parity": parity, "secondary": secondary}
+
+
 def _seed_probabilities(period: float, sde: float) -> tuple[dict, dict]:
     """FAP 1 in 1,700 and FPP 0.03 ("about 3 percent"), with the keys ``generate`` writes."""
     from skysift import dossier as ds
@@ -370,7 +408,7 @@ def _seed_pixels() -> list[dict]:
 
 def seed_dossier(store: Store, data_dir, target_id: str = STAGE2_TARGET) -> dict:
     """A hand-made ``dossier_data.json`` for ``target_id``'s best signal (small arrays, every key ``generate`` writes,
-    the star and planet of a cool dwarf, FPP 0.03, FAP 1 in 1,700) and its ``dossiers`` row carrying the signal's
+    the star and planet of a cool dwarf, FPP 0.03, FAP 1 in 1,700, the version-3 error blocks of ``_seed_errors``) and its ``dossiers`` row carrying the signal's
     current fingerprint, so the dossier pages have one current dossier to draw. Returns the JSON as written."""
     import dataclasses
     from datetime import datetime
@@ -388,6 +426,7 @@ def seed_dossier(store: Store, data_dir, target_id: str = STAGE2_TARGET) -> dict
     period, t0, dur = float(sig["period"]), float(sig["t0"]), float(sig["duration"])
     star, planet, look = _seed_star()
     fap, fpp = _seed_probabilities(period, float(sig["sde"]))
+    errors = _seed_errors(period, t0)
     cand = {"status": sig["candidate_status"]} if sig.get("candidate_status") else None
     verdict = explain.verdict(sig, tests, cand, decisions)
     label, label_text = ds.status_label(verdict)
@@ -404,7 +443,8 @@ def seed_dossier(store: Store, data_dir, target_id: str = STAGE2_TARGET) -> dict
         "summary": explain.summary_sentence(sig, target, tests),
         "ephemeris": {"period_days": period, "t0_bkjd": t0, "t0_bjd": t0 + 2454833.0, "duration_h": dur * 24,
                       "depth_ppm": float(sig["depth_ppm"]), "sde": float(sig["sde"]), "snr": float(sig["snr"]),
-                      "n_events": int(sig["n_events"])},
+                      "n_events": int(sig["n_events"]), **errors["ephemeris_extra"]},
+        **{key: errors[key] for key in ("timing", "shape", "parity", "secondary")},
         "plots": _seed_plots(period, t0),
         "tests": [{"rung": x["rung"], "status": x["status"], "reason": x["reason"], "metrics": x["metrics"],
                    "created": x["created"].isoformat()} for x in tests],

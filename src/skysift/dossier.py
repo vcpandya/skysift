@@ -1,5 +1,7 @@
 """Dossier generation (dossiers spec 5.4): one ``dossier_data.json`` per target, built from stored rows and files plus
 the four Gaia queries, and the ``dossiers`` row that says which signal, versions and test rows it was built from.
+Since version 3 the ephemeris carries errors: the period and T0 of a linear fit of the per-transit times, the shape
+from a bootstrap over transits, the odd and even depths and the secondary limit (``ephemeris``, referee pack spec 3).
 
 ``generate`` picks the target's best signal (``STATUS_ORDER`` then SDE), compares the fingerprint of its latest test
 rows, status and decision with the stored row (a match is a no-op unless forced), reloads the light curve through the
@@ -34,6 +36,7 @@ import numpy as np
 from sqlalchemy import select
 
 from skysift import calibrate as cal
+from skysift import ephemeris as eph
 from skysift import jsonutil, net, stars
 from skysift.calibrate import FalseAlarm
 from skysift.detectors.base import get_detector
@@ -67,7 +70,8 @@ from skysift.vetting.rung1_detection import SYSTEMATIC_PERIODS
 
 log = logging.getLogger(__name__)
 
-DOSSIER_VERSION = "2"           # 2: the FPP model version joins the fingerprint (21 October 2026)
+DOSSIER_VERSION = "3"      # 3: ephemeris, timing, shape, parity and secondary blocks (22 October 2026)
+N_BOOT_DEFAULT = eph.N_BOOT     # the shape bootstrap's resamples; ``generate`` reads it at call time
 # best first; an undetermined signal (the pixel stage could not decide) outranks every closed one, so a target's
 # tile and its dossier name the same signal when a superseded parent or a rejected sibling has the higher SDE
 STATUS_ORDER = ("candidate_stage2", "approved", "candidate_stage1", "undetermined", "pending", "rejected", "superseded")
@@ -413,6 +417,107 @@ def plot_arrays(lc: LightCurve, fnorm: np.ndarray, signal: dict, tests: list[dic
             "spectrum": _spectrum(periodogram), "spectrum_lines": lines, "quarters": quarters}
 
 
+# ---------------------------------------------------------------------------------------------------- errors
+
+def _fit_point(shape: dict) -> dict | None:
+    """Rung 2's uniform-disc fit as the bootstrap's point, or None unless ``fit_ok`` is true and all five values
+    (k, b, a/R*, T14 and the model depth) are finite."""
+    if shape.get("fit_ok") is not True:
+        return None
+    point = {"k": _num(shape, "fit_k"), "b": _num(shape, "fit_b"), "a_over_r": _num(shape, "fit_a_over_r"),
+             "t14_h": _num(shape, "fit_t14_h"), "fit_depth_ppm": _num(shape, "fit_depth_ppm")}
+    return None if None in point.values() else point
+
+
+def _minus_plus(block: dict | None) -> dict | None:
+    if not block or block.get("minus") is None or block.get("plus") is None:
+        return None
+    return {"minus": block["minus"], "plus": block["plus"]}
+
+
+def _timing(time, fnorm, signal: dict, shape: dict) -> dict:
+    """The ``timing`` block: per-transit times against the rung 2 template (the search box when the fit is not ok,
+    or when its geometry does not dip, which ``template_from`` refuses), the linear ephemeris, and the template used."""
+    period, t0, dur = float(signal["period"]), float(signal["t0"]), float(signal["duration"])
+    depth = float(signal["depth_ppm"])
+    note = None
+    try:
+        template = eph.template_from(shape, depth, dur)
+    except ValueError as e:
+        template = eph.Template("box", depth * 1e-6, dur)
+        note = f"the rung 2 fit does not dip ({e}), so the transits are timed with the search box"
+        log.warning("signal %s: %s", signal.get("id"), note)
+    lin = eph.linear_fit(eph.transit_times(time, fnorm, period, t0, dur, template), period, t0)
+    return {**lin.as_dict(), "template": template.kind, "template_reason": note}
+
+
+def _ephemeris_extra(signal: dict, shape_metrics: dict, timing: dict, shape: dict, fitted: bool) -> dict:
+    """The ephemeris keys of version 3, each value beside its own error: the period and T0 of the linear fit when it
+    is ok (else the search values with no error), the fitted T14 when the fit was bootstrapped (else the bootstrap box
+    width when the shape block is ok, else the search box), rung 2's depth with its error."""
+    ok = timing.get("ok") is True
+    out = {"period_days": float(signal["period"]), "t0_bkjd": float(signal["t0"]),
+           "t0_bjd": float(signal["t0"]) + BKJD_OFFSET, "period_source": "search"}
+    if ok:
+        out = {"period_days": timing["period"], "t0_bkjd": timing["t0"], "t0_bjd": timing["t0_bjd"],
+               "period_source": f"linear fit of {timing['n_used']} transit times"}
+    pick = (lambda key: timing.get(key) if ok else None)
+    out.update({"period_err_days": pick("period_err"), "t0_bkjd_err": pick("t0_err"), "t0_bjd_err": pick("t0_err"),
+                "t_ref_bkjd": pick("t_ref"), "t_ref_bjd": pick("t_ref_bjd"), "t_ref_err_days": pick("t_ref_err"),
+                "epoch_ref": pick("epoch_ref")})
+    if fitted:
+        duration = (shape.get("t14_h") or {}).get("median")       # rung 2's T14 either way; None when not ok
+        out.update(duration_h=_num(shape_metrics, "fit_t14_h") if duration is None else duration,
+                   duration_h_err=_minus_plus(shape.get("t14_h")), duration_source="fitted T14")
+    elif shape.get("ok") and (shape.get("box_duration_h") or {}).get("median") is not None:
+        out.update(duration_h=shape["box_duration_h"]["median"], duration_h_err=_minus_plus(shape["box_duration_h"]),
+                   duration_source="bootstrap box width")
+    else:
+        out.update(duration_h=float(signal["duration"]) * 24, duration_h_err=None, duration_source="search box")
+    depth, err = _num(shape_metrics, "depth_ppm"), _num(shape_metrics, "depth_err_ppm")
+    if depth is not None:
+        source = ("box depth of the stacked fold" if shape_metrics.get("stacked") is True
+                  else "per-event weighted mean of the box depth")
+        out.update(depth_ppm=depth, depth_ppm_err=err, depth_source=source)
+    else:
+        out.update(depth_ppm=float(signal["depth_ppm"]), depth_ppm_err=None, depth_source="search box")
+    out.update(ephemeris_method=timing.get("method"), shape_method=shape.get("method"))
+    return out
+
+
+def ephemeris_blocks(lc: LightCurve, fnorm, signal: dict, tests: list[dict], *, n_boot: int = N_BOOT_DEFAULT) -> dict:
+    """The version-3 error blocks (referee pack spec 3): ``timing`` (``_timing``), ``shape`` (the bootstrap over the
+    transits the ephemeris used, of the rung 2 fit when ``_fit_point`` gives one, else of the box), ``parity`` (odd and
+    even from the per-event depths), ``secondary`` (rung 2's phase 0.5 limit, None without it) and
+    ``ephemeris_extra``, the ephemeris keys they give (``_ephemeris_extra``)."""
+    period, t0, dur = float(signal["period"]), float(signal["t0"]), float(signal["duration"])
+    time, fnorm = np.asarray(lc.time, float), np.asarray(fnorm, float)
+    metrics = _metrics(tests, "rung2_shape")
+    timing = _timing(time, fnorm, signal, metrics)
+    used = [t["epoch"] for t in timing["times"] if t["used"]] if timing["ok"] else None
+    point = _fit_point(metrics)
+    shape = eph.bootstrap_shape(time, fnorm, period, t0, dur, point, n_boot=n_boot, used_epochs=used).as_dict()
+    parity = eph.parity_depths(event_depths(time, fnorm, np.asarray(lc.quarter), period, t0, dur)).as_dict()
+    secondary = eph.secondary_limit(metrics)
+    return {"ephemeris_extra": _ephemeris_extra(signal, metrics, timing, shape, point is not None), "timing": timing,
+            "shape": shape, "parity": parity, "secondary": None if secondary is None else secondary.as_dict()}
+
+
+def with_k_error(planet: dict, shape: dict | None) -> dict:
+    """``planet`` with the bootstrap error of the radius ratio folded into ``rp_rearth``: each side becomes the
+    quadrature of its stellar term and ``rp * k_err / k``, and the source says so. Unchanged when the shape block
+    has no finite k error (no fit, or not ok) or there is no radius."""
+    rp, k = planet.get("rp_rearth"), (shape or {}).get("k") or {}
+    kv, km, kp = (k.get(x) for x in ("median", "minus", "plus"))
+    if not rp or rp.get("median") is None or None in (kv, km, kp) or not kv > 0:
+        return planet
+    r = float(rp["median"])
+    folded = {**rp, "minus": round(math.hypot(rp["minus"], r * km / kv), 2),
+              "plus": round(math.hypot(rp["plus"], r * kp / kv), 2),
+              "source": f"{rp['source']}; radius-ratio error from the bootstrap"}
+    return {**planet, "rp_rearth": folded}
+
+
 # ---------------------------------------------------------------------------------------------------- pixels
 
 def _pixel_seasons(metrics: dict) -> list[dict]:
@@ -659,6 +764,29 @@ def close_call(tests: list[dict]) -> bool:
     return False
 
 
+def _error_caveats(data: dict) -> list[dict]:
+    """The caveats of the version-3 error blocks, in order: no ephemeris error, no shape error, and a k point value
+    further from the bootstrap median than the larger half-width. A dossier without the blocks gets none."""
+    timing, shape = data.get("timing"), data.get("shape")
+    out = []
+    if isinstance(timing, dict) and timing.get("ok") is False:
+        out.append({"key": "no_ephemeris_error", "title": "The ephemeris carries no error",
+                    "text": f"The period and the mid-transit time are the search values, quoted without an error "
+                            f"({timing.get('reason') or 'no reason stored'}). An error needs at least {eph.MIN_EVENTS} "
+                            "transits timed one by one."})
+    if isinstance(shape, dict) and shape.get("ok") is False:
+        out.append({"key": "no_shape_error", "title": "The transit shape carries no error",
+                    "text": f"The radius ratio, impact parameter, a/R*, duration and depth have no bootstrap error "
+                            f"({shape.get('reason') or 'no reason stored'})."})
+    k = (shape or {}).get("k") if isinstance(shape, dict) and shape.get("ok") else None
+    vals = [(k or {}).get(x) for x in ("median", "boot_median", "minus", "plus")]
+    if k and None not in vals and abs(vals[0] - vals[1]) > max(vals[2], vals[3]):
+        out.append({"key": "shape_offset", "title": "The shape fit sits off its bootstrap",
+                    "text": "The full-curve radius ratio differs from the bootstrap median by more than its 1-sigma "
+                            "spread; quote the bootstrap median beside it."})
+    return out
+
+
 def caveats(data: dict) -> list[dict]:
     """The section 07 list, [{"title", "text"}], by the rules of the plan in their order, each sentence built from
     the stored numbers."""
@@ -687,6 +815,7 @@ def caveats(data: dict) -> list[dict]:
                             f"({NO_PIXEL_CONFUSION_ARCSEC:g} arcsec) counts in full towards the background binary "
                             f"term, with a fall-off of one pixel ({NO_PIXEL_FALLOFF_ARCSEC:g} arcsec) beyond, so the "
                             "estimate is labelled \"no pixel data yet\"."})
+    out.extend(_error_caveats(data))
     if fpp.get("neighbours_known") is False:
         out.append({"key": "no_neighbours", "title": "The false-positive probability is not computed",
                     "text": "Without the Gaia neighbour list the background binary term cannot be judged, and leaving "
@@ -903,12 +1032,14 @@ def _section(name: str, errors: dict, build: Callable[[], object]):
 
 
 def generate(store: Store, blob, settings, target_id: str, *, signal_id: int | None = None, force: bool = False,
-             fetch=net.fetch, log: Callable[[str], None] | None = None) -> DossierReport:
+             fetch=net.fetch, log: Callable[[str], None] | None = None, n_boot: int | None = None) -> DossierReport:
     """Write ``<data_dir>/dossiers/<target_id>/dossier_data.json`` and its ``dossiers`` row (spec 5.4). A no-op
     (``generated=False``, the file untouched) when the stored fingerprint and dossier version match and ``force`` is
     False. Raises NoSignal when the target has no signal (or not ``signal_id``) and LightCurveReleased when the raw
-    light curve is no longer stored (it is not downloaded again: offline except Gaia, spec 5.8)."""
+    light curve is no longer stored (it is not downloaded again: offline except Gaia, spec 5.8). ``n_boot`` is the
+    shape bootstrap's resample count, ``N_BOOT_DEFAULT`` (read at call time) when None."""
     say = log or (lambda _text: None)
+    n_boot = N_BOOT_DEFAULT if n_boot is None else n_boot
     signal = pick_signal(store, target_id, signal_id)
     sid = signal["id"]
     tests = store.latest_tests(sid)
@@ -931,6 +1062,8 @@ def generate(store: Store, blob, settings, target_id: str, *, signal_id: int | N
     periodogram = _section("periodogram", errors, lambda: _periodogram(store, blob, target_id))
     plots = plot_arrays(lc, fnorm, signal, tests, periodogram=periodogram)
     pixels = _section("pixels", errors, lambda: pixels_section(store, blob, sid, _metrics(tests, "rung5_pixels")))
+    say(f"timing the transits and bootstrapping the shape ({n_boot} resamples)")
+    blocks = _section("ephemeris", errors, lambda: ephemeris_blocks(lc, fnorm, signal, tests, n_boot=n_boot))
     say("asking Gaia for the star and its neighbours")
     tgt = Target(**{k: target[k] for k in TARGET_FIELDS if target.get(k) is not None}, meta=target.get("meta") or {})
     star, planet, neighbours, gaia, gaia_errors = _lookup(tgt, signal, tests, fetch=fetch, store=store)
@@ -944,7 +1077,7 @@ def generate(store: Store, blob, settings, target_id: str, *, signal_id: int | N
     version = calibration_version_for(signal, settings.thresholds)
     fap = cal.false_alarm(rows, float(signal["sde"]), version)
     data = _assemble(store, signal, target, tests, decisions, plots, pixels, star, planet, gaia_errors, fap, fpp,
-                     inputs, calibration, version, settings.data_dir)
+                     inputs, calibration, version, settings.data_dir, blocks)
     data["section_errors"] = errors
     data["caveats"] = caveats(data)
     data = _tidy(data)
@@ -981,7 +1114,7 @@ def whitened(lc: LightCurve, signal: dict) -> np.ndarray:
 
 
 def _assemble(store, signal, target, tests, decisions, plots, pixels, star, planet, gaia_errors, fap, fpp, inputs,
-              calibration, version, data_dir) -> dict:
+              calibration, version, data_dir, blocks: dict | None = None) -> dict:
     test_rows = [{"rung": t["rung"], "status": t["status"], "reason": t["reason"], "metrics": t["metrics"],
                   "created": _iso(t["created"])} for t in tests]
     verdict = explain.verdict(signal, tests, {"status": signal.get("candidate_status")} if signal.get(
@@ -989,6 +1122,7 @@ def _assemble(store, signal, target, tests, decisions, plots, pixels, star, plan
     label, label_text = status_label(verdict)
     star_d = {**dataclasses.asdict(star), "gaia_errors": list(gaia_errors)}
     period, t0, dur = float(signal["period"]), float(signal["t0"]), float(signal["duration"])
+    blocks = blocks or {}
     return {
         "dossier_version": DOSSIER_VERSION, "generated": utcnow().isoformat(),
         "sections": [{"number": f"{i:02d}", "title": t} for i, t in enumerate(SECTIONS, 1)],
@@ -1001,7 +1135,9 @@ def _assemble(store, signal, target, tests, decisions, plots, pixels, star, plan
         "summary": explain.summary_sentence(signal, target, tests),
         "ephemeris": {"period_days": period, "t0_bkjd": t0, "t0_bjd": t0 + BKJD_OFFSET, "duration_h": dur * 24,
                       "depth_ppm": float(signal["depth_ppm"]), "sde": float(signal["sde"]),
-                      "snr": float(signal["snr"]), "n_events": int(signal["n_events"])},
+                      "snr": float(signal["snr"]), "n_events": int(signal["n_events"]),
+                      **(blocks.get("ephemeris_extra") or {})},
+        **{key: blocks.get(key) for key in ("timing", "shape", "parity", "secondary")},
         "plots": plots, "tests": test_rows, "why": [dataclasses.asdict(w) for w in explain.why(tests)],
         "rechecks": store.rechecks(signal["id"]), "children": store.children(signal["id"]),
         "fap": {**dataclasses.asdict(fap), "one_in": fap.one_in(), "words": fap.words(), "sde": float(signal["sde"]),
@@ -1009,7 +1145,8 @@ def _assemble(store, signal, target, tests, decisions, plots, pixels, star, plan
                 "min_nulls": cal.MIN_NULLS, "sentence_not_covered": FAP_NOT_COVERED},
         "fpp": {**fpp.as_dict(), "inputs": dataclasses.asdict(inputs), "words": fpp.words(), "label": fpp.label(),
                 "sentence_not_covered": FPP_NOT_COVERED},
-        "pixels": pixels, "star": star_d, "planet": dataclasses.asdict(planet), "look": look_numbers(star, planet),
+        "pixels": pixels, "star": star_d, "planet": with_k_error(dataclasses.asdict(planet), blocks.get("shape")),
+        "look": look_numbers(star, planet),
         "caveats": [], "provenance": _provenance(store, signal, target, calibration, data_dir),
     }
 
