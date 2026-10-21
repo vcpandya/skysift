@@ -45,7 +45,7 @@ from skysift.lc.transit_model import uniform_disc_flux
 from skysift.models import LightCurve, Target
 from skysift.net import ServiceUnavailable
 from skysift.pipeline import search_version
-from skysift.priors import PIXEL_ARCSEC
+from skysift.priors import NO_PIXEL_CONFUSION_ARCSEC, NO_PIXEL_FALLOFF_ARCSEC, PIXEL_ARCSEC
 from skysift.store.db import (
     PERIODOGRAM_URL,
     PIXELS_URL,
@@ -680,8 +680,9 @@ def caveats(data: dict) -> list[dict]:
         out.append({"key": "close_call", "title": "A season sits close to the 3 sigma line", "text": CLOSE_CALL})
     if fpp.get("pixels") is False:
         out.append({"title": "The false-positive estimate has no pixel exclusion",
-                    "text": f"Without a difference-image centroid every neighbour within one Kepler pixel "
-                            f"({PIXEL_ARCSEC} arcsec) counts in full towards the background binary term, so the "
+                    "text": f"Without a difference-image centroid every neighbour within two Kepler pixels "
+                            f"({NO_PIXEL_CONFUSION_ARCSEC:g} arcsec) counts in full towards the background binary "
+                            f"term, with a fall-off of one pixel ({NO_PIXEL_FALLOFF_ARCSEC:g} arcsec) beyond, so the "
                             "estimate is labelled \"no pixel data yet\"."})
     if fpp.get("neighbours_known") is False:
         out.append({"key": "no_neighbours", "title": "The false-positive probability is not computed",

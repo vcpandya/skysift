@@ -809,3 +809,29 @@ def test_cli_pack_exits_2_when_the_light_curve_was_released(cli_env):
 def test_cli_pack_without_a_dossier_exits_1(cli_env):
     r = runner.invoke(app, ["pack", "--target", "kic-000000001"])
     assert r.exit_code == 1 and "skysift dossier --target kic-000000001" in r.output and "Traceback" not in r.output
+
+
+def test_a_live_draft_refuses_a_stale_dossier(env_with_dossier, fake_session, monkeypatch):
+    # a dossier written under an older false-positive model is stale through the fingerprint; the live gate refuses
+    env = env_with_dossier
+    _approve(env)
+    monkeypatch.setattr(dossier_module, "FPP_MODEL_VERSION", "9")
+    live = ZenodoClient("t", sandbox=False, session=fake_session)
+    with pytest.raises(PackError, match="is stale"):
+        _build(env, zenodo=live)
+    assert fake_session.calls == [] and env.store.dossier(STAGE2_TARGET)["pack_path"] == ""
+    rep = _build(env, zenodo=ZenodoClient("t", session=fake_session))         # the sandbox still builds, and says so
+    assert rep.zenodo is not None and "stale" in (rep.out_dir / "README.md").read_text(encoding="utf-8").lower()
+
+
+def test_a_live_draft_refuses_a_dossier_stored_before_the_sign_off(env_with_dossier, fake_session):
+    env = env_with_dossier
+    _approve(env)
+    path = Path(env.store.dossier(STAGE2_TARGET)["data_path"])
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["fpp"]["signed_off"] = False
+    path.write_text(json.dumps(data), encoding="utf-8")
+    live = ZenodoClient("t", sandbox=False, session=fake_session)
+    with pytest.raises(PackError, match="written before the false-positive sign-off"):
+        _build(env, zenodo=live)
+    assert fake_session.calls == []
