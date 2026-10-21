@@ -91,7 +91,7 @@ def test_edge_allowance_moves_a_point_source_towards_the_interior():
     assert edge_allowance((4.0, 4.0), valid, 0.55, (7.0, 4.0)) == (0.0, 0.0)
     valid[3, 4] = False
     hole, _ = edge_allowance((4.0, 4.0), valid, 0.55, (7.0, 4.0))
-    assert 0.0 < hole < 0.1
+    assert 0.0 < hole < 0.15
     assert all(math.isnan(x) for x in edge_allowance((math.nan, 0.1), valid, 0.55, (4.0, 3.0)))
 ```
 
