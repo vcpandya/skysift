@@ -92,6 +92,13 @@ Pages, in the order of the navigation, and two modes: **simple** (the default) e
 * **Approved**: current decisions by status, kept to the current search version unless asked otherwise. Each signal
   has a copyable summary and a `review.json` download with the signal, every test, every query, the artifacts and the
   decision history.
+* **Dossiers**: one tile per candidate in the final set (stage 2 and reviewer-approved signals; stage 1 on demand),
+  each with its two probability pills (**False alarm** from the null calibration, **False positive** from the
+  three-scenario estimate, labelled provisional until the priors are signed off). A tile opens the target's dossier
+  (`/dossiers/<target>`): the signal, whether it repeats, the checks, which star is dimming (the difference images of
+  every season), the star and the planet from Gaia, an illustration to scale, the caveats and how to reproduce it. The
+  page can generate or refresh the dossier, download it as one standalone HTML file, and build the submission pack
+  with its five steps.
 * **About** (`/about`, linked from the footer): how SkySift works, what the words mean, the recheck steps, the
   thresholds in force and how to cite it.
 
@@ -103,6 +110,32 @@ Every sweep stores a periodogram summary per target (the SDE envelope over 2,048
 told otherwise. `skysift run --periodogram all|signals|off` sets this for one sweep. `SKYSIFT_STORE_PERIODOGRAM`
 (`all`, `signals` or `off`, default `all`) sets the default. The envelopes of targets without a signal form the null
 set for calibrating `sde_min`. `skysift vet --spectrum` also writes the raw BLS spectrum for one target.
+
+## Dossiers and submission packs
+
+```bash
+python -m skysift dossier --target kic-006146676 --export kic-006146676.html
+python -m skysift pack --target kic-006146676 --tic 169822650
+```
+
+`dossier` writes `<data_dir>/dossiers/<target>/dossier_data.json` and its row in the `dossiers` table from the stored
+signal, test rows, light curve and rung 5 pixel arrays, plus four Gaia queries (the star, its distance, its 2MASS Ks
+and a 20 arcsec cone for the neighbours), each logged in the `queries` table. It downloads nothing else: a light curve
+released by retention stops it with exit code 2 and the advice to sweep the target again with `--retention keep`. A
+second run is a no-op until the test rows, the status or the reviewer decision change (`--force` regenerates,
+`--signal` picks another signal of the target). `--export` also writes the standalone page, which loads nothing from
+any other address.
+
+`pack` builds the submission pack from the stored dossier: a README with the five steps (freeze the record on
+Zenodo, upload to ExoFOP-TESS, write a Research Note of the AAS, tell the NASA Exoplanet Archive, answer follow-up
+requests), the Research Note draft, the data files, the figures, the provenance and the ExoFOP copies, and a zip beside
+the folder (default `<data_dir>/packs/<target>/<UTC date>/`). `--tic` and `--tag` name the ExoFOP files. With
+`--zenodo` it also creates a Zenodo draft deposition holding the zip on the sandbox (`--zenodo-live` for zenodo.org),
+with the personal access token in `SKYSIFT_ZENODO_TOKEN`. The draft is never published: publishing is your click on
+Zenodo. With `--zenodo` and no token the pack is still built, without a deposition, and the command exits with code 2.
+
+The one-time check of the generated numbers against the hand-built KIC 6146676 study is
+`docs/superpowers/notes/2026-10-21-dossier-comparison.md`, made with `python -m tools.dossier_compare`.
 
 ## Calibrating the detection threshold
 
@@ -216,6 +249,7 @@ prefix (nested keys use `__`). Optional extras: `s3` (boto3, for an `s3://` blob
 | `workers_cpu` | `SKYSIFT_WORKERS_CPU` | `2` | Search and vetting workers |
 | `retention` | `SKYSIFT_RETENTION` | `stream` | Light-curve retention mode (see below) |
 | `thresholds.*` | `SKYSIFT_THRESHOLDS__SDE_MIN` etc. | see `config/default.yaml` | Detection and vetting thresholds |
+| (environment only) | `SKYSIFT_ZENODO_TOKEN` | unset | Zenodo personal access token for `skysift pack --zenodo` |
 
 ## Retention modes
 

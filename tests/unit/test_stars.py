@@ -27,7 +27,7 @@ CONE_CSV = (b"source_id,ra,dec,phot_g_mean_mag,bp_rp,sep_arcsec\n"
             b"2073896294004902144,297.8704,41.4571,19.772,1.814,7.14\n"
             b"2073896294004902400,297.8660,41.4535,12.80,1.1,10.8\n"
             b"2073896294004903000,297.8690,41.4590,22.6,1.5,12.0\n")
-RESPONSES = {"CONTAINS": CONE_CSV, "gaia_source WHERE source_id": GAIA_CSV, "gaiaedr3_distance": DIST_CSV,
+RESPONSES = {"CONTAINS": CONE_CSV, "WHERE g.source_id": GAIA_CSV, "gaiaedr3_distance": DIST_CSV,
              "tmass": TMASS_CSV}
 
 
@@ -80,7 +80,7 @@ def test_query_gaia_parses_the_three_tables_and_logs_each(store):
 
 def test_query_gaia_without_zero_point_inputs_uses_the_global_offset():
     two_p = GAIA_CSV.replace(b",60.5697568,31,", b",60.5697568,3,")
-    fetch = fake_fetch({**RESPONSES, "gaia_source WHERE source_id": two_p})
+    fetch = fake_fetch({**RESPONSES, "WHERE g.source_id": two_p})
     row = query_gaia(target_6146676(), fetch=fetch, store=None)
     assert row.zero_point == -0.017 and row.zero_point_source == "none: missing inputs"
     star, _ = derive(row, 40.29109, 0.048, 2165e-6, np.random.default_rng(1))
@@ -89,10 +89,10 @@ def test_query_gaia_without_zero_point_inputs_uses_the_global_offset():
 
 def test_a_zero_row_answer_is_no_row_but_an_empty_body_is_an_outage(store):
     header_only = GAIA_CSV.split(b"\n")[0] + b"\n"
-    assert query_gaia(target_6146676(), fetch=fake_fetch({"gaia_source WHERE source_id": header_only}),
+    assert query_gaia(target_6146676(), fetch=fake_fetch({"WHERE g.source_id": header_only}),
                       store=store) is None
     with pytest.raises(ServiceUnavailable, match="gaia_source: empty response"):
-        query_gaia(target_6146676(), fetch=fake_fetch({"gaia_source WHERE source_id": b""}), store=store)
+        query_gaia(target_6146676(), fetch=fake_fetch({"WHERE g.source_id": b""}), store=store)
     with pytest.raises(ServiceUnavailable, match="2MASS cross-match: missing column ks_m"):
         query_gaia(target_6146676(), fetch=fake_fetch({**RESPONSES, "tmass": b"ks,ks_msigcom\n13.0,0.03\n"}),
                    store=store)
@@ -108,7 +108,7 @@ def test_an_error_document_or_a_failed_fetch_is_an_outage(store):
     vot = (b'<?xml version="1.0"?><VOTABLE><RESOURCE><INFO name="QUERY_STATUS" value="ERROR">UsageFault: bad'
            b"</INFO></RESOURCE></VOTABLE>")
     with pytest.raises(ServiceUnavailable, match="UsageFault"):
-        query_gaia(target_6146676(), fetch=fake_fetch({"gaia_source WHERE source_id": vot}), store=store)
+        query_gaia(target_6146676(), fetch=fake_fetch({"WHERE g.source_id": vot}), store=store)
     down = ServiceUnavailable("gaia https://gea.esac.esa.int -> HTTP 503")
 
     def failing(*_a, **_kw):

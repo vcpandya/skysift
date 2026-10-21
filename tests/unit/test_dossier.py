@@ -56,7 +56,7 @@ TMASS_CSV = b"ks_m,ks_msigcom\n13.030,0.034\n"
 CONE_CSV = (b"source_id,ra,dec,phot_g_mean_mag,bp_rp,sep_arcsec\n"
             b"2101234567890120001,285.9017,40.9015,19.772,1.814,7.14\n"
             b"2101234567890120002,285.8973,40.8979,12.80,1.1,10.8\n")
-RESPONSES = {"CONTAINS": CONE_CSV, "gaia_source WHERE source_id": GAIA_CSV, "gaiaedr3_distance": DIST_CSV,
+RESPONSES = {"CONTAINS": CONE_CSV, "WHERE g.source_id": GAIA_CSV, "gaiaedr3_distance": DIST_CSV,
              "tmass": TMASS_CSV}
 PERIOD, T0 = 40.2899, 136.3
 
@@ -135,7 +135,7 @@ def env_stage1(env):
 
 @pytest.fixture
 def env_no_gaia(settings, monkeypatch):
-    return _make_env(settings, monkeypatch, {**RESPONSES, "gaia_source WHERE source_id": GAIA_HEADER})
+    return _make_env(settings, monkeypatch, {**RESPONSES, "WHERE g.source_id": GAIA_HEADER})
 
 
 SEASON_FRAMES = {0: ((7, 9), (2.0, 3.0), (4.5, 3.6)), 2: ((9, 9), (3.0, 4.0), (5.5, 4.6))}   # shape, target, nbr
@@ -498,3 +498,32 @@ def test_a_voting_season_near_three_sigma_gets_the_monte_carlo_caveat(env, seaso
     if close:
         assert found[0]["text"] == CLOSE_CALL
         assert "200 Monte Carlo draws" in found[0]["text"] and "—" not in found[0]["text"]
+
+
+REPO = Path(__file__).resolve().parents[2]
+HAND_BUILT = REPO / "docs" / "candidates" / "kic-006146676" / "dossier_data.json"
+GENERATED = REPO / "tests" / "golden" / "kic-006146676-generated.json"     # tools/dossier_compare.py --write-golden
+
+
+def test_hand_built_values_agree_within_errors():
+    """The real run of 21 October 2026 (docs/superpowers/notes/2026-10-21-dossier-comparison.md) against the hand-built
+    KIC 6146676 study: Rp, a and Teq within the study's quoted errors, the per-season centroid within 0.1 pixel of the
+    study's, the habitable-zone flags, and the stored FPP reproduced from its stored inputs."""
+    ref = json.loads(HAND_BUILT.read_text(encoding="utf-8"))
+    gen = json.loads(GENERATED.read_text(encoding="utf-8"))
+    pb = ref["context"]["summary"]["planet_baseline"]
+    planet, teq = gen["planet"], pb["Teq_K_A0.3_full_redistribution"]
+    assert abs(planet["rp_rearth"]["median"] - pb["Rp_from_k_Rearth"]["median"]) <= pb["Rp_from_k_Rearth"]["plus"]
+    assert abs(planet["a_au"]["median"] - pb["a_AU"]["median"]) <= pb["a_AU"]["plus"]
+    assert abs(planet["teq_k"]["median"] - teq["median"]) <= teq["plus"]
+    assert planet["in_habitable_zone"] is False and planet["in_optimistic_habitable_zone"] is True
+    to_candidate = ref["pixels"]["summary"]["seasons_snrbox_centroid_dist_to_candidate_pix"]
+    rung5 = next(t for t in gen["tests"] if t["rung"] == "rung5_pixels")
+    assert rung5["status"] == "pass" and rung5["metrics"]["tpf_missing"] == []
+    for s in rung5["metrics"]["seasons"]:
+        assert abs(s["dist_target_pix"] - to_candidate[str(s["season"])]) <= 0.1
+    # the FPP band of spec 4.2 (1 to 60 percent) did not survive Task 2: with the spec's priors the localised BEB term
+    # vanishes and the on-target EB term is killed by the secondary and odd/even limits, so KIC 6146676 reads
+    # "under 1 percent"; the number is a sign-off item (ledger), and this test pins reproducibility, not the band
+    assert gen["fpp"]["value"] == pytest.approx(compute(FppInputs(**gen["fpp"]["inputs"])).value, rel=1e-6)
+    assert gen["fpp"]["signed_off"] is False

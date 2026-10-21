@@ -47,6 +47,7 @@ from skysift.pipeline import search_version
 from skysift.priors import PIXEL_ARCSEC
 from skysift.store.db import (
     PERIODOGRAM_URL,
+    PIXELS_URL,
     ArtifactRow,
     CandidateRow,
     DecisionRow,
@@ -82,7 +83,6 @@ RSUN_AU = 0.00465047
 STATIC_DIR = Path(__file__).parent / "ui" / "static"
 DOSSIER_URL = "skysift://dossier/{target_id}"
 EXPORT_URL = "skysift://dossier-export/{target_id}"
-PIXELS_URL = "skysift://pixels/{signal_id}"
 
 # printed under each number, verbatim from spec 4.1 and 4.2
 FAP_NOT_COVERED = "This is about noise. A real dip on a neighbouring star or an eclipsing binary passes this test."

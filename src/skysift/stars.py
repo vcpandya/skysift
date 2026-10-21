@@ -70,9 +70,13 @@ PARALLAX_DROP_MAX = 0.01         # fraction of non-positive parallax draws befor
 
 SOURCE_COLUMNS = ("source_id", "ra", "dec", "parallax", "parallax_error", "phot_g_mean_mag", "bp_rp")
 CONE_COLUMNS = ("phot_g_mean_mag", "sep_arcsec", "source_id")
-Q_SOURCE = ("SELECT source_id, ra, dec, parallax, parallax_error, phot_g_mean_mag, bp_rp, ruwe, "
-            "nu_eff_used_in_astrometry, pseudocolour, ecl_lat, astrometric_params_solved, teff_gspphot, radius_flame, "
-            "mass_flame FROM gaiadr3.gaia_source WHERE source_id = {id}")
+# the FLAME radius and mass live in astrophysical_parameters, not gaia_source (asking gaia_source for them is an
+# HTTP 400 from the archive); the outer join keeps the gaia_source row of a star FLAME did not fit
+Q_SOURCE = ("SELECT g.source_id, g.ra, g.dec, g.parallax, g.parallax_error, g.phot_g_mean_mag, g.bp_rp, g.ruwe, "
+            "g.nu_eff_used_in_astrometry, g.pseudocolour, g.ecl_lat, g.astrometric_params_solved, g.teff_gspphot, "
+            "ap.radius_flame, ap.mass_flame FROM gaiadr3.gaia_source AS g "
+            "LEFT OUTER JOIN gaiadr3.astrophysical_parameters AS ap ON ap.source_id = g.source_id "
+            "WHERE g.source_id = {id}")
 Q_DISTANCE = "SELECT r_med_geo, r_lo_geo, r_hi_geo FROM external.gaiaedr3_distance WHERE source_id = {id}"
 Q_TMASS = ("SELECT t.ks_m, t.ks_msigcom FROM gaiadr3.tmass_psc_xsc_best_neighbour AS x "
            "JOIN gaiadr1.tmass_original_valid AS t ON x.original_ext_source_id = t.designation "
