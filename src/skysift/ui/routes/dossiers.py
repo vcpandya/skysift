@@ -234,8 +234,8 @@ def export(request: Request, target_id: str):
 
 
 def pack_zip_path(pack_path: str | None) -> Path | None:
-    """The zip ``skysift pack`` wrote beside the pack folder, when the folder is recorded and the zip is on disk: the
-    name the pack's ``provenance/versions.json`` gives (``<target>_<yyyymmdd>_skysift_pack.zip``)."""
+    """The zip ``skysift pack`` wrote inside the pack folder, when the folder is recorded and the zip is on disk:
+    the name the pack's ``provenance/versions.json`` gives (``<target>_<yyyymmdd>_skysift_pack.zip``)."""
     if not pack_path:
         return None
     folder = Path(pack_path)
@@ -245,7 +245,7 @@ def pack_zip_path(pack_path: str | None) -> Path | None:
         return None
     if not isinstance(name, str) or Path(name).name != name or not name.endswith(".zip"):
         return None
-    path = folder.parent / name
+    path = folder / name
     return path if path.is_file() else None
 
 

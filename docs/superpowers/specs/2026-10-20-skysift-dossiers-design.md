@@ -141,6 +141,7 @@ There is no NASA portal that accepts a new Kepler candidate from outside a missi
 - `dossier.html`: the standalone export.
 - `provenance/`: search and ladder versions, the git commit, the query log for this target (every catalogue and data request with URL, time, status and SHA-256), the file hashes, the calibration counts behind the FAP.
 - `exofop/`: the files renamed to ExoFOP's convention (`<TIC>_<UTC date>_<observer tag>_<content>.<ext>`) and `note.txt` with the upload text.
+  Amended 21 October 2026: ExoFOP takes KIC ids directly and enforces no file name, so the TIC-based names were dropped; the copies are named `<target>_<yyyymmdd>_<content>.<ext>` and the uploader sets the Data Tag (`YYYYMMDD_username_description_nnnnn`) on the upload form.
 
 With `--zenodo` and `SKYSIFT_ZENODO_TOKEN` in the environment, the command creates a Zenodo deposition through the API (sandbox by default, `--zenodo-live` for the real site), uploads the pack, fills the metadata (title, creators from `CITATION.cff`, description from the dossier summary, keywords, related identifiers) and stops before publishing: publishing is a click the person makes on Zenodo after reading the record, and the command prints the draft URL. The candidate row then gets `pack_path` and, after the person publishes, `doi` through the dashboard's existing decision flow ("published" with the DOI pasted in). The engine never posts to ExoFOP, arXiv or a journal.
 

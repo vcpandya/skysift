@@ -65,6 +65,7 @@ DOI_PLACEHOLDER = "10.5281/zenodo.XXXXXXX"
 RNAAS_DOI_PLACEHOLDER = "10.3847/2515-5172/XXXXX"
 SANDBOX_DOI_PREFIX = "10.5072/"             # Zenodo sandbox DOIs never resolve
 SANDBOX_DOI_NOTE = "sandbox DOI, replace before submission"
+ZIP_SUFFIX = "_skysift_pack.zip"
 # the Research Notes of the AAS limits (AAS preparation guidelines, read 21 October 2026)
 NOTE_LIMITS = {"total": 1500, "abstract": 150, "figures_or_tables": 1}
 TEMPLATES = Path(__file__).parent / "templates" / "pack"
@@ -362,20 +363,54 @@ def _vetting_sentences(data: dict) -> list[str]:
     return out
 
 
+def _pixel_votes(row: dict | None) -> tuple[list[dict], list[dict]]:
+    """(voting, silent) seasons of the pixel rung. As in the dossier, a vote not recorded is not a vote."""
+    seasons = [s for s in ((row or {}).get("metrics") or {}).get("seasons") or [] if isinstance(s, dict)]
+    return [s for s in seasons if s.get("voting") is True], [s for s in seasons if s.get("voting") is not True]
+
+
+def _seasons_phrase(near: int, voting: list[dict], silent: list[dict]) -> str:
+    """"the dip is nearer this star than its brightest neighbour in N of M ...": what the difference images show."""
+    kind = "seasons that voted" if silent else "observing seasons"
+    return f"the dip is nearer this star than its brightest neighbour in {near} of {len(voting)} {kind}"
+
+
+def _silent_sentence(silent: list[dict]) -> str:
+    """The seasons that did not vote, each with its stored reason."""
+    def label(s: dict) -> str:
+        return str(s.get("season")) if s.get("season") is not None else "?"
+    if not silent:
+        return ""
+    if len(silent) == 1:
+        s = silent[0]
+        return f"Season {label(s)} did not vote ({s.get('non_voting_reason') or 'no reason stored'})."
+    names = ", ".join(label(s) for s in silent[:-1]) + f" and {label(silent[-1])}"
+    why = "; ".join(f"season {label(s)}: {s.get('non_voting_reason') or 'no reason stored'}" for s in silent)
+    return f"Seasons {names} did not vote ({why})."
+
+
+def _first(value) -> float | None:
+    """The value of a stored ``[value, error]`` pair, or None when the pair or its value is missing."""
+    return _num(value[0]) if isinstance(value, list) and value else None
+
+
 def pixel_sentence(data: dict) -> str:
-    """Section 04 in words: whether the pixel check ran, and where the difference-image centroid sits."""
+    """Section 04 in words: whether the pixel check ran, where the difference-image centroid sits in the seasons
+    that voted, and which seasons did not vote and why."""
     row = _test(data, "rung5_pixels")
     if row is None:
         return ("The pixel check has not run for this signal, so the dip could still come from a neighbouring star "
                 "whose light falls in the same photometry.")
     if row.get("status") == "undetermined":
         return f"The pixel check gave no verdict ({row.get('reason') or 'no reason stored'})."
-    seasons = [s for s in (row.get("metrics") or {}).get("seasons") or [] if isinstance(s, dict)]
-    if not seasons:
+    voting, silent = _pixel_votes(row)
+    if not voting and silent:
+        return f"The pixel check gave no verdict: no season voted. {_silent_sentence(silent)}"
+    if not voting:
         return f"The pixel check {'passed' if row.get('status') == 'pass' else 'failed'} without per-season numbers."
-    near = sum(1 for s in seasons if s.get("nearer") == "target")
-    text = (f"Difference images (out of transit minus in transit) place the lost light nearer this star than the "
-            f"brightest neighbour in {near} of {len(seasons)} observing seasons.")
+    near = sum(1 for s in voting if s.get("nearer") == "target")
+    text = f"In difference images (out of transit minus in transit) {_seasons_phrase(near, voting, silent)}."
+    seasons = voting
     dt = [d for s in seasons if (d := _num(s.get("dist_target_pix"))) is not None]
     dn = [d for s in seasons if (d := _num(s.get("dist_neighbour_pix"))) is not None]
     if dt and dn:
@@ -384,14 +419,16 @@ def pixel_sentence(data: dict) -> str:
     off = ds.centroid_offset(row.get("metrics") or {})
     if off is not None:
         text += f" Averaged over the seasons it is {off[0]:.2f} ± {off[1]:.2f} arcsec from the star."
-    pairs = [(s["depth_target_ppm"], s["depth_neighbour_ppm"]) for s in seasons
-             if isinstance(s.get("depth_target_ppm"), list) and isinstance(s.get("depth_neighbour_ppm"), list)
-             and s["depth_target_ppm"] and s["depth_neighbour_ppm"]]
+    pairs = [(t, n) for s in seasons
+             if (t := _first(s.get("depth_target_ppm"))) is not None
+             and (n := _first(s.get("depth_neighbour_ppm"))) is not None]
     if pairs:
-        t = float(np.median([p[0][0] for p in pairs]))
-        n = float(np.median([p[1][0] for p in pairs]))
+        t = float(np.median([p[0] for p in pairs]))
+        n = float(np.median([p[1] for p in pairs]))
         text += (f" A two-source fit gives a median depth of {t:,.0f} ppm on this star and {n:,.0f} ppm on the "
                  "neighbour.")
+    if silent:
+        text += f" {_silent_sentence(silent)}"
     if row.get("status") == "fail":
         text += " The pixel check failed: the dip may sit on the neighbour."
     return text
@@ -523,16 +560,16 @@ def abstract_text(data: dict) -> str:
               f"{_f(eph.get('duration_h'), 2)} hours repeats every {_f(eph.get('period_days'), 5)} days over "
               f"{eph.get('n_events')} transits.")]
     row = _test(data, "rung5_pixels")
-    seasons = [s for s in ((row or {}).get("metrics") or {}).get("seasons") or [] if isinstance(s, dict)]
+    voting, silent = _pixel_votes(row)
     if row is None:
         parts.append("The pixel check has not run, so a neighbouring star could still cause the dip.")
-    elif row.get("status") == "undetermined" or not seasons:
+    elif row.get("status") == "undetermined" or not voting:
         parts.append("The pixel check gave no verdict on which star dims.")
+    elif row.get("status") == "fail":
+        parts.append("In difference images the dip is nearer a neighbouring star than this one.")
     else:
-        near = sum(1 for s in seasons if s.get("nearer") == "target")
-        parts.append(f"Difference images place the lost light on this star in {near} of {len(seasons)} observing "
-                     "seasons." if row.get("status") != "fail" else
-                     "Difference images place the lost light nearer a neighbouring star.")
+        near = sum(1 for s in voting if s.get("nearer") == "target")
+        parts.append(f"In difference images {_seasons_phrase(near, voting, silent)}.")
     rp, a = (data.get("planet") or {}).get("rp_rearth"), (data.get("planet") or {}).get("a_au")
     if isinstance(rp, dict) and _num(rp.get("median")) is not None:
         orbit = f" on a {_num(a.get('median')):.3f} AU orbit" if isinstance(a, dict) and _num(a.get("median")) else ""
@@ -680,7 +717,7 @@ def _exofop_list(target_id, date, png: bool, pixels_figure: bool) -> list[tuple[
 
 def zip_name(target_id: str, date: str) -> str:
     """The pack's zip, ``<target>_<yyyymmdd>_skysift_pack.zip``: the name Zenodo and a download show."""
-    return f"{_safe_target(target_id)}_{date}_skysift_pack.zip"
+    return f"{_safe_target(target_id)}_{date}{ZIP_SUFFIX}"
 
 
 def _fields(data: dict, f: dict) -> dict:
@@ -791,6 +828,8 @@ def _panel(spec: dict, x0: float, y0: float, w: float, h: float, pid: str) -> li
         ylo, yhi = ylo - pad, yhi + pad
     if xhi <= xlo:
         xhi = xlo + 1.0
+    if xlog and xlo <= 0:                # an empty log axis (a dossier without its periodogram) spans a decade
+        xlo, xhi = (xhi / 10.0, xhi) if xhi > 0 else (1.0, 10.0)
     lx = (lambda v: math.log10(v)) if xlog else (lambda v: v)
     xa, xb = lx(xlo), lx(xhi)
 
@@ -1100,7 +1139,9 @@ def _sha(path: Path) -> dict:
 
 
 def _rel(out_dir: Path) -> list[str]:
-    return sorted(p.relative_to(out_dir).as_posix() for p in out_dir.rglob("*") if p.is_file())
+    """The pack's files, without its own zip (which sits in the folder, so two folders never share one)."""
+    return sorted(name for p in out_dir.rglob("*") if p.is_file()
+                  and not (name := p.relative_to(out_dir).as_posix()).endswith((ZIP_SUFFIX, ZIP_SUFFIX + ".tmp")))
 
 
 def _zip(out_dir: Path, zip_path: Path, top: str) -> None:
@@ -1223,11 +1264,21 @@ def _check_out(out_dir: Path) -> None:
             raise PackError(f"{out_dir} is not empty and is not a submission pack; choose another --out")
 
 
-def _prepare(out_dir: Path) -> None:
-    """An empty folder for the pack (``_check_out`` has passed): an earlier pack is replaced."""
-    if out_dir.exists() and any(out_dir.iterdir()):
+def _building(out_dir: Path) -> Path:
+    """The empty folder a pack is written into before it replaces ``out_dir`` (``_check_out`` has passed): a
+    hidden sibling, so a build that crashes leaves neither a partial pack nor a folder that blocks the retry."""
+    work = out_dir.with_name(f".{out_dir.name}.building")
+    if work.exists():
+        shutil.rmtree(work)              # only a crashed earlier build of this folder leaves it
+    work.mkdir(parents=True)
+    return work
+
+
+def _move_into_place(work: Path, out_dir: Path) -> None:
+    """The finished pack replaces ``out_dir`` (an earlier pack, or nothing)."""
+    if out_dir.exists():
         shutil.rmtree(out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
+    work.replace(out_dir)
 
 
 def _write_texts(out_dir: Path, zip_path: Path, data: dict, fields: dict, citation: dict | None) -> dict:
@@ -1250,11 +1301,13 @@ def _write_texts(out_dir: Path, zip_path: Path, data: dict, fields: dict, citati
 def build_pack(store, blob, settings, target_id: str, *, out_dir: Path | None = None, tic: str | None = None,
                observer_tag: str = "skysift", zenodo: ZenodoClient | None = None,
                log: Callable[[str], None] | None = None) -> PackReport:
-    """Write the submission pack of ``target_id`` from its stored dossier and zip it beside the folder as
+    """Write the submission pack of ``target_id`` from its stored dossier and zip it inside the folder as
     ``<target>_<yyyymmdd>_skysift_pack.zip``; the default folder is ``<data_dir>/packs/<target_id>/<UTC yyyymmdd>/``
-    (an earlier pack there is replaced). Everything is checked and written first; only then, with a ``zenodo``
-    client, is the draft created, its reserved DOI written into the texts (a sandbox DOI with the words that it must
-    be replaced), the metadata filled and the zip uploaded. The draft is never published, and a live draft is refused
+    (an earlier pack there is replaced only once the new one is complete: it is written in a hidden sibling folder
+    and moved into place, so a crash leaves the earlier pack and nothing that blocks a retry). Everything is
+    checked and written first; only then, with a ``zenodo`` client, is the draft created, its reserved DOI written
+    into the texts (a sandbox DOI with the words that it must be replaced), the metadata filled and the zip
+    uploaded. The draft is never published, and a live draft is refused
     for a candidate no reviewer has approved. Records the folder on the dossiers row and the candidate row.
 
     Raises NoDossier, ``dossier.LightCurveReleased`` (nothing is downloaded), PackError (bad TIC id, tag or folder; a
@@ -1284,9 +1337,49 @@ def build_pack(store, blob, settings, target_id: str, *, out_dir: Path | None = 
     if citation is None:
         say("no CITATION.cff or package author found; the creators are placeholders")
     data = public_paths(raw, settings.data_dir)
-    zip_path = out_dir.parent / zip_name(target_id, date)
-    _prepare(out_dir)
-    say(f"writing {out_dir}")
+    final = out_dir
+    out_dir = _building(final)
+    try:
+        zip_file, metadata, fields, words = _write_pack(
+            out_dir, data, raw, row, lc, fnorm, target_id, date, now, settings, citation, creators_source,
+            {"approved": approved, "stale_reason": stale, "tic": tic, "tag": observer_tag}, say)
+        _move_into_place(out_dir, final)
+    except BaseException:
+        shutil.rmtree(out_dir, ignore_errors=True)
+        raise
+    out_dir, zip_path = final, final / zip_file
+    store.set_pack(target_id, str(out_dir), now.replace(tzinfo=None))
+    store.set_candidate_pack(sid, str(out_dir))
+    say(f"wrote {zip_path}")
+    zinfo = None
+    if zenodo is not None:
+        deposition = None
+        try:
+            say("creating the Zenodo draft")
+            deposition = zenodo.create_deposition()
+            zinfo = {"deposition_id": deposition.get("id"), "draft_url": zenodo.draft_url(deposition),
+                     "sandbox": zenodo.sandbox, "doi": zenodo.reserved_doi(deposition)}
+            doi = zinfo["doi"] or DOI_PLACEHOLDER
+            words = _write_texts(out_dir, zip_path, data, {**fields, "zenodo": zinfo, "doi": doi,
+                                                           "doi_shown": doi_shown(zinfo["doi"])}, citation)
+            say("filling the Zenodo draft and uploading the zip")
+            zenodo.set_metadata(deposition, metadata)
+            zenodo.upload(deposition, zip_path)
+        except Exception as e:  # any failure after the files exist is reported with the draft
+            if deposition is None:
+                raise ZenodoError(f"{e}; the pack at {out_dir} was built without a Zenodo draft") from e
+            raise ZenodoError(f"{e}; the pack at {out_dir} was built, but the unpublished Zenodo draft "
+                              f"{deposition.get('id')} ({zenodo.draft_url(deposition)}) is unfinished: discard it on "
+                              "Zenodo, then run the command again") from e
+    return PackReport(target_id, out_dir, zip_path, _rel(out_dir), approved, zinfo, stale, words)
+
+
+def _write_pack(out_dir: Path, data: dict, raw: dict, row: dict, lc, fnorm, target_id: str, date: str,
+                now: datetime, settings, citation: dict | None, creators_source: str, review: dict, say):
+    """Every file of the pack into ``out_dir`` (the building folder) and its zip there, with the DOI placeholder.
+    Returns (zip file name, Zenodo metadata, the text fields, the note's word counts)."""
+    zip_path = out_dir / zip_name(target_id, date)
+    say("writing the pack")
     figures, note, d = out_dir / "figures", out_dir / "note", out_dir / "data"
     for folder in (figures, note, d, out_dir / "provenance", out_dir / "exofop"):
         folder.mkdir(parents=True, exist_ok=True)
@@ -1333,35 +1426,11 @@ def build_pack(store, blob, settings, target_id: str, *, out_dir: Path | None = 
     _write(out_dir / "zenodo_metadata.json", jsonutil.dumps(metadata, indent=1))
     for name, source, _what in _exofop_list(target_id, date, png, pixels_figure):
         shutil.copyfile(out_dir / source, out_dir / "exofop" / name)
-    fields = {"approved": approved, "stale_reason": stale, "tic": tic, "date": date, "tag": observer_tag,
-              "png": png, "zenodo": None, "pixels_figure": pixels_figure, "zip_name": zip_path.name,
-              "built_words": date_words(now), "doi": DOI_PLACEHOLDER, "doi_shown": DOI_PLACEHOLDER,
-              "creators_source": creators_source}
+    fields = {**review, "date": date, "png": png, "zenodo": None, "pixels_figure": pixels_figure,
+              "zip_name": zip_path.name, "built_words": date_words(now), "doi": DOI_PLACEHOLDER,
+              "doi_shown": DOI_PLACEHOLDER, "creators_source": creators_source}
     words = _write_texts(out_dir, zip_path, data, fields, citation)
-    store.set_pack(target_id, str(out_dir), now.replace(tzinfo=None))
-    store.set_candidate_pack(sid, str(out_dir))
-    say(f"wrote {zip_path}")
-    zinfo = None
-    if zenodo is not None:
-        deposition = None
-        try:
-            say("creating the Zenodo draft")
-            deposition = zenodo.create_deposition()
-            zinfo = {"deposition_id": deposition.get("id"), "draft_url": zenodo.draft_url(deposition),
-                     "sandbox": zenodo.sandbox, "doi": zenodo.reserved_doi(deposition)}
-            doi = zinfo["doi"] or DOI_PLACEHOLDER
-            words = _write_texts(out_dir, zip_path, data, {**fields, "zenodo": zinfo, "doi": doi,
-                                                           "doi_shown": doi_shown(zinfo["doi"])}, citation)
-            say("filling the Zenodo draft and uploading the zip")
-            zenodo.set_metadata(deposition, metadata)
-            zenodo.upload(deposition, zip_path)
-        except Exception as e:  # any failure after the files exist is reported with the draft
-            if deposition is None:
-                raise ZenodoError(f"{e}; the pack at {out_dir} was built without a Zenodo draft") from e
-            raise ZenodoError(f"{e}; the pack at {out_dir} was built, but the unpublished Zenodo draft "
-                              f"{deposition.get('id')} ({zenodo.draft_url(deposition)}) is unfinished: discard it on "
-                              "Zenodo, then run the command again") from e
-    return PackReport(target_id, out_dir, zip_path, _rel(out_dir), approved, zinfo, stale, words)
+    return zip_path.name, metadata, fields, words
 
 
 def _versions(data: dict, row: dict, now: datetime, Figure, zip_file: str, creators_source: str) -> dict:

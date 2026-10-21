@@ -299,7 +299,7 @@ def dossier(target: str = typer.Option(..., "--target", help="The target id, e.g
 @app.command("pack")
 def pack_command(target: str = typer.Option(..., "--target", help="The target id, e.g. kic-006146676."),
                  out: str | None = typer.Option(None, "--out", help="The pack folder (default <data_dir>/packs/"
-                                                "<target>/<UTC yyyymmdd>); the zip is written beside it."),
+                                                "<target>/<UTC yyyymmdd>); the zip is written inside it."),
                  tic: str | None = typer.Option(None, "--tic", help="The star's TIC id, named in the ExoFOP "
                                                 "upload note."),
                  tag: str = typer.Option("skysift", "--tag", help="The word that starts the description of the "

@@ -555,7 +555,7 @@ def _fake_pack(app, settings, target_id=STAGE2_TARGET):
     (out / "provenance").mkdir()
     zip_name = f"{target_id}_20261021_skysift_pack.zip"
     (out / "provenance" / "versions.json").write_text(json.dumps({"zip_name": zip_name}), encoding="utf-8")
-    zip_path = out.parent / zip_name
+    zip_path = out / zip_name
     zip_path.write_bytes(b"PK fake zip")
     app.state.store.set_pack(target_id, str(out), datetime(2026, 10, 21, 10, 0))
     return out, zip_path

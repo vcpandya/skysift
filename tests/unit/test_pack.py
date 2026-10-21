@@ -9,6 +9,7 @@ import json
 import re
 import zipfile
 from datetime import UTC, datetime
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -93,7 +94,9 @@ def _build(env, **kw):
 
 
 def _files(rep) -> set[str]:
-    return {p.relative_to(rep.out_dir).as_posix() for p in rep.out_dir.rglob("*") if p.is_file()}
+    """The pack's files, without the zip that sits in the same folder."""
+    return {p.relative_to(rep.out_dir).as_posix() for p in rep.out_dir.rglob("*") if p.is_file()} - {
+        rep.zip_path.name}
 
 
 def _approve(env):
@@ -114,7 +117,8 @@ def test_build_pack_writes_every_folder_and_the_zip(env_with_dossier):
             "provenance/calibration.json", "archive_email.txt", "zenodo_metadata.json"} <= names
     assert rep.zip_path.exists() and zipfile.ZipFile(rep.zip_path).testzip() is None
     assert rep.out_dir == (env_with_dossier.settings.data_dir / "packs" / STAGE2_TARGET / _today()).resolve()
-    assert rep.zip_path == rep.out_dir.parent / _zip_name()
+    assert rep.zip_path == rep.out_dir / _zip_name() and rep.zip_path.name not in rep.files
+    assert [p.name for p in rep.out_dir.parent.iterdir()] == [rep.out_dir.name]      # nothing beside the folder
     with zipfile.ZipFile(rep.zip_path) as z:
         inside = {n.split("/", 1)[1] for n in z.namelist()}
         assert inside == names and {n.split("/", 1)[0] for n in z.namelist()} == {rep.zip_path.stem}
@@ -251,7 +255,9 @@ def test_rebuilding_the_same_day_replaces_the_pack_and_a_foreign_folder_is_refus
         _build(env_with_dossier, out_dir=foreign)
     assert (foreign / "thesis.docx").read_bytes() == b"keep me"
     out = _build(env_with_dossier, out_dir=tmp_path / "custom")
-    assert out.out_dir == (tmp_path / "custom").resolve() and (tmp_path / _zip_name()).is_file()
+    assert out.out_dir == (tmp_path / "custom").resolve() and (tmp_path / "custom" / _zip_name()).is_file()
+    other = _build(env_with_dossier, out_dir=tmp_path / "other")                     # same day, another folder
+    assert other.zip_path != out.zip_path and out.zip_path.is_file() and other.zip_path.is_file()
 
 
 def test_build_pack_without_a_dossier_raises(env_with_dossier):
@@ -299,6 +305,7 @@ def test_readme_lists_the_five_steps_and_the_approval_warning(env_with_dossier):
     assert "under the star's TIC id" not in text
     assert "https://exoplanetarchive.ipac.caltech.edu/support/helpdesk" in text
     assert "1,500 words including the title, headings, caption and references" in text and "1,000" not in text
+    assert "\n2. Replace 10.5281/zenodo.XXXXXXX with the Zenodo DOI from step 1.\n3. Read every" in text
 
 
 def test_the_readme_prints_both_word_counts(env_with_dossier):
@@ -386,10 +393,12 @@ def test_note_is_aastex7_with_an_abstract_inside_the_rnaas_limits(env_with_dossi
     assert "candidate" in tex and "discover" not in tex.lower() and EM_DASH not in tex and "---" not in tex
     assert tex.rstrip().endswith(r"\end{document}") and tex.count("{") == tex.count("}")
     assert r"\uat{Transit photometry}{1709}" in tex
-    frame = tex.split(r"\begin{document}")[0]
-    assert frame.count(r"\begin{document}") == 0                        # the frame never names the begin line
+    assert tex.count(r"\begin{document}") == 1                          # the frame never names the begin line
     abstract = tex.split(r"\begin{abstract}")[1].split(r"\end{abstract}")[0]
     assert "1 in 440" in abstract and "under 1 percent" in abstract and "provisional" in abstract
+    assert re.search(r"the dip is nearer this star than its brightest neighbour in \d of \d "
+                     r"(observing seasons|seasons that voted)\.", abstract)
+    assert "lost light" not in tex and "on this star in" not in tex
     assert "10.5281/zenodo.XXXXXXX" in tex and r"\includegraphics" in tex
     cited = set(re.findall(r"\\cite[pt]?\{([^}]+)\}", tex))
     keys = {k.strip() for c in cited for k in c.split(",")}
@@ -499,6 +508,76 @@ def test_creators_fall_back_to_the_package_metadata(monkeypatch, tmp_path):
     assert citation is None and "placeholders" in source
 
 
+def _with_a_silent_season(data: dict) -> dict:
+    """The fixture's dossier with three pixel seasons: two that voted for this star and one that did not, as the
+    real KIC 6146676 run has season 3: its two-source depths are null and its ``nearer`` is unknown."""
+    data = json.loads(json.dumps(data))
+    row = next(t for t in data["tests"] if t["rung"] == "rung5_pixels")
+
+    def season(n, depth, voting=True, why=None):
+        return {"season": n, "n_events": 9, "dist_target_pix": 0.15, "dist_neighbour_pix": 2.8,
+                "centroid_sigma_pix": 0.06, "nearer": "target" if voting else "unknown",
+                "depth_target_ppm": [depth, 600.0] if voting else [None, None],
+                "depth_neighbour_ppm": [-20.0, 50.0] if voting else [None, None], "two_source": voting,
+                "voting": voting, "non_voting_reason": why}
+    row["metrics"]["seasons"] = [season(0, 2800.0), season(1, 2300.0),
+                                 season(3, None, voting=False, why="box incomplete: target")]
+    return data
+
+
+def test_a_season_that_did_not_vote_is_named_and_its_null_depths_are_skipped(env_with_dossier):
+    data = _with_a_silent_season(env_with_dossier.data)
+    text = pack_module.pixel_sentence(data)
+    assert "the dip is nearer this star than its brightest neighbour in 2 of 2 seasons that voted" in text
+    assert "Season 3 did not vote (box incomplete: target)." in text and "nan" not in text
+    assert "A two-source fit gives a median depth of 2,550 ppm on this star" in text  # the voting seasons only
+    abstract = pack_module.abstract_text(data)
+    assert "nearer this star than its brightest neighbour in 2 of 2 seasons that voted" in abstract
+    tex = render_note(data)
+    assert "Season 3 did not vote" in tex and note_problems(note_words(tex), tex) == []
+    for season in next(t for t in data["tests"] if t["rung"] == "rung5_pixels")["metrics"]["seasons"]:
+        season["voting"], season["non_voting_reason"] = False, "box incomplete: target"
+    assert "no season voted" in pack_module.pixel_sentence(data)
+
+
+def test_a_crashed_build_leaves_no_folder_that_blocks_the_retry(env_with_dossier, monkeypatch):
+    env = env_with_dossier
+    first = _build(env)
+    before = (first.out_dir / "README.md").read_bytes()
+    real = pack_module._write_texts
+
+    def crash(*_a, **_kw):
+        raise RuntimeError("a bug half way through")
+    monkeypatch.setattr(pack_module, "_write_texts", crash)
+    with pytest.raises(RuntimeError, match="half way"):
+        _build(env)
+    assert (first.out_dir / "README.md").read_bytes() == before                    # the earlier pack is intact
+    assert [p.name for p in first.out_dir.parent.iterdir()] == [first.out_dir.name]  # no partial folder left
+    fresh = env.settings.data_dir / "fresh"
+    with pytest.raises(RuntimeError):
+        _build(env, out_dir=fresh)
+    assert not fresh.exists() and not any(env.settings.data_dir.glob(".*building*"))
+    monkeypatch.setattr(pack_module, "_write_texts", real)
+    assert _build(env, out_dir=fresh).zip_path.is_file()                             # the retry goes through
+
+
+def test_build_pack_on_the_real_kic_6146676_dossier(env_with_dossier):
+    """The dossier the real-data run generated (tests/golden, Task 7): season 3 did not vote and its depths are
+    null. The light curve is the fixture's; every number in the texts comes from the real dossier."""
+    golden = json.loads((Path(__file__).parents[1] / "golden" / "kic-006146676-generated.json").read_text(
+        encoding="utf-8"))
+    env = env_with_dossier
+    Path(env.store.dossier(STAGE2_TARGET)["data_path"]).write_text(json.dumps(golden), encoding="utf-8")
+    rep = _build(env)
+    note = (rep.out_dir / "exofop" / "note.txt").read_text(encoding="utf-8")
+    assert "nearer this star than its brightest neighbour in 3 of 3 seasons that voted" in note
+    assert "Season 3 did not vote (box incomplete: target)." in note
+    tex = (rep.out_dir / "note" / "note.tex").read_text(encoding="utf-8")
+    assert note_problems(rep.note_words, tex) == [] and rep.zip_path.is_file()
+    import xml.etree.ElementTree as ET
+    ET.fromstring((rep.out_dir / "figures" / "periodogram.svg").read_text(encoding="utf-8"))  # no plots block
+
+
 # ---------------------------------------------------------------------------------------------------- Zenodo
 
 def test_pack_with_zenodo_creates_a_draft_after_the_files_and_records_the_path(env_with_dossier, fake_session):
@@ -519,6 +598,9 @@ def test_pack_with_zenodo_creates_a_draft_after_the_files_and_records_the_path(e
         assert f"10.5072/zenodo.{DEPOSITION_ID}, a {SANDBOX_WORDS}" in (rep.out_dir / name).read_text(encoding="utf-8")
     readme = (rep.out_dir / "README.md").read_text(encoding="utf-8")
     assert "sandbox" in readme and str(DEPOSITION_ID) in readme
+    assert f"2. Replace 10.5072/zenodo.{DEPOSITION_ID} (a sandbox DOI) before submission" in readme
+    assert f"in place of 10.5072/zenodo.{DEPOSITION_ID} (a sandbox DOI)" in readme
+    assert f"{SANDBOX_WORDS} with" not in readme                                     # no run-on sentence
     hashes = json.loads((rep.out_dir / "provenance" / "hashes.json").read_text(encoding="utf-8"))
     assert hashes["note/note.tex"]["sha256"] == hashlib.sha256(tex.encode("utf-8")).hexdigest()   # rehashed
 

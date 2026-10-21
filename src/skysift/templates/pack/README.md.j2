@@ -58,7 +58,7 @@ The engine can make the draft for you: create a personal access token on Zenodo 
 Without a token, do it by hand: on zenodo.org choose New upload, attach `{{ f.zip_name }}`, and copy the fields from `zenodo_metadata.json` (upload type Dataset, title, creators, description, keywords, licence, related identifier).
 {% endif %}
 
-What you do: open the draft, read every field, check that the uploaded zip holds the files `provenance/hashes.json` lists, then press Publish. Publishing cannot be undone: a published record keeps its files (a later version can be added, the first stays). Copy the DOI. On the dashboard, mark the candidate "published" with that DOI, and put the DOI in `note/note.tex` in place of {{ f.doi_shown }}.
+What you do: open the draft, read every field, check that the uploaded zip holds the files `provenance/hashes.json` lists, then press Publish. Publishing cannot be undone: a published record keeps its files (a later version can be added, the first stays). Copy the DOI. On the dashboard, mark the candidate "published" with that DOI, and put the DOI in `note/note.tex` in place of {% if f.zenodo and f.zenodo.doi and f.zenodo.sandbox %}{{ f.zenodo.doi }} (a sandbox DOI){% else %}{{ f.doi_shown }}{% endif %}.
 
 ## Step 2. {{ titles["2"] }}
 
@@ -88,7 +88,7 @@ The limits (AAS research note guidelines): at most {{ "{:,}".format(f.limits.tot
 {% endif %}
 
 1. Fill in the author block (affiliation, email, ORCID) and add co-authors.
-2. Replace {{ f.doi_shown }} with the Zenodo DOI from step 1{% if f.zenodo and f.zenodo.doi and not f.zenodo.sandbox %} (the draft's reserved DOI is already in place; check it matches the published record){% endif %}.
+{% if f.zenodo and f.zenodo.doi and f.zenodo.sandbox %}2. Replace {{ f.zenodo.doi }} (a sandbox DOI) before submission: use the DOI of the record you publish on zenodo.org in step 1.{% elif f.zenodo and f.zenodo.doi %}2. Check that {{ f.zenodo.doi }}, the draft's reserved DOI, matches the published record.{% else %}2. Replace {{ f.doi_shown }} with the Zenodo DOI from step 1.{% endif %}{{ "" }}
 3. Read every sentence against `dossier.html`; the note is built from the stored numbers and says nothing the dossier does not.
 4. Compile it with AASTeX v7 (aastex7.cls) and pdflatex; Overleaf has the AAS template. The UAT keywords can be changed in the submission form. {% if f.png %}The figure is `note/figure1.pdf`.{% else %}matplotlib could not be imported when this pack was built, so there is no PDF figure: convert `note/figure1.svg` to PDF first (Inkscape: `inkscape figure1.svg --export-type=pdf`).{% endif %}
 
