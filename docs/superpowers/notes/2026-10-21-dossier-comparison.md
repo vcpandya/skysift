@@ -31,8 +31,8 @@ Four things did not hold on real data and are findings below: the Gaia star quer
 fixed, archive season 3 does not vote, the FAP is "1 in 170" and not the "0 of 1,716" the spec quoted, and the pack
 builder failed on the real rung 5 row (since fixed in the pack round). The fix round of the same day (appendix) changed
 the centroid error and the provenance. After the final review the on-target binary term is two sub-scenarios (finding
-8): KIC 6146676 reads 0.78 percent ("under 1 percent") and KIC 5689121 1.2 percent ("about 1 percent"). The numbers in
-this note come from that last run.
+8): KIC 6146676 reads 1.3 percent and KIC 5689121 1.4 percent, both "about 1 percent". The numbers in this note come
+from that last run.
 
 ## What ran
 
@@ -51,7 +51,7 @@ Every engine command ran with `SKYSIFT_DATA_DIR=.superpowers/dossier-run`,
 `SKYSIFT_BLOB_URL=file://.superpowers/sample-run/blobs`, `SKYSIFT_DATABASE_URL=sqlite:///.superpowers/dossier-run/engine.db`
 and `PYTHONUTF8=1`. The dossier and pack commands ran below normal priority (`start /belownormal`).
 
-## Network calls (the copy's `queries` table, rows 3137 to 3191)
+## Network calls (the copy's `queries` table, rows 3137 to 3203)
 
 | Rows | Service | Status | What | Bytes |
 | --- | --- | --- | --- | --- |
@@ -68,6 +68,8 @@ and `PYTHONUTF8=1`. The dossier and pack commands ran below normal priority (`st
 | 3176 to 3179 | gaia | 200 | re-review round: the same four queries, from the clean tree at 2588897, the run behind the golden block (07:07:11 to 07:07:17 UTC) | 359, 57, 29, 608 |
 | 3180 to 3183 | gaia | 200 | final review: the four queries of KIC 6146676 from HEAD 04173f6 with this round's diff applied, for the interim golden block of 0b84077 (08:39:29 to 08:39:37 UTC) | 359, 57, 29, 608 |
 | 3184 to 3191 | gaia | 200 | final review: the four queries of each star from the clean tree at 0b84077 (KIC 6146676 08:46:54 to 08:47:01, the golden block; KIC 5689121 08:47:23 to 08:47:29) | 359, 57, 29, 608; 360, 58, 29, 527 |
+| 3192 to 3195 | gaia | 200 | prior-window round: the four queries of KIC 6146676 from HEAD a49ba9b with the fpp diff applied, for the interim golden block of 1f66c29 (08:57:59 to 08:58:06 UTC) | 359, 57, 29, 608 |
+| 3196 to 3203 | gaia | 200 | prior-window round: the four queries of each star from the clean tree at 1f66c29 (KIC 6146676 09:05:15 to 09:05:21, the golden block; KIC 5689121 09:05:46 to 09:05:52) | 359, 57, 29, 608; 360, 58, 29, 527 |
 
 Nothing else reached the network: no catalogue query (rung 4 was left out of the ladder recheck), no light curve
 download (both raw files were in the blob store) and no Zenodo call (no token).
@@ -141,23 +143,22 @@ into dips, and 11 of the 999 calibration stars give a box-shaped peak above 50 t
 of 1,998; 37 inverted, 1 scrambled at 20.2). Which nulls count is a decision for the FAP rule, not something to tune
 here.
 
-**8. With the EB term corrected, KIC 6146676 is still below the 1 to 60 percent band of spec 4.2 and KIC 5689121
-sits at its lower edge.** The final review found that spec 4.2 multiplied the secondary limit and the odd/even limit
-into one on-target binary scenario, though the two tests belong to exclusive hypotheses: an eclipsing binary at P shows
-a secondary at phase 0.5, one at 2P shows odd and even eclipses of different depth, and no binary is both. As ruled,
-the on-target binary is now two sub-scenarios sharing the EB prior equally, EB-P (geometry at P, data S_sec x S_v) and
-EB-2P (geometry at 2P, data S_oe x S_v), summed with PL and BEB. Both numbers, for the sign-off packet:
+**8. With the EB term corrected, both FPPs sit at the lower edge of the 1 to 60 percent band of spec 4.2.** The final
+review found that spec 4.2 multiplied the secondary limit and the odd/even limit into one on-target binary scenario,
+though the two tests belong to exclusive hypotheses: an eclipsing binary at P shows a secondary at phase 0.5, one at 2P
+shows odd and even eclipses of different depth, and no binary is both. As ruled, the on-target binary is now two
+sub-scenarios about different orbital periods, each with the full binary fraction and the period window around its own
+period: EB-P (g 0.0342 over P/2 to 2P, geometry at P, data S_sec x S_v) and EB-2P (g 0.0413 over P to 4P, geometry at
+2P, data S_oe x S_v), summed with PL and BEB. Both numbers, for the sign-off packet:
 
 | Target | FPP, spec 4.2 as first written | FPP, two sub-scenarios (as ruled) | Words now |
 | --- | --- | --- | --- |
-| KIC 6146676 | 0.000139 (0.0139 percent; EB weight 2.86e-7) | 0.00775 (0.78 percent; EB-P 1.52e-5, EB-2P 8.5e-7, PL 2.05e-3) | under 1 percent |
-| KIC 5689121, no pixel data | 0.00895 (0.90 percent; EB weight 1.65e-7) | 0.0123 (1.2 percent; EB-P 1.07e-5, EB-2P 1.05e-6, BEB 3.08e-5, PL 3.43e-3) | about 1 percent |
+| KIC 6146676 | 0.000139 (0.0139 percent; EB weight 2.86e-7) | 0.0129 (1.29 percent; EB-P 2.52e-5, EB-2P 1.70e-6, PL 2.05e-3) | about 1 percent |
+| KIC 5689121, no pixel data | 0.00895 (0.90 percent; EB weight 1.65e-7) | 0.0144 (1.44 percent; EB-P 1.73e-5, EB-2P 2.10e-6, BEB 3.08e-5, PL 3.43e-3) | about 1 percent |
 
-The reviewer's scratch estimate of 1.3 percent for KIC 6146676 gave each hypothesis the full binary fraction and its
-own period window (g 0.0342 over P/2 to 2P for EB-P, 0.0413 over P to 4P for EB-2P); the same arithmetic gives 1.29
-percent here (1.44 percent for KIC 5689121). The ruling's equal share halves the prior of each and keeps the one window
-of the original EB prior (0.0413), which gives the 0.78 percent above. That choice decides whether KIC 6146676 enters
-the band, so it belongs in the sign-off, and `SIGNED_OFF` stays False.
+A first version of the split halved one shared prior between the two hypotheses and gave 0.78 and 1.2 percent; the
+ruling was corrected, since each hypothesis is about its own period and halving understates both. `SIGNED_OFF` stays
+False until Vikram signs off the factor tables.
 
 The background binary term still vanishes for KIC 6146676 (X_mean 2.2e-222). Since the fix round the averaged centroid
 uses the three voting seasons only, and its error sigma_c is the larger of two numbers: the error of the
@@ -167,7 +168,7 @@ its 2.0 arcsec floor. The target sits 0.762 arcsec (about 5.5 sigma_c) from the 
 bright neighbour, 6.38 arcsec from it, sits 32 sigma outside the confusion radius. The spec expected about 4.6 sigma,
 which is the study's multi-quarter offset error (0.9 arcsec), not the per-season Monte Carlo error; with 0.9 arcsec
 the product FPP would have been 0.0174 percent, so the miss of the band was an on-target binary matter, which the
-correction above addresses. Rung 5's own `centroid_sigma_pix_mean` (0.0641 pixel) is a different number on purpose:
+correction above settles. Rung 5's own `centroid_sigma_pix_mean` (0.0641 pixel) is a different number on purpose:
 the plain mean of the voting seasons' errors, kept as the rung reports it, while the FPP needs the error of the
 averaged centroid.
 
@@ -292,7 +293,7 @@ Rung 5: pass, "the dip is on the target in 3/3 seasons (centroid >= 17.5 sigma n
 
 ### Provenance
 
-Search version 5+6cfe4cf4, effective ladder version 4, git 0b84077.
+Search version 5+6cfe4cf4, effective ladder version 4, git 1f66c29.
 
 | Rung | Status | Ladder version | Written |
 | --- | --- | --- | --- |
@@ -307,14 +308,14 @@ Search version 5+6cfe4cf4, effective ladder version 4, git 0b84077.
 
 False alarm: "1 in 170", 11 of 1998 null searches at or above SDE 50.5 (by null kind: inverted 11 of 999, scrambled 0 of 999), calibration version 5+42061727 (signal search 5+6cfe4cf4, version matches True).
 
-**KIC 6146676**: FPP 0.007754 ("under 1 percent", label "False positive", pixels True, signed off False), confusion radius 2 arcsec. Centroid error sigma_c 0.1373 arcsec, the statistical one of statistical 0.1373 and scatter 0.1103 arcsec. Spec 4.2 as first written (one EB at 2P weighted by S_sec x S_oe): EB weight 2.856e-07, FPP 0.000139.
+**KIC 6146676**: FPP 0.01292 ("about 1 percent", label "False positive", pixels True, signed off False), confusion radius 2 arcsec. Centroid error sigma_c 0.1373 arcsec, the statistical one of statistical 0.1373 and scatter 0.1103 arcsec. Spec 4.2 as first written (one EB at 2P weighted by S_sec x S_oe): EB weight 2.856e-07, FPP 0.000139.
 
 | Scenario | Prior | Geometric | Data | Weight | Share of the total |
 | --- | --- | --- | --- | --- | --- |
-| PL | 0.1604 | 0.01284 | 0.9976 | 0.002054 | 0.9922 |
-| BEB | 0.084 | 0.02022 | 2.234e-222 | 3.795e-225 | 1.833e-222 |
-| EB-P | 0.005371 | 0.01682 | 0.1683 | 1.52e-05 | 0.007344 |
-| EB-2P | 0.005371 | 0.0106 | 0.01491 | 8.487e-07 | 0.00041 |
+| PL | 0.1604 | 0.01284 | 0.9976 | 0.002054 | 0.9871 |
+| BEB | 0.084 | 0.02022 | 2.234e-222 | 3.795e-225 | 1.824e-222 |
+| EB-P | 0.008896 | 0.01682 | 0.1683 | 2.518e-05 | 0.0121 |
+| EB-2P | 0.01074 | 0.0106 | 0.01491 | 1.697e-06 | 0.0008157 |
 
 | Scenario | Factor | Value |
 | --- | --- | --- |
@@ -336,11 +337,10 @@ False alarm: "1 in 170", 11 of 1998 null searches at or above SDE 50.5 (by null 
 | BEB | centroid_sigma_arcsec | 0.1373 |
 | EB-P | class | M |
 | EB-P | f_bin | 0.26 |
-| EB-P | g_P | 0.04132 |
-| EB-P | prior_share | 0.5 |
 | EB-P | pair_mass_msun | 0.7545 |
 | EB-P | fit_b | 0.8933 |
 | EB-P | S_v | 1 |
+| EB-P | g_P | 0.03422 |
 | EB-P | a_P_au | 0.2094 |
 | EB-P | secondary_predicted_ppm | 218.7 |
 | EB-P | secondary_ppm | 95.43 |
@@ -348,11 +348,10 @@ False alarm: "1 in 170", 11 of 1998 null searches at or above SDE 50.5 (by null 
 | EB-P | S_sec | 0.1683 |
 | EB-2P | class | M |
 | EB-2P | f_bin | 0.26 |
-| EB-2P | g_P | 0.04132 |
-| EB-2P | prior_share | 0.5 |
 | EB-2P | pair_mass_msun | 0.7545 |
 | EB-2P | fit_b | 0.8933 |
 | EB-2P | S_v | 1 |
+| EB-2P | g_2P | 0.04132 |
 | EB-2P | a_2P_au | 0.3324 |
 | EB-2P | odd_even_predicted_ppm | 546.7 |
 | EB-2P | odd_even_ppm | 69.28 |
@@ -368,14 +367,14 @@ False alarm: "1 in 170", 11 of 1998 null searches at or above SDE 50.5 (by null 
 | 2073896190921609600 | 13.51 | 19.38 | 0.05242 | yes | 12.75 | 0 |
 | 2073896289692177024 | 18.62 | 18.88 | 0.08034 | yes | 17.86 | 0 |
 
-**KIC 5689121**: FPP 0.01226 ("about 1 percent", label "False positive (no pixel data yet)", pixels False, signed off False), confusion radius 3.98 arcsec. Spec 4.2 as first written (one EB at 2P weighted by S_sec x S_oe): EB weight 1.646e-07, FPP 0.008954.
+**KIC 5689121**: FPP 0.01442 ("about 1 percent", label "False positive (no pixel data yet)", pixels False, signed off False), confusion radius 3.98 arcsec. Spec 4.2 as first written (one EB at 2P weighted by S_sec x S_oe): EB weight 1.646e-07, FPP 0.008954.
 
 | Scenario | Prior | Geometric | Data | Weight | Share of the total |
 | --- | --- | --- | --- | --- | --- |
-| PL | 0.1409 | 0.02623 | 0.9286 | 0.003431 | 0.9877 |
-| BEB | 0.07 | 0.04136 | 0.01065 | 3.084e-05 | 0.008877 |
-| EB-P | 0.003981 | 0.03437 | 0.07825 | 1.071e-05 | 0.003083 |
-| EB-2P | 0.003981 | 0.02165 | 0.0122 | 1.051e-06 | 0.0003027 |
+| PL | 0.1409 | 0.02623 | 0.9286 | 0.003431 | 0.9856 |
+| BEB | 0.07 | 0.04136 | 0.01065 | 3.084e-05 | 0.008858 |
+| EB-P | 0.00642 | 0.03437 | 0.07825 | 1.727e-05 | 0.00496 |
+| EB-2P | 0.007963 | 0.02165 | 0.0122 | 2.103e-06 | 0.0006041 |
 
 | Scenario | Factor | Value |
 | --- | --- | --- |
@@ -397,11 +396,10 @@ False alarm: "1 in 170", 11 of 1998 null searches at or above SDE 50.5 (by null 
 | BEB | centroid_sigma_arcsec | n/a |
 | EB-P | class | M |
 | EB-P | f_bin | 0.26 |
-| EB-P | g_P | 0.03063 |
-| EB-P | prior_share | 0.5 |
 | EB-P | pair_mass_msun | 0.753 |
 | EB-P | fit_b | 0.8611 |
 | EB-P | S_v | 1 |
+| EB-P | g_P | 0.02469 |
 | EB-P | a_P_au | 0.1023 |
 | EB-P | secondary_predicted_ppm | 203.1 |
 | EB-P | secondary_ppm | 7.054 |
@@ -409,11 +407,10 @@ False alarm: "1 in 170", 11 of 1998 null searches at or above SDE 50.5 (by null 
 | EB-P | S_sec | 0.07825 |
 | EB-2P | class | M |
 | EB-2P | f_bin | 0.26 |
-| EB-2P | g_P | 0.03063 |
-| EB-2P | prior_share | 0.5 |
 | EB-2P | pair_mass_msun | 0.753 |
 | EB-2P | fit_b | 0.8611 |
 | EB-2P | S_v | 1 |
+| EB-2P | g_2P | 0.03063 |
 | EB-2P | a_2P_au | 0.1624 |
 | EB-2P | odd_even_predicted_ppm | 507.8 |
 | EB-2P | odd_even_ppm | 0.4658 |
@@ -499,7 +496,8 @@ The whole-branch review asked for four fixes and a set of minors, in one code co
    the pack's probability sentence and the Research Note abstract say it is not computed.
 2. The FAP split by null kind is shown under the pooled number on the page, in the verdict popup and in the standalone
    export.
-3. The on-target binary is two sub-scenarios, EB-P and EB-2P (finding 8). The result keeps the spec's product and its
+3. The on-target binary is two sub-scenarios, EB-P and EB-2P (finding 8; first with a halved shared prior, then
+   with each hypothesis's own prior window, see the next appendix). The result keeps the spec's product and its
    FPP (`spec_product`) beside the new sum, the factor tables list both sub-scenarios with their weights, spec 4.2
    records the change in one line, and `SIGNED_OFF` stays False.
 4. `skysift pack --zenodo-live` and a live Zenodo client in `build_pack` are refused while `SIGNED_OFF` is False; the
@@ -518,4 +516,15 @@ both modes. The golden block was written twice: once from HEAD 04173f6 with the 
 "04173f6-dirty", so the code commit is green on its own), then from the clean tree at 0b84077, so its `git_commit`
 names that commit. The only differences between the two are `generated` and `git_commit`. The runs made 12 Gaia calls
 (rows 3180 to 3191, all 200).
+
+## Appendix: prior-window round (21 October 2026)
+
+The corrected ruling gives each eclipsing-binary hypothesis the full binary fraction and the period window around its
+own period: EB-P takes `g` over P/2 to 2P (0.0342 for KIC 6146676) and EB-2P over P to 4P (0.0413); the first version
+halved one shared prior (0.0413 / 2 each). The spec product beside the sum is unchanged (prior `f_bin x g` over P to
+4P, geometry at 2P, S_sec x S_oe x S_v). Results: KIC 6146676 0.0129 (1.29 percent), KIC 5689121 0.0144 (1.44
+percent), both "about 1 percent", which match the reviewer's scratch numbers. The code commit is 1f66c29, with an
+interim golden block from HEAD a49ba9b plus the diff (`git_commit` "a49ba9b-dirty"); this note's commit carries the
+golden block regenerated from the clean tree at 1f66c29, which differs from the interim one in `generated` and
+`git_commit` only. The runs made 12 Gaia calls (rows 3192 to 3203, all 200).
 

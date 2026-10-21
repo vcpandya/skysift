@@ -1,6 +1,6 @@
 {
  "dossier_version": "1",
- "generated": "2026-10-21T08:58:06.171461+00:00",
+ "generated": "2026-10-21T09:05:21.685211+00:00",
  "target": {
   "target_id": "kic-006146676",
   "source": "kbonus_bkg",
@@ -728,6 +728,6 @@
    "rung4_novelty": "3",
    "rung5_pixels": "4"
   },
-  "git_commit": "a49ba9b-dirty"
+  "git_commit": "1f66c29"
  }
 }
