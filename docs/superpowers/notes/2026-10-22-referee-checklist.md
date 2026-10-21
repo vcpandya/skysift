@@ -40,6 +40,7 @@ Status words: **met** (nothing to do), **partial** (present but not in the form 
 | 24 | Candidate wording and status | ExoFOP: lowercase letters only after confirmation; the project's own rule | "candidate" throughout | met |
 | 25 | The routes described truthfully (section 1) | the sources of section 1 | README step 3 says the editor reviews for fit; step 4 says the archive adds objects from the literature; the ExoFOP step attaches the ephemeris to the KIC page | partial: step 2 (files and the note now; planet parameters only with a community TOI, which needs a paper), step 4 (a refereed paper, not the Research Note, opens the archive route) |
 | 26 | The one figure, with the data points, the bins and the model | RNAAS: one figure or one table | `note/figure1` | met |
+| 27 | A star with two independent candidate periods reported as two candidates (own ephemeris, errors, odd-even, secondary and pixel result each) | Kepler multi-planet KOIs carry one row per candidate (Thompson et al. 2018, Table 2); Bienias and Szabo 2025 report per signal | The dossier and the pack are one per target; the stage 2 signal with the highest score becomes the dossier and the other period is not in the note (KIC 6699887 carries 15.11 d and 47.69 d at stage 2 after the 22 October pixel reopen, ratio 3.16, not an alias) | missing: not covered by this plan; recorded as a gap for a per-signal pack or a two-candidate note |
 
 ## 3. What the gaps become
 
@@ -47,6 +48,7 @@ Status words: **met** (nothing to do), **partial** (present but not in the form 
 - Row 13: a TRICERATOPS run in its own environment (it pins numpy below 2 and scipy 1.13, so it cannot share the engine's venv), fed from the dossier, stored as a cross-check block.
 - Row 11: the centroid floor, measured on the live pixel files, with a stored constant.
 - Rows 8, 17, 18, 19, 21, 25: pack and note changes.
+- Row 27: not in this plan. A per-signal pack (or a two-candidate note for one star) is its own change to the dossier's one-per-target shape; left for a later plan, and the README of a pack for such a star should say that a second period exists until then.
 
 ## 4. Sources
 
