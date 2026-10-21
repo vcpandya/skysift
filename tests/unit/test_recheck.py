@@ -26,7 +26,7 @@ from skysift.store.db import ArtifactRow, QueryRow, RunRow, SignalRow, Store, ma
 from skysift.vetting.rung2_shape import Rung2Shape
 from tests.synthetic import _with_dip, inject_transit, make_lightcurve
 from tests.unit import fake_fetch
-from tests.unit.synthetic_tpf import tpf_name, tpf_quarters
+from tests.unit.synthetic_tpf import FakeMast, listing_html, tpf_name, tpf_quarters
 from tests.unit.test_pixels import EPH
 
 LC_RUNGS = ("rung1_detection", "rung1_events", "rung2_shape", "rung3_stability", "rung4_novelty")
@@ -514,3 +514,58 @@ def test_a_pixel_archive_outage_is_retried_by_the_next_recheck(env):
     assert env.store.signal_status(sid) == "undetermined"
     rep = recheck(env.store, env.blob, env.settings, fetch=fake_fetch.fetch, tpf_loader=env.tpf_loader)
     assert rep.steps["pixels"] == 1 and env.store.signal_status(sid) == "candidate_stage2"
+
+
+def test_a_first_pixel_crash_is_retried_once(env):
+    sid = env.seed_signal(tpfs="target")
+    calls = []
+
+    def crash_then_load(kic, **kw):
+        calls.append(kic)
+        if len(calls) == 1:
+            raise RuntimeError("bad header")
+        return env.tpf_loader(kic, **kw)
+    recheck(env.store, env.blob, env.settings, fetch=fake_fetch.fetch, tpf_loader=crash_then_load)
+    assert env.store.latest_tests(sid)[-1]["reason"].startswith("exception: ")
+    assert env.store.signal_status(sid) == "undetermined"
+    rep = recheck(env.store, env.blob, env.settings, fetch=fake_fetch.fetch, tpf_loader=crash_then_load)
+    assert rep.steps["pixels"] == 1 and len(calls) == 2 and env.store.signal_status(sid) == "candidate_stage2"
+
+
+def test_a_second_pixel_crash_stays_for_a_person(env):
+    sid = env.seed_signal(tpfs="target")
+    calls = []
+
+    def always_crash(kic, **kw):
+        calls.append(kic)
+        raise RuntimeError("bad header")
+    for _ in range(3):
+        recheck(env.store, env.blob, env.settings, fetch=fake_fetch.fetch, tpf_loader=always_crash)
+    assert len(calls) == 2 and env.store.signal_status(sid) == "undetermined"
+    assert [r["step"] for r in env.store.rechecks(sid)] == ["pixels", "pixels"]
+
+
+def test_the_pixel_step_end_to_end_through_fetch_tpfs(env):
+    """The default loader (``fetch_tpfs``) inside a recheck: the stamped fetch reaches a fake MAST, the files go into
+    the blob as the target's ``kind="tpf"`` artifacts, every request is logged under the target, and the rung 5 row
+    and the pinned ``pixels.npz`` land."""
+    from skysift.lc.tpf import tpf_listing_url
+    sid = env.seed_signal(tpfs="target")
+    kic, (mode, radec) = next(iter(env.tpfs.items()))
+    files = {tpf_name(kic, b.quarter): b for b in tpf_quarters(mode, target_radec=radec, kic=kic)}
+    mast = FakeMast({tpf_listing_url(kic): listing_html(kic, sorted(files)), **files}, other=fake_fetch.fetch)
+    rep = recheck(env.store, env.blob, env.settings, fetch=mast)
+    with env.store.session() as s:
+        tid = s.get(SignalRow, sid).target_id
+    assert rep.steps["pixels"] == 1 and env.store.signal_status(sid) == "candidate_stage2"
+    assert mast.calls == 6 and env.tpf_calls == []
+    rung5 = env.store.latest_tests(sid)[-1]
+    assert rung5["rung"] == "rung5_pixels" and rung5["metrics"]["tpf_manifest"] == sorted(files)
+    with env.store.session() as s:
+        tpfs = s.scalars(select(ArtifactRow).where(ArtifactRow.kind == "tpf")).all()
+        assert len(tpfs) == 5 and {a.target_id for a in tpfs} == {tid}
+        assert {a.url for a in tpfs} == {tpf_listing_url(kic) + n for n in files}
+        npz = s.scalars(select(ArtifactRow).where(ArtifactRow.kind == "pixels")).one()
+        assert npz.pinned and npz.url == f"skysift://pixels/{sid}" and npz.sha256 == rung5["metrics"]["pixels_sha256"]
+        mast_queries = s.scalars(select(QueryRow).where(QueryRow.service == "mast")).all()
+        assert len(mast_queries) == 6 and {q.target_id for q in mast_queries} == {tid}

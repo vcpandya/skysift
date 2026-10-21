@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 
 from skysift.config import Thresholds
-from skysift.lc.tpf import parse_tpf
+from skysift.lc.tpf import fetch_tpfs, parse_tpf, tpf_listing_url
 from skysift.models import LightCurve, Signal, Target, TestStatus
 from skysift.net import ServiceUnavailable
 from skysift.pipeline import build_ladder
@@ -18,7 +18,15 @@ from skysift.store.blob import LocalBlob
 from skysift.store.db import PIXELS_URL, ArtifactRow, Store
 from skysift.vetting.base import DataBundle
 from skysift.vetting.rung5_pixels import Rung5Pixels
-from tests.unit.synthetic_tpf import NEIGHBOUR_KIC, TARGET_KIC, TARGET_RADEC, tpf_name, tpf_quarters
+from tests.unit.synthetic_tpf import (
+    NEIGHBOUR_KIC,
+    TARGET_KIC,
+    TARGET_RADEC,
+    FakeMast,
+    listing_html,
+    tpf_name,
+    tpf_quarters,
+)
 from tests.unit.test_pixels import EPH
 
 SIGNAL = Signal(target_id="kic-006146676", detector="box_dip", detector_version="1", period=EPH.period, t0=EPH.t0,
@@ -43,11 +51,12 @@ def raising(exc):
     return load
 
 
-def _bundle(target: Target, store=None) -> DataBundle:
+def _bundle(target: Target, store=None, fetch=None) -> DataBundle:
     t = np.arange(131.5, 131.5 + 465.0, 29.4 / 1440)
     lc = LightCurve(time=t, flux=np.ones(t.size), flux_err=np.full(t.size, 1e-3), quality=np.zeros(t.size, int),
                     quarter=np.minimum(1 + ((t - 131.5) // 93.0).astype(int), 5), meta={})
-    return DataBundle(lc=lc, fnorm=np.ones(t.size), target=target, thresholds=Thresholds(), store=store)
+    extra = {} if fetch is None else {"fetch": fetch}
+    return DataBundle(lc=lc, fnorm=np.ones(t.size), target=target, thresholds=Thresholds(), store=store, **extra)
 
 
 def _target(**kw) -> Target:
@@ -208,3 +217,66 @@ def test_build_ladder_with_pixels_appends_rung5():
     assert rung.cost == 1000.0 and math.isfinite(rung.cost)
     assert [r.name for r in build_ladder("4", with_novelty=False, with_pixels=True).rungs][-2:] == [
         "rung3_stability", "rung5_pixels"]
+
+
+def test_q0_joins_q1s_season_and_does_not_vote_on_its_own(bundle_with_tpfs):
+    """Q0 has Q1's module and roll (archive SEASON 3 for both; Q4 is on another module): a two-transit Q0 with the dip
+    on the neighbour is stacked with Q1 and Q5, so no season of Q0 alone or of Q0 with Q4 exists to vote."""
+    r = Rung5Pixels(tpf_loader=loader("neighbour", with_q0=True)).run(SIGNAL, bundle_with_tpfs)
+    by_season = {s["season"]: s for s in r.metrics["seasons"]}
+    assert r.status == TestStatus.FAIL and r.reason.endswith("4/4 seasons)")
+    assert by_season[3]["quarters"] == [0, 1, 5] and by_season[2]["quarters"] == [4]
+    assert by_season[3]["n_events"] == 20 and r.metrics["n_seasons"] == 4 and r.metrics["unusable_quarters"] == []
+    assert by_season[3]["nearer"] == "neighbour"
+    ok = Rung5Pixels(tpf_loader=loader("target", with_q0=True)).run(SIGNAL, bundle_with_tpfs)
+    assert ok.status == TestStatus.PASS and {s["season"]: s["quarters"] for s in ok.metrics["seasons"]}[3] == [0, 1, 5]
+
+
+def _mast(mode="target", fail=()):
+    files = {tpf_name(NEIGHBOUR_KIC, b.quarter): b for b in tpf_quarters(mode)}
+    return FakeMast({"listing": listing_html(NEIGHBOUR_KIC, sorted(files)), **files}, fail=fail)
+
+
+def test_a_partial_fetch_is_an_outage_and_the_retry_fetches_only_the_rest(tmp_path):
+    store = Store(f"sqlite:///{tmp_path.as_posix()}/t.db"); store.init_schema()
+    blob = LocalBlob(tmp_path / "blobs")
+    q3 = tpf_name(NEIGHBOUR_KIC, 3)
+    mast = _mast(fail={q3})
+    rung = Rung5Pixels(tpf_loader=fetch_tpfs, blob=blob, signal_id=3)
+    r = rung.run(SIGNAL, _bundle(_target(), store=store, fetch=mast))
+    assert r.status == TestStatus.UNDETERMINED and r.reason == "outage:mast: 1 of 5 pixel files unreachable"
+    assert r.metrics["tpf_missing"] == [{"name": q3, "cause": "unreachable"}] and r.metrics["n_tpf"] == 4
+    assert store.counts()["artifacts"] == 4                # the four files that came are kept for the retry
+    mast.fail.clear(); mast.urls.clear()
+    r = rung.run(SIGNAL, _bundle(_target(), store=store, fetch=mast))
+    assert r.status == TestStatus.PASS and r.metrics["tpf_missing"] == [] and r.metrics["n_tpf"] == 5
+    assert mast.urls == [tpf_listing_url(NEIGHBOUR_KIC), tpf_listing_url(NEIGHBOUR_KIC) + q3]
+    _strict(r.metrics)
+
+
+def test_unreadable_pixel_files_are_recorded_and_do_not_block_the_verdict(bundle_with_tpfs):
+    def load(kic, **kw):
+        from skysift.lc.tpf import TpfSet
+        return TpfSet(tpfs_of("target"), [{"name": "kplr-broken_lpd-targ.fits.gz", "cause": "unreadable"}])
+    r = Rung5Pixels(tpf_loader=load).run(SIGNAL, bundle_with_tpfs)
+    assert r.status == TestStatus.PASS and r.metrics["tpf_missing"][0]["cause"] == "unreadable"
+    from skysift.lc.tpf import TpfSet
+    none = Rung5Pixels(tpf_loader=lambda kic, **kw: TpfSet([], [{"name": "x", "cause": "unreadable"}]))
+    r = none.run(SIGNAL, bundle_with_tpfs)
+    assert r.status == TestStatus.UNDETERMINED and r.reason == "pixels: no readable pixel files (1 listed)"
+
+
+def test_a_rerun_with_other_arrays_releases_the_previous_file(tmp_path):
+    store = Store(f"sqlite:///{tmp_path.as_posix()}/t.db"); store.init_schema()
+    blob = LocalBlob(tmp_path / "blobs")
+    b = _bundle(_target(), store=store)
+    first = Rung5Pixels(tpf_loader=loader("target"), blob=blob, signal_id=9).run(SIGNAL, b).metrics["pixels_sha256"]
+    with store.session() as s:
+        old_path = s.get(ArtifactRow, first).local_path
+    second = Rung5Pixels(tpf_loader=loader("target", seed=1), blob=blob, signal_id=9).run(SIGNAL, b)
+    new = second.metrics["pixels_sha256"]
+    assert new != first and not blob.exists(old_path)
+    with store.session() as s:
+        assert s.get(ArtifactRow, first).deleted_at is not None
+        assert s.get(ArtifactRow, new).pinned and s.get(ArtifactRow, new).deleted_at is None
+    assert store.live_artifact(PIXELS_URL.format(signal_id=9))["sha256"] == new

@@ -9,7 +9,8 @@ stage-1 candidate of the current search version that no reviewer has decided on,
 3. the catalogue retry: when rung 4 could not reach a catalogue (``outage:``), rung 4 alone runs again;
 4. the pixel stage (``step_pixels``): ``rung5_pixels`` alone on the Kepler target pixel files, for a stage-1
    candidate or an undetermined signal whose reason only the pixels can settle; a pass promotes to stage 2, a dip on
-   the neighbouring star rejects. Once per signal: a rung 5 row other than an archive outage settles it.
+   the neighbouring star rejects. Once per signal: a rung 5 row settles it, except an archive outage (retried) and
+   a first crash (retried once).
 
 A step computes everything first and touches the store not at all: it returns a ``StepWrite`` (its ``rechecks`` row
 with the outcome, "skipped" and why when it could not run, the test rows that point back to it, and the P/2 signal
@@ -23,7 +24,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from skysift import net
 from skysift.config import Settings
@@ -52,6 +53,7 @@ from skysift.store.db import (
     StepWrite,
     Store,
     TargetRow,
+    TestRow,
     final_status_for,
     status_from_tests,
 )
@@ -151,17 +153,30 @@ def _latest(tests: list[dict], rung: str) -> dict | None:
     return next((t for t in tests if t["rung"] == rung), None)
 
 
+def _crashes(store: Store, signal_id: int, rung: str) -> int:
+    """How many of the signal's rows of ``rung`` record a crash (reason "exception: ...")."""
+    with store.session() as s:
+        return s.scalar(select(func.count()).select_from(TestRow).where(
+            TestRow.signal_id == signal_id, TestRow.rung == rung, TestRow.reason.like("exception:%")))
+
+
 def wants_pixels(store: Store, sig: StoredSignal, tests: list[dict], status: str | None = None) -> bool:
     """Step 4 applies: the signal is open and qualifies (``pixels_qualify``) on its rows other than rung 5's, and its
-    pixels are not settled. A rung 5 row settles them unless it could not reach the pixel archive (``outage:``),
-    which the next recheck retries; a verdict, or a reason the pixels gave themselves ("pixels: ..."), is final for
-    the signal, so a signal that stays in the queue is not fetched and localized at every recheck."""
+    pixels are not settled. A rung 5 row settles them unless it could not reach the pixel archive (``outage:``,
+    retried at every recheck) or it is the signal's first crash (``exception:``, retried once, spec 4.2; after a
+    second crash it stays for a person); a verdict, or a reason the pixels gave themselves ("pixels: ..."), is final
+    for the signal, so a signal that stays in the queue is not fetched and localized at every recheck."""
     status = store.signal_status(sig.id) if status is None else status
     if status not in OPEN_STATUSES:
         return False
     rung5 = _latest(tests, "rung5_pixels")
-    if rung5 is not None and not str(rung5["reason"]).startswith("outage:"):
-        return False
+    if rung5 is not None:
+        reason = str(rung5["reason"])
+        if reason.startswith("exception:"):
+            if _crashes(store, sig.id, "rung5_pixels") > 1:
+                return False
+        elif not reason.startswith("outage:"):
+            return False
     others = [t for t in tests if t["rung"] != "rung5_pixels"]
     return pixels_qualify(final_status_for(status_from_tests(others), others), others)
 

@@ -22,7 +22,9 @@ integer offset of its rounded target position relative to the season's first usa
 the union of all the shifted stamps (as the study built it from CRVAL1P/CRVAL2P), with invalid padding wherever a
 quarter has no pixel. A season votes only when both stars' 3x3 boxes lie complete on valid pixels of that frame: a
 truncated box pulls the centroid towards the frame interior and could reject a real candidate or pass a blend.
-``localise`` is the single-grid convenience wrapper.
+``localise`` is the single-grid convenience wrapper. "Season" is the Kepler archive SEASON (0 to 3) each
+``QuarterData`` carries from its TPF header (Q0 shares Q1's module and roll, so it shares Q1's season), and
+``quarter % 4`` with Q0 counted as Q1 when it is not known (``quarter_season``).
 
 Known limitation: the Gaussian PSF is not the Kepler PRF, so the two-source depth errors are somewhat optimistic
 when the model does not match the stars' images (on a pixel-integrated synthetic stamp a dip on the neighbour put
@@ -69,13 +71,24 @@ class Ephemeris:
 @dataclass
 class QuarterData:
     """One quarter's target pixel file: the cube (n_cad, rows, cols) and the stars' positions, (col, row) in this
-    quarter's own stamp."""
+    quarter's own stamp. ``season`` is the Kepler archive SEASON (0 to 3, the TPF header's SEASON: quarters on the
+    same module and roll, Q0 sharing Q1's); None falls back to ``quarter_season``."""
     quarter: int
     cube: np.ndarray
     time: np.ndarray
     quality: np.ndarray
     pos_target: tuple[float, float]
     pos_neighbour: tuple[float, float]
+    season: int | None = None
+
+
+def quarter_season(qd: QuarterData) -> int:
+    """The season a quarter is stacked in: its archive SEASON when known, else ``season_of(max(quarter, 1))`` (Q0
+    has Q1's module and roll, so it never joins Q4's season). The fallback numbers seasons ``quarter % 4``, not the
+    archive's ``(quarter + 2) % 4``; the grouping is the same."""
+    if qd.season is not None:
+        return int(qd.season)
+    return int(season_of(np.array([max(int(qd.quarter), 1)]))[0])
 
 
 _NAN2 = (math.nan, math.nan)
@@ -144,6 +157,10 @@ class Localisation:
     verdict: str            # "pass" | "fail" | "undetermined"
     reason: str
     images: list[SeasonImage] = field(default_factory=list, repr=False)
+
+    def neighbour_votes(self) -> tuple[float, int, int]:
+        """(k sigma, n seasons on the neighbour, m voting seasons), as the fail verdict counts them."""
+        return neighbour_votes(self.seasons)
 
     def metrics(self) -> dict:
         """Strict-JSON metrics (no NaN or inf, no arrays) for the test row, the dashboard and the dossier."""
@@ -240,7 +257,7 @@ def _shift_into(img: np.ndarray, shape: tuple[int, int], dc: int, dr: int, fill)
 def season_images(quarters: list[QuarterData], eph: Ephemeris, *, in_half: float = 0.5, out_lo: float = 1.0,
                   out_hi: float = 3.0) -> list[SeasonImage]:
     """Per-season difference images from per-quarter stamps, sorted by season. Per quarter the events as in
-    ``difference_images``; quarters with non-finite star positions are dropped. Within a season (``season_of``)
+    ``difference_images``; quarters with non-finite star positions are dropped. Within a season (``quarter_season``)
     each quarter is offset from the season's first usable quarter by round(pos_target - first pos_target) per axis;
     the frame spans the minimum to maximum extent of all the shifted stamps, a quarter's missing pixels are invalid,
     and the events are stacked with per-pixel inverse-variance weights. Season positions are the first quarter's,
@@ -254,7 +271,7 @@ def season_images(quarters: list[QuarterData], eph: Ephemeris, *, in_half: float
             usable[int(qd.quarter)] = (qd, *res)
     by_season: dict[int, list[int]] = {}
     for q in sorted(usable):
-        by_season.setdefault(int(season_of(np.array([q]))[0]), []).append(q)
+        by_season.setdefault(quarter_season(usable[q][0]), []).append(q)
     images = []
     for s in sorted(by_season):
         qs = by_season[s]
@@ -536,6 +553,21 @@ def _neighbour_strength(s: SeasonResult) -> float:
     return max(-s.separation_sigma, by_depth if math.isfinite(by_depth) else -math.inf)
 
 
+def _voting(seasons: list[SeasonResult]) -> list[SeasonResult]:
+    """The seasons that vote, by season: both stars' boxes on the frame, a finite separation, enough events."""
+    return sorted((s for s in seasons if s.voting and s.n_events >= SEASON_EVENTS_MIN
+                   and math.isfinite(s.separation_sigma)), key=lambda s: s.season)
+
+
+def neighbour_votes(seasons: list[SeasonResult]) -> tuple[float, int, int]:
+    """(k, n, m): of the m voting seasons, the n that put the dip on the neighbour (``_on_neighbour``) and the
+    median of their neighbour strength in sigma (NaN when n is 0); the numbers of the fail verdict."""
+    voting = _voting(seasons)
+    neighbour = [s for s in voting if _on_neighbour(s)]
+    k = float(np.median([_neighbour_strength(s) for s in neighbour])) if neighbour else math.nan
+    return k, len(neighbour), len(voting)
+
+
 def verdict(seasons: list[SeasonResult], n_events_used: int) -> tuple[str, str]:
     """Spec 4.4 over the voting seasons (both stars' 3x3 boxes on the frame, a finite centroid and error, at least
     SEASON_EVENTS_MIN events): undetermined with fewer than TRANSITS_MIN usable transits or no voting season; pass
@@ -545,8 +577,7 @@ def verdict(seasons: list[SeasonResult], n_events_used: int) -> tuple[str, str]:
     ("ambiguous" when it lies within SEPARATION_SIGMA of the bisector)."""
     if n_events_used < TRANSITS_MIN:
         return "undetermined", f"pixels: {n_events_used} usable transits < {TRANSITS_MIN}"
-    voting = sorted((s for s in seasons if s.voting and s.n_events >= SEASON_EVENTS_MIN
-                     and math.isfinite(s.separation_sigma)), key=lambda s: s.season)
+    voting = _voting(seasons)
     if not voting:
         if seasons and all(not s.on_frame for s in seasons):
             return "undetermined", "pixels: no season holds both stars on the frame"
@@ -555,10 +586,9 @@ def verdict(seasons: list[SeasonResult], n_events_used: int) -> tuple[str, str]:
     if all(_on_target(s) for s in voting):
         k = min(s.separation_sigma for s in voting)
         return "pass", f"pixels: the dip is on the target in {m}/{m} seasons (centroid >= {k:.1f} sigma nearer)"
-    neighbour = [s for s in voting if _on_neighbour(s)]
-    if len(neighbour) > m / 2:
-        k = float(np.median([_neighbour_strength(s) for s in neighbour]))
-        return "fail", f"pixels: the dip is on the neighbour in {len(neighbour)}/{m} seasons ({k:.1f} sigma)"
+    k, n, _m = neighbour_votes(seasons)
+    if n > m / 2:
+        return "fail", f"pixels: the dip is on the neighbour in {n}/{m} seasons ({k:.1f} sigma)"
     s = next(s for s in voting if not _on_target(s))
     if abs(s.separation_sigma) <= SEPARATION_SIGMA:
         return "undetermined", f"pixels: season {s.season} ambiguous ({s.separation_sigma:.1f} sigma)"

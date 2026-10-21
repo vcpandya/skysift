@@ -9,7 +9,7 @@ from skysift.lc.tpf import TPF_BASE, fetch_tpfs, list_tpf_names, parse_tpf, tpf_
 from skysift.net import ServiceUnavailable
 from skysift.store.blob import LocalBlob
 from skysift.store.db import ArtifactRow, QueryRow, Store
-from tests.unit.synthetic_tpf import NEIGHBOUR_KIC, tpf_name, tpf_quarters
+from tests.unit.synthetic_tpf import NEIGHBOUR_KIC, FakeMast, archive_season, tpf_name, tpf_quarters
 
 KIC = 6146666
 NAME = tpf_name(KIC, 3)
@@ -32,26 +32,6 @@ def blob(tmp_path):
 @pytest.fixture
 def synthetic_tpf_bytes():
     return tpf_quarters("target", n_quarters=3, kic=NEIGHBOUR_KIC)[2]          # quarter 3
-
-
-class FakeMast:
-    """The archive: the directory URL answers the listing, a file URL the bytes registered under its name. Every
-    request is counted and logged like ``net.fetch`` logs it."""
-
-    def __init__(self, files: dict):
-        self.files, self.calls, self.urls = files, 0, []
-
-    def __call__(self, url, *, params=None, service, store=None, target_id=None, timeout=60.0, **_kw):
-        self.calls += 1; self.urls.append(url)
-        assert service == "mast"
-        data = self.files["listing"] if url.endswith("/") else next(
-            (v for k, v in self.files.items() if k != "listing" and url.endswith(k)), None)
-        if store is not None:
-            store.log_query(service, url, params or {}, 200 if data is not None else 404, len(data or b""),
-                            target_id=target_id)
-        if data is None:
-            raise ServiceUnavailable(f"{service} {url} -> HTTP 404")
-        return data
 
 
 def outage_fetch(url, *, service, **_kw):
@@ -83,6 +63,9 @@ def test_parse_tpf_reads_cube_quarter_and_wcs(synthetic_tpf_bytes):
     assert tpf.pixel_of(*synthetic_tpf_bytes.neighbour_radec) == pytest.approx(synthetic_tpf_bytes.pos_neighbour,
                                                                               abs=1e-6)
     assert tpf.aperture.shape == (9, 9) and int((tpf.aperture & 2).astype(bool).sum()) == 9
+    assert tpf.season == archive_season(3) == 1                 # the header SEASON, not quarter % 4
+    no_season = tpf_quarters("target", n_quarters=3, season=None)[2]
+    assert parse_tpf(no_season).season is None
 
 
 def test_parse_tpf_reads_plain_fits_and_a_failed_wcs_gives_nan(synthetic_tpf_bytes):
@@ -139,10 +122,26 @@ def test_fetch_tpfs_of_a_star_without_pixel_files_is_empty(store, blob):
     assert fetch_tpfs(KIC, fetch=fetch, blob=blob, store=store, target_id="t") == [] and fetch.calls == 1
 
 
+def test_a_missing_pixel_directory_is_no_pixel_files_not_an_outage(store, blob):
+    fetch = FakeMast({})                                   # the listing URL answers HTTP 404
+    got = fetch_tpfs(KIC, fetch=fetch, blob=blob, store=store, target_id="t")
+    assert got == [] and got.missing == [] and fetch.calls == 1
+
+
+def test_fetch_tpfs_reports_the_files_it_could_not_reach(store, blob, synthetic_tpf_bytes):
+    other = tpf_name(KIC, 4)
+    listing = LISTING.replace(f'<li><a href="{NAME}">'.encode(),
+                              f'<li><a href="{other}"></a><a href="{NAME}">'.encode())
+    fetch = FakeMast({"listing": listing, NAME: synthetic_tpf_bytes, other: b"unused"}, fail={other})
+    got = fetch_tpfs(KIC, fetch=fetch, blob=blob, store=store, target_id="t")
+    assert [t.quarter for t in got] == [3] and got.missing == [{"name": other, "cause": "unreachable"}]
+
+
 def test_fetch_tpfs_skips_an_unreadable_file_and_keeps_the_rest(store, blob, synthetic_tpf_bytes):
     other = tpf_name(KIC, 4)
     listing = LISTING.replace(f'<li><a href="{NAME}">'.encode(),
                               f'<li><a href="{other}"></a><a href="{NAME}">'.encode())
     fetch = FakeMast({"listing": listing, NAME: synthetic_tpf_bytes, other: b"<html>not a fits file</html>"})
     tpfs = fetch_tpfs(KIC, fetch=fetch, blob=blob, store=store, target_id="t")
-    assert [t.quarter for t in tpfs] == [3]
+    assert [t.quarter for t in tpfs] == [3] and tpfs.missing == [{"name": other, "cause": "unreadable"}]
+    assert store.counts()["artifacts"] == 1                 # the unreadable file is not kept

@@ -15,6 +15,8 @@ from skysift.lc.pixels import (
     leak_depth,
     localise,
     localise_quarters,
+    quarter_season,
+    season_images,
     snr_box_centroid,
     two_source_fit,
     verdict,
@@ -404,3 +406,29 @@ def test_localise_wrapper_carries_the_positions_into_the_season_images():
     assert all(im.pos_target == POS_TARGET and im.pos_neighbour == POS_NEIGHBOUR and im.offsets_pix == [(0, 0)]
                for im in loc.images)
     assert all(s.two_source for s in loc.seasons)
+
+
+def test_quarters_are_grouped_by_their_archive_season():
+    """A quarter's ``season`` (the TPF header's archive SEASON) decides its stack; without one, ``quarter % 4`` with
+    Q0 counted as Q1 (Q0 has Q1's module and roll, never Q4's)."""
+    qs = make_quarters("target")
+    for qd in qs:
+        qd.season = 3 if qd.quarter in (1, 5) else (qd.quarter + 2) % 4
+    images = season_images(qs, EPH)
+    assert {im.season: im.quarters for im in images} == {3: [1, 5], 0: [2], 1: [3], 2: [4]}
+    loc = localise_quarters(qs, EPH)
+    assert loc.verdict == "pass" and sorted(s.season for s in loc.seasons) == [0, 1, 2, 3]
+    q0 = QuarterData(quarter=0, cube=np.zeros((1, 2, 2)), time=np.zeros(1), quality=np.zeros(1, int),
+                     pos_target=(0.0, 0.0), pos_neighbour=(1.0, 1.0))
+    assert quarter_season(q0) == quarter_season(QuarterData(**{**q0.__dict__, "quarter": 1})) == 1
+    assert quarter_season(QuarterData(**{**q0.__dict__, "quarter": 4})) == 0
+    assert quarter_season(QuarterData(**{**q0.__dict__, "season": 3})) == 3
+
+
+def test_neighbour_votes_are_the_fail_verdicts_numbers():
+    cube, time, quality, quarter, eph, pt, pn = make_cube("neighbour")
+    loc = localise(cube, time, quality, quarter, eph, pt, pn)
+    k, n, m = loc.neighbour_votes()
+    assert loc.verdict == "fail" and (n, m) == (4, 4) and f"{n}/{m} seasons ({k:.1f} sigma)" in loc.reason
+    k, n, m = localise(*make_cube("target")).neighbour_votes()
+    assert (n, m) == (0, 4) and math.isnan(k)

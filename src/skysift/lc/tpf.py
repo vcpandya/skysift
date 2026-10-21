@@ -1,7 +1,8 @@
 """Kepler long-cadence target pixel files (TPFs) from the MAST archive, for the pixel rung (mission control spec 4.4).
 
 One directory per Kepler target, ``TPF_BASE``, listing one ``kplr<kic9>-<13 digits>_lpd-targ.fits.gz`` per quarter.
-A file holds the primary header (KEPLERID, QUARTER, RA_OBJ, DEC_OBJ of the Kepler target), the TARGETTABLES binary
+A file holds the primary header (KEPLERID, QUARTER, SEASON, RA_OBJ, DEC_OBJ of the Kepler target; SEASON is the
+archive's 0 to 3, the same for quarters on the same module and roll, Q0 sharing Q1's), the TARGETTABLES binary
 table (TIME in BKJD, QUALITY, the FLUX cube in e-/s) and the APERTURE image (bit 2 marks the optimal aperture the
 pipeline summed into SAP_FLUX) whose header carries the stamp's celestial WCS. ``fetch_tpfs`` lists the directory and
 fetches each file through ``net.fetch`` (service "mast", every request logged under the target), keeps it in the blob
@@ -46,6 +47,7 @@ class TPF:
     kepler_id: int | None = None
     ra_obj: float = math.nan    # the Kepler target's position from the primary header
     dec_obj: float = math.nan
+    season: int | None = None   # the archive SEASON (0 to 3) from the primary header, None when it is absent
 
     def pixel_of(self, ra: float, dec: float) -> tuple[float, float]:
         """Zero-based (col, row) of a sky position on this stamp's grid, pixel centres at integers; (NaN, NaN) when
@@ -67,6 +69,16 @@ class TPF:
         if mask.shape != self.cube.shape[1:] or not mask.any():
             return np.full(self.cube.shape[0], np.nan)
         return self.cube[:, mask].sum(axis=1)
+
+
+class TpfSet(list):
+    """The pixel files ``fetch_tpfs`` could read, as a list, with ``missing``: the listed files it could not, each
+    {"name", "cause"} with cause "unreachable" (the archive did not serve it: an outage the next recheck retries) or
+    "unreadable" (served, but not a readable TPF)."""
+
+    def __init__(self, tpfs=(), missing=()):
+        super().__init__(tpfs)
+        self.missing: list[dict] = list(missing)
 
 
 def _kic9(kic: int) -> str:
@@ -116,10 +128,11 @@ def parse_tpf(data: bytes, name: str = "") -> TPF:
             wcs = WCS(ap_hdu.header, naxis=2)
         if not wcs.has_celestial:
             wcs = None
-        kid = prim.get("KEPLERID")
+        kid, season = prim.get("KEPLERID"), prim.get("SEASON")
         tpf = TPF(quarter=int(prim["QUARTER"]), time=time, quality=quality, cube=cube, wcs=wcs, name=name,
                   sha256=sha, aperture=aperture, kepler_id=None if kid is None else int(kid),
-                  ra_obj=_float(prim.get("RA_OBJ")), dec_obj=_float(prim.get("DEC_OBJ")))
+                  ra_obj=_float(prim.get("RA_OBJ")), dec_obj=_float(prim.get("DEC_OBJ")),
+                  season=None if season is None else int(season))
     if cube.ndim != 3 or cube.shape[0] != time.size or quality.size != time.size:
         raise ValueError(f"{name or 'TPF'}: FLUX {cube.shape} does not match {time.size} cadences")
     return tpf
@@ -145,20 +158,28 @@ def _cached(store, blob, url: str, name: str) -> TPF | None:
     return tpf
 
 
-def fetch_tpfs(kic: int, *, fetch: Callable, blob, store, target_id: str, timeout: float = 600.0) -> list[TPF]:
-    """Every long-cadence TPF of the Kepler target ``kic``, sorted by quarter: one listing request (service "mast"),
-    then one request per file that the blob cache does not hold. A fetched file is stored through ``blob.put`` and
-    recorded with ``store.add_artifact(..., target_id=target_id, kind="tpf")`` (unpinned: budget retention may evict
-    it, and pinning the target's evidence pins it); a kept, undeleted file is read from the blob instead. A file that
-    cannot be fetched or read is skipped. Returns [] when the listing names no file (the star has no pixel files);
-    raises ServiceUnavailable when the listing fails or none of the listed files is reachable."""
+def fetch_tpfs(kic: int, *, fetch: Callable, blob, store, target_id: str, timeout: float = 600.0) -> TpfSet:
+    """Every long-cadence TPF of the Kepler target ``kic`` it can read, sorted by quarter, as a ``TpfSet`` whose
+    ``missing`` names the listed files it could not (unreachable or unreadable): one listing request (service
+    "mast"), then one request per file that the blob cache does not hold. A fetched file is stored through
+    ``blob.put`` and recorded with ``store.add_artifact(..., target_id=target_id, kind="tpf")`` (unpinned: budget
+    retention may evict it, and pinning the target's evidence pins it); a kept, undeleted file is read from the blob
+    instead, so a retry fetches only what is missing. An empty set when the listing names no file or the directory
+    does not exist (HTTP 404: the star has no pixel files); raises ServiceUnavailable when the listing fails
+    otherwise, or when files are listed, none could be read and at least one was unreachable."""
     base = tpf_listing_url(kic)
-    listing = fetch(base, service="mast", store=store, target_id=target_id, timeout=timeout)
+    try:
+        listing = fetch(base, service="mast", store=store, target_id=target_id, timeout=timeout)
+    except ServiceUnavailable as e:
+        if "HTTP 404" in str(e):        # no such directory: no pixel files, not an outage to retry
+            log.info("no pixel-file directory for KIC %s: %s", kic, e)
+            return TpfSet()
+        raise
     err = looks_like_error_document(listing)
     if err:
         raise ServiceUnavailable(f"mast {base}: {err}")
     names = list_tpf_names(listing.decode("utf-8", "replace"), kic)
-    out, last = [], ""
+    out, missing, last = [], [], ""
     for name in names:
         url = base + name
         tpf = _cached(store, blob, url, name)
@@ -168,15 +189,17 @@ def fetch_tpfs(kic: int, *, fetch: Callable, blob, store, target_id: str, timeou
                 tpf = parse_tpf(data, name)
             except ServiceUnavailable as e:
                 last = str(e); log.warning("pixel file %s not reachable: %s", url, e)
+                missing.append({"name": name, "cause": "unreachable"})
                 continue
             except Exception as e:      # noqa: BLE001  (an error page or a damaged file in place of a TPF)
                 last = f"{name}: {e}"; log.warning("pixel file %s unreadable: %s", url, e)
+                missing.append({"name": name, "cause": "unreadable"})
                 continue
             if blob is not None:
                 sha, loc = blob.put(data, name)
                 if store is not None and hasattr(store, "add_artifact"):
                     store.add_artifact(sha, len(data), url, loc, target_id=target_id, kind="tpf")
         out.append(tpf)
-    if names and not out:
+    if names and not out and any(m["cause"] == "unreachable" for m in missing):
         raise ServiceUnavailable(f"mast: no pixel file of KIC {int(kic)} reachable ({len(names)} listed): {last}")
-    return sorted(out, key=lambda t: (t.quarter, t.name))
+    return TpfSet(sorted(out, key=lambda t: (t.quarter, t.name)), missing)
