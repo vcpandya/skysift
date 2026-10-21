@@ -23,8 +23,8 @@ the union of all the shifted stamps (as the study built it from CRVAL1P/CRVAL2P)
 quarter has no pixel. A season votes only when both stars' 3x3 boxes lie complete on valid pixels of that frame: a
 truncated box pulls the centroid towards the frame interior and could reject a real candidate or pass a blend.
 ``localise`` is the single-grid convenience wrapper. "Season" is the Kepler archive SEASON (0 to 3) each
-``QuarterData`` carries from its TPF header (Q0 shares Q1's module and roll, so it shares Q1's season), and
-``quarter % 4`` with Q0 counted as Q1 when it is not known (``quarter_season``).
+``QuarterData`` carries from its TPF header (Q0 shares Q1's module and roll, so it shares Q1's season), and the
+same numbering derived from the quarter when it is not known (``quarter_season``).
 
 Known limitation: the Gaussian PSF is not the Kepler PRF, so the two-source depth errors are somewhat optimistic
 when the model does not match the stars' images (on a pixel-integrated synthetic stamp a dip on the neighbour put
@@ -38,8 +38,6 @@ from dataclasses import dataclass, field
 
 import numpy as np
 from scipy.optimize import least_squares
-
-from skysift.lc.ops import season_of
 
 PIX_ARCSEC = 3.98
 N_MC = 200
@@ -83,12 +81,12 @@ class QuarterData:
 
 
 def quarter_season(qd: QuarterData) -> int:
-    """The season a quarter is stacked in: its archive SEASON when known, else ``season_of(max(quarter, 1))`` (Q0
-    has Q1's module and roll, so it never joins Q4's season). The fallback numbers seasons ``quarter % 4``, not the
-    archive's ``(quarter + 2) % 4``; the grouping is the same."""
+    """The season a quarter is stacked in: its archive SEASON when known, else the archive's numbering from the
+    quarter, ``(max(quarter, 1) + 2) % 4`` (Q1 and Q5 are season 3, Q2 is 0, Q3 is 1, Q4 is 2; Q0 has Q1's module
+    and roll, so it never joins Q4's season)."""
     if qd.season is not None:
         return int(qd.season)
-    return int(season_of(np.array([max(int(qd.quarter), 1)]))[0])
+    return (max(int(qd.quarter), 1) + 2) % 4
 
 
 _NAN2 = (math.nan, math.nan)

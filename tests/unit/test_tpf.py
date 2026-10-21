@@ -112,7 +112,7 @@ def test_fetch_tpfs_raises_service_unavailable_when_mast_is_down(store, blob):
 
 
 def test_fetch_tpfs_raises_when_no_listed_file_is_reachable(store, blob):
-    fetch = FakeMast({"listing": LISTING})                 # the listing answers, every file 404s
+    fetch = FakeMast({"listing": LISTING}, fail={NAME})     # the listing answers, every file 503s
     with pytest.raises(ServiceUnavailable, match="no pixel file"):
         fetch_tpfs(KIC, fetch=fetch, blob=blob, store=store, target_id="t")
 
@@ -145,3 +145,15 @@ def test_fetch_tpfs_skips_an_unreadable_file_and_keeps_the_rest(store, blob, syn
     tpfs = fetch_tpfs(KIC, fetch=fetch, blob=blob, store=store, target_id="t")
     assert [t.quarter for t in tpfs] == [3] and tpfs.missing == [{"name": other, "cause": "unreadable"}]
     assert store.counts()["artifacts"] == 1                 # the unreadable file is not kept
+
+
+def test_a_listed_file_that_404s_is_a_stale_index_not_an_outage(store, blob, synthetic_tpf_bytes):
+    other = tpf_name(KIC, 4)
+    listing = LISTING.replace(f'<li><a href="{NAME}">'.encode(),
+                              f'<li><a href="{other}"></a><a href="{NAME}">'.encode())
+    fetch = FakeMast({"listing": listing, NAME: synthetic_tpf_bytes})          # the listed Q4 file answers 404
+    got = fetch_tpfs(KIC, fetch=fetch, blob=blob, store=store, target_id="t")
+    assert [t.quarter for t in got] == [3] and got.missing == [{"name": other, "cause": "unreadable"}]
+    only = FakeMast({"listing": LISTING})                  # the only listed file 404s: nothing to read, no outage
+    got = fetch_tpfs(KIC, fetch=only, blob=None, store=store, target_id="t")
+    assert got == [] and got.missing == [{"name": NAME, "cause": "unreadable"}]

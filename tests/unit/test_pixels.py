@@ -119,7 +119,8 @@ def test_difference_images_recover_the_dip_pixels():
     assert len(seasons) == 4 and all(s.n_events >= 2 for s in seasons)
     s = seasons[0]; r, c = np.unravel_index(np.argmax(s.diff / np.sqrt(s.var)), s.diff.shape)
     assert abs(c - pt[0]) < 1.1 and abs(r - pt[1]) < 1.1
-    assert [im.season for im in seasons] == [0, 1, 2, 3] and [im.quarters for im in seasons] == [[4], [1], [2], [3]]
+    # archive seasons: Q2 is 0, Q3 is 1, Q4 is 2, Q1 is 3
+    assert [im.season for im in seasons] == [0, 1, 2, 3] and [im.quarters for im in seasons] == [[2], [3], [4], [1]]
     assert all(im.diff.shape == im.var.shape == im.direct.shape == im.valid.shape == SHAPE for im in seasons)
 
 
@@ -190,10 +191,10 @@ def test_localise_needs_three_usable_transits():
 
 def test_localise_is_undetermined_when_a_season_disagrees():
     cube, *rest = make_cube("target")
-    # move the dip to the neighbour in season 2 only
+    # move the dip to the neighbour in Q2 only (quarter % 4 == 2), archive season 0
     loc = localise(_swap_season(cube, rest, season=2), *rest)
-    assert loc.verdict == "undetermined" and "season 2" in loc.reason
-    assert loc.reason.startswith("pixels: season 2 disagrees (centroid nearer neighbour, ")
+    assert loc.verdict == "undetermined" and "season 0" in loc.reason
+    assert loc.reason.startswith("pixels: season 0 disagrees (centroid nearer neighbour, ")
 
 
 def test_localise_is_deterministic():
@@ -332,13 +333,13 @@ def test_localise_quarters_co_registers_a_shifted_reshaped_stamp():
     aligned = localise_quarters(make_quarters(), EPH)
     shifted = localise_quarters(make_quarters(layout={5: SHIFTED}), EPH)
     assert aligned.verdict == shifted.verdict == "pass"
-    im = next(i for i in shifted.images if i.season == 1)
+    im = next(i for i in shifted.images if i.season == 3)
     # the union frame spans Q1's 9 x 9 and Q5's 10 x 10 stamp, which reaches one column further left
     assert im.quarters == [1, 5] and im.diff.shape == (10, 10) and im.n_events == 18
     assert im.pos_target == (POS_TARGET[0] + 1, POS_TARGET[1]) and im.pos_neighbour == (POS_NEIGHBOUR[0] + 1, 4.6)
     assert im.valid.all()                                          # Q5 fills column 0 and row 9
     assert im.offsets_pix == [(0, 0), (1, 0)] and im.residual_offsets_pix == [(0.0, 0.0), (0.0, 0.0)]
-    s = _by_season(shifted)[1]
+    s = _by_season(shifted)[3]
     assert s.voting and s.nearer == "target" and s.separation_sigma > 3
     assert abs(s.depth_neighbour_ppm[0]) < 3 * s.depth_neighbour_ppm[1]
     assert abs(s.depth_target_ppm[0] - 3000) < 4 * s.depth_target_ppm[1]
@@ -347,10 +348,10 @@ def test_localise_quarters_co_registers_a_shifted_reshaped_stamp():
 
 def test_a_sub_pixel_offset_is_recorded_and_changes_nothing():
     loc = localise_quarters(make_quarters(layout={5: SUBPIX}), EPH)
-    im = next(i for i in loc.images if i.season == 1)
+    im = next(i for i in loc.images if i.season == 3)
     assert im.offsets_pix == [(0, 0), (0, 0)] and im.diff.shape == SHAPE
     assert math.isclose(im.residual_offsets_pix[1][0], 0.3) and im.residual_offsets_pix[1][1] == 0.0
-    assert loc.verdict == "pass" and _by_season(loc)[1].separation_sigma > 3
+    assert loc.verdict == "pass" and _by_season(loc)[3].separation_sigma > 3
 
 
 def test_localise_quarters_dip_on_the_neighbour_fails_across_shifted_stamps():
@@ -361,7 +362,7 @@ def test_localise_quarters_dip_on_the_neighbour_fails_across_shifted_stamps():
 def test_one_quarter_without_the_neighbour_is_covered_by_the_other():
     for layout in ({5: NO_NEIGHBOUR}, {1: NO_NEIGHBOUR}):
         loc = localise_quarters(make_quarters(layout=layout), EPH)
-        im = next(i for i in loc.images if i.season == 1); s1 = _by_season(loc)[1]
+        im = next(i for i in loc.images if i.season == 3); s1 = _by_season(loc)[3]
         assert im.diff.shape == SHAPE and im.neighbour_on_frame and s1.voting and s1.two_source
         assert loc.verdict == "pass" and s1.n_events == 18
 
@@ -371,16 +372,16 @@ def test_a_season_without_the_neighbour_does_not_vote():
         loc = localise_quarters(make_quarters(dip_on, layout={1: NO_NEIGHBOUR, 5: NO_NEIGHBOUR}), EPH)
         m = loc.metrics(); json.dumps(m, allow_nan=False)
         by = {s["season"]: s for s in m["seasons"]}
-        assert by[1]["voting"] is False and by[1]["nearer"] == "unknown" and by[1]["two_source"] is False
-        assert by[1]["non_voting_reason"] == "box incomplete: neighbour"
-        assert by[1]["depth_neighbour_ppm"] == [None, None]
-        assert all(by[s]["voting"] and by[s]["depth_neighbour_ppm"][0] is not None for s in (0, 2, 3))
+        assert by[3]["voting"] is False and by[3]["nearer"] == "unknown" and by[3]["two_source"] is False
+        assert by[3]["non_voting_reason"] == "box incomplete: neighbour"
+        assert by[3]["depth_neighbour_ppm"] == [None, None]
+        assert all(by[s]["voting"] and by[s]["depth_neighbour_ppm"][0] is not None for s in (0, 1, 2))
         assert loc.verdict == expected and "3/3 seasons" in loc.reason
 
 
 def test_a_season_with_the_target_on_the_stamp_edge_does_not_vote():
     loc = localise_quarters(make_quarters(layout={1: NO_TARGET, 5: NO_TARGET}), EPH)
-    s1 = _by_season(loc)[1]; im = next(i for i in loc.images if i.season == 1)
+    s1 = _by_season(loc)[3]; im = next(i for i in loc.images if i.season == 3)
     assert im.pos_target == (0.0, 4.0) and not im.target_on_frame and im.neighbour_on_frame
     assert not s1.voting and s1.nearer == "unknown" and not s1.two_source
     assert s1.non_voting_reason == "box incomplete: target"
@@ -398,7 +399,7 @@ def test_a_quarter_without_positions_is_unusable():
     qs = make_quarters()
     qs[4].pos_target = (math.nan, 4.0)
     loc = localise_quarters(qs, EPH)
-    assert loc.unusable_quarters == [5] and loc.n_quarters_usable == 4 and _by_season(loc)[1].quarters == [1]
+    assert loc.unusable_quarters == [5] and loc.n_quarters_usable == 4 and _by_season(loc)[3].quarters == [1]
 
 
 def test_localise_wrapper_carries_the_positions_into_the_season_images():
@@ -420,8 +421,8 @@ def test_quarters_are_grouped_by_their_archive_season():
     assert loc.verdict == "pass" and sorted(s.season for s in loc.seasons) == [0, 1, 2, 3]
     q0 = QuarterData(quarter=0, cube=np.zeros((1, 2, 2)), time=np.zeros(1), quality=np.zeros(1, int),
                      pos_target=(0.0, 0.0), pos_neighbour=(1.0, 1.0))
-    assert quarter_season(q0) == quarter_season(QuarterData(**{**q0.__dict__, "quarter": 1})) == 1
-    assert quarter_season(QuarterData(**{**q0.__dict__, "quarter": 4})) == 0
+    assert quarter_season(q0) == quarter_season(QuarterData(**{**q0.__dict__, "quarter": 1})) == 3
+    assert [quarter_season(QuarterData(**{**q0.__dict__, "quarter": q})) for q in (2, 3, 4, 5)] == [0, 1, 2, 3]
     assert quarter_season(QuarterData(**{**q0.__dict__, "season": 3})) == 3
 
 

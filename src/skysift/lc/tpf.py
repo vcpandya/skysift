@@ -189,7 +189,8 @@ def fetch_tpfs(kic: int, *, fetch: Callable, blob, store, target_id: str, timeou
                 tpf = parse_tpf(data, name)
             except ServiceUnavailable as e:
                 last = str(e); log.warning("pixel file %s not reachable: %s", url, e)
-                missing.append({"name": name, "cause": "unreachable"})
+                # a 404 on a listed file is a stale index, not an outage: recorded, and it does not block the verdict
+                missing.append({"name": name, "cause": "unreadable" if "HTTP 404" in str(e) else "unreachable"})
                 continue
             except Exception as e:      # noqa: BLE001  (an error page or a damaged file in place of a TPF)
                 last = f"{name}: {e}"; log.warning("pixel file %s unreadable: %s", url, e)
