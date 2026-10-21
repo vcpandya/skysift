@@ -14,6 +14,7 @@ from skysift.lc.pixels import (
     Ephemeris,
     QuarterData,
     SeasonResult,
+    _allowance_width,
     _axis_sigma,
     _on_neighbour,
     _on_target,
@@ -89,7 +90,7 @@ def make_cube(dip_on="target", n_days=372, depth=DEPTH, seed=0, neighbour_ratio=
 
 def make_quarters(dip_on="target", layout=None, n_quarters=5, seed=0, neighbour_ratio=RATIO, psf_sigma=PSF_SIGMA):
     """Per-quarter stamps of the make_cube scene: ``layout`` maps a quarter to (shape, stamp origin (col, row) on the
-    grid of the default stamp); positions are given in each stamp's own pixels. Quarters 1 and 5 share season 1.
+    grid of the default stamp); positions are given in each stamp's own pixels. Quarters 1 and 5 share season 3.
     ``psf_sigma`` is the PSF width in px (the Kepler PRF core is nearer 0.55 than the default 0.9)."""
     layout = layout or {}
     rng = np.random.default_rng(seed)
@@ -498,6 +499,11 @@ def test_the_allowance_falls_back_to_the_default_width(monkeypatch):
     assert s1.edge_bias_pix == want > 0 and s1.edge_bias_axis_pix == want_axis
     # no fit, no neighbour depth: a cut box is not decisive on the target's side without it, so it abstains
     assert not s1.voting and s1.non_voting_reason == "box cut: neighbour depth not measured"
+
+
+def test_a_fit_width_pinned_on_its_bound_falls_back_to_the_default():
+    # the fit's bounds are 0.3 and 3.0 px: a width on either has collapsed, so the default 0.6 px takes over
+    assert [_allowance_width(w) for w in (0.3, 3.0, math.nan, 0.55)] == [0.6, 0.6, 0.6, 0.55]
 
 
 def test_no_season_with_both_stars_on_the_frame_is_undetermined():

@@ -103,7 +103,7 @@ REASONS: list[tuple[re.Pattern, str, str]] = [(re.compile(p), w, n) for p, w, n 
      "In one season the centroid of the lost light sits too close to the line between the two stars to call",
      PIXELS_SAID),
     (r"^pixels: only one season could vote \((?P<detail>.*)\)$",
-     "Only one observing season had both stars on the frame, and one season is too few to vote", PERSON_DECIDES),
+     "Only one observing season could vote on which star dims, and one is too few", PERSON_DECIDES),
     (r"^pixels: (?P<detail>season \d+ disagrees \(neighbour depth.*)",
      "The neighbour's own depth vetoes one season's vote", PIXELS_SAID),
     (r"^pixels: (?P<detail>season \d+ disagrees.*)",

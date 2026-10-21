@@ -601,7 +601,7 @@ def test_caveats_list_a_partial_box_after_the_close_call(env):
 
 
 REPO = Path(__file__).resolve().parents[2]
-HAND_BUILT =REPO / "docs" / "candidates" / "kic-006146676" / "dossier_data.json"
+HAND_BUILT = REPO / "docs" / "candidates" / "kic-006146676" / "dossier_data.json"
 GENERATED = REPO / "tests" / "golden" / "kic-006146676-generated.json"     # tools/dossier_compare.py --write-golden
 
 

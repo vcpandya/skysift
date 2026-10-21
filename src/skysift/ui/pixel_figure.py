@@ -191,13 +191,12 @@ def _panel(i: int, s: dict, m: dict, half: float, ids: str) -> str:
         edge = n + 0.5
         parts.append(f'<line class="pf-grid" x1="{PLOT_X}" x2="{PLOT_X + PLOT}" y1="{Y(edge)}" y2="{Y(edge)}"/>')
     t, nb, ct, sigma = m["target"], m["neighbour"], m["centroid"], m["sigma"]
-    if voting:
-        for star, key in ((t, "box_missing_target"), (nb, "box_missing_neighbour")):
-            for dcol, drow in (_offset(v) for v in s.get(key) or []):
-                if star and dcol is not None:
-                    col, row = round(star[0]) + dcol, round(star[1]) + drow
-                    parts.append(f'<rect class="pf-missing" x="{X(col - 0.5)}" y="{Y(row + 0.5)}" '
-                                  f'width="{_f(k)}" height="{_f(k)}"/>')
+    for star, key in ((t, "box_missing_target"), (nb, "box_missing_neighbour")):
+        for dcol, drow in (_offset(v) for v in s.get(key) or []):
+            if star and dcol is not None:
+                col, row = round(star[0]) + dcol, round(star[1]) + drow
+                parts.append(f'<rect class="pf-missing" x="{X(col - 0.5)}" y="{Y(row + 0.5)}" '
+                              f'width="{_f(k)}" height="{_f(k)}"/>')
     if t and nb:
         parts.append(f'<line class="pf-axis" x1="{X(t[0])}" y1="{Y(t[1])}" x2="{X(nb[0])}" y2="{Y(nb[1])}"/>')
     if nb:
@@ -242,8 +241,9 @@ def render_svg(metrics: dict, signal_id: int, reason: str = "", theme: str | Non
         h = PAD + PANEL_H
         body = "".join(_panel(i, s, m, half, ids) for i, (s, m) in enumerate(zip(seasons, marks, strict=True)))
     ground = f'<rect width="{w}" height="{h}" fill="{PALETTES[theme]["bg"]}"/>' if theme else ""
+    cut = any(s.get("box_missing_target") or s.get("box_missing_neighbour") for s in seasons)
+    shaded = " A shaded cell is a box pixel missing from the stamp." if cut else ""
     desc = escape("Ring: this star. Square: the neighbour. Cross: the centroid of the lost light, with circles at 1 "
-                  "and 3 times its error. A shaded cell is a box pixel missing from the stamp. A greyed panel did not "
-                  "vote.")
+                  f"and 3 times its error.{shaded} A greyed panel did not vote.")
     return (f'<svg xmlns="http://www.w3.org/2000/svg" class="pf" viewBox="0 0 {w} {h}" width="{w}" height="{h}" '
             f'role="img" aria-label="{label}"><desc>{desc}</desc>{style}{ground}{body}</svg>')

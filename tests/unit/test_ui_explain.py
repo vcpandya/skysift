@@ -242,8 +242,8 @@ def test_pixel_reasons_map_to_words(reason):
     ("pixels: no neighbour to test against", "no neighbour in its pixels", "PIXELS_NONE"),
     ("pixels: no readable pixel files (3 listed)", "None of the archive's pixel files", "PIXELS_NONE"),
     ("pixels: only one season could vote (season 1: box incomplete: target; season 2: box incomplete: target)",
-     "Only one observing season had both stars on the frame", "PERSON_DECIDES"),
-    ("pixels: only one season could vote (no other season has data)", "one season is too few to vote",
+     "Only one observing season could vote on which star dims", "PERSON_DECIDES"),
+    ("pixels: only one season could vote (no other season has data)", "and one is too few",
      "PERSON_DECIDES"),
     ("pixels: season 3 disagrees (neighbour depth 400 +/- 50 ppm)", "The neighbour's own depth vetoes",
      "PIXELS_SAID"),
@@ -490,8 +490,8 @@ def test_the_new_pixel_reasons_carry_their_detail_in_archive_seasons():
     one = {"rung": "rung5_pixels", "status": "undetermined", "metrics": {},
            "reason": "pixels: only one season could vote (season 1: box incomplete: target)"}
     w = explain.why([one])[5]
-    assert w.sentence == ("No verdict: only one observing season had both stars on the frame, and one season is too "
-                          "few to vote (archive season 1: box incomplete: target)")
+    assert w.sentence == ("No verdict: only one observing season could vote on which star dims, and one is too few "
+                          "(archive season 1: box incomplete: target)")
     assert w.next_step == "a person decides"
     veto = {**one, "reason": "pixels: season 3 disagrees (neighbour depth 400 +/- 50 ppm)"}
     w = explain.why([veto])[5]
@@ -499,3 +499,14 @@ def test_the_new_pixel_reasons_carry_their_detail_in_archive_seasons():
                           "(neighbour depth 400 +/- 50 ppm))")
     centroid = {**one, "reason": "pixels: season 1 disagrees (centroid nearer neighbour, 4.1 sigma)"}
     assert explain.why([centroid])[5].sentence.startswith("No verdict: one season does not agree")
+
+
+def test_the_one_season_headline_names_the_vote_not_the_frame():
+    # the other seasons may have had both stars on the frame and abstained with a cut box
+    row = {"rung": "rung5_pixels", "status": "undetermined", "metrics": {},
+           "reason": "pixels: only one season could vote (season 3: box cut: ambiguous (1.8 sigma))"}
+    w = explain.why([row])[5]
+    assert "only one observing season could vote on which star dims, and one is too few" in w.sentence
+    assert "(archive season 3: box cut: ambiguous (1.8 sigma))" in w.sentence
+    assert "both stars on the frame" not in w.sentence
+    assert w.next_step == explain.PERSON_DECIDES

@@ -172,8 +172,9 @@ def _crashes(store: Store, signal_id: int, rung: str) -> int:
 
 
 def box_rule_reopens(rung5: dict) -> bool:
-    """The rung 5 row is an undetermined "pixels:" row that the complete-box rule (rule version 1) silenced: some
-    season was dropped for an incomplete box and the row predates ``PIXEL_RULE_VERSION``."""
+    """The rung 5 row is an undetermined "pixels:" row with a "box incomplete" key among its silenced seasons
+    (``seasons_silenced``) and a rule version below ``PIXEL_RULE_VERSION`` (1 when none is stored). Such a row is
+    rerun once, whatever its reason, and the rerun writes the current version, so it is not reopened again."""
     if rung5["status"] != "undetermined" or not str(rung5["reason"]).startswith("pixels:"):
         return False
     metrics = rung5.get("metrics")

@@ -1009,17 +1009,30 @@ def test_pixels_svg_draws_the_missing_box_pixels_and_names_the_cut(seeded):
     assert "A shaded cell is a box pixel missing from the stamp." in r.text
 
 
+def test_the_pixel_figure_shades_the_missing_cells_of_a_season_that_abstains():
+    from skysift.ui.pixel_figure import render_svg
+    from tests.unit.ui_seed import stage2_pixel_metrics
+    m = stage2_pixel_metrics()
+    m["seasons"][0] = {**m["seasons"][0], "box_partial": True, "voting": False, "nearer": "unknown",
+                       "non_voting_reason": "box cut: ambiguous (1.8 sigma)", "box_pixels_target": 6,
+                       "box_pixels_neighbour": 9, "box_missing_target": [[-1, -1], [0, -1], [1, -1]],
+                       "box_missing_neighbour": []}
+    svg = render_svg(m, 7)
+    panel = _season_panels(svg)["0"]
+    assert 'class="season non-voting"' in panel and panel.count('class="pf-missing"') == 3
+    assert "A shaded cell is a box pixel missing from the stamp." in svg
+
+
 def test_the_pixel_figure_of_a_season_without_box_keys_is_unchanged():
-    """Metrics stored before the box keys draw what they drew (the <desc> sentence aside): no cell, no suffix."""
+    """Metrics stored before the box keys draw what they drew: no cell, no suffix."""
     import hashlib
 
     from skysift.ui.pixel_figure import render_svg
     from tests.unit.ui_seed import stage2_pixel_metrics
     svg = render_svg(stage2_pixel_metrics(), 7)
     assert "pf-missing" not in svg and "box cut" not in svg
-    body = re.sub(r"<desc>.*?</desc>", "", svg)
-    assert hashlib.sha256(body.encode()).hexdigest() == (
-        "7f6d3e3eb21c8ded1b7b083e6b96793544b8de1b9895b59d4cf7c2d760262e0d")
+    assert hashlib.sha256(svg.encode()).hexdigest() == (
+        "bf6d568d6cc879babb44e5b815fa79bf9ba4aebbde5707289487ddc43267956e")
 
 
 def test_pixels_svg_of_a_rung5_row_without_seasons_says_so(seeded):

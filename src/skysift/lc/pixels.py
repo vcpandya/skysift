@@ -304,6 +304,12 @@ def box_coverage(pos, valid: np.ndarray) -> BoxCoverage:
     return BoxCoverage(9 - len(missing), (0, 0) not in missing, missing)
 
 
+def _allowance_width(psf: float) -> float:
+    """The PSF width (px) the edge allowance uses: the two-source fit's width when it lies strictly inside the fit's
+    bounds (0.3, 3.0), else EDGE_PSF_SIGMA_PIX. A fit pinned on a bound has collapsed, and nan means no fit."""
+    return psf if math.isfinite(psf) and 0.3 < psf < 3.0 else EDGE_PSF_SIGMA_PIX
+
+
 def edge_allowance(pos, valid: np.ndarray, psf_sigma: float, pos_other) -> tuple[float, float]:
     """``(bias, bias_axis)``: how far, in pixels, a box cut by the frame edge or by invalid pixels moves the 3x3
     centroid of a point source at ``pos`` (and the part of that along the axis from ``pos_other`` to ``pos``).
@@ -757,8 +763,7 @@ def localise_quarters(quarters: list[QuarterData], eph: Ephemeris, *,
         # the allowance of each cut box: how far its cut moves a point source's 3x3 centroid (the larger of the two)
         bias = bias_axis = 0.0
         if box_partial:
-            psf = float(fit["psf_sigma_pix"])
-            psf = psf if math.isfinite(psf) and 0.3 <= psf <= 3.0 else EDGE_PSF_SIGMA_PIX
+            psf = _allowance_width(float(fit["psf_sigma_pix"]))
             stars = ((im.box_target, (ct, rt), (cn, rn)), (im.box_neighbour, (cn, rn), (ct, rt)))
             cuts = [edge_allowance(star, im.valid, psf, other) for box, star, other in stars if box.partial]
             if any(math.isnan(b) for b, _ in cuts):         # both are nan together: no allowance can be given
