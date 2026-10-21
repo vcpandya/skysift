@@ -181,7 +181,7 @@ class SeasonResult:
     two_source: bool = False                    # the two-source fit ran (both stars' boxes eligible: ``on_frame``)
     voting: bool = False                        # both boxes eligible, a finite centroid, >= SEASON_EVENTS_MIN, and
     #                                             a cut box decisive
-    on_frame: bool = False                      # both stars' 3x3 boxes eligible (complete, or cut but >= BOX_PIXELS_MIN)
+    on_frame: bool = False                      # both stars' 3x3 boxes eligible (complete, or cut: BOX_PIXELS_MIN)
     pos_target: tuple[float, float] = _NAN2     # season-frame (col, row)
     pos_neighbour: tuple[float, float] = _NAN2
     centroid_sigma_axis_pix: float = math.nan   # centroid error along the neighbour-to-target axis
@@ -692,13 +692,14 @@ def _disagreement(s: SeasonResult) -> str:
 
 def verdict(seasons: list[SeasonResult], n_events_used: int) -> tuple[str, str]:
     """Spec 4.4 over the voting seasons (both stars' 3x3 boxes on the frame, complete or cut but decisive, a finite
-    centroid and error, at least SEASON_EVENTS_MIN events): undetermined with fewer than TRANSITS_MIN usable transits or no voting season; pass
-    when every voting season, and at least PASS_SEASONS_MIN of them, is more than SEPARATION_SIGMA on the target's
-    side of the bisector with a neighbour depth consistent with zero (one voting season alone is undetermined, naming
-    why the others did not vote); fail when a majority is more than SEPARATION_SIGMA on the neighbour's side or puts
-    the depth on the neighbour; otherwise undetermined, naming the first voting season that does not pass and why
-    ("ambiguous" when it lies within SEPARATION_SIGMA of the bisector, else the centroid on the neighbour's side or the
-    two-source depth on the neighbour)."""
+    centroid and error, at least SEASON_EVENTS_MIN events): undetermined with fewer than TRANSITS_MIN usable transits
+    or no voting season; pass when every voting season, and at least PASS_SEASONS_MIN of them, is more than
+    SEPARATION_SIGMA on the target's side of the bisector with a neighbour depth consistent with zero (one voting
+    season alone is undetermined, naming why the others did not vote); fail when a majority is more than
+    SEPARATION_SIGMA on the neighbour's side or puts the depth on the neighbour; otherwise
+    undetermined, naming the first voting season that does not pass and why ("ambiguous" when it lies within
+    SEPARATION_SIGMA of the bisector, else the centroid on the neighbour's side or the two-source depth on the
+    neighbour)."""
     if n_events_used < TRANSITS_MIN:
         return "undetermined", f"pixels: {n_events_used} usable transits < {TRANSITS_MIN}"
     voting = _voting(seasons)
@@ -758,9 +759,8 @@ def localise_quarters(quarters: list[QuarterData], eph: Ephemeris, *,
         if box_partial:
             psf = float(fit["psf_sigma_pix"])
             psf = psf if math.isfinite(psf) and 0.3 <= psf <= 3.0 else EDGE_PSF_SIGMA_PIX
-            cuts = [edge_allowance(star, im.valid, psf, other)
-                    for box, star, other in ((im.box_target, (ct, rt), (cn, rn)), (im.box_neighbour, (cn, rn), (ct, rt)))
-                    if box.partial]
+            stars = ((im.box_target, (ct, rt), (cn, rn)), (im.box_neighbour, (cn, rn), (ct, rt)))
+            cuts = [edge_allowance(star, im.valid, psf, other) for box, star, other in stars if box.partial]
             if any(math.isnan(b) for b, _ in cuts):         # both are nan together: no allowance can be given
                 bias = bias_axis = math.nan
             else:

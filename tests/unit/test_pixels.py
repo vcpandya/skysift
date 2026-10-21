@@ -462,7 +462,7 @@ def test_a_cut_box_votes_only_when_decisive():
     from skysift.lc.pixels import partial_abstention
     partial = replace(_season(0), box_partial=True, edge_bias_pix=0.1)
     assert partial_abstention(partial) is None                                     # 10 sigma on the target
-    assert partial_abstention(replace(_season(0, sep=-8.0), box_partial=True)) is None          # 8 sigma on the neighbour
+    assert partial_abstention(replace(_season(0, sep=-8.0), box_partial=True)) is None      # 8 sigma on the neighbour
     assert partial_abstention(replace(_season(0, sep=1.7), box_partial=True)) == "box cut: ambiguous (1.7 sigma)"
     assert partial_abstention(replace(_season(0, sep=-2.9), box_partial=True)) == "box cut: ambiguous (-2.9 sigma)"
     assert (partial_abstention(replace(_season(0, d_n=(200.0, 60.0)), box_partial=True))
