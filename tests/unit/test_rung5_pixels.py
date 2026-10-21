@@ -20,6 +20,8 @@ from skysift.store.db import PIXELS_URL, ArtifactRow, Store
 from skysift.vetting.base import DataBundle
 from skysift.vetting.rung5_pixels import Rung5Pixels
 from tests.unit.synthetic_tpf import (
+    CORNER_TARGET,
+    EDGE_TARGET,
     NEIGHBOUR_KIC,
     TARGET_KIC,
     TARGET_RADEC,
@@ -92,6 +94,7 @@ def test_rung5_passes_when_the_dip_is_on_the_target(bundle_with_tpfs):
     assert all(s["nearer"] == "target" and s["voting"] for s in m["seasons"])
     assert {"two_source", "pos_target", "pos_neighbour", "non_voting_reason", "centroid_sigma_axis_pix", "shift_pix",
             "psf_sigma_pix"} <= set(m["seasons"][0])
+    assert r.metrics["n_seasons_partial_box"] == 0 and r.metrics["rule_version"] == 2
     _strict(m)
 
 
@@ -157,12 +160,29 @@ def test_a_quarter_whose_wcs_fails_is_unusable(bundle_with_tpfs):
     assert r.status == TestStatus.PASS and r.reason.startswith("the dip is on the target in 3/3 seasons")
 
 
-def test_a_target_off_the_stamp_is_undetermined_with_the_frame_reason(bundle_with_tpfs):
-    # columns 4 to 8 only: the KBonus target sits on the stamp's first column in every quarter, its 3x3 box incomplete
-    r = Rung5Pixels(tpf_loader=loader("target", stamp=((9, 5), (4, 0)))).run(SIGNAL, bundle_with_tpfs)
-    assert r.status == TestStatus.UNDETERMINED
-    assert r.reason == "pixels: no season holds both stars on the frame"
-    assert r.metrics["n_seasons_voting"] == 0 and r.metrics["n_seasons"] == 4
+def test_a_target_on_the_stamp_edge_votes_in_the_seasons_that_hold_the_neighbour(bundle_with_tpfs):
+    # columns 4 to 8 only: the KBonus target sits on the stamp's first column in every quarter (6 of 9 box pixels);
+    # the neighbour turns about it from season to season and falls off the stamp in two of the four
+    r = Rung5Pixels(tpf_loader=loader("target", stamp=EDGE_TARGET, psf_sigma=0.55)).run(SIGNAL, bundle_with_tpfs)
+    assert r.status == TestStatus.PASS and r.reason.startswith("the dip is on the target in 2/2 seasons")
+    assert r.metrics["n_seasons_voting"] == 2 and r.metrics["n_seasons_partial_box"] == 2
+    assert r.metrics["seasons_silenced"] == {"box incomplete: neighbour": 2}
+    voting = [s for s in r.metrics["seasons"] if s["voting"]]
+    assert all(s["box_partial"] and s["box_pixels_target"] == 6 and s["edge_bias_pix"] > 0 for s in voting)
+    assert all(s["box_missing_target"] == [[-1, -1], [-1, 0], [-1, 1]] for s in voting)
+    _strict(r.metrics)
+
+
+def test_a_dip_on_the_neighbour_fails_with_the_target_on_the_stamp_edge(bundle_with_tpfs):
+    r = Rung5Pixels(tpf_loader=loader("neighbour", stamp=EDGE_TARGET, psf_sigma=0.55)).run(SIGNAL, bundle_with_tpfs)
+    assert r.status == TestStatus.FAIL and "2/2 seasons" in r.reason
+    _strict(r.metrics)
+
+
+def test_a_target_in_the_stamp_corner_is_undetermined_with_the_frame_reason(bundle_with_tpfs):
+    r = Rung5Pixels(tpf_loader=loader("target", stamp=CORNER_TARGET, psf_sigma=0.55)).run(SIGNAL, bundle_with_tpfs)
+    assert r.status == TestStatus.UNDETERMINED and r.reason == "pixels: no season holds both stars on the frame"
+    assert r.metrics["n_seasons_voting"] == 0 and r.metrics["n_seasons_partial_box"] == 0
     assert r.metrics["seasons_silenced"] == {"box incomplete: target": 4}
     _strict(r.metrics)
 

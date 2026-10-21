@@ -15,6 +15,8 @@ from skysift.lc.pixels import (
     QuarterData,
     SeasonResult,
     _axis_sigma,
+    _on_neighbour,
+    _on_target,
     box_coverage,
     difference_images,
     edge_allowance,
@@ -42,10 +44,10 @@ DEPTH = 3000e-6
 RATIO = 5.0
 
 
-def _psf(pos, shape=SHAPE):
-    """Pixel-integrated circular Gaussian of unit total flux centred on (col, row)."""
+def _psf(pos, shape=SHAPE, psf_sigma=PSF_SIGMA):
+    """Pixel-integrated circular Gaussian of unit total flux and width ``psf_sigma`` px centred on (col, row)."""
     col, row = pos
-    s = math.sqrt(2.0) * PSF_SIGMA
+    s = math.sqrt(2.0) * psf_sigma
     cc, rr = np.arange(shape[1]), np.arange(shape[0])
     px = 0.5 * (erf((cc + 0.5 - col) / s) - erf((cc - 0.5 - col) / s))
     py = 0.5 * (erf((rr + 0.5 - row) / s) - erf((rr - 0.5 - row) / s))
@@ -68,9 +70,10 @@ def _scene(n_days, dip_on, depth, neighbour_ratio, n_quarters):
     return time, quarter, f_t, f_n
 
 
-def _render(rng, f_t, f_n, pt, pn, shape=SHAPE):
+def _render(rng, f_t, f_n, pt, pn, shape=SHAPE, psf_sigma=PSF_SIGMA):
     """Photon-noise stamps of the two stars plus background."""
-    model = f_t[:, None, None] * _psf(pt, shape) + f_n[:, None, None] * _psf(pn, shape) + BACKGROUND
+    model = (f_t[:, None, None] * _psf(pt, shape, psf_sigma) + f_n[:, None, None] * _psf(pn, shape, psf_sigma)
+             + BACKGROUND)
     return rng.normal(model, np.sqrt(model))
 
 
@@ -84,9 +87,10 @@ def make_cube(dip_on="target", n_days=372, depth=DEPTH, seed=0, neighbour_ratio=
     return cube, time, quality, quarter, EPH, POS_TARGET, POS_NEIGHBOUR
 
 
-def make_quarters(dip_on="target", layout=None, n_quarters=5, seed=0, neighbour_ratio=RATIO):
+def make_quarters(dip_on="target", layout=None, n_quarters=5, seed=0, neighbour_ratio=RATIO, psf_sigma=PSF_SIGMA):
     """Per-quarter stamps of the make_cube scene: ``layout`` maps a quarter to (shape, stamp origin (col, row) on the
-    grid of the default stamp); positions are given in each stamp's own pixels. Quarters 1 and 5 share season 1."""
+    grid of the default stamp); positions are given in each stamp's own pixels. Quarters 1 and 5 share season 1.
+    ``psf_sigma`` is the PSF width in px (the Kepler PRF core is nearer 0.55 than the default 0.9)."""
     layout = layout or {}
     rng = np.random.default_rng(seed)
     time, quarter, f_t, f_n = _scene(QUARTER_DAYS * n_quarters, dip_on, DEPTH, neighbour_ratio, n_quarters)
@@ -95,7 +99,7 @@ def make_quarters(dip_on="target", layout=None, n_quarters=5, seed=0, neighbour_
         m = quarter == q
         shape, (oc, orow) = layout.get(q, (SHAPE, (0, 0)))
         pt = (POS_TARGET[0] - oc, POS_TARGET[1] - orow); pn = (POS_NEIGHBOUR[0] - oc, POS_NEIGHBOUR[1] - orow)
-        out.append(QuarterData(quarter=q, cube=_render(rng, f_t[m], f_n[m], pt, pn, shape), time=time[m],
+        out.append(QuarterData(quarter=q, cube=_render(rng, f_t[m], f_n[m], pt, pn, shape, psf_sigma), time=time[m],
                                quality=np.zeros(m.sum(), int), pos_target=pt, pos_neighbour=pn))
     return out
 
@@ -404,7 +408,7 @@ def test_complete_boxes_vote_exactly_as_before():
 
 def test_a_season_with_the_target_on_the_stamp_edge_votes_with_an_allowance():
     for dip_on, expected in (("target", "pass"), ("neighbour", "fail")):
-        loc = localise_quarters(make_quarters(dip_on, layout={1: NO_TARGET, 5: NO_TARGET}), EPH)
+        loc = localise_quarters(make_quarters(dip_on, layout={1: NO_TARGET, 5: NO_TARGET}, psf_sigma=0.55), EPH)
         s1 = _by_season(loc)[3]; im = next(i for i in loc.images if i.season == 3)
         assert im.pos_target == (0.0, 4.0) and im.box_target.partial and im.box_neighbour.complete
         assert im.target_on_frame and s1.on_frame and s1.voting and s1.two_source and s1.box_partial
@@ -424,18 +428,25 @@ def test_a_season_with_the_target_on_the_stamp_edge_votes_with_an_allowance():
         assert row["edge_bias_pix"] > 0 and row["separation_sigma_raw"] is not None
 
 
+def test_every_season_with_the_target_on_the_edge_passes_as_partial():
+    loc = localise_quarters(make_quarters(layout={q: NO_TARGET for q in range(1, 6)}, psf_sigma=0.55), EPH)
+    assert loc.verdict == "pass" and "4/4 seasons" in loc.reason
+    assert all(s.voting and s.box_partial for s in loc.seasons)
+
+
 def test_every_season_with_the_target_on_the_edge_is_eligible_and_carries_the_allowance():
     """The target on the first column with a 0.9 px PSF puts 0.36 px of allowance in the axis error, so the 2.9 px
-    pair is only just decisive (2.8 to 3.0 sigma in a single-quarter season): each season either votes or says why
-    it did not with a stored "box cut" reason, and none is dropped as an incomplete box."""
+    pair is not decisive in any season (about 3 sigma at best, in the single quarters and in season 3, which stacks
+    Q1 and Q5): every season is eligible, carries the allowance and abstains with a stored "box cut" reason; none is
+    dropped as an incomplete box, and a cut box that votes is decisive."""
     loc = localise_quarters(make_quarters(layout={q: NO_TARGET for q in range(1, 6)}), EPH)
     assert all(s.on_frame and s.two_source and s.box_partial and s.box_target.metrics()["pixels"] == 6
                for s in loc.seasons)
     assert all(0.3 < s.edge_bias_pix < 0.4 and abs(s.separation_sigma) < abs(s.separation_sigma_raw)
                for s in loc.seasons)
-    assert all(s.voting if s.non_voting_reason is None else s.non_voting_reason.startswith("box cut: ambiguous")
-               for s in loc.seasons)
-    assert loc.reason != "pixels: no season holds both stars on the frame"
+    assert all(not (s.voting and s.box_partial) or _on_target(s) or _on_neighbour(s) for s in loc.seasons)
+    assert any((s.non_voting_reason or "").startswith("box cut: ambiguous") for s in loc.seasons)
+    assert loc.verdict != "pass" and loc.reason != "pixels: no season holds both stars on the frame"
 
 
 def test_a_corner_box_does_not_vote():
