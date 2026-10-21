@@ -50,21 +50,26 @@ def test_four_scenarios_sum_to_the_fpp():
     assert beb.factors["n_bright"] == 2 and beb.weight < 1e-6
     assert beb.geometric == pytest.approx(0.020219, rel=0.01)
     # EB prior: f_bin 0.26 (M) x g_P, the Raghavan log-normal (mu 5.03, sigma 2.28) between log10(P) = 1.6052 and
-    # log10(4P) = 2.2073: Phi(-1.2380) - Phi(-1.5021) = 0.10786 - 0.06654 = 0.041315; prior 0.26 * 0.041315 = 0.010742,
-    # shared equally by EB-P and EB-2P: 0.0053710 each.
+    # log10(4P) = 2.2073 for EB-2P (a factor of two around 2P): Phi(-1.2380) - Phi(-1.5021) = 0.10786 - 0.06654 =
+    # 0.041315, prior 0.26 * 0.041315 = 0.010742; for EB-P between log10(P / 2) = 1.3042 and log10(2P) = 1.9062:
+    # Phi(-1.3701) - Phi(-1.6341) = 0.08533 - 0.05112 = 0.03422, prior 0.26 * 0.03422 = 0.008896. Each hypothesis
+    # carries the full binary fraction: they are about different orbital periods.
     # EB geometric, M1 + M2 = 0.495 * 1.5 = 0.7425 Msun: at P = 40.29 d a = (0.7425 * 0.012168)^(1/3) = 0.20828 AU,
     # (R1 + R2) / a = 0.498 * 1.5 * 0.00465047 / 0.20828 = 0.016679; at 2P = 80.58 d a = 0.33062 AU, 0.010507.
     # EB data: S_sec = 1 - Phi((216.5 - 72) / 80) = 0.03544 for EB-P, S_oe = 1 - Phi((541.25 - 87) / 199) = 0.01123
-    # for EB-2P, S_v = 1 (b 0.885 < 0.9). Weights 0.005371 * 0.016679 * 0.03544 = 3.175e-6 and
-    # 0.005371 * 0.010507 * 0.01123 = 6.337e-7.
-    assert eb_p.prior == eb_2p.prior == pytest.approx(0.26 * 0.041315 / 2, rel=0.01)
+    # for EB-2P, S_v = 1 (b 0.885 < 0.9). Weights 0.008896 * 0.016679 * 0.03544 = 5.259e-6 and
+    # 0.010742 * 0.010507 * 0.01123 = 1.2675e-6.
+    assert eb_p.prior == pytest.approx(0.26 * 0.03422, rel=0.01) and eb_p.factors["g_P"] == pytest.approx(0.03422,
+                                                                                                        rel=0.01)
+    assert eb_2p.prior == pytest.approx(0.26 * 0.041315, rel=0.01) and eb_2p.factors["g_2P"] == pytest.approx(
+        0.041315, rel=0.01)
     assert eb_p.geometric == pytest.approx(0.016679, rel=0.01) and eb_2p.geometric == pytest.approx(0.010507, rel=0.01)
     assert eb_p.data == pytest.approx(0.03544, rel=0.01) and eb_p.factors["S_sec"] == eb_p.data
     assert eb_2p.data == pytest.approx(0.01123, rel=0.01) and eb_2p.factors["S_oe"] == eb_2p.data
     assert eb_p.factors["S_v"] == eb_2p.factors["S_v"] == 1.0
-    assert eb_p.weight == pytest.approx(3.175e-6, rel=0.01) and eb_2p.weight == pytest.approx(6.337e-7, rel=0.01)
-    # FPP: (BEB ~1e-134 + 3.175e-6 + 6.337e-7) / (PL 2.1012e-3 + 3.809e-6) = 1.809e-3
-    assert f.value == pytest.approx(1.809e-3, rel=0.01)
+    assert eb_p.weight == pytest.approx(5.259e-6, rel=0.01) and eb_2p.weight == pytest.approx(1.2675e-6, rel=0.01)
+    # FPP: (BEB ~1e-134 + 5.259e-6 + 1.2675e-6) / (PL 2.1012e-3 + 6.526e-6) = 3.096e-3
+    assert f.value == pytest.approx(3.096e-3, rel=0.01)
     # spec 4.2 as first written, kept for the sign-off: one EB at 2P with the prior in full and S_sec x S_oe,
     # 0.010742 * 0.010507 * 3.978e-4 = 4.490e-8, so (4.490e-8) / (2.1012e-3 + 4.490e-8) = 2.137e-5
     assert f.product_eb_weight == pytest.approx(4.490e-8, rel=0.01)
@@ -83,8 +88,9 @@ def test_an_unlocalized_bright_neighbour_dominates_the_fpp():
     assert f.scenarios[1].weight > f.scenarios[2].weight
     # The ruling asked for f.value > 0.5. The model cannot reach it: a fully unexcluded neighbour adds F_EB x
     # 2 Rsun / a(2P, 2 Msun) = 0.014 * 0.0202 = 2.8e-4 of weight against PL 2.10e-3. By hand, sum X = 1 + 0.052,
-    # BEB = 0.014 * 0.0202 * 1.052 = 2.98e-4, FPP = 2.98e-4 / (2.10e-3 + 2.98e-4) = 0.124. Flagged for sign-off.
-    assert f.value == pytest.approx(0.124, rel=0.02)
+    # BEB = 0.014 * 0.0202 * 1.052 = 2.98e-4; with the two on-target EB terms (5.26e-6 + 1.27e-6) FPP =
+    # (2.98e-4 + 6.53e-6) / (2.10e-3 + 2.98e-4 + 6.53e-6) = 0.127. Flagged for sign-off.
+    assert f.value == pytest.approx(0.127, rel=0.02)
 
 
 def test_bright_neighbour_far_from_the_centroid_is_excluded():

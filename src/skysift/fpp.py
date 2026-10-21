@@ -1,8 +1,9 @@
 """The approximate astrophysical false-positive probability of spec 4.2: in the spirit of Morton (2012), a planet on
 the target (PL), a background or foreground eclipsing binary within the confusion radius (BEB) and an eclipsing binary
 on the target itself, kept as two sub-scenarios that cannot both hold: one whose true period is P (EB-P, tested by the
-secondary at phase 0.5) and one whose true period is 2P (EB-2P, tested by the odd/even difference). The two share the
-EB prior equally. Each scenario weighs ``prior x geometric x data``;
+secondary at phase 0.5) and one whose true period is 2P (EB-2P, tested by the odd/even difference). Being hypotheses
+about different orbital periods, each carries the full binary fraction and its own period window. Each scenario weighs
+``prior x geometric x data``;
 ``FPP = (w_BEB + w_EB-P + w_EB-2P) / (w_PL + w_BEB + w_EB-P + w_EB-2P)``. The spec as first written multiplied the two
 EB tests into one scenario at 2P; that product and the FPP it gives are kept on the result (``product_eb_weight``,
 ``product_value``) for the sign-off. Every factor and its inputs is kept in ``ScenarioWeight.factors`` so the dossier
@@ -239,11 +240,13 @@ def _background(inputs: FppInputs) -> tuple[ScenarioWeight, float, tuple[dict, .
 
 
 def _on_target_binaries(inputs: FppInputs, cls: str, radius: float, mass: float) -> tuple[ScenarioWeight, ...]:
-    """EB-P and EB-2P, each with half the EB prior ``f_bin x g(P)``, the pair's transit probability at its own period
+    """EB-P and EB-2P, each with the full binary fraction ``f_bin`` times the fraction of binaries within a factor of
+    two of its own period (``g_P`` over P/2 to 2P, ``g_2P`` over P to 4P), the pair's transit probability at that period
     and its own test (S_sec for P, S_oe for 2P), both times S_v; and, last, the single scenario of spec 4.2 as first
-    written (prior in full, geometry at 2P, data S_sec x S_oe x S_v), kept for the sign-off and not summed."""
+    written (prior ``f_bin x g_2P``, geometry at 2P, data S_sec x S_oe x S_v), kept for the sign-off and not summed."""
     f_bin = F_BIN[cls]
-    g_p = binary_period_fraction(inputs.period)
+    # binary_period_fraction(p) is the window within a factor of two of 2p: p / 2 gives the window around P itself
+    g_p, g_2p = binary_period_fraction(inputs.period / 2), binary_period_fraction(inputs.period)
     m_pair = mass * (1 + EB_M2_OVER_M1)
     a_p, a_2p = _a_au(inputs.period, m_pair), _a_au(2 * inputs.period, m_pair)
     r_pair = radius * (1 + EB_R2_OVER_R1) * RSUN_AU
@@ -253,16 +256,15 @@ def _on_target_binaries(inputs: FppInputs, cls: str, radius: float, mass: float)
         else None
     s_oe = _tail(EB_ODD_EVEN_RATIO * depth_ppm, odd_even, inputs.odd_even_err_ppm)
     s_v = 1.0 if (inputs.fit_b is None or inputs.fit_b < V_SHAPE_B) else V_SHAPE_FACTOR
-    share = f_bin * g_p / 2
-    common: dict[str, float | str | None] = {"class": cls, "f_bin": f_bin, "g_P": g_p, "prior_share": 0.5,
-                                             "pair_mass_msun": m_pair, "fit_b": inputs.fit_b, "S_v": s_v}
-    at_p = ScenarioWeight("EB-P", share, r_pair / a_p, s_sec * s_v, {
-        **common, "a_P_au": a_p, "secondary_predicted_ppm": EB_SECONDARY_RATIO * depth_ppm,
+    common: dict[str, float | str | None] = {"class": cls, "f_bin": f_bin, "pair_mass_msun": m_pair,
+                                             "fit_b": inputs.fit_b, "S_v": s_v}
+    at_p = ScenarioWeight("EB-P", f_bin * g_p, r_pair / a_p, s_sec * s_v, {
+        **common, "g_P": g_p, "a_P_au": a_p, "secondary_predicted_ppm": EB_SECONDARY_RATIO * depth_ppm,
         "secondary_ppm": inputs.secondary_ppm, "secondary_err_ppm": inputs.secondary_err_ppm, "S_sec": s_sec})
-    at_2p = ScenarioWeight("EB-2P", share, r_pair / a_2p, s_oe * s_v, {
-        **common, "a_2P_au": a_2p, "odd_even_predicted_ppm": EB_ODD_EVEN_RATIO * depth_ppm,
+    at_2p = ScenarioWeight("EB-2P", f_bin * g_2p, r_pair / a_2p, s_oe * s_v, {
+        **common, "g_2P": g_2p, "a_2P_au": a_2p, "odd_even_predicted_ppm": EB_ODD_EVEN_RATIO * depth_ppm,
         "odd_even_ppm": odd_even, "odd_even_err_ppm": inputs.odd_even_err_ppm, "S_oe": s_oe})
-    product = ScenarioWeight("EB (spec product)", f_bin * g_p, r_pair / a_2p, s_sec * s_oe * s_v, {})
+    product = ScenarioWeight("EB (spec product)", f_bin * g_2p, r_pair / a_2p, s_sec * s_oe * s_v, {})
     return at_p, at_2p, product
 
 
