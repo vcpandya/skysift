@@ -5,17 +5,17 @@
 {% block content %}
 <section class="page-head">
   <h1>Dossiers</h1>
-  <p class="lede">The final set: every stage 2 candidate and every candidate a person approved, each with two separate numbers. False alarm asks whether noise could make the dip. False positive asks whether a real dip could be something other than a planet on this star.</p>
+  <p class="lede">The final set: every candidate a person approved, every stage 2 candidate, every stage 1 candidate waiting for its pixel stage, and the signals the pixel stage alone could not decide, each with two separate numbers. False alarm asks whether noise could make the dip. False positive asks whether a real dip could be something other than a planet on this star.</p>
 </section>
 <p class="muted">{% if versions == 'current' %}Current search version only · <a href="/dossiers?versions=all">show all</a>{% else %}All search versions · <a href="/dossiers?versions=current">current only</a>{% endif %}</p>
 {% if not rows %}
-{{ empty("No dossiers yet. A dossier is generated for a stage-2 candidate or an approved one.", "Run a sweep, then a recheck.", "/sources", "Open Sources") }}
+{{ empty("No dossiers yet. A dossier is generated for a candidate of stage 1 or 2, an approved one, or one the pixel stage could not decide.", "Run a sweep, then a recheck.", "/sources", "Open Sources") }}
 <p class="empty-more"><a href="/candidates">See the candidates</a></p>
 {% else %}
 {% if not any_dossier %}
 <div class="dossier-empty-note">
   <p class="empty-title">No dossiers yet.</p>
-  <p>A dossier is generated for a stage-2 candidate or an approved one. The candidates below qualify: press Generate on one. More come from a sweep and a recheck, from <a href="/sources">Sources</a>; the full list is on <a href="/candidates">Candidates</a>.</p>
+  <p>A dossier is generated for a candidate of stage 1 or 2, an approved one, or one the pixel stage could not decide. The candidates below qualify: press Generate on one. More come from a sweep and a recheck, from <a href="/sources">Sources</a>; the full list is on <a href="/candidates">Candidates</a>.</p>
 </div>
 {% endif %}
 <div class="dossier-grid">

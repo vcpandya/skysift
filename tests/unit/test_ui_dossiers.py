@@ -54,7 +54,7 @@ def test_dossiers_page_lists_the_final_set_in_order(seeded_dossier):
     assert html.index(APPROVED_TARGET) < html.index(STAGE2_TARGET)              # approved first
     assert "False alarm" in html and "1 in 1,700" in html and "about 3 percent" in html and "provisional" in html
     assert 'role="img"' in html and "times the size of Earth" in html
-    assert STAGE1_TARGET not in html                    # a stage-1 candidate without a dossier is not in the final set
+    assert STAGE1_TARGET in html                        # a stage-1 candidate is in the final set even without a dossier (21 October 2026)
     assert "False positive" in html and "1 in 1,700 about 3 percent" not in html     # two pills, never one number
 
 
@@ -83,7 +83,7 @@ def test_dossiers_page_empty_state_without_candidates(settings):
     client = TestClient(create_app(settings, store=store, blob=blob_from_url(settings.blob_url)),
                         base_url="http://127.0.0.1")
     main = client.get("/dossiers").text.split('id="main"')[1]
-    assert "No dossiers yet. A dossier is generated for a stage-2 candidate or an approved one." in main
+    assert "No dossiers yet. A dossier is generated for a candidate of stage 1 or 2, an approved one, or one the pixel stage could not decide." in main
     assert "Run a sweep, then a recheck." in main and 'href="/sources"' in main and 'href="/candidates"' in main
 
 
@@ -682,3 +682,31 @@ def test_the_dossier_page_renders_in_the_dark_theme(seeded_dossier, mode):
     assert r.status_code == 200 and 'data-theme="dark"' in r.text and f'data-mode="{mode}"' in r.text
     assert 'id="checks"' in r.text and 'id="look"' in r.text and "—" not in r.text
     assert "dossier.js" in r.text and 'id="dossier-data"' in r.text
+
+
+def test_pixel_undecided_signals_join_the_page_but_other_undetermined_ones_do_not(seeded_dossier):
+    # 21 October 2026: the page shows stage 1 and the signals only the pixel stage could not decide; a signal
+    # undetermined at rung 4 (the seed's outage target) stays off it
+    from skysift.models import TestResult, TestStatus
+    from skysift.ui import queries
+    from tests.unit.ui_seed import VERSION, _signal, _target, _tests, make_job_key
+    client, app, _ids, _data = seeded_dossier
+    store = app.state.store
+    tid = "kic-009243078"
+    store.upsert_targets([_target(tid, kic=9243078, gaia="2101234567890123470")])
+    rid = store.start_run(make_job_key(tid, "box_dip", VERSION, "7"), tid, "box_dip", VERSION, "7")
+    tests = _tests("pass") + [TestResult(rung="rung5_pixels", status=TestStatus.UNDETERMINED,
+                                         reason="pixels: season 2 ambiguous (1.0 sigma)", metrics={"seasons": []})]
+    item = {"signal": _signal(tid, 6.113, 20.5).model_dump(), "outcome": "undetermined",
+            "tests": [r.model_dump() for r in tests], "timings": [0.01] * len(tests)}
+    store.record_results(rid, tid, [item], [], pin_evidence=False)
+    html = client.get("/dossiers").text
+    assert tid in html and "group-pixels" in html
+    assert "gaia-dr3-2101234567890123457" not in html                 # undetermined at rung 4: not on the page
+    rows = queries.final_set(store, None)
+    groups = [r["group"] for r in rows]
+    assert groups == sorted(groups, key=queries.FINAL_GROUPS.index) and groups[-1] == "pixels"
+    assert STAGE1_TARGET in [r["target_id"] for r in rows if r["group"] == "stage1"]
+    assert queries.pixels_undecided([{"rung": "rung2_shape", "status": "undetermined", "reason": "equal secondary"},
+                                     {"rung": "rung5_pixels", "status": "undetermined", "reason": "pixels: x"}]) is False
+    assert queries.pixels_undecided([{"rung": "rung5_pixels", "status": "undetermined", "reason": "outage:mast: 1"}]) is False

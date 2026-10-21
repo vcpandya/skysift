@@ -92,7 +92,8 @@ Pages, in the order of the navigation, and two modes: **simple** (the default) e
 * **Approved**: current decisions by status, kept to the current search version unless asked otherwise. Each signal
   has a copyable summary and a `review.json` download with the signal, every test, every query, the artifacts and the
   decision history.
-* **Dossiers**: one tile per candidate in the final set (stage 2 and reviewer-approved signals; stage 1 on demand),
+* **Dossiers**: one tile per candidate in the final set (reviewer-approved, stage 2 and stage 1 signals, and the
+  undetermined ones that only the pixel stage could not decide; a tile without a dossier offers Generate),
   each with its two probability pills (**False alarm** from the null calibration, **False positive** from the
   scenario estimate of spec 4.2, whose priors were signed off on 21 October 2026). A tile opens the target's dossier
   (`/dossiers/<target>`): the signal, whether it repeats, the checks, which star is dimming (the difference images of

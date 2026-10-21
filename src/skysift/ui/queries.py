@@ -531,7 +531,7 @@ def review_document(store: Store, signal_id: int) -> dict | None:
 
 # ---- the Dossiers page (dossiers spec 5.5) ------------------------------------------------------------------------
 
-FINAL_GROUPS = ("approved", "stage2", "stage1")
+FINAL_GROUPS = ("approved", "stage2", "stage1", "pixels")      # "pixels": the pixel stage could not decide
 _JSON_CACHE: dict[str, tuple[int, dict | None, str | None]] = {}      # path -> (mtime_ns, data, error)
 _JSON_CACHE_MAX = 64
 
@@ -564,7 +564,25 @@ def dossier_json(path: str) -> tuple[dict | None, str | None]:
 def _group(final_status: str, decision: str | None, candidate_status: str | None) -> str:
     if decision == "approve" or candidate_status in ("approved", "published"):
         return "approved"
+    if final_status == "undetermined":
+        return "pixels"
     return "stage2" if final_status == "candidate_stage2" else "stage1"
+
+
+def pixels_undecided(tests: list[dict]) -> bool:
+    """An undetermined signal belongs on the Dossiers page when every light-curve rung passed and only the pixel
+    stage could not decide: among the latest row of each rung, no failure, at least one undetermined row, and every
+    undetermined row is rung 5's (its reason starts with "pixels:": one voting season, an ambiguous season, no
+    pixel files). A signal undetermined at rung 2, 3 or 4, or whose pixel step never ran, stays off the page."""
+    latest: dict[str, dict] = {}
+    for t in tests:                        # ordered by id, so the last row of a rung wins
+        latest[t["rung"]] = t
+    rows = list(latest.values())
+    if any(t["status"] == "fail" for t in rows):
+        return False
+    open_rows = [t for t in rows if t["status"] == "undetermined"]
+    return bool(open_rows) and all(t["rung"] == "rung5_pixels" and str(t.get("reason") or "").startswith("pixels:")
+                                   for t in open_rows)
 
 
 def stale_reason(store: Store, row: dict, best_signal_id: int | None = None) -> str | None:
@@ -611,14 +629,15 @@ def _tile_facts(data: dict | None) -> dict:
 
 
 def final_set(store: Store, version: str | None, target_id: str | None = None) -> list[dict]:
-    """One row per target for the Dossiers page: every ``candidate_stage2`` signal of ``version`` (None: every
-    version), every signal of ``version`` whose latest decision is an approval, and every target with a dossier row
-    whatever its version. A target shows its best signal by ``dossier.rank_key``, the ranking ``pick_signal`` builds
+    """One row per target for the Dossiers page: every ``candidate_stage2`` and ``candidate_stage1`` signal of
+    ``version`` (None: every version), every ``undetermined`` signal of ``version`` that only the pixel stage could
+    not decide (``pixels_undecided``), every signal of ``version`` whose latest decision is an approval, and every
+    target with a dossier row whatever its version. A target shows its best signal by ``dossier.rank_key``, the ranking ``pick_signal`` builds
     the dossier from; a target with a dossier ranks every signal it has, of any version, so its tile and its dossier
     always name the same signal. ``group`` only orders the tiles. Rows carry ``target_id``,
     ``signal_id``, ``final_status``, ``decision``, ``dossier`` (the row or None), ``stale`` and ``stale_reason``,
-    ``group`` ("approved", "stage2", "stage1"), ``fpp`` and ``fap``, plus what a tile prints; sorted approved,
-    stage 2, stage 1, then FPP ascending with None last. With ``target_id``, the one row of that target (any of its
+    ``group`` ("approved", "stage2", "stage1", "pixels"), ``fpp`` and ``fap``, plus what a tile prints; sorted
+    approved, stage 2, stage 1, pixels undecided, then FPP ascending with None last. With ``target_id``, the one row of that target (any of its
     signals qualifies, so a stage-1 candidate's tile can be drawn while its first dossier is generated)."""
     from skysift import dossier as ds
     latest = _latest_decision_subquery()
@@ -630,7 +649,8 @@ def final_set(store: Store, version: str | None, target_id: str | None = None) -
         base = base.where(SignalRow.target_id == target_id)
         q = base
     else:
-        q = base.where((SignalRow.final_status == "candidate_stage2") | (latest.c.decision == "approve"))
+        q = base.where(SignalRow.final_status.in_(("candidate_stage2", "candidate_stage1", "undetermined"))
+                       | (latest.c.decision == "approve"))
     if version is not None:
         q = q.join(RunRow, RunRow.id == SignalRow.run_id).where(RunRow.detector_version == version)
     dossiers = {d["target_id"]: d for d in store.dossiers() if target_id is None or d["target_id"] == target_id}
@@ -650,6 +670,11 @@ def final_set(store: Store, version: str | None, target_id: str | None = None) -
                          "target": {**target, "name": ds.target_name(target)},
                          "group": _group(sig.final_status, decision, cand)})
         tests = _tests_by_signal(s, [r["signal_id"] for r in rows])
+    # an undetermined signal qualifies on its own only when the pixel stage alone could not decide; one of a target
+    # already on the page (a dossier, or a qualifying sibling) is kept so the tile and the dossier rank the same set
+    qualifying = {r["target_id"] for r in rows
+                  if r["group"] != "pixels" or pixels_undecided(tests[r["signal_id"]])} | set(dossiers)
+    rows = [r for r in rows if r["target_id"] in qualifying]
     by_target: dict[str, list[dict]] = {}
     for r in rows:
         by_target.setdefault(r["target_id"], []).append(r)

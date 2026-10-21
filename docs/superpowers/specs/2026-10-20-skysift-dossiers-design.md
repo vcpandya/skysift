@@ -172,7 +172,7 @@ The recheck plan is the contract: `Localisation.metrics()` keys, `rung5_pixels` 
 
 ## 9. Open calls made here (for Vikram to check)
 
-- The final set is stage 2 plus reviewer-approved; stage 1 is on demand. (Alternative: every stage 1 too, which would put rediscoveries and aliases on the page.)
+- The final set is stage 2 plus reviewer-approved; stage 1 is on demand. (Alternative: every stage 1 too, which would put rediscoveries and aliases on the page.) Decision (Vikram, 21 October 2026): every stage 1 too, and the undetermined signals that only the pixel stage could not decide (one voting season, an ambiguous season, no pixel files), so the page shows the candidates waiting for their pixels, not only the two that have them. The worry about rediscoveries and aliases is answered by the recheck: a rediscovery fails rung 4, and an alias is superseded by its P/2 child. A tile without a dossier offers Generate; the group order is approved, stage 2, stage 1, pixels undecided.
 - FAP uses the add-one rule and needs at least 200 null searches of the same source.
 - FPP is the three-scenario approximation of section 4.2 with the priors and factors written there, labelled approximate, with the factor table always visible in Expert, gated by the sign-off on the two known stars' factor tables before the numbers appear on a tile (given on 21 October 2026, section 4.2).
 - Stellar parameters follow the route of the hand-built dossier (Mamajek colour table, Mann relations for M dwarfs, Gaia parallax with the zero-point correction, Monte Carlo errors), with Gaia's own FLAME values as an Expert cross-check only.
