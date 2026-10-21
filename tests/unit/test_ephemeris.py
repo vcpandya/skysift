@@ -162,10 +162,10 @@ def test_bootstrap_brackets_the_rung2_radius_ratio_and_the_injected_one_lies_wit
     fit = fit_transit(lc.time, fn, P, T0, DUR)
     point = _rung2_point(fit)
     se = bootstrap_shape(lc.time, fn, P, T0, DUR, point, n_boot=20, seed=1)
-    assert se.ok and se.k["minus"] > 0 and se.k["plus"] > 0
-    assert abs(se.k["boot_median"] - se.k["median"]) < max(se.k["minus"], se.k["plus"])
+    # every resample of this clean scene converges, and the k interval brackets the injected k
+    assert se.ok and se.n_converged == 20 and se.k["minus"] > 0 and se.k["plus"] > 0
+    assert se.k["boot_median"] - 3 * se.k["minus"] <= K <= se.k["boot_median"] + 3 * se.k["plus"]
     assert se.k["minus"] < 0.01 and se.k["plus"] < 0.01 and se.t14_h["median"] == point["t14_h"]
-    assert abs(K - se.k["median"]) < 3 * max(se.k["minus"], se.k["plus"])
     assert se.k["median"] == fit.k and se.model_depth_ppm["median"] == fit.depth_ppm and se.box_duration_h is None
     assert se.n_boot == 20 and se.seed == 1 and set(se.b) == {"median", "minus", "plus", "boot_median"}
     # the ingress (about 10 minutes) is shorter than the cadence: b and a/R* keep their point values, no errors
@@ -189,10 +189,10 @@ def test_bootstrap_quotes_b_and_a_over_r_when_the_ingress_is_resolved():
     se = bootstrap_shape(lc.time, fn, P, T0, dur, _rung2_point(fit), n_boot=20, seed=1)
     assert se.ok and not se.degenerate and se.degeneracy_reason is None and se.ingress_min > CADENCE_MIN
     for block in (se.b, se.a_over_r):
-        assert None not in block.values() and block["minus"] + block["plus"] > 0
-    # the injected b lies within three sigma of the rung 2 value, on its own side of the interval
-    assert se.b["median"] - 3 * se.b["minus"] <= b <= se.b["median"] + 3 * se.b["plus"]
-    assert se.a_over_r["median"] - 3 * se.a_over_r["minus"] <= a <= se.a_over_r["median"] + 3 * se.a_over_r["plus"]
+        assert None not in block.values() and block["minus"] > 0 and block["plus"] > 0
+    # the injected b and a/R* lie within three half-widths of the bootstrap median, on their own side
+    for block, true in ((se.b, b), (se.a_over_r, a)):
+        assert block["boot_median"] - 3 * block["minus"] <= true <= block["boot_median"] + 3 * block["plus"]
 
 
 def test_bootstrap_without_a_fit_gives_box_depth_and_duration(scene):

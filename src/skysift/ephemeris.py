@@ -17,7 +17,9 @@ line are dropped and the line is fitted again (Holczer et al. 2016).
 The radius ratio, impact parameter, a/R*, duration and model depth carry errors from a bootstrap over whole transits:
 the events are drawn with replacement, their points are concatenated and the uniform-disc fit is run on each
 resample (Schmitt et al. 2014, the Planet Hunters practice). The point value stays the rung 2 fit; the errors are the
-distances from it to the 16th and 84th percentiles of the resamples. Without a fit the box depth keeps its per-event
+resample spread, the 50th minus the 16th and the 84th minus the 50th percentile, and the bootstrap median is kept
+beside the point value, their offset a bias indicator (a full-curve fit at the edge of the resample distribution
+would otherwise read an error of zero on one side). Without a fit the box depth keeps its per-event
 error and the box duration gets percentiles from the width that maximises the depth over its error on each resample.
 
 Odd and even depths are the weighted means of the per-event box depths of each parity, and the secondary block turns
@@ -329,7 +331,8 @@ class ShapeErrors:
     n_boot: int
     n_converged: int
     seed: int
-    # each {"median": the rung 2 point value, "minus", "plus", "boot_median"}; None without a fit or when not ok
+    # each {"median": the rung 2 point value, "minus": p50 - p16, "plus": p84 - p50, "boot_median": p50} of the
+    # resamples; None without a fit or when not ok
     k: dict | None
     b: dict | None
     a_over_r: dict | None
@@ -365,8 +368,10 @@ def ingress_minutes(period: float, k: float, b: float, a_over_r: float) -> float
 
 
 def _spread(samples, median: float, with_boot: bool = True) -> dict:
+    """``median`` (the point value) with the resample spread ``p50 - p16`` and ``p84 - p50`` (never negative) and,
+    when ``with_boot``, the resample median ``p50``."""
     p16, p50, p84 = np.percentile(np.asarray(samples, float), [16, 50, 84])
-    out = {"median": float(median), "minus": max(0.0, float(median - p16)), "plus": max(0.0, float(p84 - median))}
+    out = {"median": float(median), "minus": float(p50 - p16), "plus": float(p84 - p50)}
     if with_boot:
         out["boot_median"] = float(p50)
     return out
