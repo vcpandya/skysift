@@ -30,7 +30,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from skysift.lc.ops import event_depths, measure_at
-from skysift.lc.transit_model import fit_transit, uniform_disc_flux
+from skysift.lc.transit_model import _t14, fit_transit, uniform_disc_flux
 
 BKJD_OFFSET = 2454833.0
 EVENT_IN_MIN, EVENT_OUT_MIN, EVENT_OUT_SIDE_MIN = 3, 6, 2     # the pixel rung's event rules
@@ -43,6 +43,8 @@ BOX_DURATION_FACTORS = (0.5, 2.0)      # the box-duration grid, times the search
 EPHEMERIS_METHOD = ("weighted linear fit of per-transit mid-times, reference epoch at the centre of the series "
                     "(Deeg 2015; Holczer et al. 2016)")
 SHAPE_METHOD = "bootstrap over transits of the uniform-disc fit (Schmitt et al. 2014)"
+CADENCE_MIN = 29.4             # Kepler long cadence, minutes: a shorter ingress leaves b and a/R* degenerate with k
+DEGENERACY_REASON = "ingress shorter than the cadence: b and a/R* are degenerate with k, errors not quoted"
 
 WINDOW_DURATIONS = 3.0         # an event's window: the points within this many durations of the predicted mid-time
 BOX_DURATION_STEPS = 40
@@ -66,7 +68,8 @@ def _finite(*xs) -> bool:
 class Template:
     """The fixed dip an event is timed with. ``depth`` is a fraction and is not fitted (the per-event depths are a
     separate measurement): the box is ``1 - depth`` within half a duration, the "fit" kind is the uniform-disc model
-    of ``k``, ``b`` and ``a_over_r`` with its dip scaled to ``depth`` at mid-transit."""
+    of ``k``, ``b`` and ``a_over_r`` with its dip scaled to ``depth`` at mid-transit. A "fit" template whose geometry
+    has no dip (``b >= 1 + k``: the disc never touches the star) has nothing to scale and raises ValueError."""
     kind: str                  # "fit" | "box"
     depth: float
     duration_days: float
@@ -74,14 +77,20 @@ class Template:
     b: float | None = None
     a_over_r: float | None = None
 
+    def __post_init__(self):
+        if self.kind not in ("fit", "box"):
+            raise ValueError(f"template kind must be 'fit' or 'box', got {self.kind!r}")
+        if self.kind == "fit" and not (_finite(self.k, self.b, self.a_over_r) and self.k > 0 and self.a_over_r > 0
+                                       and self.b < 1.0 + self.k):
+            raise ValueError(f"a fit template needs a dipping geometry, got k={self.k}, b={self.b}, "
+                             f"a_over_r={self.a_over_r}")
+
     def flux(self, dt_days: np.ndarray, period: float) -> np.ndarray:
         dt = np.atleast_1d(np.asarray(dt_days, dtype=float))
         if self.kind == "box":
             return np.where(np.abs(dt) < 0.5 * self.duration_days, 1.0 - self.depth, 1.0)
         model = uniform_disc_flux(dt, period, self.k, self.b, self.a_over_r)
         own = 1.0 - float(uniform_disc_flux(np.array([0.0]), period, self.k, self.b, self.a_over_r)[0])
-        if not own > 0:
-            return np.ones_like(dt)
         return 1.0 - (1.0 - model) * (self.depth / own)
 
 
@@ -130,8 +139,8 @@ def _time_one(d, y, shifts, model, n_in, n_out, epoch, mid, duration_days) -> Tr
     out = np.abs(d) >= duration_days
     level = float(np.median(y[out]))
     sigma = MAD_TO_SIGMA * float(np.median(np.abs(y[out] - level)))
-    if not sigma > 0:           # a flat baseline gives no per-point error
-        return TransitTime(epoch, None, None, None, n_in, n_out, False, "too few out-of-transit points")
+    if not sigma > 0:           # half the baseline points or more share one value: no per-point error
+        return TransitTime(epoch, None, None, None, n_in, n_out, False, "flat baseline")
     chi2 = np.sum(((y[None, :] - level * model(d[None, :] - shifts[:, None])) / sigma) ** 2, axis=1)
     j = int(np.argmin(chi2))
     red = float(chi2[j]) / max(1, d.size - 1)
@@ -151,9 +160,10 @@ def _time_one(d, y, shifts, model, n_in, n_out, epoch, mid, duration_days) -> Tr
 def transit_times(time, fnorm, period: float, t0: float, duration_days: float, template: Template) -> list[TransitTime]:
     """The mid-time of each event with a point within three durations of its predicted time ``t0 + epoch period``,
     in epoch order. An event needs ``EVENT_IN_MIN`` points within half a duration and ``EVENT_OUT_MIN`` from one to
-    three durations, ``EVENT_OUT_SIDE_MIN`` on each side (the pixel rung's rules); otherwise, or when the chi-square
-    has no minimum inside the grid or the shift error exceeds half a duration, it is kept with ``used`` false and the
-    reason. The template is ``template`` averaged over the median time step of the data (module docstring)."""
+    three durations, ``EVENT_OUT_SIDE_MIN`` on each side (the pixel rung's rules); otherwise, or when the baseline is
+    flat (a zero median absolute deviation), the chi-square has no minimum inside the grid or the shift error exceeds
+    half a duration, it is kept with ``used`` false and the reason. The template is ``template`` averaged over the
+    median time step of the data (module docstring)."""
     time, fnorm = np.asarray(time, float), np.asarray(fnorm, float)
     good = np.isfinite(time) & np.isfinite(fnorm)
     t, f = time[good], fnorm[good]
@@ -211,6 +221,8 @@ class LinearEphemeris:
     def predict(self, epoch: int) -> tuple[float, float | None]:
         """Mid-time at ``epoch`` (BKJD) and its error in days: sigma squared is t_ref_err squared plus
         (epoch - epoch_ref) squared period_err squared (Deeg 2015). No error without an ok fit."""
+        # Deeg's form drops the covariance, which vanishes only at the unrounded weighted centre; t0_err keeps it, so
+        # predict(0)[1] and t0_err differ slightly when epoch_ref is rounded
         if not self.ok:
             return self.t0 + epoch * self.period, None
         de = epoch - self.epoch_ref
@@ -293,6 +305,7 @@ def linear_fit(times: list[TransitTime], period: float, t0: float) -> LinearEphe
     infl = max(1.0, math.sqrt(chi2 / dof)) if dof > 0 else 1.0
     var_t, var_p, cov = var_t * infl ** 2, var_p * infl ** 2, cov * infl ** 2
     t0_fit = t_ref - p * e_ref
+    # t0_err carries the covariance term; predict (Deeg's form) does not, so the two differ slightly at epoch 0
     var_t0 = max(var_t + e_ref ** 2 * var_p - 2.0 * e_ref * cov, 0.0)
     return LinearEphemeris(True, None, p, math.sqrt(var_p), t_ref, math.sqrt(var_t), e_ref, cov, t0_fit,
                            math.sqrt(var_t0), chi2, dof, infl, float(np.sqrt(np.mean(resid ** 2)) * 1440.0),
@@ -324,6 +337,9 @@ class ShapeErrors:
     model_depth_ppm: dict | None
     box_depth_ppm: dict | None          # {"median": depth_ppm, "minus": err, "plus": err} from event_depths
     box_duration_h: dict | None         # only without a fit: {"median", "minus", "plus"} over the resamples
+    ingress_min: float | None = None    # (T14 - T23) / 2 of the rung 2 geometry, minutes; None without a fit
+    degenerate: bool = False            # ingress shorter than CADENCE_MIN: b and a/R* carry no errors
+    degeneracy_reason: str | None = None
 
     def as_dict(self) -> dict:
         def block(d):
@@ -332,7 +348,20 @@ class ShapeErrors:
                 "n_converged": self.n_converged, "seed": self.seed, "k": block(self.k), "b": block(self.b),
                 "a_over_r": block(self.a_over_r), "t14_h": block(self.t14_h),
                 "model_depth_ppm": block(self.model_depth_ppm), "box_depth_ppm": block(self.box_depth_ppm),
-                "box_duration_h": block(self.box_duration_h)}
+                "box_duration_h": block(self.box_duration_h), "ingress_min": _f(self.ingress_min),
+                "degenerate": self.degenerate, "degeneracy_reason": self.degeneracy_reason}
+
+
+def ingress_minutes(period: float, k: float, b: float, a_over_r: float) -> float | None:
+    """The ingress duration (T14 - T23) / 2 of a uniform-disc transit on a circular orbit, minutes. T23 uses
+    ``sqrt((1 - k)^2 - b^2)`` in the form of ``transit_model._t14`` and is 0 when ``b >= 1 - k`` (a grazing transit
+    has no flat bottom, so the ingress is T14 / 2). None when T14 is undefined."""
+    t14 = _t14(period, k, b, a_over_r)
+    if not math.isfinite(t14):
+        return None
+    inner = (1.0 - k) ** 2 - b * b
+    t23 = 0.0 if b >= 1.0 - k or inner <= 0.0 else period / math.pi * math.asin(min(1.0, math.sqrt(inner) / a_over_r))
+    return 0.5 * (t14 - t23) * 1440.0
 
 
 def _spread(samples, median: float, with_boot: bool = True) -> dict:
@@ -359,7 +388,12 @@ def bootstrap_shape(time, fnorm, period, t0, duration_days, point: dict | None, 
     ``point`` (rung 2's {"k", "b", "a_over_r", "t14_h", "fit_depth_ppm"} when its fit is ok) each resample is fitted
     with ``fit_transit``; without it, the box duration that maximises the depth over its error on a grid from half
     to twice ``duration_days`` is kept per resample. The box depth always comes from ``event_depths`` over the same
-    epochs, with its scaled error. Fewer than ``BOOT_MIN_CONVERGED`` converged resamples give no shape errors."""
+    epochs, with its scaled error. Fewer than ``BOOT_MIN_CONVERGED`` converged resamples give no shape errors.
+
+    When the ingress of the rung 2 geometry is shorter than ``CADENCE_MIN`` the fit is degenerate between k, b and
+    a/R* (spec 3.4, ruling of 22 October 2026): the block is marked ``degenerate`` and b and a/R* keep their point
+    values with no errors, while k, T14 and the model depth, which the depth and the box width constrain, keep
+    theirs."""
     time, fnorm = np.asarray(time, float), np.asarray(fnorm, float)
     good = np.isfinite(time) & np.isfinite(fnorm)
     t, f = time[good], fnorm[good]
@@ -375,6 +409,11 @@ def bootstrap_shape(time, fnorm, period, t0, duration_days, point: dict | None, 
     box_depth = ({"median": float(ev.mean), "minus": float(ev.err_scaled), "plus": float(ev.err_scaled)}
                  if ev.n and _finite(ev.mean, ev.err_scaled) else None)
     members = {int(e): np.flatnonzero(near & (epoch == e)) for e in pool}
+    ingress = None
+    if point is not None and _finite(point.get("k"), point.get("b"), point.get("a_over_r")):
+        ingress = ingress_minutes(period, float(point["k"]), float(point["b"]), float(point["a_over_r"]))
+    degenerate = ingress is not None and ingress < CADENCE_MIN
+    flags = (ingress, degenerate, DEGENERACY_REASON if degenerate else None)
     rng = np.random.default_rng(seed)
     durations = np.geomspace(BOX_DURATION_FACTORS[0] * duration_days, BOX_DURATION_FACTORS[1] * duration_days,
                              BOX_DURATION_STEPS)
@@ -393,14 +432,16 @@ def bootstrap_shape(time, fnorm, period, t0, duration_days, point: dict | None, 
     n_conv = len(samples)
     if n_conv < BOOT_MIN_CONVERGED:
         return ShapeErrors(False, f"{n_conv} of {n_boot} resamples converged (fewer than {BOOT_MIN_CONVERGED})",
-                           SHAPE_METHOD, n_boot, n_conv, seed, None, None, None, None, None, box_depth, None)
+                           SHAPE_METHOD, n_boot, n_conv, seed, None, None, None, None, None, box_depth, None, *flags)
     s = np.array(samples)
     if point is None:
         return ShapeErrors(True, None, SHAPE_METHOD, n_boot, n_conv, seed, None, None, None, None, None, box_depth,
                            _spread(s[:, 0], float(np.median(s[:, 0])), with_boot=False))
     keys = ("k", "b", "a_over_r", "t14_h", "fit_depth_ppm")
     k, b, a, t14, depth = (_spread(s[:, i], float(point[key])) for i, key in enumerate(keys))
-    return ShapeErrors(True, None, SHAPE_METHOD, n_boot, n_conv, seed, k, b, a, t14, depth, box_depth, None)
+    if degenerate:      # the bootstrap scatters around one solution in the k-b-a/R* valley, not across it
+        b, a = ({"median": d["median"], "minus": None, "plus": None, "boot_median": None} for d in (b, a))
+    return ShapeErrors(True, None, SHAPE_METHOD, n_boot, n_conv, seed, k, b, a, t14, depth, box_depth, None, *flags)
 
 
 @dataclass(frozen=True)

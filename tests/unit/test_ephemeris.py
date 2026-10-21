@@ -6,9 +6,12 @@ import pytest
 
 from skysift.ephemeris import (
     BKJD_OFFSET,
+    CADENCE_MIN,
+    DEGENERACY_REASON,
     ParityDepths,
     Template,
     bootstrap_shape,
+    ingress_minutes,
     linear_fit,
     parity_depths,
     predict_from,
@@ -60,12 +63,29 @@ def test_transit_times_recover_the_injected_mid_times(scene):
 
 
 def test_transit_times_give_the_reason_an_event_is_not_timed(scene):
-    lc, fn, _ = scene
-    # an event at the start of the data, half inside the 1.5 d gap-edge mask after a quarter gap
-    starved = [t for t in transit_times(lc.time, fn, P, T0, DUR, Template("box", 0.0022, DUR)) if not t.used]
+    lc, fn, times = scene
+    # events at quarter edges, partly inside the 1.5 d gap-edge mask
+    starved = [t for t in times if not t.used]
     assert starved and all(t.t_bkjd is None and t.err_days is None for t in starved)
     assert {t.reason for t in starved} <= {"too few in-transit points", "too few out-of-transit points",
-                                          "no minimum inside the grid", "shift error above half a duration"}
+                                          "flat baseline", "no minimum inside the grid",
+                                          "shift error above half a duration"}
+    # epoch 10 keeps two in-transit points, epoch 20 gets a baseline of one repeated value
+    timed = {t.epoch for t in times if t.used}
+    assert {10, 20} <= timed
+    epoch = np.round((lc.time - T0) / P)
+    dt = np.abs(lc.time - (T0 + epoch * P))
+    cut = fn.copy()
+    gone = np.flatnonzero((epoch == 10) & (dt < 0.5 * DUR) & np.isfinite(cut))[2:]
+    cut[gone] = np.nan
+    cut[(epoch == 20) & (dt >= DUR) & (dt <= 3 * DUR) & np.isfinite(cut)] = 1.0
+    by_epoch = {t.epoch: t for t in transit_times(lc.time, cut, P, T0, DUR, Template("box", 0.0022, DUR))}
+    assert by_epoch[10].reason == "too few in-transit points" and by_epoch[10].n_in == 2
+    assert by_epoch[20].reason == "flat baseline" and not by_epoch[20].used
+    # a 1 ppm template barely bends the chi-square: its parabola is wider than half a duration
+    faint = transit_times(lc.time, fn, P, T0, DUR, Template("box", 1e-6, DUR))
+    wide = [t for t in faint if t.reason == "shift error above half a duration"]
+    assert len(wide) > 0.2 * len(faint) and all(t.t_bkjd is None and t.chi2_red > 0 for t in wide)
     # predicted 1.5 durations late, the dip lies beyond the shift grid: the chi-square falls to the grid's edge
     late = transit_times(lc.time, fn, P, T0 + 1.5 * DUR, DUR, Template("box", 0.0022, DUR))
     edge = [t for t in late if t.reason == "no minimum inside the grid"]
@@ -77,6 +97,11 @@ def test_a_fit_template_times_the_transit_as_well_as_the_box(scene):
     tmpl = template_from({"fit_ok": True, "fit_k": K, "fit_b": B, "fit_a_over_r": A_R}, 2209.0, DUR)
     assert tmpl.kind == "fit" and tmpl.flux(np.array([0.0]), P)[0] == pytest.approx(1 - 2209e-6)
     assert template_from({"fit_ok": False, "fit_k": None}, 2200.0, DUR).kind == "box"
+    # a fitted geometry whose disc never touches the star has no dip to scale: refused, not timed with a flat line
+    with pytest.raises(ValueError, match="dipping geometry"):
+        template_from({"fit_ok": True, "fit_k": 0.05, "fit_b": 1.2, "fit_a_over_r": 12.0}, 2200.0, DUR)
+    with pytest.raises(ValueError, match="kind"):
+        Template("trapezoid", 0.002, DUR)
     used = [t for t in transit_times(lc.time, fn, P, T0, DUR, tmpl) if t.used]
     pulls = [(t.t_bkjd - (T0 + t.epoch * P)) / t.err_days for t in used]
     assert len(used) >= 150 and abs(np.mean(pulls)) < 0.3 and 0.6 < np.std(pulls) < 1.6
@@ -126,18 +151,48 @@ def test_linear_fit_with_two_events_has_no_error(scene):
     assert eph.predict(10) == (T0 + 10 * P, None) and predict_from(eph.as_dict(), 10) == (T0 + 10 * P, None)
 
 
+def _rung2_point(fit):
+    return {"k": fit.k, "b": fit.b, "a_over_r": fit.a_over_r, "t14_h": fit.t14_days * 24,
+            "fit_depth_ppm": fit.depth_ppm}
+
+
 def test_bootstrap_brackets_the_rung2_radius_ratio_and_the_injected_one_lies_within_three_sigma(scene):
     lc, fn, _ = scene
     # the point is what rung 2 reports: the fit of the whole curve (k 0.0467 on this noise draw, 1.6 sigma below K)
     fit = fit_transit(lc.time, fn, P, T0, DUR)
-    point = {"k": fit.k, "b": fit.b, "a_over_r": fit.a_over_r, "t14_h": fit.t14_days * 24,
-             "fit_depth_ppm": fit.depth_ppm}
+    point = _rung2_point(fit)
     se = bootstrap_shape(lc.time, fn, P, T0, DUR, point, n_boot=20, seed=1)
-    assert se.ok and se.n_converged >= 15 and se.k["minus"] > 0 and se.k["plus"] > 0
+    assert se.ok and se.k["minus"] > 0 and se.k["plus"] > 0
+    assert abs(se.k["boot_median"] - se.k["median"]) < max(se.k["minus"], se.k["plus"])
     assert se.k["minus"] < 0.01 and se.k["plus"] < 0.01 and se.t14_h["median"] == point["t14_h"]
     assert abs(K - se.k["median"]) < 3 * max(se.k["minus"], se.k["plus"])
     assert se.k["median"] == fit.k and se.model_depth_ppm["median"] == fit.depth_ppm and se.box_duration_h is None
     assert se.n_boot == 20 and se.seed == 1 and set(se.b) == {"median", "minus", "plus", "boot_median"}
+    # the ingress (about 10 minutes) is shorter than the cadence: b and a/R* keep their point values, no errors
+    assert se.ingress_min == pytest.approx(ingress_minutes(P, fit.k, fit.b, fit.a_over_r)) and se.ingress_min < 20
+    assert se.degenerate and se.degeneracy_reason == DEGENERACY_REASON
+    for block, value in ((se.b, fit.b), (se.a_over_r, fit.a_over_r)):
+        assert block == {"median": value, "minus": None, "plus": None, "boot_median": None}
+    assert se.t14_h["plus"] > 0 and se.model_depth_ppm["minus"] > 0
+    d = se.as_dict()
+    assert d["degenerate"] is True and d["b"]["minus"] is None and d["ingress_min"] == se.ingress_min
+
+
+def test_bootstrap_quotes_b_and_a_over_r_when_the_ingress_is_resolved():
+    # a 6 h transit of k 0.1 at b 0.5 has a 43 minute ingress, longer than the 29.4 minute cadence
+    k, b, dur = 0.1, 0.5, 6.0 / 24
+    a = np.sqrt((1 + k) ** 2 - b ** 2) / np.sin(np.pi * dur / P)
+    assert _t14(P, k, b, a) == pytest.approx(dur) and ingress_minutes(P, k, b, a) > CADENCE_MIN + 10
+    lc = inject_model(make_lightcurve(noise_ppm=600, seed=3), P, T0, k, b, a)
+    fn = detrend(lc)
+    fit = fit_transit(lc.time, fn, P, T0, dur)
+    se = bootstrap_shape(lc.time, fn, P, T0, dur, _rung2_point(fit), n_boot=20, seed=1)
+    assert se.ok and not se.degenerate and se.degeneracy_reason is None and se.ingress_min > CADENCE_MIN
+    for block in (se.b, se.a_over_r):
+        assert None not in block.values() and block["minus"] + block["plus"] > 0
+    # the injected b lies within three sigma of the rung 2 value, on its own side of the interval
+    assert se.b["median"] - 3 * se.b["minus"] <= b <= se.b["median"] + 3 * se.b["plus"]
+    assert se.a_over_r["median"] - 3 * se.a_over_r["minus"] <= a <= se.a_over_r["median"] + 3 * se.a_over_r["plus"]
 
 
 def test_bootstrap_without_a_fit_gives_box_depth_and_duration(scene):
