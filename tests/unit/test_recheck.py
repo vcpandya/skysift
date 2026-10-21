@@ -8,6 +8,7 @@ import copy
 import dataclasses
 import math
 import pickle
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -512,6 +513,48 @@ def test_a_settled_pixel_step_is_not_run_again(env):
     rep = recheck(env.store, env.blob, env.settings, fetch=fake_fetch.fetch, tpf_loader=env.tpf_loader)
     assert rep.steps["pixels"] == 1 and env.store.signal_status(sid) == "candidate_stage2"
     assert env.store.latest_tests(sid)[-1]["status"] == "pass"
+    before, rows = env.store.counts(), env.store.rechecks(sid)
+    rep = recheck(env.store, env.blob, env.settings, fetch=fake_fetch.fetch, tpf_loader=env.tpf_loader)
+    assert rep.steps["pixels"] == 0 and env.store.counts() == before and env.store.rechecks(sid) == rows
+    assert len(env.tpf_calls) == 1
+
+
+SILENCED = {"seasons_silenced": {"box incomplete: target": 3}, "n_seasons_voting": 1}
+ONE_SEASON = "pixels: only one season could vote (season 0: box incomplete: target)"
+
+
+def _wants(env, status, reason, metrics):
+    """``wants_pixels`` for a fresh signal whose rung 5 row is the given one (the rest of its ladder passes)."""
+    sid = env.seed_signal(tests=[("rung5_pixels", status, reason)], metrics={"rung5_pixels": metrics})
+    return recheck_mod.wants_pixels(env.store, SimpleNamespace(id=sid), env.store.latest_tests(sid))
+
+
+def test_the_recheck_reopens_a_pixel_row_the_box_rule_silenced(env):
+    """Spec 2026-10-22 (partial box), section 5: an undetermined "pixels:" row whose silenced seasons include a
+    "box incomplete" key, stored under an older rule version, runs the pixel step again; no other pixel row does."""
+    assert _wants(env, "undetermined", ONE_SEASON, SILENCED) is True
+    assert _wants(env, "undetermined", ONE_SEASON, {**SILENCED, "rule_version": 2}) is False
+    assert _wants(env, "pass", "", SILENCED) is False
+    assert _wants(env, "undetermined", "pixels: season 2 ambiguous (1.0 sigma)", {"seasons_silenced": {}}) is False
+    row = {"status": "undetermined", "reason": "pixels: x"}
+    assert recheck_mod.box_rule_reopens({**row, "metrics": SILENCED}) is True
+    assert recheck_mod.box_rule_reopens({**row, "metrics": {}}) is False
+    assert recheck_mod.box_rule_reopens({**row, "metrics": None}) is False
+    assert recheck_mod.box_rule_reopens({**row, "metrics": "not a dict"}) is False
+    assert recheck_mod.box_rule_reopens({**row, "metrics": {"seasons_silenced": {"gap": 1}}}) is False
+
+
+def test_the_recheck_reruns_a_silenced_pixel_row_once_end_to_end(env):
+    """A stage-1 candidate the 21 October recheck left undetermined by the complete-box rule is reopened by the
+    next recheck, which writes a rung 5 row carrying rule version 2; the recheck after that writes nothing."""
+    sid = env.seed_signal(tpfs="target", tests=[("rung5_pixels", "undetermined", ONE_SEASON)],
+                          metrics={"rung5_pixels": SILENCED})
+    assert env.store.signal_status(sid) == "undetermined" and env.tpf_calls == []
+    rep = recheck(env.store, env.blob, env.settings, fetch=fake_fetch.fetch, tpf_loader=env.tpf_loader)
+    assert rep.steps["pixels"] == 1 and len(env.tpf_calls) == 1
+    rung5 = env.store.latest_tests(sid)[-1]
+    assert rung5["rung"] == "rung5_pixels" and rung5["metrics"]["rule_version"] == 2
+    assert not rung5["reason"].startswith("exception:") and rung5["recheck_id"] is not None
     before, rows = env.store.counts(), env.store.rechecks(sid)
     rep = recheck(env.store, env.blob, env.settings, fetch=fake_fetch.fetch, tpf_loader=env.tpf_loader)
     assert rep.steps["pixels"] == 0 and env.store.counts() == before and env.store.rechecks(sid) == rows

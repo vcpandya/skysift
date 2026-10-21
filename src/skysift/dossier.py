@@ -790,6 +790,41 @@ def _error_caveats(data: dict) -> list[dict]:
     return out
 
 
+def partial_box_seasons(seasons: list[dict]) -> list[dict]:
+    """The seasons that voted (``voting`` stored and true) with a 3 x 3 box cut by the stamp edge (``box_partial``
+    stored and true). A row stored before the box keys existed has none."""
+    return [s for s in seasons if isinstance(s, dict) and s.get("voting") is True and s.get("box_partial") is True]
+
+
+def partial_box_sentence(seasons: list[dict]) -> str:
+    """One sentence naming the voting seasons whose box is cut by the stamp edge, the star or stars whose box it is
+    (a box with fewer than nine pixels) and the largest ``edge_bias_pix`` allowance among them; "" when none is."""
+    cut = partial_box_seasons(seasons)
+    if not cut:
+        return ""
+    names = [str(s.get("season")) if s.get("season") is not None else "?" for s in cut]
+    listed = names[0] if len(names) == 1 else ", ".join(names[:-1]) + f" and {names[-1]}"
+    target = any((n := _num(s, "box_pixels_target")) is not None and n < 9 for s in cut)
+    neighbour = any((n := _num(s, "box_pixels_neighbour")) is not None and n < 9 for s in cut)
+    if target and neighbour:
+        whose = "both stars' 3 x 3 boxes are"
+    elif neighbour:
+        whose = "the neighbour's 3 x 3 box is"
+    else:
+        whose = "this star's 3 x 3 box is"
+    bias = max((_num(s, "edge_bias_pix") or 0.0 for s in cut), default=0.0)
+    return (f"In season{'s' if len(cut) > 1 else ''} {listed} {whose} cut by the stamp edge; the centroid there is "
+            f"measured on the pixels present and the shift the cut would give a point source ({bias:.2f} px at most) "
+            "is added to its error.")
+
+
+def partial_box_clause(seasons: list[dict]) -> str:
+    """The short form for a word-limited text: ", N of them with a box cut by the stamp edge", N the number of voting
+    seasons whose box is cut; "" when none is."""
+    n = len(partial_box_seasons(seasons))
+    return f", {n} of them with a box cut by the stamp edge" if n else ""
+
+
 def caveats(data: dict) -> list[dict]:
     """The section 07 list, [{"title", "text"}], by the rules of the plan in their order, each sentence built from
     the stored numbers."""
@@ -812,6 +847,9 @@ def caveats(data: dict) -> list[dict]:
                     "text": f"The {name} section could not be built: {err.get('error')}"})
     if close_call(tests):
         out.append({"key": "close_call", "title": "A season sits close to the 3 sigma line", "text": CLOSE_CALL})
+    cut = partial_box_sentence(_pixel_seasons(_metrics(tests, "rung5_pixels")))
+    if cut:
+        out.append({"key": "partial_box", "title": "A season's box is cut by the stamp edge", "text": cut})
     if fpp.get("pixels") is False:
         out.append({"title": "The false-positive estimate has no pixel exclusion",
                     "text": f"Without a difference-image centroid every neighbour within two Kepler pixels "

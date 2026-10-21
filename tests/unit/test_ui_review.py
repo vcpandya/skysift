@@ -991,6 +991,50 @@ def test_pixels_svg_keeps_archive_season_order_and_names_the_neighbour_side(seed
     assert "Archive season 0 · Q2, Q6, Q10, Q14" in panels["0"]          # the archive SEASON, not quarter mod 4
 
 
+def test_pixels_svg_draws_the_missing_box_pixels_and_names_the_cut(seeded):
+    from tests.unit.ui_seed import stage2_pixel_metrics
+    client, ids = seeded
+    m = stage2_pixel_metrics()
+    m["seasons"][0] = {**m["seasons"][0], "box_partial": True, "box_pixels_target": 6, "box_pixels_neighbour": 9,
+                       "box_missing_target": [[-1, -1], [0, -1], [1, -1]], "box_missing_neighbour": [],
+                       "edge_bias_pix": 0.10, "separation_sigma_raw": 9.6}
+    _set_metrics(client.app, ids["stage2"], "rung5_pixels", m)
+    r = client.get(f"/api/signals/{ids['stage2']}/pixels.svg")
+    panels = _season_panels(r.text)
+    assert "nearer target, +40.9 sigma (box cut, 6 of 9 px)" in panels["0"]
+    assert panels["0"].count('class="pf-missing"') == 3
+    assert 'class="pf-missing"' not in panels["1"]
+    label = re.search(r'aria-label="([^"]*)"', r.text).group(1)
+    assert "archive season 0 box cut by the stamp edge (6 of 9 pixels)" in label
+    assert "A shaded cell is a box pixel missing from the stamp." in r.text
+
+
+def test_the_pixel_figure_shades_the_missing_cells_of_a_season_that_abstains():
+    from skysift.ui.pixel_figure import render_svg
+    from tests.unit.ui_seed import stage2_pixel_metrics
+    m = stage2_pixel_metrics()
+    m["seasons"][0] = {**m["seasons"][0], "box_partial": True, "voting": False, "nearer": "unknown",
+                       "non_voting_reason": "box cut: ambiguous (1.8 sigma)", "box_pixels_target": 6,
+                       "box_pixels_neighbour": 9, "box_missing_target": [[-1, -1], [0, -1], [1, -1]],
+                       "box_missing_neighbour": []}
+    svg = render_svg(m, 7)
+    panel = _season_panels(svg)["0"]
+    assert 'class="season non-voting"' in panel and panel.count('class="pf-missing"') == 3
+    assert "A shaded cell is a box pixel missing from the stamp." in svg
+
+
+def test_the_pixel_figure_of_a_season_without_box_keys_is_unchanged():
+    """Metrics stored before the box keys draw what they drew: no cell, no suffix."""
+    import hashlib
+
+    from skysift.ui.pixel_figure import render_svg
+    from tests.unit.ui_seed import stage2_pixel_metrics
+    svg = render_svg(stage2_pixel_metrics(), 7)
+    assert "pf-missing" not in svg and "box cut" not in svg
+    assert hashlib.sha256(svg.encode()).hexdigest() == (
+        "bf6d568d6cc879babb44e5b815fa79bf9ba4aebbde5707289487ddc43267956e")
+
+
 def test_pixels_svg_of_a_rung5_row_without_seasons_says_so(seeded):
     client, ids = seeded
     _set_metrics(client.app, ids["stage2"], "rung5_pixels", {"neighbour_kic": 6146666, "n_tpf": 0})

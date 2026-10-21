@@ -28,6 +28,7 @@ from tests.unit.test_pixels import (
     F_TARGET,
     POS_NEIGHBOUR,
     POS_TARGET,
+    PSF_SIGMA,
     QUARTER_DAYS,
     RATIO,
     SHAPE,
@@ -42,6 +43,8 @@ NEIGHBOUR_KIC = 6146666             # the Kepler target whose pixel files hold i
 PIX_DEG = 3.98 / 3600.0
 Q0_DAYS = (109.0, 131.5)            # BKJD span of the synthetic Q0: two transits (117, 127) with baseline on both sides
 CADENCE = 29.4 / 1440
+EDGE_TARGET = ((9, 5), (4, 0))      # columns 4 to 8: the target on the stamp's first column, as the KBonus stars sit
+CORNER_TARGET = ((5, 5), (4, 4))    # columns and rows 4 to 8: the target on the stamp's corner pixel
 
 
 def archive_season(quarter: int) -> int:
@@ -123,11 +126,11 @@ def _q0_scene(dip_on: str):
 @lru_cache(maxsize=16)
 def tpf_quarters(dip_on: str = "target", target_radec: tuple[float, float] = TARGET_RADEC, n_quarters: int = 5,
                  seed: int = 0, stamp: tuple | None = None, kic: int = NEIGHBOUR_KIC, with_q0: bool = False,
-                 season: str | None = "archive") -> tuple[TpfBytes, ...]:
+                 season: str | None = "archive", psf_sigma: float = PSF_SIGMA) -> tuple[TpfBytes, ...]:
     """One gzipped TPF per quarter 1 to ``n_quarters`` (quarters 1 and 5 share archive season 3), and a Q0 at Q1's
     roll first when ``with_q0`` (two transits). ``stamp`` is ((rows, cols), (col, row) origin of the stamp on the
-    default 9 x 9 grid) to cut the stamp down; the default is the 9 x 9 grid with the target on pixel (4, 4).
-    ``season=None`` writes no SEASON keyword."""
+    default 9 x 9 grid) to cut the stamp down (``EDGE_TARGET``, ``CORNER_TARGET``); the default is the 9 x 9 grid with
+    the target on pixel (4, 4). ``season=None`` writes no SEASON keyword. ``psf_sigma`` is the PSF width in px."""
     rng = np.random.default_rng(seed)
     time, quarter, f_t, f_n = _scene(QUARTER_DAYS * n_quarters, dip_on, DEPTH, RATIO, n_quarters)
     nb = neighbour_radec(target_radec)
@@ -137,7 +140,7 @@ def tpf_quarters(dip_on: str = "target", target_radec: tuple[float, float] = TAR
     def add(q, t, ft, fn, r):
         w = _wcs(target_radec, (POS_TARGET[0] - oc, POS_TARGET[1] - orow), archive_season(q))
         pt, pn = _pix(w, target_radec), _pix(w, nb)
-        cube = _render(r, ft, fn, pt, pn, tuple(shape))
+        cube = _render(r, ft, fn, pt, pn, tuple(shape), psf_sigma)
         b = TpfBytes(tpf_fits(q, t, np.zeros(t.size, int), cube, w, _aperture(tuple(shape), pn), kic, nb,
                               season=season))
         b.quarter, b.pos_target, b.pos_neighbour = q, pt, pn

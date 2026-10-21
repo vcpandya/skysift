@@ -35,6 +35,7 @@ log = logging.getLogger(__name__)
 
 NO_FILES = "pixels: no pixel files for this star"
 NO_NEIGHBOUR = "pixels: no neighbour to test against"
+PIXEL_RULE_VERSION = 2      # 2: a 3 x 3 box cut by the stamp edge votes when decisive; rows without the key read as 1
 _ZIP_EPOCH = (1980, 1, 1, 0, 0, 0)      # fixed member times: the same arrays give the same file and sha256
 
 
@@ -166,7 +167,8 @@ class Rung5Pixels:
         metrics = {**loc.metrics(), "leak_depth_ppm": list(leak), **files,
                    "neighbour_position": "catalogue" if from_catalogue else "tpf header",
                    "n_seasons": len(loc.seasons), "n_seasons_voting": sum(1 for x in loc.seasons if x.voting),
-                   "seasons_silenced": dict(sorted(silenced.items()))}
+                   "n_seasons_partial_box": sum(1 for x in loc.seasons if x.voting and x.box_partial),
+                   "seasons_silenced": dict(sorted(silenced.items())), "rule_version": PIXEL_RULE_VERSION}
         metrics["pixels_sha256"] = self._store_arrays(loc, b) if loc.images else None
         if loc.verdict == "pass":
             return TestResult(rung=self.name, status=TestStatus.PASS, metrics=metrics,

@@ -542,6 +542,43 @@ def test_a_season_that_did_not_vote_is_named_and_its_null_depths_are_skipped(env
     assert "no season voted" in pack_module.pixel_sentence(data)
 
 
+def _with_a_cut_box(data: dict) -> dict:
+    """The silent-season fixture with season 0's target box cut by the stamp edge (6 of 9 pixels)."""
+    data = _with_a_silent_season(data)
+    row = next(t for t in data["tests"] if t["rung"] == "rung5_pixels")
+    row["metrics"]["seasons"][0].update({"box_partial": True, "box_pixels_target": 6, "box_pixels_neighbour": 9,
+                                         "edge_bias_pix": 0.1})
+    return data
+
+
+def test_pixel_sentence_names_a_box_cut_by_the_stamp_edge(env_with_dossier):
+    data = _with_a_cut_box(env_with_dossier.data)
+    cut = dossier_module.partial_box_sentence(
+        next(t for t in data["tests"] if t["rung"] == "rung5_pixels")["metrics"]["seasons"])
+    text = pack_module.pixel_sentence(data)
+    assert "In season 0 this star's 3 x 3 box is cut by the stamp edge" in text and "(0.10 px at most)" in text
+    assert text.index("pixels from the neighbour.") < text.index(cut) < text.index("Averaged over the seasons")
+    assert EM_DASH not in text
+
+
+def test_the_abstract_carries_only_a_short_clause_for_a_cut_box(env_with_dossier):
+    abstract = pack_module.abstract_text(_with_a_cut_box(env_with_dossier.data))
+    assert "in 2 of 2 seasons that voted, 1 of them with a box cut by the stamp edge." in abstract
+    assert "3 x 3 box" not in abstract and "px at most" not in abstract
+    plain = pack_module.abstract_text(_with_a_silent_season(env_with_dossier.data))
+    assert "box cut by the stamp edge" not in plain
+
+
+def test_pixel_sentence_without_box_keys_is_unchanged(env_with_dossier):
+    """The text of the commit before the box keys existed (9b4f076), captured before the change."""
+    assert pack_module.pixel_sentence(env_with_dossier.data) == (
+        "In difference images (out of transit minus in transit) the dip is nearer this star than its brightest "
+        "neighbour in 3 of 3 seasons that voted. The centroid sits a median 0.13 pixels from this star and 2.75 "
+        "pixels from the neighbour. Averaged over the seasons it is 0.54 ± 0.14 arcsec from the star. A "
+        "two-source fit gives a median depth of 2,213 ppm on this star and -21 ppm on the neighbour. Season 3 did "
+        "not vote (box incomplete: target).")
+
+
 def test_a_crashed_build_leaves_no_folder_that_blocks_the_retry(env_with_dossier, monkeypatch):
     env = env_with_dossier
     first = _build(env)

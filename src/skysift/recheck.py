@@ -68,7 +68,7 @@ from skysift.store.db import (
 )
 from skysift.vetting.base import Ladder
 from skysift.vetting.rung4_novelty import Rung4Novelty
-from skysift.vetting.rung5_pixels import Rung5Pixels
+from skysift.vetting.rung5_pixels import PIXEL_RULE_VERSION, Rung5Pixels
 
 logger = logging.getLogger(__name__)
 
@@ -171,12 +171,28 @@ def _crashes(store: Store, signal_id: int, rung: str) -> int:
             TestRow.signal_id == signal_id, TestRow.rung == rung, TestRow.reason.like("exception:%")))
 
 
+def box_rule_reopens(rung5: dict) -> bool:
+    """The rung 5 row is an undetermined "pixels:" row with a "box incomplete" key among its silenced seasons
+    (``seasons_silenced``) and a rule version below ``PIXEL_RULE_VERSION`` (1 when none is stored). Such a row is
+    rerun once, whatever its reason, and the rerun writes the current version, so it is not reopened again."""
+    if rung5["status"] != "undetermined" or not str(rung5["reason"]).startswith("pixels:"):
+        return False
+    metrics = rung5.get("metrics")
+    if not isinstance(metrics, dict):
+        return False
+    silenced = metrics.get("seasons_silenced")
+    return (isinstance(silenced, dict) and any(str(k).startswith("box incomplete") for k in silenced)
+            and int(metrics.get("rule_version") or 1) < PIXEL_RULE_VERSION)
+
+
 def wants_pixels(store: Store, sig: StoredSignal, tests: list[dict], status: str | None = None) -> bool:
     """Step 4 applies: the signal is open and qualifies (``pixels_qualify``) on its rows other than rung 5's, and its
     pixels are not settled. A rung 5 row settles them unless it could not reach the pixel archive (``outage:``,
     retried at every recheck) or it is the signal's first crash (``exception:``, retried once, spec 4.2; after a
     second crash it stays for a person); a verdict, or a reason the pixels gave themselves ("pixels: ..."), is final
-    for the signal, so a signal that stays in the queue is not fetched and localized at every recheck."""
+    for the signal, so a signal that stays in the queue is not fetched and localized at every recheck. The one
+    exception among the "pixels:" rows is the undetermined row the complete-box rule silenced (``box_rule_reopens``),
+    which runs again under the current rule (2026-10-22 partial-box design, section 5)."""
     status = store.signal_status(sig.id) if status is None else status
     if status not in OPEN_STATUSES:
         return False
@@ -186,7 +202,7 @@ def wants_pixels(store: Store, sig: StoredSignal, tests: list[dict], status: str
         if reason.startswith("exception:"):
             if _crashes(store, sig.id, "rung5_pixels") > 1:
                 return False
-        elif not reason.startswith("outage:"):
+        elif not reason.startswith("outage:") and not box_rule_reopens(rung5):
             return False
     others = [t for t in tests if t["rung"] != "rung5_pixels"]
     return pixels_qualify(final_status_for(status_from_tests(others), others), others)

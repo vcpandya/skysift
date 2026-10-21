@@ -91,6 +91,11 @@ Rechecks write ordinary test rows, so the dashboard shows them in the same ladde
 
 Cost: about 50 MB of pixel files and one to two CPU minutes per signal; it runs only on the handful of signals that reach it. Metrics stored: per-season centroid offsets and errors, two-source depths, the leak-test depth, the number of transits used, and the pixel-file manifest.
 
+Rulings on which seasons vote (the history is in the recheck ledger):
+- 20 October 2026 (Task 4 review): a season votes only when both stars' 3 x 3 boxes lie complete on valid pixels of the season's union frame; the centroid test is the signed distance from the perpendicular bisector of the two stars over the centroid error along the star axis; a pass needs every voting season above three sigma on the target's side.
+- 21 October 2026 (final review): a pass needs at least two voting seasons.
+- 22 October 2026 (`docs/superpowers/specs/2026-10-22-skysift-pixel-partial-box-design.md`): a box cut by the stamp edge or by a dead pixel still votes when its centre and at least six of its nine pixels are valid. The centroid is measured on the pixels present, the two-source fit on every valid pixel as before, and the shift the cut would give a point source of the fitted PSF width (the edge allowance) is added in quadrature to the centroid error before the three-sigma test. The metrics record each box's valid-pixel count and missing pixels, the allowance and the raw statistic; the figure, the explain sentences, the pack and the dossier caveats name a season whose box was cut. Complete boxes vote exactly as before. The live recheck of 21 October had silenced three of four seasons for KIC 5689121 and KIC 6699887 under the complete-box rule, because a KBonus background star sits where someone else's stamp caught it.
+
 ## 5. Pages
 
 Navigation: **Tonight** (home), **Candidates**, **Live**, **Sources**, **Approved**, and About in the footer. On phones the navigation is a bottom bar with icons and labels.

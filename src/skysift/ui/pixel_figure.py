@@ -3,7 +3,8 @@ archive SEASON order. Each panel places this star (a ring), the neighbour whose 
 centroid of the light lost in transit (a cross, with circles at 1 and 3 times its error) on the season's own pixel
 grid, row 0 at the bottom as the dossier draws it, and names the nearer star with the signed separation in sigma. A
 season that did not vote is greyed and says why. Every scale is shared by the panels, so the seasons compare at a
-glance. Metrics in, SVG text out.
+glance. A shaded cell is a box pixel missing from the stamp (the box was cut by the stamp edge). Metrics in, SVG text
+out.
 
 The signal page draws the figure inline (``theme=None``): it carries no colour of its own, and app.css styles its
 ``pf-`` classes with the theme tokens, so the dashboard's theme toggle applies. The standalone download
@@ -36,6 +37,7 @@ RULES = (".pf-text{font:11px 'IBM Plex Sans',system-ui,sans-serif;fill:<fg-2>;te
          ".pf-frame{fill:none;stroke:<muted>}",
          ".pf-grid{stroke:<muted>;stroke-opacity:.35}",
          ".pf-axis{stroke:<muted>;stroke-dasharray:2 4}",
+         ".pf-missing{fill:<muted>;fill-opacity:.3;stroke:none}",
          ".pf-target{fill:none;stroke:<solar>;stroke-width:2.5}",
          ".pf-neighbour{fill:none;stroke:<muted>;stroke-width:2}",
          ".pf-centroid{stroke:<ion>;stroke-width:2;stroke-linecap:round}",
@@ -75,13 +77,29 @@ def _point(v) -> tuple[float, float] | None:
     return None if col is None or row is None else (col, row)
 
 
+def _offset(v) -> tuple[int | None, int | None]:
+    """A stored (dcol, drow) pixel offset, or (None, None) when it is not a pair of whole numbers."""
+    p = _point(v)
+    return (int(p[0]), int(p[1])) if p and p[0] == int(p[0]) and p[1] == int(p[1]) else (None, None)
+
+
 def _f(x: float) -> str:
     return f"{x:.1f}"
 
 
+def _cut_pixels(s: dict) -> int | None:
+    """The smaller of a voting season's two box pixel counts when its box was cut by the stamp edge (below 9)."""
+    if not season_votes(s) or s.get("box_partial") is not True:
+        return None
+    counts = [int(n) for n in (_num(s.get("box_pixels_target")), _num(s.get("box_pixels_neighbour")))
+              if n is not None and n < 9]
+    return min(counts) if counts else None
+
+
 def figure_label(metrics: dict) -> str:
     """The figure's text alternative from the per-season votes: "Pixel check: 3 of 4 archive seasons nearer the
-    target; archive season 3 not voting (box incomplete: target)"."""
+    target; archive season 0 box cut by the stamp edge (6 of 9 pixels); archive season 3 not voting (box incomplete:
+    target)"."""
     seasons = pixel_seasons(metrics)
     if not seasons:
         return "Pixel check: no season to draw"
@@ -90,6 +108,8 @@ def figure_label(metrics: dict) -> str:
         n = sum(1 for s in seasons if season_votes(s) and s.get("nearer") == star)
         if n:
             parts.append(f"{n} of {len(seasons)} archive seasons nearer the {star}")
+    parts += [f"{season_name(s)} box cut by the stamp edge ({k} of 9 pixels)"
+              for s in seasons if (k := _cut_pixels(s)) is not None]
     parts += [f"{season_name(s)} not voting ({s.get('non_voting_reason') or 'no reason stored'})"
               for s in seasons if not season_votes(s)]
     return "Pixel check: " + ("; ".join(parts) or "no season voted")
@@ -134,6 +154,8 @@ def _words(s: dict) -> tuple[str, str, str]:
         vote = f"not voting: {s.get('non_voting_reason') or 'no reason stored'}"
     elif s.get("nearer") in ("target", "neighbour"):
         vote = f"nearer {s['nearer']}" + (f", {sep:+.1f} sigma" if sep is not None else "")
+        cut = _cut_pixels(s)
+        vote += f" (box cut, {cut} of 9 px)" if cut is not None else ""
     else:
         vote = "voted, no nearer star stored"
     d_t, d_n = _num(s.get("dist_target_pix")), _num(s.get("dist_neighbour_pix"))
@@ -169,6 +191,12 @@ def _panel(i: int, s: dict, m: dict, half: float, ids: str) -> str:
         edge = n + 0.5
         parts.append(f'<line class="pf-grid" x1="{PLOT_X}" x2="{PLOT_X + PLOT}" y1="{Y(edge)}" y2="{Y(edge)}"/>')
     t, nb, ct, sigma = m["target"], m["neighbour"], m["centroid"], m["sigma"]
+    for star, key in ((t, "box_missing_target"), (nb, "box_missing_neighbour")):
+        for dcol, drow in (_offset(v) for v in s.get(key) or []):
+            if star and dcol is not None:
+                col, row = round(star[0]) + dcol, round(star[1]) + drow
+                parts.append(f'<rect class="pf-missing" x="{X(col - 0.5)}" y="{Y(row + 0.5)}" '
+                              f'width="{_f(k)}" height="{_f(k)}"/>')
     if t and nb:
         parts.append(f'<line class="pf-axis" x1="{X(t[0])}" y1="{Y(t[1])}" x2="{X(nb[0])}" y2="{Y(nb[1])}"/>')
     if nb:
@@ -213,7 +241,9 @@ def render_svg(metrics: dict, signal_id: int, reason: str = "", theme: str | Non
         h = PAD + PANEL_H
         body = "".join(_panel(i, s, m, half, ids) for i, (s, m) in enumerate(zip(seasons, marks, strict=True)))
     ground = f'<rect width="{w}" height="{h}" fill="{PALETTES[theme]["bg"]}"/>' if theme else ""
+    cut = any(s.get("box_missing_target") or s.get("box_missing_neighbour") for s in seasons)
+    shaded = " A shaded cell is a box pixel missing from the stamp." if cut else ""
     desc = escape("Ring: this star. Square: the neighbour. Cross: the centroid of the lost light, with circles at 1 "
-                  "and 3 times its error. A greyed panel did not vote.")
+                  f"and 3 times its error.{shaded} A greyed panel did not vote.")
     return (f'<svg xmlns="http://www.w3.org/2000/svg" class="pf" viewBox="0 0 {w} {h}" width="{w}" height="{h}" '
             f'role="img" aria-label="{label}"><desc>{desc}</desc>{style}{ground}{body}</svg>')

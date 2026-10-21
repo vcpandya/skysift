@@ -433,6 +433,7 @@ kbd { padding: 0 4px; font-size: var(--fs-12); border: 1px solid currentColor; b
 .pf-frame{fill:none;stroke:var(--muted)}
 .pf-grid{stroke:var(--muted);stroke-opacity:.35}
 .pf-axis{stroke:var(--muted);stroke-dasharray:2 4}
+.pf-missing{fill:var(--muted);fill-opacity:.3;stroke:none}
 .pf-target{fill:none;stroke:var(--solar);stroke-width:2.5}
 .pf-neighbour{fill:none;stroke:var(--muted);stroke-width:2}
 .pf-centroid{stroke:var(--ion);stroke-width:2;stroke-linecap:round}
