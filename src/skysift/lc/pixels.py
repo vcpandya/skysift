@@ -57,6 +57,9 @@ SEASON_EVENTS_MIN = 2       # seasons with fewer events do not vote in the verdi
 TRANSITS_MIN = 3            # fewer usable transits in all leaves the rung undetermined
 VALID_FINITE_FRACTION = 0.9  # a pixel is valid when finite this often, relative to the best pixel of the quarter
 SEPARATION_SIGMA = 3.0      # pass: centroid nearer the target by more than this many sigma
+BOX_PIXELS_MIN = 6          # a star's 3x3 box cut by the frame edge votes only with at least this many valid pixels
+EDGE_PSF_SIGMA_PIX = 0.6    # point-source width used for the edge allowance when the two-source fit gives none
+EDGE_PAD = 2                # pixels of padding around the frame when the cut box is rendered for the allowance
 PASS_SEASONS_MIN = 2        # a pass needs at least this many voting seasons; one alone leaves it undetermined
 NEIGHBOUR_DEPTH_SIGMA = 3.0  # pass: |two-source depth on the neighbour| below this many sigma; fail: above it
 TARGET_DEPTH_SIGMA = 1.0    # fail (two-source route): depth on the target below this many sigma
@@ -241,15 +244,76 @@ def _finite2(p) -> bool:
     return p is not None and all(math.isfinite(float(x)) for x in p)
 
 
-def _box_on_frame(pos, valid: np.ndarray) -> bool:
-    """True when the 3x3 box around the (col, row) position's pixel lies complete on valid pixels of the grid, that
-    is the position is at least one pixel inside the valid extent."""
+_BOX_OFFSETS = tuple((dc, dr) for dr in (-1, 0, 1) for dc in (-1, 0, 1))   # (dcol, drow), row-major
+
+
+@dataclass(frozen=True)
+class BoxCoverage:
+    """How much of a star's 3x3 box lies on valid pixels: the count, whether the centre pixel is one of them, and
+    the (dcol, drow) offsets of the missing pixels in row-major order."""
+    valid: int
+    centre: bool
+    missing: tuple[tuple[int, int], ...]
+
+    @property
+    def complete(self) -> bool:
+        return self.valid == 9
+
+    @property
+    def partial(self) -> bool:
+        return self.centre and BOX_PIXELS_MIN <= self.valid < 9
+
+    @property
+    def eligible(self) -> bool:
+        return self.complete or self.partial
+
+    def metrics(self) -> dict:
+        return {"pixels": self.valid, "missing": [[dc, dr] for dc, dr in self.missing]}
+
+
+ALL_MISSING = BoxCoverage(0, False, _BOX_OFFSETS)      # the coverage of a star with no position
+
+
+def box_coverage(pos, valid: np.ndarray) -> BoxCoverage:
+    """Coverage of the 3x3 box around the pixel of the (col, row) position: a pixel is missing when it is off the
+    frame or not valid. A position that is not finite has ``ALL_MISSING``."""
     if not _finite2(pos):
-        return False
+        return ALL_MISSING
     c, r = round(float(pos[0])), round(float(pos[1]))
-    if not (1 <= r < valid.shape[0] - 1 and 1 <= c < valid.shape[1] - 1):
-        return False
-    return bool(valid[r - 1:r + 2, c - 1:c + 2].all())
+    missing = tuple((dc, dr) for dc, dr in _BOX_OFFSETS
+                    if not (0 <= r + dr < valid.shape[0] and 0 <= c + dc < valid.shape[1] and valid[r + dr, c + dc]))
+    return BoxCoverage(9 - len(missing), (0, 0) not in missing, missing)
+
+
+def edge_allowance(pos, valid: np.ndarray, psf_sigma: float, pos_other) -> tuple[float, float]:
+    """``(bias, bias_axis)``: how far, in pixels, a box cut by the frame edge or by invalid pixels moves the 3x3
+    centroid of a point source at ``pos`` (and the part of that along the axis from ``pos_other`` to ``pos``).
+
+    A Gaussian of width ``psf_sigma`` is rendered at ``pos`` on a frame padded by EDGE_PAD pixels, and its 3x3
+    centroid around the brightest valid pixel is taken twice: on the valid pixels and with every pixel valid. The
+    bias is the length of the difference. A complete box has none; a position that is not finite, or that coincides
+    with ``pos_other``, has no allowance (nan)."""
+    if not (_finite2(pos) and _finite2(pos_other)):
+        return math.nan, math.nan
+    d = np.array([float(pos[0]) - float(pos_other[0]), float(pos[1]) - float(pos_other[1])])
+    n = float(np.hypot(*d))
+    if not n > 0:
+        return math.nan, math.nan
+    if box_coverage(pos, valid).complete:
+        return 0.0, 0.0
+    shape = (valid.shape[0] + 2 * EDGE_PAD, valid.shape[1] + 2 * EDGE_PAD)
+    vpad = np.zeros(shape, bool)
+    vpad[EDGE_PAD:EDGE_PAD + valid.shape[0], EDGE_PAD:EDGE_PAD + valid.shape[1]] = valid
+    if not vpad.any():
+        return math.nan, math.nan
+    img = gauss_psf(shape, float(pos[0]) + EDGE_PAD, float(pos[1]) + EDGE_PAD, psf_sigma)
+    r0, c0 = np.unravel_index(int(np.argmax(np.where(vpad, img, -np.inf))), shape)
+    cut = _box_centroid(img, vpad, int(r0), int(c0))
+    full = _box_centroid(img, np.ones(shape, bool), int(r0), int(c0))
+    shift = np.array(cut) - np.array(full)
+    if not np.all(np.isfinite(shift)):
+        return math.nan, math.nan
+    return float(np.hypot(*shift)), float(abs(shift @ (d / n)))
 
 
 def _shift_into(img: np.ndarray, shape: tuple[int, int], dc: int, dr: int, fill) -> np.ndarray:
@@ -317,7 +381,7 @@ def season_images(quarters: list[QuarterData], eph: Ephemeris, *, in_half: float
             var=np.where(valid, 1.0 / safe, np.inf),
             direct=np.where(valid & (dn > 0), dsum / np.maximum(dn, 1), np.nan), valid=valid,
             pos_target=f_t, pos_neighbour=f_n, offsets_pix=offsets, residual_offsets_pix=residuals,
-            target_on_frame=_box_on_frame(f_t, valid), neighbour_on_frame=_box_on_frame(f_n, valid)))
+            target_on_frame=box_coverage(f_t, valid).complete, neighbour_on_frame=box_coverage(f_n, valid).complete))
     return images
 
 

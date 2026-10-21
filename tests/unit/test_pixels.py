@@ -6,12 +6,17 @@ from scipy.special import erf
 
 from skysift.lc.ops import season_of
 from skysift.lc.pixels import (
+    ALL_MISSING,
+    BOX_PIXELS_MIN,
     N_MC,
+    BoxCoverage,
     Ephemeris,
     QuarterData,
     SeasonResult,
     _axis_sigma,
+    box_coverage,
     difference_images,
+    edge_allowance,
     leak_depth,
     localise,
     localise_quarters,
@@ -462,3 +467,35 @@ def test_the_two_source_shift_is_stored_per_season():
     for s in m["seasons"]:
         assert len(s["shift_pix"]) == 2 and all(x is not None and abs(x) <= 1.0 for x in s["shift_pix"])
         assert 0.3 <= s["psf_sigma_pix"] <= 3.0
+
+
+def test_box_coverage_counts_the_pixels_on_the_frame():
+    valid = np.ones(SHAPE, bool)
+    assert BOX_PIXELS_MIN == 6
+    assert box_coverage((4.0, 4.0), valid) == BoxCoverage(9, True, ())
+    edge = box_coverage((4.0, 0.1), valid)
+    assert (edge.valid, edge.centre, edge.missing) == (6, True, ((-1, -1), (0, -1), (1, -1)))
+    assert edge.partial and edge.eligible and not edge.complete
+    corner = box_coverage((0.2, -0.3), valid)
+    assert corner.valid == 4 and corner.centre and not corner.partial and not corner.eligible
+    valid[3, 4] = False                                   # row 3, col 4: offset (0, -1) from (4, 4)
+    hole = box_coverage((4.0, 4.0), valid)
+    assert hole == BoxCoverage(8, True, ((0, -1),)) and hole.partial
+    valid[4, 4] = False
+    assert not box_coverage((4.0, 4.0), valid).centre and not box_coverage((4.0, 4.0), valid).eligible
+    assert box_coverage((math.nan, 4.0), valid) == ALL_MISSING and ALL_MISSING.valid == 0
+    assert box_coverage((4.0, 0.1), np.ones(SHAPE, bool)).metrics() == {
+        "pixels": 6, "missing": [[-1, -1], [0, -1], [1, -1]]}
+
+
+def test_edge_allowance_moves_a_point_source_towards_the_interior():
+    valid = np.ones(SHAPE, bool)
+    bias, along = edge_allowance((4.0, 0.1), valid, 0.55, (4.0, 3.0))
+    assert 0.05 < bias < 0.2 and abs(along - bias) < 1e-9          # the other star is straight up the column
+    _, across = edge_allowance((4.0, 0.1), valid, 0.55, (7.0, 0.1))
+    assert across < 1e-9                                          # the cut is perpendicular to the star axis
+    assert edge_allowance((4.0, 4.0), valid, 0.55, (7.0, 4.0)) == (0.0, 0.0)
+    valid[3, 4] = False
+    hole, _ = edge_allowance((4.0, 4.0), valid, 0.55, (7.0, 4.0))
+    assert 0.0 < hole < 0.15
+    assert all(math.isnan(x) for x in edge_allowance((math.nan, 0.1), valid, 0.55, (4.0, 3.0)))
