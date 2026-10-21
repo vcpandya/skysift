@@ -112,8 +112,8 @@ cadences with 2 per side, the study for 10 with 3 per side). Season 3 lost Q1 (f
 pixel tolerance.
 
 **5. The stellar radius error is half the study's.** The engine reads 0.505 +- 0.016 Rsun and 0.503 +- 0.013 Msun from
-the Mann relations at Ks, while the study's baseline is the Mamajek colour route (0.498 -0.040 +0.036 Rsun). The study ran
-the Mann route only as a check, and that check gave exactly the engine's values (0.505 +- 0.016 Rsun, 0.503 -0.012
+the Mann relations at Ks, while the study's baseline is the Mamajek colour route (0.498 -0.040 +0.036 Rsun). The study
+ran the Mann route only as a check, and that check gave exactly the engine's values (0.505 +- 0.016 Rsun, 0.503 -0.012
 +0.013 Msun). The planet errors shrink with it: Rp 2.63 +- 0.08 against 2.61 -0.21 +0.19 Earth radii, Teq 268 -7 +8
 against 267 -12 +13 K. This is the route the spec chose (5.3), not a disagreement.
 
@@ -209,7 +209,7 @@ python -m tools.dossier_compare --data .superpowers/dossier-run/dossiers/kic-006
 ```
 
 The same tables come out of the committed golden block (`--data tests/golden/kic-006146676-generated.json --out <scratch
-file>`; without `--out` the tool writes into the current directory, never beside `--data`). The tool's output follows.
+file>`; without `--out` the tool prints the tables and writes nothing). The tool's output follows.
 
 ### Comparison: KIC 6146676 generated against the hand-built study
 
@@ -408,7 +408,7 @@ The Task 7 review asked for five changes and a set of minors. All of them are in
    and `skysift dossier` exits 3 when any Gaia query failed, while still writing the dossier (also on a later run that
    finds the dossier current).
 
-Minors: the compare tool writes into the current directory unless `--out` says otherwise; a rung 3 season with no
+Minors: the compare tool writes only to `--out` and otherwise prints the tables; a rung 3 season with no
 generated value is listed as missing; rows with both values but no error are counted as compared without an error;
 the headline uses the tool's tolerance wording; the two rung 2 differences have a sentence each; `git_commit` carries
 a "-dirty" suffix when the tree has changes; a test pins `stars.Q_SOURCE` to the DR3 tables; "localized" is spelled
@@ -417,7 +417,10 @@ with a z; the 18 unpinned pixel files are listed above as a note for Vikram. Two
 the season and its quarters from rung 5 (archive SEASON, so Q1 and Q5 are season 3) instead of the quarter number.
 
 The golden block was regenerated from a clean worktree at f431ed0 (the same code as this commit, without the note and
-the golden itself), so its `git_commit` reads f431ed0 with no "-dirty" suffix. That run made 4 Gaia calls (rows 3168 to
+the golden itself), so its `git_commit` reads f431ed0 with no "-dirty" suffix. f431ed0 is the pre-amend hash of the
+same tree as 0ee90d6: the code is identical and only the note and the golden block differ, but f431ed0 itself is not
+on the branch. The re-review round below regenerates the golden block from a committed tree, so that its `git_commit`
+names a reachable commit. That run made 4 Gaia calls (rows 3168 to
 3171, all 200) for KIC 6146676 only. The KIC 5689121 dossier was not regenerated: it has no pixel data, so its FPP
 does not depend on the centroid, and its FAP split is 37 inverted and 1 scrambled of 38, with 999 searches of each kind.
 

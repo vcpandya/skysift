@@ -9,7 +9,7 @@ spec 4.2 for the sign-off.
 
 ``--data`` is a generated ``dossier_data.json`` or the slim block ``--write-golden`` extracts from one (the keys the
 comparison and the golden test read: target, signal, ephemeris, fap, fpp, star, planet, look and the rung 2, 3, 4 and
-5 rows). The tables are printed and written to ``--out`` (default: ``<stem>.comparison.md`` in the current directory).
+5 rows). The tables are written to ``--out`` when it is given, and printed (writing nothing) when it is not.
 
 The two pages name the stars differently: the engine's "target" is the candidate star KIC 6146676 (the hand-built
 "candidate") and its "neighbour" is the Kepler target KIC 6146666 whose pixels hold it (the hand-built "target").
@@ -304,14 +304,17 @@ def factor_table(data: dict) -> str:
 
 
 def provenance_table(data: dict) -> str:
-    """The search version, the effective ladder version and the ladder each latest test row was vetted under."""
+    """The search version, the effective ladder version and the ladder each latest test row was vetted under: one row
+    per rung of ``provenance.ladder_versions`` (so the slim golden block, which keeps only the rung 2 to 5 rows, still
+    gives all of them), with the status and date of the test row where the data has it."""
     prov = data.get("provenance") or {}
-    per_rung = prov.get("ladder_versions") or {}
+    tests = {t.get("rung"): t for t in data.get("tests") or []}
     lines = [(f"Search version {prov.get('search_version')}, effective ladder version {prov.get('ladder_version')}, "
               f"git {prov.get('git_commit')}."), "",
              "| Rung | Status | Ladder version | Written |", "| --- | --- | --- | --- |"]
-    for t in data.get("tests") or []:
-        lines.append(f"| {t.get('rung')} | {t.get('status')} | {per_rung.get(t.get('rung'))} | {t.get('created')} |")
+    for rung, version in (prov.get("ladder_versions") or {}).items():
+        t = tests.get(rung) or {}
+        lines.append(f"| {rung} | {t.get('status', 'n/a')} | {version} | {t.get('created', 'n/a')} |")
     return "\n".join(lines)
 
 
@@ -347,20 +350,20 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--reference", required=True, type=Path, help="the hand-built dossier_data.json")
     ap.add_argument("--fpp", action="append", default=[], type=Path,
                     help="another generated dossier whose FPP factor table is printed too (repeatable)")
-    ap.add_argument("--out", type=Path, help="the markdown file (default <data stem>.comparison.md in the current "
-                    "directory, never beside --data)")
+    ap.add_argument("--out", type=Path, help="the markdown file to write (without it the tables are printed only)")
     ap.add_argument("--write-golden", type=Path, help="also write the slim block of --data here")
     args = ap.parse_args(argv)
     gen = json.loads(args.data.read_text(encoding="utf-8"))
     ref = json.loads(args.reference.read_text(encoding="utf-8"))
     others = [json.loads(p.read_text(encoding="utf-8")) for p in args.fpp]
     text = report(gen, ref, others)
-    out = args.out or Path.cwd() / f"{args.data.stem}.comparison.md"
-    out.write_text(text, encoding="utf-8", newline="\n")
+    if args.out:
+        args.out.write_text(text, encoding="utf-8", newline="\n")
+    else:
+        sys.stdout.write(text + "\n")
     if args.write_golden:
         args.write_golden.write_text(json.dumps(golden_block(gen), indent=1, sort_keys=False) + "\n",
                                      encoding="utf-8", newline="\n")
-    sys.stdout.write(text + "\n")
     return 0
 
 

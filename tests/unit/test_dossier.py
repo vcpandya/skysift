@@ -544,6 +544,21 @@ def test_hand_built_values_agree_within_errors():
     assert gen["fpp"]["signed_off"] is False
 
 
+def test_the_compare_tool_reads_the_golden_block(monkeypatch, tmp_path, capsys):
+    monkeypatch.syspath_prepend(str(REPO))
+    monkeypatch.chdir(tmp_path)
+    from tools import dossier_compare
+    argv = ["--data", str(GENERATED), "--reference", str(HAND_BUILT)]
+    assert dossier_compare.main(argv) == 0
+    printed = capsys.readouterr().out
+    assert list(tmp_path.iterdir()) == []                                  # without --out it prints and writes nothing
+    rungs = json.loads(GENERATED.read_text(encoding="utf-8"))["provenance"]["ladder_versions"]
+    assert len(rungs) == 6 and all(f"| {rung} | " in printed for rung in rungs)
+    out = tmp_path / "c.md"
+    assert dossier_compare.main([*argv, "--out", str(out)]) == 0
+    assert capsys.readouterr().out == "" and out.read_text(encoding="utf-8") + "\n" == printed
+
+
 # ---------------------------------------------------------------------------------------------------- Task 7 fix round
 
 def _season(season: int, dist: float, sigma: float, voting: bool = True) -> dict:
@@ -557,9 +572,10 @@ def test_the_centroid_estimate_uses_the_voting_seasons_and_the_larger_error():
     assert est.source == "statistical" and est.sigma_scatter == pytest.approx(0.0, abs=1e-12)
     assert est.sigma == est.sigma_stat == pytest.approx(0.05 / math.sqrt(2) * PIXEL_ARCSEC)
     spread = centroid_estimate({"seasons": [_season(0, 0.1, 0.01), _season(1, 0.5, 0.01)]})
-    # mean 0.3 px, RMS scatter 0.2 px, over sqrt(2): 0.141 px against a statistical 0.0071 px
-    assert spread.source == "scatter" and spread.sigma == pytest.approx(0.2 / math.sqrt(2) * PIXEL_ARCSEC)
+    # mean 0.3 px, sample scatter (ddof 1) 0.283 px, over sqrt(2): 0.2 px against a statistical 0.0071 px
+    assert spread.source == "scatter" and spread.sigma == pytest.approx(0.2 * PIXEL_ARCSEC)
     assert spread.sigma_stat == pytest.approx(0.01 / math.sqrt(2) * PIXEL_ARCSEC)
+    assert centroid_estimate({"seasons": [_season(0, 0.2, 0.05)]}).sigma_scatter == 0.0     # one season: no scatter
     assert centroid_estimate({"seasons": [_season(3, 0.2, 0.05, voting=False)]}) is None
 
 

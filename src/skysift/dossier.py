@@ -417,11 +417,13 @@ def centroid_estimate(rung5_metrics: dict) -> CentroidEstimate | None:
     d = np.array([d for d, _e in rows])
     mean = float(np.sum(w * d) / np.sum(w))
     stat = float(1.0 / math.sqrt(np.sum(w)))
-    scatter = float(math.sqrt(np.mean((d - mean) ** 2)) / math.sqrt(len(rows)))
+    # sample scatter (ddof 1) about the weighted mean, over sqrt(n); a single season has no scatter to judge by
+    n = len(rows)
+    scatter = float(math.sqrt(np.sum((d - mean) ** 2) / (n - 1)) / math.sqrt(n)) if n > 1 else 0.0
     source = "scatter" if scatter > stat else "statistical"
     return CentroidEstimate(offset=mean * PIXEL_ARCSEC, sigma=max(stat, scatter) * PIXEL_ARCSEC,
                             sigma_stat=stat * PIXEL_ARCSEC, sigma_scatter=scatter * PIXEL_ARCSEC, source=source,
-                            n_seasons=len(rows))
+                            n_seasons=n)
 
 
 def centroid_offset(rung5_metrics: dict) -> tuple[float, float] | None:
