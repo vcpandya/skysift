@@ -1,6 +1,6 @@
 {
  "dossier_version": "1",
- "generated": "2026-10-21T07:07:17.725520+00:00",
+ "generated": "2026-10-21T08:39:37.854946+00:00",
  "target": {
   "target_id": "kic-006146676",
   "source": "kbonus_bkg",
@@ -57,11 +57,18 @@
   "sentence_not_covered": "This is about noise. A real dip on a neighbouring star or an eclipsing binary passes this test."
  },
  "fpp": {
-  "value": 0.00013902264,
+  "value": 0.007754167,
   "words": "under 1 percent",
   "label": "False positive",
   "signed_off": false,
   "pixels": true,
+  "neighbours_known": true,
+  "value_without_beb": null,
+  "spec_product": {
+   "eb_weight": 2.8559513e-07,
+   "value": 0.00013902264,
+   "rule": "spec 4.2 as first written: one EB scenario at 2P weighted by S_sec x S_oe"
+  },
   "confusion_radius_arcsec": 2.0,
   "neighbours": [
    {
@@ -161,27 +168,45 @@
     }
    },
    {
-    "name": "EB",
-    "prior": 0.010741941,
-    "geometric": 0.010598081,
-    "data": 0.0025086542,
-    "weight": 2.8559513e-07,
+    "name": "EB-P",
+    "prior": 0.0053709704,
+    "geometric": 0.016823405,
+    "data": 0.16825271,
+    "weight": 1.5202981e-05,
     "factors": {
      "class": "M",
      "f_bin": 0.26,
      "g_P": 0.041315157,
-     "a_2P_au": 0.33239329,
+     "prior_share": 0.5,
      "pair_mass_msun": 0.7545,
+     "fit_b": 0.8932519,
+     "S_v": 1.0,
+     "a_P_au": 0.20939465,
      "secondary_predicted_ppm": 218.663,
      "secondary_ppm": 95.430951,
      "secondary_err_ppm": 128.22074,
-     "S_sec": 0.16825271,
+     "S_sec": 0.16825271
+    }
+   },
+   {
+    "name": "EB-2P",
+    "prior": 0.0053709704,
+    "geometric": 0.010598081,
+    "data": 0.014910037,
+    "weight": 8.4870882e-07,
+    "factors": {
+     "class": "M",
+     "f_bin": 0.26,
+     "g_P": 0.041315157,
+     "prior_share": 0.5,
+     "pair_mass_msun": 0.7545,
+     "fit_b": 0.8932519,
+     "S_v": 1.0,
+     "a_2P_au": 0.33239329,
      "odd_even_predicted_ppm": 546.65749,
      "odd_even_ppm": 69.282579,
      "odd_even_err_ppm": 219.73811,
-     "S_oe": 0.014910037,
-     "fit_b": 0.8932519,
-     "S_v": 1.0
+     "S_oe": 0.014910037
     }
    }
   ],
@@ -246,6 +271,7 @@
     }
    ],
    "centroid_sigma_arcsec": 0.137343,
+   "neighbours_known": true,
    "sigma_c_stat_arcsec": 0.137343,
    "sigma_c_scatter_arcsec": 0.11028396,
    "sigma_c_source": "statistical"
@@ -704,6 +730,6 @@
    "rung4_novelty": "3",
    "rung5_pixels": "4"
   },
-  "git_commit": "2588897"
+  "git_commit": "04173f6-dirty"
  }
 }

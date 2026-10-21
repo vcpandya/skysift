@@ -652,3 +652,110 @@ def test_pixel_seasons_are_the_archive_seasons_rung_5_wrote(env):
     assert set(by_season) == {0, 3}
     assert by_season[0]["quarters"] == [2, 6, 10, 14] and by_season[3]["quarters"] == [1, 5, 9, 13]   # Q1, Q5: season 3
     assert by_season[3]["nearer"] == "unknown"                     # the seeded archive season 3 does not vote
+
+
+# ---------------------------------------------------------------------------------------------------- final review
+
+def _refusing_cone(fetch, status: int = 503):
+    """``fetch`` with the Gaia neighbour cone failing (an outage by default)."""
+    def refuse(url, *, params=None, service, store=None, target_id=None, **kw):
+        if "CONTAINS(" in (params or {}).get("query", ""):
+            raise ServiceUnavailable(f"{service} {url} -> HTTP {status}")
+        return fetch(url, params=params, service=service, store=store, target_id=target_id, **kw)
+    return refuse
+
+
+def test_a_failed_neighbour_cone_leaves_the_fpp_not_computed(env):
+    known = generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch)
+    assert known.fpp.neighbours_known and _data(known)["fpp"]["value"] is not None
+    rep = generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=_refusing_cone(env.fetch), force=True)
+    data, row = _data(rep), env.store.dossier(STAGE2_TARGET)
+    assert rep.gaia_errors and rep.gaia_errors[0].startswith("neighbour cone:")
+    assert data["fpp"]["inputs"]["neighbours_known"] is False and data["fpp"]["value"] is None
+    assert data["fpp"]["words"] == "not computed (no neighbour data)" and row["fpp"] is None
+    assert row["fpp_detail"]["label"] == "False positive (no neighbour data)"
+    assert data["fpp"]["value_without_beb"] is not None                     # the other terms, for the factor table
+    assert any(c.get("key") == "no_neighbours" for c in data["caveats"])
+    assert rep.as_dict()["fpp"]["value"] is None
+    # the stored inputs recompute to the same state, so the no-op report says the same
+    again = generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch)
+    assert not again.generated and again.fpp.words() == "not computed (no neighbour data)"
+
+
+def test_no_target_g_leaves_the_fpp_not_computed(env):
+    rep = generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch)
+    signal = pick_signal(env.store, STAGE2_TARGET)
+    tests = env.store.latest_tests(signal["id"])
+    star, planet = SimpleNamespace(teff=None, radius=None, mass=None), SimpleNamespace(rp_rearth=None)
+    inputs = dossier_module.fpp_inputs(signal, tests, star, planet, [], None)
+    assert inputs.neighbours_known is False and compute(inputs).reported_value is None
+    assert dossier_module.fpp_inputs(signal, tests, star, planet, [], 16.2).neighbours_known is True
+    assert rep.fpp.neighbours_known
+
+
+def test_the_pack_texts_say_the_fpp_is_not_computed_without_neighbours(env):
+    from skysift import pack
+    from skysift.zenodo import probability_sentences
+    rep = generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=_refusing_cone(env.fetch))
+    data = _data(rep)
+    _fap, fpp_text = probability_sentences(data)
+    assert fpp_text.startswith("False-positive probability: not computed, since the Gaia neighbour list")
+    assert "percent" not in fpp_text
+    assert "the false-positive probability is not computed" in pack.abstract_text(data)
+
+
+def test_the_null_calibration_size_is_in_the_fingerprint(env):
+    tests = [{"id": 3}, {"id": 1}]
+    assert fingerprint(tests, "candidate_stage2", None) == fingerprint(tests, "candidate_stage2", None, 0)
+    assert fingerprint(tests, "candidate_stage2", None, 0) != fingerprint(tests, "candidate_stage2", None, 120)
+    first = generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch)
+    assert first.generated
+    assert not generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch).generated
+    path = cal.default_path(env.settings.data_dir, "kbonus_bkg")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as fh:                       # a null search arrives
+        fh.write(json.dumps({"target_id": "kic-0", "search_version": "x", "sde_inverted": 1.0,
+                             "sde_scrambled": 1.0}) + "\n")
+    assert dossier_module.calibration_rows(env.settings.data_dir, "kbonus_bkg") >= 1
+    again = generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch)
+    assert again.generated
+    assert again.stale_reason == "the test rows, the reviewer decision or the null calibration changed"
+
+
+def test_a_regeneration_clears_the_pack_link_and_its_steps(env):
+    from datetime import datetime
+    generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch)
+    env.store.set_pack(STAGE2_TARGET, "packs/x", datetime(2026, 10, 21, 10, 0))
+    env.store.set_pack_steps(STAGE2_TARGET, {"1": True})
+    generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch, force=True)
+    row = env.store.dossier(STAGE2_TARGET)
+    assert row["pack_path"] == "" and row["pack_built"] is None and row["pack_steps"] == {}
+
+
+def test_public_paths_cuts_a_path_whole_or_inside_a_sentence(tmp_path):
+    root = tmp_path.resolve()
+    out = dossier_module.public_paths({
+        "whole": str(root / "calibration" / "kbonus_bkg.jsonl"),
+        "quoted": f"[Errno 2] No such file or directory: '{root / 'my blobs' / 'a.npz'}'",
+        "bare": r"could not open C:\Users\someone\data\x.fits while reading",
+        "posix": "read /home/someone/data/x.fits failed",
+        "elsewhere": "D:/other/place/file.csv",
+        "kept": ["https://gea.esac.esa.int/tap-server/tap/sync", "on the target in 3/3 seasons", "ppm / sigma",
+                 "and/or"]}, root)
+    assert out["whole"] == "calibration/kbonus_bkg.jsonl"
+    assert out["quoted"] == "[Errno 2] No such file or directory: 'my blobs/a.npz'"
+    assert out["bare"] == "could not open x.fits while reading" and out["posix"] == "read x.fits failed"
+    assert out["elsewhere"] == "file.csv"
+    assert out["kept"] == ["https://gea.esac.esa.int/tap-server/tap/sync", "on the target in 3/3 seasons",
+                           "ppm / sigma", "and/or"]
+
+
+def test_the_export_and_the_stored_provenance_name_no_local_folder(env):
+    rep = generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch)
+    data = _data(rep)
+    root = Path(env.settings.data_dir).resolve()
+    calib = data["provenance"]["calibration_file"]
+    assert calib is None or not Path(calib).is_absolute()
+    data["section_errors"] = {"pixels": {"error": f"cannot read '{root / 'blobs' / 'z.npz'}'"}}
+    text = export_html(data, data_dir=root)
+    assert "cannot read 'blobs\\/z.npz'" in text and root.parent.name not in text

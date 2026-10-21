@@ -173,11 +173,17 @@
     {%- endif %}
     <p>{% if not fap.calibrated %}Not yet calibrated: at least {{ fap.min_nulls or 200 }} null searches of this source and search version are needed, and the pilot calibration is still running.{% elif not fap.version_matches %}The calibration is for an older search ({{ (fap.versions or []) | join(", ") }}), so the number is shown here only: {{ "1 in %s" | format(fap.one_in) if fap.one_in else "no number" }}.{% else %}Calibration version {{ fap.calibration_version }}, matching the signal's search.{% endif %}</p>
     <h3>The false-positive factor table</h3>
-    <p>FPP = (w<sub>BEB</sub> + w<sub>EB</sub>) / (w<sub>PL</sub> + w<sub>BEB</sub> + w<sub>EB</sub>){% if fpp.value is not none and fpp.value is defined %} = <span class="mono">{{ "%.3g" | format(fpp.value) }}</span>{% endif %}. Each weight is prior × geometric probability × data factor. Confusion radius {{ fpp.confusion_radius_arcsec | fmt(2) }} arcsec{% if not fpp.pixels %}, without pixel data{% endif %}.{% if not fpp.signed_off %} Provisional until the priors are reviewed.{% endif %}</p>
+    <p>FPP = (w<sub>BEB</sub> + w<sub>EB-P</sub> + w<sub>EB-2P</sub>) / (w<sub>PL</sub> + w<sub>BEB</sub> + w<sub>EB-P</sub> + w<sub>EB-2P</sub>){% if fpp.value is not none and fpp.value is defined %} = <span class="mono">{{ "%.3g" | format(fpp.value) }}</span>{% endif %}. Each weight is prior × geometric probability × data factor. An eclipsing binary on the target is either at the signal's period, when it shows a secondary eclipse, or at twice it, when odd and even eclipses differ, so the two share its prior. Confusion radius {{ fpp.confusion_radius_arcsec | fmt(2) }} arcsec{% if not fpp.pixels %}, without pixel data{% endif %}.{% if not fpp.signed_off %} Provisional until the priors are reviewed.{% endif %}</p>
+    {%- if fpp.neighbours_known is sameas false %}
+    <p class="dossier-caveat">Not computed (no neighbour data): the Gaia neighbour list is missing, so the background binary term cannot be judged and no FPP is given. The table below leaves that term out{% if fpp.value_without_beb is number %} (the other terms alone give {{ "%.3g" | format(fpp.value_without_beb) }}){% endif %}.</p>
+    {%- endif %}
+    {%- if fpp.spec_product and fpp.spec_product.value is number %}
+    <p class="dossier-small">Spec 4.2 as first written, one eclipsing binary at twice the period weighted by the secondary and odd/even tests together: weight <span class="mono">{{ "%.3g" | format(fpp.spec_product.eb_weight) }}</span>, FPP <span class="mono">{{ "%.3g" | format(fpp.spec_product.value) }}</span>.</p>
+    {%- endif %}
     <div class="table-wrap"><table class="dossier-table">
       <caption>Scenarios</caption>
       <thead><tr><th scope="col">scenario</th><th scope="col" class="num">prior</th><th scope="col" class="num">geometric</th><th scope="col" class="num">data</th><th scope="col" class="num">weight</th></tr></thead>
-      <tbody>{% for sc in fpp.scenarios or [] %}<tr><th scope="row">{{ {"PL": "Planet on the target (PL)", "BEB": "Background eclipsing binary (BEB)", "EB": "Eclipsing binary on the target (EB)"}.get(sc.name, sc.name) }}</th>{% for k in ("prior", "geometric", "data", "weight") %}<td class="num mono">{{ "%.3g" | format(sc[k]) if sc[k] is number else "–" }}</td>{% endfor %}</tr>{% endfor %}</tbody>
+      <tbody>{% for sc in fpp.scenarios or [] %}<tr><th scope="row">{{ {"PL": "Planet on the target (PL)", "BEB": "Background eclipsing binary (BEB)", "EB-P": "Eclipsing binary on the target at the signal's period (EB-P)", "EB-2P": "Eclipsing binary on the target at twice the period (EB-2P)", "EB": "Eclipsing binary on the target (EB)"}.get(sc.name, sc.name) }}</th>{% for k in ("prior", "geometric", "data", "weight") %}<td class="num mono">{{ "%.3g" | format(sc[k]) if sc[k] is number else "–" }}</td>{% endfor %}</tr>{% endfor %}</tbody>
     </table></div>
     {%- if fpp.neighbours %}
     <div class="table-wrap"><table class="dossier-table">
@@ -330,6 +336,9 @@
   {%- if (r and r.group == "approved") or dz.pack_path %}
   <h3 id="pack-title">The submission pack</h3>
   <p>No portal takes a new Kepler candidate from outside a mission, so the pack holds what each route needs. Tick a step when you have done it.{% if dz.pack_path %} The pack is at <code>{{ dz.pack_path }}</code>.{% endif %}</p>
+  {%- if dz.pack_path and dz.pack_built and dz.generated and dz.pack_built < dz.generated %}
+  <p class="dossier-caveat">The pack was built from an earlier dossier. Build it again for this one.</p>
+  {%- endif %}
   {%- if pack_zip %}
   <p><a class="btn" href="/dossiers/{{ target_id }}/pack.zip">Download the submission pack (zip)</a></p>
   {%- endif %}

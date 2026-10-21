@@ -14,6 +14,7 @@ superseded. The launcher owns the stop file: a new start removes a stale one and
 from __future__ import annotations
 
 import json
+import logging
 import math
 import os
 import re
@@ -36,6 +37,7 @@ PROVISIONAL_TTL_S = 30.0                          # a lock without a pid older t
 STOP_WAIT_S = 5.0
 CREATE_NEW_PROCESS_GROUP = 0x00000200             # the Windows creation flags, spelt out so they exist on every OS
 BELOW_NORMAL_PRIORITY_CLASS = 0x00004000
+_log = logging.getLogger(__name__)
 NICE_INCREMENT = 10                               # the POSIX stand-in for the below-normal priority class
 
 
@@ -43,17 +45,26 @@ class SweepActive(RuntimeError):
     pass
 
 
-def _lower_priority() -> None:
-    os.nice(NICE_INCREMENT)
+def lower_priority(pid: int, platform: str = sys.platform) -> None:
+    """Off Windows, a nice of ``NICE_INCREMENT`` for the started child ``pid``, set from the parent after ``Popen``
+    (a ``preexec_fn`` runs between fork and exec, which can deadlock the child of a threaded parent such as the
+    dashboard). On Windows the priority class is given at creation (``spawn_options``), so nothing is done. A refusal
+    is logged and the child keeps the normal priority."""
+    if platform == "win32":
+        return
+    try:
+        os.setpriority(os.PRIO_PROCESS, pid, NICE_INCREMENT)
+    except (OSError, AttributeError) as e:
+        _log.warning("could not lower the priority of process %s: %s", pid, e)
 
 
 def spawn_options(below_normal: bool, platform: str = sys.platform) -> dict:
     """The ``Popen`` keywords of a launched child: its own process group on Windows (so a stop does not reach the
-    dashboard), and with ``below_normal`` the below-normal priority class there or a nice of ``NICE_INCREMENT``
-    elsewhere, so a job started beside a sweep yields the CPU to it."""
+    dashboard), and with ``below_normal`` the below-normal priority class there; elsewhere ``lower_priority`` sets a
+    nice of ``NICE_INCREMENT`` once the child has started, so a job started beside a sweep yields the CPU to it."""
     if platform == "win32":
         return {"creationflags": CREATE_NEW_PROCESS_GROUP | (BELOW_NORMAL_PRIORITY_CLASS if below_normal else 0)}
-    return {"creationflags": 0, **({"preexec_fn": _lower_priority} if below_normal else {})}
+    return {"creationflags": 0}
 
 
 @dataclass
@@ -364,6 +375,8 @@ class SweepLauncher:
             except BaseException:
                 log.unlink(missing_ok=True); self._drop_lock(); raise
             self._proc = proc
+            if self.below_normal:
+                lower_priority(proc.pid)
             info = {**provisional, "pid": proc.pid, "created": _process_created(proc.pid)}
             info.pop("provisional")
             try:

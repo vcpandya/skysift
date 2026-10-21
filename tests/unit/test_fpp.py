@@ -27,12 +27,13 @@ def no_pixels(inputs: FppInputs) -> FppInputs:
         dataclasses.replace(n, centroid_sep_arcsec=None) for n in inputs.neighbours))
 
 
-def test_three_scenarios_sum_to_the_fpp():
+def test_four_scenarios_sum_to_the_fpp():
     # The factor table of spec 4.2 for KIC 6146676, documented for the sign-off review.
     f = compute(base())
-    pl, beb, eb = f.scenarios
+    pl, beb, eb_p, eb_2p = f.scenarios
     w = {s.name: s.weight for s in f.scenarios}
-    assert f.value == pytest.approx((w["BEB"] + w["EB"]) / sum(w.values()))
+    assert list(w) == ["PL", "BEB", "EB-P", "EB-2P"]
+    assert f.value == pytest.approx((w["BEB"] + w["EB-P"] + w["EB-2P"]) / sum(w.values()))
     assert 0 <= f.value <= 0.6
     # PL by hand. f_pl: the Dressing grid's bin centres around (2.61 Re, 40.29 d) are 2.236/2.739 Re and
     # 33.13/109.8 d; u = (log 2.61 - log 2.236) / (log 2.739 - log 2.236) = 0.763, t = 0.163; rows 2.0-2.5 Re
@@ -49,17 +50,25 @@ def test_three_scenarios_sum_to_the_fpp():
     assert beb.factors["n_bright"] == 2 and beb.weight < 1e-6
     assert beb.geometric == pytest.approx(0.020219, rel=0.01)
     # EB prior: f_bin 0.26 (M) x g_P, the Raghavan log-normal (mu 5.03, sigma 2.28) between log10(P) = 1.6052 and
-    # log10(4P) = 2.2073: Phi(-1.2380) - Phi(-1.5021) = 0.10786 - 0.06654 = 0.041315; prior 0.26 * 0.041315 = 0.010742.
-    # EB geometric: M1 + M2 = 0.495 * 1.5 = 0.7425 Msun at 80.58 d, a = (0.7425 * 0.048671)^(1/3) = 0.33062 AU,
-    # (R1 + R2) / a = 0.498 * 1.5 * 0.00465047 / 0.33062 = 0.010507.
-    # EB data: S_sec = 1 - Phi((216.5 - 72) / 80) = 0.03544, S_oe = 1 - Phi((541.25 - 87) / 199) = 0.01123, S_v = 1
-    # (b 0.885 < 0.9); data 3.978e-4, weight 0.010742 * 0.010507 * 3.978e-4 = 4.490e-8.
-    assert eb.weight < 1e-6
-    assert eb.prior == pytest.approx(0.26 * 0.041315, rel=0.01) and eb.geometric == pytest.approx(0.010507, rel=0.01)
-    assert eb.factors["S_sec"] == pytest.approx(0.0354, rel=0.01) and eb.factors["S_oe"] == pytest.approx(
-        0.0112, rel=0.01) and eb.factors["S_v"] == 1.0
-    # FPP: (BEB ~1e-134 + EB 4.490e-8) / (PL 2.1012e-3 + 4.490e-8) = 2.137e-5
-    assert f.value == pytest.approx(2.137e-5, rel=0.01)
+    # log10(4P) = 2.2073: Phi(-1.2380) - Phi(-1.5021) = 0.10786 - 0.06654 = 0.041315; prior 0.26 * 0.041315 = 0.010742,
+    # shared equally by EB-P and EB-2P: 0.0053710 each.
+    # EB geometric, M1 + M2 = 0.495 * 1.5 = 0.7425 Msun: at P = 40.29 d a = (0.7425 * 0.012168)^(1/3) = 0.20828 AU,
+    # (R1 + R2) / a = 0.498 * 1.5 * 0.00465047 / 0.20828 = 0.016679; at 2P = 80.58 d a = 0.33062 AU, 0.010507.
+    # EB data: S_sec = 1 - Phi((216.5 - 72) / 80) = 0.03544 for EB-P, S_oe = 1 - Phi((541.25 - 87) / 199) = 0.01123
+    # for EB-2P, S_v = 1 (b 0.885 < 0.9). Weights 0.005371 * 0.016679 * 0.03544 = 3.175e-6 and
+    # 0.005371 * 0.010507 * 0.01123 = 6.337e-7.
+    assert eb_p.prior == eb_2p.prior == pytest.approx(0.26 * 0.041315 / 2, rel=0.01)
+    assert eb_p.geometric == pytest.approx(0.016679, rel=0.01) and eb_2p.geometric == pytest.approx(0.010507, rel=0.01)
+    assert eb_p.data == pytest.approx(0.03544, rel=0.01) and eb_p.factors["S_sec"] == eb_p.data
+    assert eb_2p.data == pytest.approx(0.01123, rel=0.01) and eb_2p.factors["S_oe"] == eb_2p.data
+    assert eb_p.factors["S_v"] == eb_2p.factors["S_v"] == 1.0
+    assert eb_p.weight == pytest.approx(3.175e-6, rel=0.01) and eb_2p.weight == pytest.approx(6.337e-7, rel=0.01)
+    # FPP: (BEB ~1e-134 + 3.175e-6 + 6.337e-7) / (PL 2.1012e-3 + 3.809e-6) = 1.809e-3
+    assert f.value == pytest.approx(1.809e-3, rel=0.01)
+    # spec 4.2 as first written, kept for the sign-off: one EB at 2P with the prior in full and S_sec x S_oe,
+    # 0.010742 * 0.010507 * 3.978e-4 = 4.490e-8, so (4.490e-8) / (2.1012e-3 + 4.490e-8) = 2.137e-5
+    assert f.product_eb_weight == pytest.approx(4.490e-8, rel=0.01)
+    assert f.product_value == pytest.approx(2.137e-5, rel=0.01)
 
 
 def test_an_unlocalized_bright_neighbour_dominates_the_fpp():
@@ -122,7 +131,25 @@ def test_words(value, words):
 
 def test_as_dict_is_json_ready_and_carries_every_factor():
     d = compute(base()).as_dict(); json.dumps(d, allow_nan=False)
-    assert {s["name"] for s in d["scenarios"]} == {"PL", "BEB", "EB"} and "S_sec" in d["scenarios"][2]["factors"]
+    assert [s["name"] for s in d["scenarios"]] == ["PL", "BEB", "EB-P", "EB-2P"]
+    assert "S_sec" in d["scenarios"][2]["factors"] and "S_oe" in d["scenarios"][3]["factors"]
+    assert d["neighbours_known"] is True and d["value_without_beb"] is None and d["value"] == compute(base()).value
+    assert d["spec_product"]["value"] == pytest.approx(2.137e-5, rel=0.01)
+
+
+def test_an_unknown_neighbour_list_is_not_computed():
+    # a failed cone (or no target G) gives no neighbours for want of data: the BEB term would be 0 and the FPP fall,
+    # so no number is given
+    known, unknown = compute(base(neighbours=())), compute(base(neighbours=(), neighbours_known=False))
+    assert known.words() == "under 1 percent" and known.reported_value == known.value
+    assert unknown.words() == "not computed (no neighbour data)" and unknown.reported_value is None
+    assert unknown.label() == "False positive (no neighbour data)"
+    d = unknown.as_dict(); json.dumps(d, allow_nan=False)
+    assert d["value"] is None and d["value_without_beb"] == pytest.approx(known.value)
+    assert d["words"] == "not computed (no neighbour data)" and d["neighbours_known"] is False
+    # an FppInputs stored before the flag existed recomputes as known
+    stored = {k: v for k, v in dataclasses.asdict(base()).items() if k != "neighbours_known"}
+    assert compute(FppInputs(**stored)).neighbours_known is True
 
 
 def test_a_nan_secondary_reads_as_missing():

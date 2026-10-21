@@ -1,8 +1,15 @@
-"""The approximate astrophysical false-positive probability of spec 4.2: three scenarios in the spirit of Morton
-(2012), a planet on the target (PL), a background or foreground eclipsing binary within the confusion radius (BEB)
-and an eclipsing binary on the target itself (EB). Each scenario weighs ``prior x geometric x data``;
-``FPP = (w_BEB + w_EB) / (w_PL + w_BEB + w_EB)``. Every factor and its inputs is kept in ``ScenarioWeight.factors``
-so the dossier can print the whole table on the Expert level.
+"""The approximate astrophysical false-positive probability of spec 4.2: in the spirit of Morton (2012), a planet on
+the target (PL), a background or foreground eclipsing binary within the confusion radius (BEB) and an eclipsing binary
+on the target itself, kept as two sub-scenarios that cannot both hold: one whose true period is P (EB-P, tested by the
+secondary at phase 0.5) and one whose true period is 2P (EB-2P, tested by the odd/even difference). The two share the
+EB prior equally. Each scenario weighs ``prior x geometric x data``;
+``FPP = (w_BEB + w_EB-P + w_EB-2P) / (w_PL + w_BEB + w_EB-P + w_EB-2P)``. The spec as first written multiplied the two
+EB tests into one scenario at 2P; that product and the FPP it gives are kept on the result (``product_eb_weight``,
+``product_value``) for the sign-off. Every factor and its inputs is kept in ``ScenarioWeight.factors`` so the dossier
+can print the whole table on the Expert level.
+
+Without the Gaia neighbour list (the cone query failed, or the target has no G) the BEB term cannot be judged, so the
+result says "not computed (no neighbour data)" and carries no value outward (``reported_value`` is None).
 
 Pure arithmetic over ``priors``; no I/O. The numbers are provisional until the sign-off gate of spec 4.2
 (``SIGNED_OFF``)."""
@@ -71,9 +78,12 @@ class FppInputs:
     odd_even_err_ppm: float | None
     neighbours: tuple[Neighbour, ...]
     centroid_sigma_arcsec: float | None  # season-averaged centroid error; None without a pixel stage
+    # False when the Gaia neighbour cone failed or the target G is unknown: the neighbour list is then empty for want
+    # of data, not because the sky is empty, and the FPP is not computed
+    neighbours_known: bool = True
     # the record of how centroid_sigma_arcsec was chosen (the dossier's centroid_offset); compute does not read them
     sigma_c_stat_arcsec: float | None = None      # the error of the inverse-variance weighted mean of the seasons
-    sigma_c_scatter_arcsec: float | None = None   # the seasons' RMS scatter about that mean / sqrt(n seasons)
+    sigma_c_scatter_arcsec: float | None = None   # the seasons' sample scatter about that mean / sqrt(n seasons)
     sigma_c_source: str | None = None             # "statistical" | "scatter": the larger of the two
 
     def __post_init__(self) -> None:
@@ -85,7 +95,7 @@ class FppInputs:
 
 @dataclass(frozen=True)
 class ScenarioWeight:
-    name: str                           # "PL" | "BEB" | "EB"
+    name: str                           # "PL" | "BEB" | "EB-P" | "EB-2P"
     prior: float
     geometric: float
     data: float
@@ -96,16 +106,31 @@ class ScenarioWeight:
         return self.prior * self.geometric * self.data
 
 
+NOT_COMPUTED_NEIGHBOURS = "not computed (no neighbour data)"
+
+
 @dataclass(frozen=True)
 class Fpp:
-    value: float                        # (w_BEB + w_EB) / (w_PL + w_BEB + w_EB)
-    scenarios: tuple[ScenarioWeight, ScenarioWeight, ScenarioWeight]
+    value: float                        # the impostor weights over all four; see reported_value
+    scenarios: tuple[ScenarioWeight, ...]   # PL, BEB, EB-P, EB-2P
     pixels: bool                        # False -> label "False positive (no pixel data yet)"
     confusion_radius_arcsec: float
     neighbours: tuple[dict, ...]        # per neighbour: source_id, sep_arcsec, gmag, bright_enough, exclusion X_i
+    neighbours_known: bool = True       # False -> "not computed (no neighbour data)"
+    product_eb_weight: float | None = None   # spec 4.2 as first written: one EB at 2P weighted by S_sec x S_oe
+    product_value: float | None = None       # the FPP that product gives
+
+    @property
+    def reported_value(self) -> float | None:
+        """The FPP to show and store, None when the neighbour list is unknown (``value`` then leaves the BEB term
+        out, which can only make the candidate look cleaner)."""
+        return self.value if self.neighbours_known else None
 
     def words(self) -> str:
-        """One significant figure as "about N percent", floored at "under 1 percent", capped at "over 90 percent"."""
+        """One significant figure as "about N percent", floored at "under 1 percent", capped at "over 90 percent";
+        "not computed (no neighbour data)" without the neighbour list."""
+        if not self.neighbours_known:
+            return NOT_COMPUTED_NEIGHBOURS
         v = self.value
         if v < 0.01: return "under 1 percent"
         if v > 0.9: return "over 90 percent"
@@ -115,6 +140,8 @@ class Fpp:
         return f"about {n} percent"
 
     def label(self) -> str:
+        if not self.neighbours_known:
+            return "False positive (no neighbour data)"
         return "False positive" if self.pixels else "False positive (no pixel data yet)"
 
     def as_dict(self) -> dict:
@@ -122,8 +149,12 @@ class Fpp:
         infinite k_i or a nan input) becomes None through ``jsonutil.sanitize``, so ``json.dumps`` with
         ``allow_nan=False`` never fails on it."""
         return jsonutil.sanitize({
-            "value": self.value, "words": self.words(), "label": self.label(), "signed_off": SIGNED_OFF,
-            "pixels": self.pixels, "confusion_radius_arcsec": self.confusion_radius_arcsec,
+            "value": self.reported_value, "words": self.words(), "label": self.label(), "signed_off": SIGNED_OFF,
+            "pixels": self.pixels, "neighbours_known": self.neighbours_known,
+            "value_without_beb": None if self.neighbours_known else self.value,
+            "spec_product": {"eb_weight": self.product_eb_weight, "value": self.product_value,
+                             "rule": "spec 4.2 as first written: one EB scenario at 2P weighted by S_sec x S_oe"},
+            "confusion_radius_arcsec": self.confusion_radius_arcsec,
             "neighbours": [dict(n) for n in self.neighbours],
             "scenarios": [{"name": s.name, "prior": s.prior, "geometric": s.geometric, "data": s.data,
                            "weight": s.weight, "factors": dict(s.factors)} for s in self.scenarios],
@@ -207,29 +238,36 @@ def _background(inputs: FppInputs) -> tuple[ScenarioWeight, float, tuple[dict, .
     return ScenarioWeight("BEB", F_EB * n_bright, geometric, x_mean, factors), r_c, tuple(rows)
 
 
-def _on_target_binary(inputs: FppInputs, cls: str, radius: float, mass: float) -> ScenarioWeight:
+def _on_target_binaries(inputs: FppInputs, cls: str, radius: float, mass: float) -> tuple[ScenarioWeight, ...]:
+    """EB-P and EB-2P, each with half the EB prior ``f_bin x g(P)``, the pair's transit probability at its own period
+    and its own test (S_sec for P, S_oe for 2P), both times S_v; and, last, the single scenario of spec 4.2 as first
+    written (prior in full, geometry at 2P, data S_sec x S_oe x S_v), kept for the sign-off and not summed."""
     f_bin = F_BIN[cls]
     g_p = binary_period_fraction(inputs.period)
     m_pair = mass * (1 + EB_M2_OVER_M1)
-    a_2p = _a_au(2 * inputs.period, m_pair)
-    geometric = radius * (1 + EB_R2_OVER_R1) * RSUN_AU / a_2p
+    a_p, a_2p = _a_au(inputs.period, m_pair), _a_au(2 * inputs.period, m_pair)
+    r_pair = radius * (1 + EB_R2_OVER_R1) * RSUN_AU
     depth_ppm = inputs.depth * 1e6
     s_sec = _tail(EB_SECONDARY_RATIO * depth_ppm, inputs.secondary_ppm, inputs.secondary_err_ppm)
     odd_even = abs(inputs.odd_ppm - inputs.even_ppm) if inputs.odd_ppm is not None and inputs.even_ppm is not None \
         else None
     s_oe = _tail(EB_ODD_EVEN_RATIO * depth_ppm, odd_even, inputs.odd_even_err_ppm)
     s_v = 1.0 if (inputs.fit_b is None or inputs.fit_b < V_SHAPE_B) else V_SHAPE_FACTOR
-    factors: dict[str, float | str | None] = {
-        "class": cls, "f_bin": f_bin, "g_P": g_p, "a_2P_au": a_2p, "pair_mass_msun": m_pair,
-        "secondary_predicted_ppm": EB_SECONDARY_RATIO * depth_ppm, "secondary_ppm": inputs.secondary_ppm,
-        "secondary_err_ppm": inputs.secondary_err_ppm, "S_sec": s_sec,
-        "odd_even_predicted_ppm": EB_ODD_EVEN_RATIO * depth_ppm, "odd_even_ppm": odd_even,
-        "odd_even_err_ppm": inputs.odd_even_err_ppm, "S_oe": s_oe, "fit_b": inputs.fit_b, "S_v": s_v}
-    return ScenarioWeight("EB", f_bin * g_p, geometric, s_sec * s_oe * s_v, factors)
+    share = f_bin * g_p / 2
+    common: dict[str, float | str | None] = {"class": cls, "f_bin": f_bin, "g_P": g_p, "prior_share": 0.5,
+                                             "pair_mass_msun": m_pair, "fit_b": inputs.fit_b, "S_v": s_v}
+    at_p = ScenarioWeight("EB-P", share, r_pair / a_p, s_sec * s_v, {
+        **common, "a_P_au": a_p, "secondary_predicted_ppm": EB_SECONDARY_RATIO * depth_ppm,
+        "secondary_ppm": inputs.secondary_ppm, "secondary_err_ppm": inputs.secondary_err_ppm, "S_sec": s_sec})
+    at_2p = ScenarioWeight("EB-2P", share, r_pair / a_2p, s_oe * s_v, {
+        **common, "a_2P_au": a_2p, "odd_even_predicted_ppm": EB_ODD_EVEN_RATIO * depth_ppm,
+        "odd_even_ppm": odd_even, "odd_even_err_ppm": inputs.odd_even_err_ppm, "S_oe": s_oe})
+    product = ScenarioWeight("EB (spec product)", f_bin * g_p, r_pair / a_2p, s_sec * s_oe * s_v, {})
+    return at_p, at_2p, product
 
 
 def compute(inputs: FppInputs) -> Fpp:
-    """The three scenario weights and the FPP of spec 4.2 for one signal. Raises ``ValueError`` on a non-positive
+    """The four scenario weights and the FPP of spec 4.2 for one signal. Raises ``ValueError`` on a non-positive
     period, depth or fitted a/R*, and when the weights come out non-finite (a NaN stellar or fit input)."""
     if not inputs.period > 0: raise ValueError(f"period must be positive, got {inputs.period}")
     if not inputs.depth > 0: raise ValueError(f"depth must be positive, got {inputs.depth}")
@@ -240,10 +278,14 @@ def compute(inputs: FppInputs) -> Fpp:
     cls = spectral_class(inputs.teff)
     pl = _planet(inputs, cls, radius, mass)
     beb, r_c, rows = _background(inputs)
-    eb = _on_target_binary(inputs, cls, radius, mass)
-    total = pl.weight + beb.weight + eb.weight
+    eb_p, eb_2p, product = _on_target_binaries(inputs, cls, radius, mass)
+    scenarios = (pl, beb, eb_p, eb_2p)
+    total = sum(s.weight for s in scenarios)
     if not math.isfinite(total):
         raise ValueError("the scenario weights are not finite; check the stellar and fit inputs")
-    value = (beb.weight + eb.weight) / total if total > 0 else 1.0     # no admissible scenario at all: not a planet
-    return Fpp(value=value, scenarios=(pl, beb, eb), pixels=inputs.centroid_sigma_arcsec is not None,
-               confusion_radius_arcsec=r_c, neighbours=rows)
+    value = (total - pl.weight) / total if total > 0 else 1.0     # no admissible scenario at all: not a planet
+    old_total = pl.weight + beb.weight + product.weight
+    old_value = (beb.weight + product.weight) / old_total if old_total > 0 else 1.0
+    return Fpp(value=value, scenarios=scenarios, pixels=inputs.centroid_sigma_arcsec is not None,
+               confusion_radius_arcsec=r_c, neighbours=rows, neighbours_known=inputs.neighbours_known,
+               product_eb_weight=product.weight, product_value=old_value)

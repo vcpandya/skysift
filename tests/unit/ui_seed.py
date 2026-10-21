@@ -319,11 +319,15 @@ def _seed_probabilities(period: float, sde: float) -> tuple[dict, dict]:
               "rp_rearth": 2.61, "fit_k": 0.047, "fit_b": 0.31, "fit_a_over_r": None, "secondary_ppm": 15.0,
               "secondary_err_ppm": 65.0, "odd_ppm": 2202.0, "even_ppm": 2115.0, "odd_even_err_ppm": 290.0,
               "neighbours": neighbours, "centroid_sigma_arcsec": 0.1, "sigma_c_stat_arcsec": 0.1,
-              "sigma_c_scatter_arcsec": 0.05, "sigma_c_source": "statistical"}
+              "sigma_c_scatter_arcsec": 0.05, "sigma_c_source": "statistical", "neighbours_known": True}
     scenarios = [{"name": name, "prior": prior, "geometric": geo, "data": dat, "weight": prior * geo * dat,
                   "factors": {}} for name, prior, geo, dat in
-                 (("PL", 0.165, 0.0129, 1.0), ("BEB", 0.014, 0.0202, 0.0), ("EB", 0.0107, 0.0107, 0.0574))]
+                 (("PL", 0.165, 0.0129, 1.0), ("BEB", 0.014, 0.0202, 0.0), ("EB-P", 0.00535, 0.0170, 0.574),
+                  ("EB-2P", 0.00535, 0.0107, 0.0574))]
     fpp = {"value": 0.03, "words": "about 3 percent", "label": "False positive", "signed_off": False, "pixels": True,
+           "neighbours_known": True, "value_without_beb": None,
+           "spec_product": {"eb_weight": 6.6e-6, "value": 0.003,
+                            "rule": "spec 4.2 as first written: one EB scenario at 2P weighted by S_sec x S_oe"},
            "confusion_radius_arcsec": 2.0,
            "neighbours": [{**neighbours[0], "s_arcsec": 10.2, "flux_fraction": 0.958, "bright_enough": True,
                            "exclusion": 0.0}],
@@ -410,7 +414,7 @@ def seed_dossier(store: Store, data_dir, target_id: str = STAGE2_TARGET) -> dict
         "section_errors": {},
         "provenance": {"search_version": sig["detector_version"], "ladder_version": ladder,
                        "ladder_versions": per_rung, "git_commit": "seed", "queries": [], "files": [],
-                       "calibration_file": str(Path(data_dir) / "calibration" / "kbonus_bkg.jsonl"),
+                       "calibration_file": "calibration/kbonus_bkg.jsonl",
                        "commands": [f"skysift vet --source kbonus_bkg --target-id {target_id}",
                                     "skysift calibrate --source kbonus_bkg",
                                     f"skysift dossier --target {target_id} --signal {sid} --force"]},

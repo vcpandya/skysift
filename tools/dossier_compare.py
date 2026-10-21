@@ -284,6 +284,13 @@ def factor_table(data: dict) -> str:
         lines[0] += (f" Centroid error sigma_c {_fmt(_num(inputs.get('centroid_sigma_arcsec')))} arcsec, the "
                      f"{inputs['sigma_c_source']} one of statistical {_fmt(_num(inputs.get('sigma_c_stat_arcsec')))} "
                      f"and scatter {_fmt(_num(inputs.get('sigma_c_scatter_arcsec')))} arcsec.")
+    if f.get("neighbours_known") is False:
+        lines[0] += (" Not computed (no neighbour data): the BEB term cannot be judged; the other terms alone give "
+                     f"{_fmt(_num(f.get('value_without_beb')))}.")
+    product = f.get("spec_product") or {}
+    if _num(product.get("value")) is not None:
+        lines[0] += (f" Spec 4.2 as first written (one EB at 2P weighted by S_sec x S_oe): EB weight "
+                     f"{_fmt(_num(product.get('eb_weight')))}, FPP {_fmt(_num(product.get('value')))}.")
     for s in scen:
         w = _num(s.get("weight")) or 0.0
         lines.append(f"| {s.get('name')} | {_fmt(_num(s.get('prior')))} | {_fmt(_num(s.get('geometric')))} | "

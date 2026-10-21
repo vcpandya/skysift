@@ -301,7 +301,7 @@
 
   // ---- "How it might look", from the look block (dossier.look_numbers)
   const L = D.look;
-  const STAR = (t) => (t > 5500 ? "#fff3d6" : t > 4500 ? "#ffd9a0" : t > 3900 ? "#ffbe78" : "#ff9d5c");    // planet_svg.STAR_COLOURS
+  const STAR = (t) => (t >= 6000 ? "#fff3d6" : t >= 5200 ? "#ffd9a0" : t >= 3900 ? "#ffbe78" : "#ff9d5c");    // planet_svg.STAR_SCALE
   const PLANET = (t) => (!isNum(t) ? "#a7b0c3" : t < 200 ? "#cfe6ff" : t < 320 ? "#7fb7a3" : t < 700 ? "#c9a96e" : "#e0784a");
   let gid = 0;
   const space = (host, w, hh, aria) => {
@@ -439,6 +439,8 @@
     const fap = D.fap || {}, fpp = D.fpp || {};
     list(2, [[`False alarm: ${fap.words || "not yet calibrated"}.`, fap.sentence_not_covered],
       [`${fpp.label || "False positive"}: ${fpp.words || "not computed"}${fpp.signed_off ? "" : " (provisional)"}.`, fpp.sentence_not_covered]]);
+    const kinds = Object.keys(fap.k_by_kind || {}).sort();
+    if (kinds.length) para(2, kinds.map((kind, i) => `${kind}${i ? "" : " nulls"} ${fmt(fap.k_by_kind[kind])} of ${fmt((fap.n_by_kind || {})[kind])}`).join(", "), "prob-split");
     if (isNum(fap.n)) para(2, `${fmt(fap.k)} of ${fmt(fap.n)} null searches reached SDE ${fmt(fap.sde, 1)}.`, "only-expert mono");
     if (D.pixels) fig(3, "pixmaps", "Difference images by season: the ring marks this star, the square the neighbour, the cross the centroid.");
     else para(3, "The pixel step has not produced difference images for this signal.");

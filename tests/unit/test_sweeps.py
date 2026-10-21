@@ -230,8 +230,23 @@ def test_spawn_options_lower_the_priority_only_when_asked():
     assert spawn_options(False, "win32") == {"creationflags": CREATE_NEW_PROCESS_GROUP}
     assert spawn_options(True, "win32") == {"creationflags": CREATE_NEW_PROCESS_GROUP | BELOW_NORMAL_PRIORITY_CLASS}
     assert spawn_options(False, "linux") == {"creationflags": 0}
-    nice = spawn_options(True, "linux")
-    assert nice["creationflags"] == 0 and callable(nice["preexec_fn"])
+    assert spawn_options(True, "linux") == {"creationflags": 0}     # no preexec_fn: the nice is set after Popen
+
+
+def test_lower_priority_sets_the_nice_after_the_start_off_windows(monkeypatch):
+    import skysift.ui.sweeps as sw
+    calls = []
+    monkeypatch.setattr(sw.os, "setpriority", lambda *a: calls.append(a), raising=False)
+    monkeypatch.setattr(sw.os, "PRIO_PROCESS", 0, raising=False)
+    sw.lower_priority(4321, "win32")
+    assert calls == []
+    sw.lower_priority(4321, "linux")
+    assert calls == [(0, 4321, sw.NICE_INCREMENT)]
+
+    def refuse(*_a):
+        raise PermissionError("not allowed")
+    monkeypatch.setattr(sw.os, "setpriority", refuse, raising=False)
+    sw.lower_priority(4321, "linux")            # logged, not raised: the child keeps the normal priority
 
 
 def test_the_sweep_keeps_normal_priority_and_passes_its_flags_to_popen(tmp_path, monkeypatch):
@@ -253,6 +268,5 @@ def test_the_sweep_keeps_normal_priority_and_passes_its_flags_to_popen(tmp_path,
         low.start(SweepRequest(source="kbonus_bkg"))
     if sys.platform == "win32":
         assert seen["creationflags"] == sw.CREATE_NEW_PROCESS_GROUP | sw.BELOW_NORMAL_PRIORITY_CLASS
-    else:
-        assert callable(seen["preexec_fn"])
+    assert "preexec_fn" not in seen
     assert launcher.active() is None

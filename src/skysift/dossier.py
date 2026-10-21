@@ -14,6 +14,7 @@ page stays in ``docs/candidates`` as the record."""
 from __future__ import annotations
 
 import base64
+import copy
 import dataclasses
 import hashlib
 import html
@@ -27,7 +28,7 @@ import subprocess
 import zipfile
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 import numpy as np
 from sqlalchemy import select
@@ -60,6 +61,7 @@ from skysift.store.db import (
     utcnow,
 )
 from skysift.ui import explain
+from skysift.ui.planet_svg import star_word
 from skysift.ui.plots import whitened_fnorm
 from skysift.vetting.rung1_detection import SYSTEMATIC_PERIODS
 
@@ -129,8 +131,8 @@ class DossierReport:
         return jsonutil.sanitize({
             "target_id": self.target_id, "signal_id": self.signal_id, "data_path": str(self.data_path),
             "generated": self.generated, "stale_reason": self.stale_reason, "fap": fap,
-            "fpp": {"value": self.fpp.value, "words": self.fpp.words(), "label": self.fpp.label(),
-                    "pixels": self.fpp.pixels},
+            "fpp": {"value": self.fpp.reported_value, "words": self.fpp.words(), "label": self.fpp.label(),
+                    "pixels": self.fpp.pixels, "neighbours_known": self.fpp.neighbours_known},
             "comparison": self.comparison, "gaia_errors": list(self.gaia_errors)})
 
 
@@ -251,12 +253,43 @@ def pick_signal(store: Store, target_id: str, signal_id: int | None = None) -> d
     return min(rows, key=lambda r: rank_key(r, r["decision"]))
 
 
-def fingerprint(latest_tests: list[dict], final_status: str, decision: str | None) -> str:
-    """sha256 of the sorted test row ids, the final status and the latest decision: a dossier is stale when any of
-    them changed since it was written."""
+def fingerprint(latest_tests: list[dict], final_status: str, decision: str | None, calibration_rows: int = 0) -> str:
+    """sha256 of the sorted test row ids, the final status, the latest decision and the number of rows in the source's
+    null calibration (``calibration_rows``): a dossier is stale when any of them changed since it was written, so one
+    written while the calibration was short goes stale as the null searches arrive."""
     ids = sorted(int(t["id"]) for t in latest_tests)
-    text = json.dumps({"tests": ids, "status": final_status, "decision": decision}, sort_keys=True)
+    text = json.dumps({"tests": ids, "status": final_status, "decision": decision,
+                       "calibration_rows": int(calibration_rows)}, sort_keys=True)
     return hashlib.sha256(text.encode()).hexdigest()
+
+
+_ROW_COUNTS: dict[str, tuple[int, int, int]] = {}      # path -> (mtime_ns, size, rows)
+
+
+def calibration_rows(data_dir, source: str | None) -> int:
+    """The number of non-empty lines (one target's two null searches each) in ``source``'s null calibration file under
+    ``data_dir``, 0 when there is none; counted once per change of the file's size or time."""
+    path = cal.default_path(Path(data_dir), source or "kbonus_bkg")
+    try:
+        st = path.stat()
+    except OSError:
+        return 0
+    key = str(path)
+    hit = _ROW_COUNTS.get(key)
+    if hit is not None and hit[:2] == (st.st_mtime_ns, st.st_size):
+        return hit[2]
+    try:
+        with path.open("rb") as fh:
+            n = sum(1 for line in fh if line.strip())
+    except OSError:
+        return 0
+    _ROW_COUNTS[key] = (st.st_mtime_ns, st.st_size, n)
+    return n
+
+
+def data_dir_of(data_path) -> Path:
+    """The data folder a dossier's ``<data_dir>/dossiers/<target_id>/dossier_data.json`` lies in."""
+    return Path(data_path).resolve().parents[2]
 
 
 # ---------------------------------------------------------------------------------------------------- plot arrays
@@ -494,14 +527,6 @@ def pixels_section(store: Store, blob, signal_id: int, rung5_metrics: dict) -> l
 
 # ---------------------------------------------------------------------------------------------------- star and FPP
 
-def _star_colour(teff: float) -> str:
-    if teff < 4000: return "red"
-    if teff < 5300: return "orange"
-    if teff < 6000: return "yellow"
-    if teff < 7500: return "white"
-    return "blue-white"
-
-
 def look_numbers(star: stars.StarParams, planet: stars.PlanetParams) -> dict | None:
     """The inputs of section 06 (the illustrated panel), or None when the star could not be characterized."""
     if star.route == "none" or star.teff is None or star.radius is None:
@@ -511,7 +536,7 @@ def look_numbers(star: stars.StarParams, planet: stars.PlanetParams) -> dict | N
     angular = math.degrees(2 * math.atan(radius * RSUN_AU / a)) if a else None
     return {"teff_k": teff, "radius_rsun": radius, "mass_msun": star.mass.median if star.mass else None,
             "luminosity_lsun": radius ** 2 * (teff / stars.TSUN) ** 4, "spectral_type": star.spectral_type,
-            "star_colour": _star_colour(teff), "a_au": a,
+            "star_colour": star_word(teff), "a_au": a,
             "rp_rearth": planet.rp_rearth.median if planet.rp_rearth else None,
             "teq_k": planet.teq_k.median if planet.teq_k else None,
             "insolation_earth": planet.insolation_earth.median if planet.insolation_earth else None,
@@ -539,8 +564,8 @@ def gaia_refused(error: str) -> str | None:
 
 def _lookup(target: Target, signal: dict, tests: list[dict], *, fetch, store: Store):
     """``stars.lookup`` with each query group caught: a failed query on the star's own row gives route "none", one on
-    the neighbour cone gives no neighbours; each is logged at warning level and returned in the error list as
-    "<group>: <error>" (``GAIA_STAR`` or ``GAIA_CONE``)."""
+    the neighbour cone gives ``None`` for the neighbours (unknown, not empty); each is logged at warning level and
+    returned in the error list as "<group>: <error>" (``GAIA_STAR`` or ``GAIA_CONE``)."""
     shape = _metrics(tests, "rung2_shape")
     depth = _depth_fraction(signal, shape)
     fit_k = _num(shape, "fit_k") if shape.get("fit_ok") is True else None
@@ -557,7 +582,7 @@ def _lookup(target: Target, signal: dict, tests: list[dict], *, fetch, store: St
     try:
         neighbours = stars.query_neighbours(cone_target, depth, fetch=fetch, store=store)
     except ServiceUnavailable as e:
-        neighbours = []
+        neighbours = None
         errors.append(f"{GAIA_CONE}: {e}")
         log.warning("Gaia neighbour cone for %s failed: %s", target.target_id, e)
     star, planet = stars.derive(gaia, float(signal["period"]), fit_k, depth, np.random.default_rng(STARS_SEED))
@@ -565,16 +590,20 @@ def _lookup(target: Target, signal: dict, tests: list[dict], *, fetch, store: St
 
 
 def fpp_inputs(signal: dict, tests: list[dict], star: stars.StarParams, planet: stars.PlanetParams,
-               neighbours: list[Neighbour], gmag: float | None) -> FppInputs:
+               neighbours: list[Neighbour] | None, gmag: float | None) -> FppInputs:
     """The FPP inputs from the signal, rung 2, the star and, when a rung 5 row has voting seasons, the centroid
     (``centroid_estimate``): each Gaia neighbour's ``centroid_sep_arcsec`` is then its separation less the centroid's
     offset from the target (the nearest the centroid can sit to it, since the cone gives no position angle), floored
-    at zero, and the centroid error with the two numbers it was chosen from goes into the inputs record."""
+    at zero, and the centroid error with the two numbers it was chosen from goes into the inputs record. The
+    neighbour list counts as known only when the cone answered (``neighbours`` is not None) and the target has a G;
+    otherwise the FPP is not computed."""
     shape = _metrics(tests, "rung2_shape")
     fit_ok = shape.get("fit_ok") is True
     odd, even, parity = _num(shape, "odd_ppm"), _num(shape, "even_ppm"), _num(shape, "parity_sigma")
     odd_even_err = abs(odd - even) / parity if odd is not None and even is not None and parity else None
     centroid = centroid_estimate(_metrics(tests, "rung5_pixels")) if _rung(tests, "rung5_pixels") else None
+    known = neighbours is not None and gmag is not None
+    neighbours = list(neighbours or [])
     if centroid is not None:
         neighbours = [dataclasses.replace(n, centroid_sep_arcsec=max(0.0, n.sep_arcsec - centroid.offset))
                       for n in neighbours]
@@ -590,7 +619,7 @@ def fpp_inputs(signal: dict, tests: list[dict], star: stars.StarParams, planet: 
         fit_a_over_r=_num(shape, "fit_a_over_r") if fit_ok else None,
         secondary_ppm=_num(shape, "secondary_ppm"), secondary_err_ppm=_num(shape, "control_rms_ppm"),
         odd_ppm=odd, even_ppm=even, odd_even_err_ppm=odd_even_err, neighbours=tuple(neighbours),
-        centroid_sigma_arcsec=centroid.sigma if centroid is not None else None,
+        centroid_sigma_arcsec=centroid.sigma if centroid is not None else None, neighbours_known=known,
         sigma_c_stat_arcsec=centroid.sigma_stat if centroid is not None else None,
         sigma_c_scatter_arcsec=centroid.sigma_scatter if centroid is not None else None,
         sigma_c_source=centroid.source if centroid is not None else None)
@@ -644,6 +673,11 @@ def caveats(data: dict) -> list[dict]:
                     "text": f"Without a difference-image centroid every neighbour within one Kepler pixel "
                             f"({PIXEL_ARCSEC} arcsec) counts in full towards the background binary term, so the "
                             "estimate is labelled \"no pixel data yet\"."})
+    if fpp.get("neighbours_known") is False:
+        out.append({"key": "no_neighbours", "title": "The false-positive probability is not computed",
+                    "text": "Without the Gaia neighbour list the background binary term cannot be judged, and leaving "
+                            "it out would make the candidate look cleaner than it is, so no number is given. It comes "
+                            "back when the neighbour cone answers and the star has a Gaia G magnitude."})
     if not fap.get("calibrated"):
         out.append({"title": "The false-alarm probability is not yet calibrated for this source",
                     "text": f"The false-alarm probability is not yet calibrated: the null calibration for {source} "
@@ -752,7 +786,15 @@ def ladder_versions(store: Store, signal: dict, tests: list[dict]) -> tuple[str 
     return effective, per_rung
 
 
-def _provenance(store: Store, signal: dict, target: dict, calibration: Path) -> dict:
+def _relative(path: Path, data_dir) -> str:
+    """``path`` relative to ``data_dir`` when it lies inside it (as the pack names it), else as it is."""
+    try:
+        return Path(path).resolve().relative_to(Path(data_dir).resolve()).as_posix()
+    except ValueError:
+        return str(path)
+
+
+def _provenance(store: Store, signal: dict, target: dict, calibration: Path, data_dir) -> dict:
     tid = target["target_id"]
     ladder, per_rung = ladder_versions(store, signal, store.latest_tests(signal["id"]))
     with store.session() as s:
@@ -771,7 +813,8 @@ def _provenance(store: Store, signal: dict, target: dict, calibration: Path) -> 
                 f"skysift dossier --target {tid} --signal {signal['id']} --force"]
     return {"search_version": signal.get("detector_version"), "ladder_version": ladder,
             "ladder_versions": per_rung, "git_commit": _git_commit(), "queries": queries, "files": files,
-            "calibration_file": str(calibration) if calibration.is_file() else None, "commands": commands}
+            "calibration_file": _relative(calibration, data_dir) if calibration.is_file() else None,
+            "commands": commands}
 
 
 def _params(text: str):
@@ -817,7 +860,7 @@ def _stale_reason(old: dict | None, signal: dict, force: bool, fp: str) -> str:
         return "forced" if force else "the data file is missing"
     if old["status_at_generation"] != signal["final_status"]:
         return "the signal's status changed"
-    return "the test rows or the reviewer decision changed"
+    return "the test rows, the reviewer decision or the null calibration changed"
 
 
 def calibration_version_for(signal: dict, thresholds) -> str:
@@ -857,7 +900,8 @@ def generate(store: Store, blob, settings, target_id: str, *, signal_id: int | N
     tests = store.latest_tests(sid)
     decisions = store.decisions(sid)
     decision = decisions[0]["decision"] if decisions else None
-    fp = fingerprint(tests, signal["final_status"], decision)
+    source = _target_dict(store, target_id).get("source") or "kbonus_bkg"
+    fp = fingerprint(tests, signal["final_status"], decision, calibration_rows(settings.data_dir, source))
     data_path = Path(settings.data_dir) / "dossiers" / target_id / "dossier_data.json"
     old = store.dossier(target_id)
     if (old is not None and not force and old["tests_fingerprint"] == fp and old["signal_id"] == sid
@@ -886,19 +930,20 @@ def generate(store: Store, blob, settings, target_id: str, *, signal_id: int | N
     version = calibration_version_for(signal, settings.thresholds)
     fap = cal.false_alarm(rows, float(signal["sde"]), version)
     data = _assemble(store, signal, target, tests, decisions, plots, pixels, star, planet, gaia_errors, fap, fpp,
-                     inputs, calibration, version)
+                     inputs, calibration, version, settings.data_dir)
     data["section_errors"] = errors
     data["caveats"] = caveats(data)
     data = _tidy(data)
     text = jsonutil.dumps(data, separators=(",", ":"))
     _write_atomic(data_path, text)
     _record_artifact(store, DOSSIER_URL.format(target_id=target_id), data_path, text, target_id)
-    # export_path is cleared: an earlier export was rendered from the earlier JSON
+    # export_path and the pack link are cleared: an earlier export or pack was made from the earlier JSON
     store.upsert_dossier(target_id=target_id, signal_id=sid, generated=utcnow().replace(tzinfo=None),
                          data_path=str(data_path), search_version=signal["detector_version"],
                          ladder_version=ladder_versions(store, signal, tests)[0], dossier_version=DOSSIER_VERSION,
-                         fap=fap.fap, fpp=fpp.value, fap_detail=data["fap"], fpp_detail=data["fpp"],
-                         tests_fingerprint=fp, status_at_generation=signal["final_status"], export_path="")
+                         fap=fap.fap, fpp=fpp.reported_value, fap_detail=data["fap"], fpp_detail=data["fpp"],
+                         tests_fingerprint=fp, status_at_generation=signal["final_status"], export_path="",
+                         pack_path="", pack_built=None, pack_steps={})
     say(f"wrote {data_path}")
     return DossierReport(target_id, sid, data_path, True, fap, fpp, stale, gaia_errors=list(gaia_errors))
 
@@ -922,7 +967,7 @@ def whitened(lc: LightCurve, signal: dict) -> np.ndarray:
 
 
 def _assemble(store, signal, target, tests, decisions, plots, pixels, star, planet, gaia_errors, fap, fpp, inputs,
-              calibration, version) -> dict:
+              calibration, version, data_dir) -> dict:
     test_rows = [{"rung": t["rung"], "status": t["status"], "reason": t["reason"], "metrics": t["metrics"],
                   "created": _iso(t["created"])} for t in tests]
     verdict = explain.verdict(signal, tests, {"status": signal.get("candidate_status")} if signal.get(
@@ -951,8 +996,51 @@ def _assemble(store, signal, target, tests, decisions, plots, pixels, star, plan
         "fpp": {**fpp.as_dict(), "inputs": dataclasses.asdict(inputs), "words": fpp.words(), "label": fpp.label(),
                 "sentence_not_covered": FPP_NOT_COVERED},
         "pixels": pixels, "star": star_d, "planet": dataclasses.asdict(planet), "look": look_numbers(star, planet),
-        "caveats": [], "provenance": _provenance(store, signal, target, calibration),
+        "caveats": [], "provenance": _provenance(store, signal, target, calibration, data_dir),
     }
+
+
+# ---------------------------------------------------------------------------------------------------- public paths
+
+_LOCAL_PATH = re.compile(r"^(?:[A-Za-z]:[\\/]|\\\\|/(?!/))")
+# a local path inside a sentence: quoted (it may hold spaces), or bare up to the next space or quote
+_QUOTED_PATH = re.compile(r"""(['"])((?:[A-Za-z]:[\\/]|\\\\|/(?!/))[^'"\n]*)\1""")
+_BARE_PATH = re.compile(r"""(?<![\w/:.\\'"])((?:[A-Za-z]:[\\/]|\\\\)[^\s'"<>|]+|/(?:[^\s'"<>/]+/)+[^\s'"<>/]*)""")
+
+
+def _looks_local(text: str) -> bool:
+    return (len(text) < 1024 and "\n" not in text and "://" not in text and bool(_LOCAL_PATH.match(text))
+            and (text[1:2] == ":" or text.startswith("\\\\") or (" " not in text and text.count("/") >= 2)))
+
+
+def public_paths(obj, data_dir: Path):
+    """A copy of ``obj`` with every absolute local path cut to a name relative to ``data_dir`` (or to its file name
+    when it lies elsewhere), whether it is a whole string or sits inside a sentence (an error text): a pack or a
+    standalone export is meant for someone outside the laptop and must not carry the user's folders."""
+    base = str(Path(data_dir).resolve()).replace("\\", "/").rstrip("/").lower()
+
+    def cut(value: str) -> str:
+        norm = value.replace("\\", "/")
+        if norm.lower().startswith(base + "/"):
+            return norm[len(base) + 1:]
+        return PureWindowsPath(value).name if "\\" in value or value[1:2] == ":" else Path(value).name
+
+    def in_text(text: str) -> str:
+        if "://" in text:
+            return text
+        text = _QUOTED_PATH.sub(lambda m: m.group(1) + cut(m.group(2)) + m.group(1), text)
+        return _BARE_PATH.sub(lambda m: cut(m.group(1)) if m.group(1).count("/") + m.group(1).count("\\") >= 2
+                              or m.group(1)[1:2] == ":" else m.group(1), text)
+
+    def fix(value):
+        if isinstance(value, dict):
+            return {k: fix(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [fix(v) for v in value]
+        if isinstance(value, str):
+            return cut(value) if _looks_local(value) else in_text(value)
+        return value
+    return fix(copy.deepcopy(obj))
 
 
 # ---------------------------------------------------------------------------------------------------- export
@@ -967,12 +1055,15 @@ def _inline_fonts(css: str, fonts: Path) -> str:
     return _FONT_URL.sub(data_uri, css)
 
 
-def export_html(data: dict, static_dir: Path = STATIC_DIR) -> str:
+def export_html(data: dict, static_dir: Path = STATIC_DIR, data_dir: Path | None = None) -> str:
     """One standalone file: the dashboard's stylesheet (tokens and components) with the fonts as data URIs,
     ``dossier.css``, the JSON in ``<script id="dossier-data" type="application/json">`` (every ``/`` escaped, so no
     ``</`` and no URL appears in the markup) and ``dossier.js``, which draws the page and its own level toggle. Nothing
-    is loaded from anywhere else."""
+    is loaded from anywhere else. With ``data_dir`` every local path in the data is cut first (``public_paths``), as
+    the pack does: the file is meant for someone outside the laptop."""
     static_dir = Path(static_dir)
+    if data_dir is not None:
+        data = public_paths(data, data_dir)
     app_css = _inline_fonts((static_dir / "app.css").read_text(encoding="utf-8"), static_dir / "fonts")
     css = (static_dir / "dossier.css").read_text(encoding="utf-8")
     js = (static_dir / "dossier.js").read_text(encoding="utf-8")
@@ -993,7 +1084,7 @@ def write_export(store: Store, report: DossierReport, path: Path, static_dir: Pa
     """Render the report's JSON to ``path`` (atomically), record it as a pinned ``dossier`` artifact and on the row."""
     path = Path(path)
     data = json.loads(report.data_path.read_text(encoding="utf-8"))
-    text = export_html(data, static_dir)
+    text = export_html(data, static_dir, data_dir_of(report.data_path))
     _write_atomic(path, text)
     _record_artifact(store, EXPORT_URL.format(target_id=report.target_id), path, text, report.target_id)
     store.upsert_dossier(target_id=report.target_id, export_path=str(path))

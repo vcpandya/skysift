@@ -588,12 +588,14 @@ def stale_reason(store: Store, row: dict, best_signal_id: int | None = None) -> 
         sig = s.get(SignalRow, sid)
         status = sig.final_status if sig is not None else None
     decisions = store.decisions(sid)
-    fp = ds.fingerprint(store.latest_tests(sid), status, decisions[0]["decision"] if decisions else None)
+    fp = ds.fingerprint(store.latest_tests(sid), status, decisions[0]["decision"] if decisions else None,
+                        ds.calibration_rows(ds.data_dir_of(row["data_path"]),
+                                            ds._target_dict(store, row["target_id"]).get("source")))
     if fp == row.get("tests_fingerprint"):
         return None
     if status != row.get("status_at_generation"):
         return "the signal's status changed"
-    return "the checks or the reviewer's decision changed"
+    return "the checks, the reviewer's decision or the null calibration changed"
 
 
 def _tile_facts(data: dict | None) -> dict:

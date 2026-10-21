@@ -13,11 +13,13 @@ SPACE = "#0b1020"                   # the thumbnail's sky, the stylesheet's --sp
 SPACE_FG = "#e8ecf4"                # marks on the sky, the stylesheet's --space-fg
 HZ_COLOUR = "#2f8f5b"
 UNKNOWN_PLANET = "#a7b0c3"
-# (upper bound exclusive or lower bound, colour): the star by its effective temperature, hottest first
-STAR_COLOURS = ((5500, "#fff3d6"), (4500, "#ffd9a0"), (3900, "#ffbe78"), (-math.inf, "#ff9d5c"))
+# the one temperature scale of a star's colour (the thumbnail, its sentence and the dossier's look.star_colour):
+# (lower bound in K, inclusive; word; colour), hottest first. The Sun (5,772 K) reads yellow.
+STAR_SCALE = ((6000, "white", "#fff3d6"), (5200, "yellow", "#ffd9a0"), (3900, "orange", "#ffbe78"),
+              (-math.inf, "red", "#ff9d5c"))
+STAR_COLOURS = tuple(colour for _edge, _word, colour in STAR_SCALE)
 # the planet by its equilibrium temperature, coolest first
 PLANET_COLOURS = ((200, "#cfe6ff"), (320, "#7fb7a3"), (700, "#c9a96e"), (math.inf, "#e0784a"))
-STAR_WORDS = ((3900, "cool red"), (5200, "orange"), (6000, "yellow"), (math.inf, "white"))
 RP_MIN, RP_MAX = 1.0, 12.0          # Earth radii: the planet disc is log-scaled between these and held outside them
 R_MIN, R_MAX = 3.0, 16.0            # the planet disc's radius in the 96-unit frame
 
@@ -35,10 +37,19 @@ def _median(v) -> float | None:
     return v if math.isfinite(v) else None
 
 
+def _star_step(teff: float) -> tuple[float, str, str]:
+    return next(step for step in STAR_SCALE if teff >= step[0])
+
+
 def star_colour(teff: float | None) -> str:
     if teff is None:
-        return STAR_COLOURS[1][1]
-    return next(colour for edge, colour in STAR_COLOURS if teff > edge)
+        return STAR_SCALE[1][2]
+    return _star_step(teff)[2]
+
+
+def star_word(teff: float) -> str:
+    """"red", "orange", "yellow" or "white" from the effective temperature, on ``STAR_SCALE``."""
+    return _star_step(teff)[1]
 
 
 def planet_colour(teq: float | None) -> str:
@@ -58,7 +69,8 @@ def planet_radius(rp: float | None) -> float:
 def _star_words(teff: float | None) -> str:
     if teff is None:
         return "A star"
-    word = next(w for edge, w in STAR_WORDS if teff < edge)
+    word = star_word(teff)
+    word = "cool red" if word == "red" else word
     return f"{'An' if word[0] in 'aeiou' else 'A'} {word} star"
 
 

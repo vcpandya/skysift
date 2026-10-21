@@ -214,11 +214,19 @@ def dossier_page(request: Request, target_id: str):
 @router.get("/dossiers/{target_id}/export.html")
 def export(request: Request, target_id: str):
     """The standalone page as an attachment, rendered on first request and kept at the row's ``export_path`` (a new
-    generation clears it, so a kept file always matches the stored JSON)."""
+    generation clears it, so a kept file always matches the stored JSON). While a dossier job for the target runs the
+    answer is 409 with a toast and nothing is written: the JSON is about to change under the export."""
     bad = _bad_id(request, target_id)
     if bad:
         return bad
     st = request.app.state
+    running = (_jobs(request).active() or {}).get("request") or {}
+    if running.get("kind") == "dossier" and running.get("target_id") == target_id:
+        resp = HTMLResponse(f"the dossier of {target_id} is being generated", status_code=409)
+        resp.headers["HX-Trigger"] = jsonutil.dumps({"toast": {
+            "message": "Not downloaded: the dossier is being generated. Try again when it is written.",
+            "tone": "undetermined"}})
+        return resp
     row = st.store.dossier(target_id)
     if row is None or not row.get("data_path") or not Path(row["data_path"]).is_file():
         return render(request, "error.html", status_code=404, error=f"no dossier for {target_id}", log_hint="")

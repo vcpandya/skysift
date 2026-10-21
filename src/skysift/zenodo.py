@@ -128,7 +128,8 @@ def _creator(author: dict) -> dict | None:
 
 def probability_sentences(data: dict) -> tuple[str, str]:
     """The two probabilities, each in its own sentence; the false-positive one says "provisional" until its factor
-    tables are signed off. Every pack text uses these, so the numbers never merge into one."""
+    tables are signed off, and "not computed" without the Gaia neighbour list. Every pack text uses these, so the
+    numbers never merge into one."""
     fap, fpp = data.get("fap") or {}, data.get("fpp") or {}
     fap_words = fap.get("words") or "not computed"
     if fap.get("calibrated") and fap.get("n") is not None:
@@ -136,11 +137,14 @@ def probability_sentences(data: dict) -> tuple[str, str]:
                     "source reached the signal's strength).")
     else:
         fap_text = f"False-alarm probability: {fap_words}."
+    if fpp.get("neighbours_known") is False:
+        return fap_text, ("False-positive probability: not computed, since the Gaia neighbour list needed for the "
+                          "background binary term is missing.")
     fpp_words = fpp.get("words") or "not computed"
     tail = (" It is provisional until its factor tables are reviewed and signed off." if not fpp.get("signed_off")
             else "")
     pixels = "" if fpp.get("pixels", True) else " (no pixel data yet)"
-    fpp_text = f"False-positive probability{pixels}: {fpp_words}, from a three-scenario estimate.{tail}"
+    fpp_text = f"False-positive probability{pixels}: {fpp_words}, from a scenario estimate.{tail}"
     return fap_text, fpp_text
 
 

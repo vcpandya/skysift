@@ -4,9 +4,11 @@ Probabilities block of the verdict popup. TestClient against the dashboard seed 
 import json
 import sys
 import xml.etree.ElementTree as ET
+from types import SimpleNamespace
 
 import pytest
 
+from skysift import dossier as ds
 from skysift.ui.jobs import DossierJobs, DossierRequest
 from skysift.ui.planet_svg import look_sentence, planet_svg
 from tests.unit.test_ui_pages import make_seeded_app
@@ -529,7 +531,21 @@ def test_planet_svg_scales_the_planet_and_colours_it_by_teq(rp, teq, colour):
 def test_planet_svg_without_a_habitable_zone_has_no_bar():
     svg = planet_svg({"teff_k": 5800, "rp_rearth": 1.0})
     ET.fromstring(svg)
-    assert "data-part=\"hz\"" not in svg and "#fff3d6" in svg
+    assert "data-part=\"hz\"" not in svg and "#ffd9a0" in svg          # a Sun-like star reads yellow
+
+
+def test_one_temperature_scale_for_the_star_colour_its_word_and_the_dossier():
+    from skysift.ui.planet_svg import STAR_SCALE, star_colour, star_word
+    for teff, word in ((3650, "red"), (3950, "orange"), (5772, "yellow"), (6400, "white")):
+        colour = next(c for _edge, w, c in STAR_SCALE if w == word)
+        assert star_word(teff) == word and star_colour(teff) == colour
+        assert look_sentence({"teff_k": teff}, {}).split(" star")[0].endswith(word)
+        star = SimpleNamespace(route="mann", teff=SimpleNamespace(median=teff), radius=SimpleNamespace(median=0.5),
+                               mass=None, spectral_type=None)
+        planet = SimpleNamespace(a_au=None, rp_rearth=None, teq_k=None, insolation_earth=None, hz_inner_au=None,
+                                 hz_outer_au=None, hz_optimistic_inner_au=None, hz_optimistic_outer_au=None,
+                                 in_habitable_zone=None, in_optimistic_habitable_zone=None)
+        assert ds.look_numbers(star, planet)["star_colour"] == word
 
 
 # ---- the submission pack (Task 6)
@@ -583,3 +599,86 @@ def test_the_pack_zip_is_linked_and_served_once_built(seeded_dossier, settings):
     assert client.get(f"/dossiers/{STAGE2_TARGET}/pack.zip").status_code == 404           # a zip moved away
     assert client.get("/dossiers/bad%20id;x/pack.zip").status_code == 400
     assert client.get("/dossiers/kic-000000001/pack.zip").status_code == 404
+
+
+# ---- the final review (21 October 2026)
+
+def test_the_fap_split_by_null_kind_sits_under_the_pooled_number(seeded_dossier):
+    client, _app, ids, _data = seeded_dossier
+    page = client.get(f"/dossiers/{STAGE2_TARGET}").text
+    assert '<p class="prob-value">1 in 1,700</p>' in page                     # the pooled number stays the headline
+    assert '<p class="prob-split">inverted nulls 0 of 850, scrambled 0 of 849</p>' in page
+    assert "inverted nulls 0 of 850" in client.get(f"/partials/signals/{ids['stage2']}/verdict").text
+    export = client.get(f"/dossiers/{STAGE2_TARGET}/export.html").text
+    assert '"k_by_kind":{"inverted":0,"scrambled":0}' in export and '" nulls"' in export     # dossier.js draws it
+
+
+def _no_neighbours(app, data_path, data):
+    from pathlib import Path
+
+    from skysift.fpp import FppInputs, compute
+    inputs = {**data["fpp"]["inputs"], "neighbours": [], "neighbours_known": False}
+    fpp = {**compute(FppInputs(**inputs)).as_dict(), "inputs": inputs,
+           "sentence_not_covered": data["fpp"]["sentence_not_covered"]}
+    Path(data_path).write_text(json.dumps({**data, "fpp": fpp}), encoding="utf-8")
+    app.state.store.upsert_dossier(target_id=STAGE2_TARGET, fpp=None, fpp_detail=fpp)
+    return fpp
+
+
+def test_without_neighbour_data_the_tile_and_page_give_no_fpp_number(seeded_dossier):
+    client, app, _ids, data = seeded_dossier
+    fpp = _no_neighbours(app, app.state.store.dossier(STAGE2_TARGET)["data_path"], data)
+    assert fpp["value"] is None and fpp["words"] == "not computed (no neighbour data)"
+    tile = client.get(f"/partials/dossiers/{STAGE2_TARGET}/tile").text
+    probs = tile.split('class="tile-probs"')[1].split("</div>")[0]
+    assert '<span class="prob-num">not computed (no neighbour data)</span>' in probs and "percent" not in probs
+    page = client.get(f"/dossiers/{STAGE2_TARGET}?mode=expert").text.split('id="dossier-data"')[0]
+    assert "not computed (no neighbour data)" in page and "Not computed (no neighbour data): the Gaia" in page
+    assert "under 1 percent" not in page
+
+
+def test_the_export_is_refused_while_its_dossier_is_generated(seeded_dossier, fake_jobs):
+    client, app, _ids, _data = seeded_dossier
+    r = client.post(f"/dossiers/{STAGE2_TARGET}/generate", data={"_token": token(app), "force": "1"})
+    assert r.status_code == 200 and fake_jobs.active()["request"]["target_id"] == STAGE2_TARGET
+    r = client.get(f"/dossiers/{STAGE2_TARGET}/export.html")
+    assert r.status_code == 409 and "being generated" in r.headers["HX-Trigger"]
+    assert app.state.store.dossier(STAGE2_TARGET)["export_path"] == ""                       # nothing written
+    fake_jobs.stop()
+    assert client.get(f"/dossiers/{STAGE2_TARGET}/export.html").status_code == 200
+
+
+def test_the_export_names_no_local_folder(seeded_dossier, settings):
+    from pathlib import Path
+    client, app, _ids, data = seeded_dossier
+    root = Path(settings.data_dir).resolve()
+    where = root / "blobs" / "7e" / "pixels.npz"
+    data = {**data, "section_errors": {"pixels": {"error": f"[Errno 2] No such file or directory: '{where}'"}},
+            "provenance": {**data["provenance"], "calibration_file": str(root / "calibration" / "kbonus_bkg.jsonl")}}
+    Path(app.state.store.dossier(STAGE2_TARGET)["data_path"]).write_text(json.dumps(data), encoding="utf-8")
+    text = client.get(f"/dossiers/{STAGE2_TARGET}/export.html").text
+    payload = json.loads(text.split('type="application/json">')[1].split("</script>")[0])
+    assert payload["provenance"]["calibration_file"] == "calibration/kbonus_bkg.jsonl"
+    assert payload["section_errors"]["pixels"]["error"] == "[Errno 2] No such file or directory: 'blobs/7e/pixels.npz'"
+    assert root.parent.name not in text
+
+
+def test_a_pack_from_an_earlier_dossier_is_not_offered(seeded_dossier, settings):
+    from datetime import datetime
+    client, app, _ids, _data = seeded_dossier
+    _fake_pack(app, settings)
+    store = app.state.store
+    store.set_pack(STAGE2_TARGET, store.dossier(STAGE2_TARGET)["pack_path"], datetime(2026, 10, 20, 8, 0))
+    store.upsert_dossier(target_id=STAGE2_TARGET, generated=datetime(2026, 10, 21, 9, 0))
+    tile = client.get(f"/partials/dossiers/{STAGE2_TARGET}/tile").text
+    assert "the pack was built from an earlier dossier" in tile and "pack built (zip)" not in tile
+    assert "The pack was built from an earlier dossier" in client.get(f"/dossiers/{STAGE2_TARGET}").text
+
+
+@pytest.mark.parametrize("mode", ["simple", "expert"])
+def test_the_dossier_page_renders_in_the_dark_theme(seeded_dossier, mode):
+    client, _app, _ids, _data = seeded_dossier
+    r = client.get(f"/dossiers/{STAGE2_TARGET}?mode={mode}&theme=dark")
+    assert r.status_code == 200 and 'data-theme="dark"' in r.text and f'data-mode="{mode}"' in r.text
+    assert 'id="checks"' in r.text and 'id="look"' in r.text and "—" not in r.text
+    assert "dossier.js" in r.text and 'id="dossier-data"' in r.text

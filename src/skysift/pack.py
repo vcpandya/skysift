@@ -23,7 +23,6 @@ after every file is written, which makes a draft and never publishes. Both proba
 text, the false-positive one marked provisional while its factor tables are not signed off."""
 from __future__ import annotations
 
-import copy
 import csv
 import hashlib
 import io
@@ -37,13 +36,14 @@ import zipfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from pathlib import Path, PureWindowsPath
+from pathlib import Path
 
 import numpy as np
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
 from skysift import calibrate as cal
 from skysift import dossier as ds
+from skysift import fpp as fpp_model
 from skysift import jsonutil
 from skysift.lc.loader import LightCurveLoader
 from skysift.store.db import Store
@@ -579,8 +579,13 @@ def abstract_text(data: dict) -> str:
     against = (f" against {fap['n']:,} null searches of this source" if fap.get("calibrated") and fap.get("n")
                else "")
     tail = ", provisional until its factor tables are reviewed" if not fpp.get("signed_off") else ""
-    parts.append(f"The false-alarm probability{against} is {fap.get('words') or 'not computed'}, and a three-scenario "
-                 f"estimate puts the false-positive probability at {fpp.get('words') or 'not computed'}{tail}.")
+    if fpp.get("neighbours_known") is False:
+        fpp_part = ("the false-positive probability is not computed, since the Gaia neighbour list needed for the "
+                    "background binary term is missing")
+    else:
+        fpp_part = (f"a scenario estimate puts the false-positive probability at {fpp.get('words') or 'not computed'}"
+                    f"{tail}")
+    parts.append(f"The false-alarm probability{against} is {fap.get('words') or 'not computed'}, and {fpp_part}.")
     parts.append("It remains a candidate until independent follow-up confirms it.")
     return " ".join(parts)
 
@@ -1180,46 +1185,27 @@ def load_citation(path: Path = CITATION_FILE) -> tuple[dict | None, str]:
     return None, "no CITATION.cff and no package author metadata, so the creators are placeholders"
 
 
-def _approval(store: Store, target_id: str, signal_id: int) -> tuple[bool, str | None]:
+def _approval(store: Store, target_id: str, signal_id: int, data_dir) -> tuple[bool, str | None]:
     """(approved, stale reason): approved when the signal's latest reviewer decision approves it (or its candidate row
     says approved or published); stale when the stored dossier no longer matches the signal's tests, status and
     decision, or another signal became the target's best."""
     sig = ds.pick_signal(store, target_id, signal_id)
     approved = sig.get("decision") == "approve" or sig.get("candidate_status") in ("approved", "published")
     row = store.dossier(target_id) or {}
-    fp = ds.fingerprint(store.latest_tests(signal_id), sig["final_status"], sig.get("decision"))
+    source = ds._target_dict(store, target_id).get("source")
+    fp = ds.fingerprint(store.latest_tests(signal_id), sig["final_status"], sig.get("decision"),
+                        ds.calibration_rows(data_dir, source))
     if ds.pick_signal(store, target_id)["id"] != signal_id:
         return approved, "another signal is now the target's best"
     if row.get("tests_fingerprint") != fp:
-        return approved, "the signal's tests, status or reviewer decision changed since it was generated"
+        return approved, ("the signal's tests, status or reviewer decision, or the null calibration, changed since "
+                          "it was generated")
     return approved, None
 
 
-_LOCAL_PATH = re.compile(r"^(?:[A-Za-z]:[\\/]|\\\\|/(?!/))")
-
-
-def _looks_local(text: str) -> bool:
-    return (len(text) < 1024 and "\n" not in text and "://" not in text and bool(_LOCAL_PATH.match(text))
-            and (text[1:2] == ":" or text.startswith("\\\\") or (" " not in text and text.count("/") >= 2)))
-
-
-def public_paths(obj, data_dir: Path):
-    """A copy of ``obj`` with every absolute local path cut to a name relative to ``data_dir`` (or to its file name
-    when it lies elsewhere): a pack is meant for a public record and must not carry the user's folders."""
-    base = str(Path(data_dir).resolve()).replace("\\", "/").rstrip("/").lower()
-
-    def fix(value):
-        if isinstance(value, dict):
-            return {k: fix(v) for k, v in value.items()}
-        if isinstance(value, list):
-            return [fix(v) for v in value]
-        if isinstance(value, str) and _looks_local(value):
-            norm = value.replace("\\", "/")
-            if norm.lower().startswith(base + "/"):
-                return norm[len(base) + 1:]
-            return PureWindowsPath(value).name if "\\" in value or value[1:2] == ":" else Path(value).name
-        return value
-    return fix(copy.deepcopy(obj))
+# every absolute local path cut to a name relative to the data folder, whole or inside a sentence (shared with the
+# standalone export)
+public_paths = ds.public_paths
 
 
 def _calibration_path(raw: dict, data_dir: Path) -> Path | None:
@@ -1342,7 +1328,8 @@ def build_pack(store, blob, settings, target_id: str, *, out_dir: Path | None = 
     swapped in by renames, so a crash or a held file leaves the earlier pack and nothing that blocks a retry).
     Everything is checked and written first; only then, with a ``zenodo`` client, is the draft created, its reserved DOI
     written into the texts (a sandbox DOI with the words that it must be replaced), the metadata filled and the zip
-    uploaded. The draft is never published, and a live draft is refused for a candidate no reviewer has approved.
+    uploaded. The draft is never published, and a live draft is refused for a candidate no reviewer has approved
+    and while the FPP is provisional (``fpp.SIGNED_OFF`` False), so a provisional number never reaches a live record.
     Records the folder on the dossiers row and the candidate row.
 
     Raises NoDossier, ``dossier.LightCurveReleased`` (nothing is downloaded), PackError (bad TIC id, tag or folder; a
@@ -1360,10 +1347,13 @@ def build_pack(store, blob, settings, target_id: str, *, out_dir: Path | None = 
     date = now.strftime("%Y%m%d")
     out_dir = Path(out_dir if out_dir is not None else Path(settings.data_dir) / "packs" / target_id / date).resolve()
     _check_out(out_dir)
-    approved, stale = _approval(store, target_id, sid)
+    approved, stale = _approval(store, target_id, sid, settings.data_dir)
     if zenodo is not None and not zenodo.sandbox and not approved:
         raise PackError(f"{target_id} is not yet approved by a reviewer, so no draft is made on zenodo.org; use "
                         "--zenodo for a sandbox rehearsal")
+    if zenodo is not None and not zenodo.sandbox and not fpp_model.SIGNED_OFF:
+        raise PackError("the false-positive estimate is provisional until spec 4.2's factor tables are signed off, "
+                        "so no draft is made on zenodo.org; use --zenodo for a sandbox rehearsal")
     say("loading the light curve")
     target = ds._target_dict(store, target_id)
     lc = LightCurveLoader(store, blob, source_factory=ds._offline_factory(target_id, sid)).load(target, pin=True)

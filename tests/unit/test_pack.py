@@ -674,7 +674,22 @@ def test_pack_with_zenodo_creates_a_draft_after_the_files_and_records_the_path(e
     assert hashes["note/note.tex"]["sha256"] == hashlib.sha256(tex.encode("utf-8")).hexdigest()   # rehashed
 
 
-def test_a_live_draft_needs_an_approved_candidate_and_writes_its_doi(env_with_dossier, fake_session):
+def test_a_live_draft_waits_for_the_fpp_sign_off(env_with_dossier, fake_session, monkeypatch):
+    from skysift import fpp
+    env = env_with_dossier
+    _approve(env)
+    assert fpp.SIGNED_OFF is False
+    live = ZenodoClient("t", sandbox=False, session=fake_session)
+    with pytest.raises(PackError, match="provisional until spec 4.2's factor tables are signed off"):
+        _build(env, zenodo=live)
+    assert fake_session.calls == [] and env.store.dossier(STAGE2_TARGET)["pack_path"] == ""
+    rep = _build(env, zenodo=ZenodoClient("t", session=fake_session))         # the sandbox stays allowed
+    assert rep.zenodo is not None and fake_session.calls
+
+
+def test_a_live_draft_needs_an_approved_candidate_and_writes_its_doi(env_with_dossier, fake_session, monkeypatch):
+    from skysift import fpp
+    monkeypatch.setattr(fpp, "SIGNED_OFF", True)                 # the gate after the sign-off
     env = env_with_dossier
     live = ZenodoClient("t", sandbox=False, session=fake_session)
     with pytest.raises(PackError, match="not yet approved"):
@@ -733,7 +748,19 @@ def test_cli_pack_prints_json_and_records_the_path(cli_env, monkeypatch, tmp_pat
     assert cli_env.store.dossier(STAGE2_TARGET)["pack_path"] == str(out.resolve()) and "a-secret" not in r.output
 
 
+def test_cli_pack_refuses_zenodo_live_before_the_fpp_sign_off(cli_env, monkeypatch):
+    monkeypatch.setenv("SKYSIFT_ZENODO_TOKEN", "a-secret")
+    _approve(cli_env)
+    r = runner.invoke(app, ["pack", "--target", STAGE2_TARGET, "--zenodo-live"])
+    assert r.exit_code == 2 and "--zenodo-live is refused while the false-positive estimate is provisional" in r.output
+    assert cli_env.session.calls == [] and cli_env.store.dossier(STAGE2_TARGET)["pack_path"] == ""
+    monkeypatch.delenv("SKYSIFT_ZENODO_TOKEN")
+    assert runner.invoke(app, ["pack", "--target", STAGE2_TARGET, "--zenodo-live"]).exit_code == 2   # token or not
+
+
 def test_cli_pack_with_a_token_makes_a_draft_and_prints_its_url(cli_env, monkeypatch):
+    from skysift import fpp
+    monkeypatch.setattr(fpp, "SIGNED_OFF", True)
     monkeypatch.setenv("SKYSIFT_ZENODO_TOKEN", "a-secret")
     r = runner.invoke(app, ["pack", "--target", STAGE2_TARGET, "--zenodo"])
     assert r.exit_code == 0, r.output

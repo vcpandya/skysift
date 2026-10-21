@@ -143,9 +143,11 @@ def run(source: str = typer.Option(...), gmag_max: float = 19.0,
                                                help="Store the SDE envelope per target: all (default), signals, off."),
         no_recheck: bool = typer.Option(False, "--no-recheck",
                                         help="Skip the stage-2 recheck of open signals after the sweep."),
+        no_pixels: bool = typer.Option(False, "--no-pixels",
+                                       help="Recheck after the sweep without the pixel stage (no pixel files)."),
         verbose: bool = False):
-    """Sweep a source: fetch, detect, vet, store, release files; then recheck the open signals (stage 2, without the
-    pixel stage) unless --no-recheck."""
+    """Sweep a source: fetch, detect, vet, store, release files; then recheck the open signals (stage 2, all four
+    steps, the pixel stage included) unless --no-recheck; --no-pixels leaves the pixel stage out."""
     logging.basicConfig(level=logging.INFO if verbose else logging.WARNING,
                         format="%(asctime)s %(levelname)s %(name)s %(message)s")
     console = _console(stderr=True)
@@ -173,7 +175,7 @@ def run(source: str = typer.Option(...), gmag_max: float = 19.0,
                                progress=lambda sm: _plain(
                                    console, f"processed {sm['processed']} signals {sm['signals']} outcomes {sm['outcomes']}",
                                    end="\r"),
-                               stop_requested=interrupt.check, recheck=not no_recheck)
+                               stop_requested=interrupt.check, recheck=not no_recheck, pixels=not no_pixels)
     except DiskBudgetExceeded as e:
         # an operator condition, not a crash: the work done so far on stdout, a plain message, exit code 3
         if getattr(e, "summary", None) is not None: _plain(_console(), jsonutil.dumps(e.summary, indent=1))
@@ -312,15 +314,21 @@ def pack_command(target: str = typer.Option(..., "--target", help="The target id
                                                    "the token in SKYSIFT_ZENODO_TOKEN; it is never published."),
                  zenodo_live: bool = typer.Option(False, "--zenodo-live", help="Make the Zenodo draft on zenodo.org "
                                                   "instead of the sandbox (implies --zenodo); refused before a "
-                                                  "reviewer approves the candidate.")):
+                                                  "reviewer approves the candidate and while the false-positive "
+                                                  "estimate is provisional.")):
     """Build the submission pack from the target's stored dossier: the README's five steps, the Research Note draft,
     the data files, figures, provenance and the ExoFOP copies, and a zip. With --zenodo, also a Zenodo draft
     deposition holding the zip, made after every file is written; publishing it is your click on Zenodo. Prints the
     report: a table in a terminal, JSON when piped."""
     from skysift import dossier as ds
+    from skysift import fpp
     from skysift import pack as pk
     from skysift import zenodo as zn
     console = _console(stderr=True)
+    if zenodo_live and not fpp.SIGNED_OFF:       # the provisional FPP must not reach a live record, token or not
+        _plain(console, "--zenodo-live is refused while the false-positive estimate is provisional (spec 4.2's factor "
+                        "tables are not signed off); use --zenodo for a sandbox rehearsal")
+        raise typer.Exit(2)
     s, store, blob = _ctx()
     want_zenodo = zenodo_draft or zenodo_live
     token = zn.token_from_env() if want_zenodo else None
@@ -356,22 +364,47 @@ def pack_command(target: str = typer.Option(..., "--target", help="The target id
 
 
 _SIGNAL_IDS = typer.Option(None, "--signal-id", help="Recheck only this signal (repeat for several).")
+BELOW_NORMAL_PRIORITY_CLASS = 0x00004000          # Windows priority class of a background job
+RECHECK_NICE = 10                                 # the POSIX stand-in
+
+
+def _lower_own_priority(platform: str = sys.platform) -> bool:
+    """Run this process below normal priority (Windows) or at nice ``RECHECK_NICE`` (elsewhere), so a standalone
+    recheck yields the CPU to a sweep running beside it, as the dashboard's background jobs do. A refusal is logged
+    and the process keeps its priority. Returns whether the priority was lowered."""
+    try:
+        if platform == "win32":
+            import ctypes
+            kernel32 = ctypes.windll.kernel32
+            return bool(kernel32.SetPriorityClass(kernel32.GetCurrentProcess(), BELOW_NORMAL_PRIORITY_CLASS))
+        import os
+        os.nice(RECHECK_NICE)
+        return True
+    except (OSError, AttributeError) as e:
+        logging.getLogger(__name__).warning("could not lower the recheck's priority: %s", e)
+        return False
 
 
 @app.command("recheck")
 def recheck_command(signal_id: list[int] | None = _SIGNAL_IDS,
                     no_pixels: bool = typer.Option(False, "--no-pixels", help="Leave out the pixel stage."),
+                    retention: str | None = typer.Option(None, help="keep, stream or budget:<GB> (default: the "
+                                                         "configured one); stream releases a signal's pixel files "
+                                                         "once its pixel step is written, keep keeps them."),
                     verbose: bool = False):
     """Stage 2: recheck the undetermined signals and stage-1 candidates of the current search version that no reviewer
-    has decided on (ladder re-vet, half-period re-vet, catalogue retry, pixel stage). Prints the report as JSON."""
+    has decided on (ladder re-vet, half-period re-vet, catalogue retry, pixel stage), each under the search window it
+    was found with, at below-normal priority. Prints the report as JSON."""
     from skysift import net
     from skysift import recheck as stage2
     logging.basicConfig(level=logging.INFO if verbose else logging.WARNING,
                         format="%(asctime)s %(levelname)s %(name)s %(message)s")
     console = _console(stderr=True)
-    s, store, blob = _ctx()
+    s, store, blob = _ctx(retention)
+    _lower_own_priority()
     rep = stage2.recheck(store, blob, s, fetch=net.fetch, signal_ids=signal_id or None, pixels=not no_pixels,
-                         log=lambda text: _plain(console, text))
+                         log=lambda text: _plain(console, text),
+                         retention=Retention(RetentionPolicy.parse(s.retention), store, blob))
     _plain(_console(), jsonutil.dumps(rep.as_dict(), indent=1))
 
 

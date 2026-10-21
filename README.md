@@ -122,16 +122,19 @@ python -m skysift pack --target kic-006146676 --tic 169822650
 signal, test rows, light curve and rung 5 pixel arrays, plus four Gaia queries (the star, its distance, its 2MASS Ks
 and a 20 arcsec cone for the neighbours), each logged in the `queries` table. It downloads nothing else: a light curve
 released by retention stops it with exit code 2 and the advice to sweep the target again with `--retention keep`. A
-second run is a no-op until the test rows, the status or the reviewer decision change (`--force` regenerates,
-`--signal` picks another signal of the target). `--export` also writes the standalone page, which loads nothing from
-any other address.
+second run is a no-op until the test rows, the status, the reviewer decision or the size of the null calibration
+change (`--force` regenerates, `--signal` picks another signal of the target). `--export` also writes the standalone
+page, which loads nothing from any other address and names no local folder.
 
 `pack` builds the submission pack from the stored dossier: a README with the five steps (freeze the record on
 Zenodo, upload to ExoFOP-TESS, write a Research Note of the AAS, tell the NASA Exoplanet Archive, answer follow-up
-requests), the Research Note draft, the data files, the figures, the provenance and the ExoFOP copies, and a zip beside
-the folder (default `<data_dir>/packs/<target>/<UTC date>/`). `--tic` and `--tag` name the ExoFOP files. With
-`--zenodo` it also creates a Zenodo draft deposition holding the zip on the sandbox (`--zenodo-live` for zenodo.org),
-with the personal access token in `SKYSIFT_ZENODO_TOKEN`. The draft is never published: publishing is your click on
+requests), the Research Note draft, the data files, the figures, the provenance and the ExoFOP copies, and a zip inside
+the folder (default `<data_dir>/packs/<target>/<UTC date>/`). The ExoFOP files are named
+`<target>_<yyyymmdd>_<content>`; `--tic` puts the star's TIC id in the ExoFOP upload note and `--tag` starts the
+description of the suggested Data Tag. With `--zenodo` it also creates a Zenodo draft deposition holding the zip on the
+sandbox, with the personal access token in `SKYSIFT_ZENODO_TOKEN`. `--zenodo-live` makes it on zenodo.org instead, and
+is refused before a reviewer approves the candidate and while the false-positive estimate is provisional (spec 4.2's
+factor tables not yet signed off). The draft is never published: publishing is your click on
 Zenodo. With `--zenodo` and no token the pack is still built, without a deposition, and the command exits with code 2.
 
 The one-time check of the generated numbers against the hand-built KIC 6146676 study is
