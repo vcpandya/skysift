@@ -1,12 +1,14 @@
-\documentclass[RNAAS]{aastex631}
-% The frame of a Research Note of the AAS (RNAAS), as SkySift fills it. The note itself starts at \begin{document}
-% and is written by skysift.pack.render_note from the candidate's dossier.
+\documentclass{aastex7}
+% The frame of a Research Note of the AAS (RNAAS), as SkySift fills it. The note itself starts at the begin-document
+% line below this frame and is written by skysift.pack.render_note from the candidate's dossier.
 %
-% What RNAAS takes (check the current author guide before you submit): at most 1,000 words, one figure or one
-% table, a short reference list, no abstract (the first paragraph does that work). The note is reviewed by the
-% editor, not refereed, and gets a DOI when it is published.
+% RNAAS rules (AAS research note preparation guidelines, read 21 October 2026; check them again before you submit):
+% at most 1,500 words including the title, headings, figure caption and references, of which up to 150 are the
+% required abstract; one figure or one table, not both. The note is reviewed by the editor, not refereed, and gets a
+% DOI when it is published. The AAS prefers AASTeX v7 (aastex7.cls), which has no separate RNAAS class option: the
+% journal is chosen at submission. UAT keywords can also be chosen in the submission form.
 %
-% Compile with AASTeX 6.31 (aastex631.cls, on Overleaf as the AAS template, or from the AAS journals site) and
-% pdflatex. The figure is figure1.pdf when the pack was built with matplotlib; otherwise convert figure1.svg to PDF
-% first (Inkscape: inkscape figure1.svg --export-type=pdf).
+% Compile with pdflatex and aastex7.cls (on Overleaf as the AAS template, or from the AAS journals site). The figure
+% is figure1.pdf when the pack was built with matplotlib; otherwise convert figure1.svg to PDF first
+% (Inkscape: inkscape figure1.svg --export-type=pdf).
 \usepackage{graphicx}

@@ -4,6 +4,7 @@ the writes are a job start (``ui.jobs.DossierJobs``), the export file (``dossier
 (``Store.set_pack_steps``)."""
 from __future__ import annotations
 
+import json
 import math
 from datetime import datetime
 from pathlib import Path
@@ -233,12 +234,18 @@ def export(request: Request, target_id: str):
 
 
 def pack_zip_path(pack_path: str | None) -> Path | None:
-    """The zip ``skysift pack`` writes beside the pack folder (``<folder>.zip``), when the folder is recorded and the
-    zip is on disk."""
+    """The zip ``skysift pack`` wrote beside the pack folder, when the folder is recorded and the zip is on disk: the
+    name the pack's ``provenance/versions.json`` gives (``<target>_<yyyymmdd>_skysift_pack.zip``)."""
     if not pack_path:
         return None
     folder = Path(pack_path)
-    path = folder.with_name(folder.name + ".zip")
+    try:
+        name = json.loads((folder / "provenance" / "versions.json").read_text(encoding="utf-8")).get("zip_name")
+    except (OSError, ValueError, AttributeError):
+        return None
+    if not isinstance(name, str) or Path(name).name != name or not name.endswith(".zip"):
+        return None
+    path = folder.parent / name
     return path if path.is_file() else None
 
 
@@ -255,8 +262,7 @@ def pack_download(request: Request, target_id: str):
                       error=f"no submission pack for {target_id}; build it from the Dossiers page or with "
                             f"skysift pack --target {target_id}")
     return FileResponse(path, media_type="application/zip",
-                        headers={"Content-Disposition":
-                                 f'attachment; filename="{target_id}_pack_{Path(row["pack_path"]).name}.zip"'})
+                        headers={"Content-Disposition": f'attachment; filename="{path.name}"'})
 
 
 def _start(request: Request, target_id: str, kind: str, force: bool) -> HTMLResponse:

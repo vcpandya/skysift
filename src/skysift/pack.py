@@ -7,19 +7,23 @@ from the target's stored dossier (``dossier_data.json``) and the light curve the
 
 - ``README.md`` (``render_readme``): the five steps, each with the account it needs, the files to attach, the text to
   write and what the engine did or cannot do; an unapproved candidate gets a warning as its first line.
-- ``note/note.tex`` (``render_note``): an AASTeX Research Note draft under 1,000 words, with ``figure1``.
+- ``note/note.tex`` (``render_note``): an AASTeX v7 Research Note draft with its abstract and ``figure1``, inside the
+  RNAAS limits (``NOTE_LIMITS``: 1,500 words with title, headings, caption and references, 150 of them for the
+  abstract, one figure or one table); ``note_words`` counts it.
 - ``data/``: the whitened light curve, the ephemeris and parameters with errors, the per-event depths, the periodogram
   summary and the rung metrics. ``figures/``: fold, odd and even, periodogram and one centroid panel per season, as
   SVG, plus PNG when matplotlib imports. ``dossier.html``: the standalone export. ``provenance/``: versions, the query
-  log, the calibration counts and the SHA-256 of every file. ``exofop/``: copies under ExoFOP's naming rule and the
-  upload note. ``archive_email.txt`` and ``zenodo_metadata.json`` for steps 4 and 1.
+  log, the calibration counts and the SHA-256 of every file. ``exofop/``: copies named ``<target>_<yyyymmdd>_<content>``
+  and the upload note. ``archive_email.txt`` and ``zenodo_metadata.json`` for steps 4 and 1.
 
 Building a pack never changes a status, never regenerates the dossier and never downloads anything: a light curve
-released by retention raises ``dossier.LightCurveReleased``. The only network use is the injected Zenodo client, which
-makes a draft and never publishes. Both probabilities appear separately in every text, the false-positive one marked
-provisional while its factor tables are not signed off."""
+released by retention raises ``dossier.LightCurveReleased``. Local absolute paths are cut to names relative to the
+data folder, since the pack is meant for a public record. The only network use is the injected Zenodo client, called
+after every file is written, which makes a draft and never publishes. Both probabilities appear separately in every
+text, the false-positive one marked provisional while its factor tables are not signed off."""
 from __future__ import annotations
 
+import copy
 import csv
 import hashlib
 import io
@@ -33,7 +37,7 @@ import zipfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 import numpy as np
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
@@ -43,31 +47,37 @@ from skysift import dossier as ds
 from skysift import jsonutil
 from skysift.lc.loader import LightCurveLoader
 from skysift.store.db import Store
-from skysift.zenodo import KBONUS_DOI, ZenodoClient, metadata_from, probability_sentences
+from skysift.zenodo import KBONUS_DOI, ZenodoClient, ZenodoError, metadata_from, probability_sentences
 
-PACK_VERSION = "1"
+PACK_VERSION = "2"
 # the five steps, in the README's order; the dashboard's step list (ui.routes.dossiers.PACK_STEPS) is built from these
 STEPS = (("1", "Freeze the record"), ("2", "Upload to ExoFOP-TESS"), ("3", "Write it up"),
          ("4", "Tell the archive"), ("5", "Answer follow-up questions"))
 STEP_TEXTS = {
     "1": "Deposit the pack on Zenodo for a citable DOI. The engine can make the draft; you publish it.",
-    "2": "Attach the dossier, the ephemeris and the note under the star's TIC id. This needs your own ExoFOP account.",
+    "2": "Attach the dossier, the ephemeris and the note to the star's ExoFOP page. This needs your own ExoFOP "
+         "account.",
     "3": "Turn the Research Note draft into a submission to the AAS, with an arXiv endorsement if needed.",
     "4": "Send the NASA Exoplanet Archive help desk the one-paragraph note once it is published.",
     "5": "Reply to observers who ask for the ephemeris or the data, from the pack's own files.",
 }
 DOI_PLACEHOLDER = "10.5281/zenodo.XXXXXXX"
 RNAAS_DOI_PLACEHOLDER = "10.3847/2515-5172/XXXXX"
-NOTE_WORD_LIMIT = 1000
+SANDBOX_DOI_PREFIX = "10.5072/"             # Zenodo sandbox DOIs never resolve
+SANDBOX_DOI_NOTE = "sandbox DOI, replace before submission"
+# the Research Notes of the AAS limits (AAS preparation guidelines, read 21 October 2026)
+NOTE_LIMITS = {"total": 1500, "abstract": 150, "figures_or_tables": 1}
 TEMPLATES = Path(__file__).parent / "templates" / "pack"
 AASTEX_FRAME = Path(__file__).parent / "data" / "rnaas" / "aastex_template.tex"
-CITATION_FILE = Path(__file__).resolve().parents[2] / "CITATION.cff"
+CITATION_FILE = Path(__file__).resolve().parents[2] / "CITATION.cff"     # present in a source checkout only
 MARKER = "provenance/versions.json"         # a folder holding this file is a pack and may be rebuilt in place
 EXOFOP_URL = "https://exofop.ipac.caltech.edu/tess/"
-HELPDESK_URL = "https://exoplanetarchive.ipac.caltech.edu/cgi-bin/Helpdesk/nph-genTicket"
+EXOFOP_HELP_URL = "https://exofop.ipac.caltech.edu/tess/help.php"
+HELPDESK_URL = "https://exoplanetarchive.ipac.caltech.edu/support/helpdesk"
 _TAG = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{0,31}")
 _CONTENT = re.compile(r"[a-z0-9][a-z0-9-]{0,31}")
 _EXT = re.compile(r"[a-z0-9]{1,8}")
+_TARGET = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}")
 
 # figure colours: fixed hex values, the figures are files read outside the dashboard
 INK, MUTED, GRID, POINT, MODEL, EVEN, DOTS = "#111827", "#6b7280", "#e5e7eb", "#1f5f8b", "#c2410c", "#b45309", "#9ca3af"
@@ -79,6 +89,11 @@ class NoDossier(LookupError):
 
     def __str__(self) -> str:
         return str(self.args[0]) if self.args else "no dossier"
+
+
+class PackError(ValueError):
+    """A request the pack refuses before writing anything: a bad TIC id, tag or output folder, a folder that is not a
+    pack, or a live Zenodo draft for a candidate no reviewer has approved. The CLI reports it as a usage error."""
 
 
 class Raw(str):
@@ -94,11 +109,13 @@ class PackReport:
     approved: bool
     zenodo: dict | None             # {"deposition_id", "draft_url", "sandbox", "doi"} when a draft was made
     stale_reason: str | None = None
+    note_words: dict | None = None  # note_words() of the written note
 
     def as_dict(self) -> dict:
         return jsonutil.sanitize({"target_id": self.target_id, "out_dir": str(self.out_dir),
                                   "zip_path": str(self.zip_path), "files": self.files, "approved": self.approved,
-                                  "zenodo": self.zenodo, "stale_reason": self.stale_reason})
+                                  "zenodo": self.zenodo, "stale_reason": self.stale_reason,
+                                  "note_words": self.note_words})
 
 
 # ---------------------------------------------------------------------------------------------------- formatting
@@ -188,11 +205,59 @@ def date_words(when) -> str:
     return f"{when.day} {when:%B %Y}" if isinstance(when, datetime) else "an unknown date"
 
 
-def note_words(tex: str) -> int:
-    """Words of the note after ``\\begin{document}``, LaTeX commands with their first argument left out (the count
-    the RNAAS limit is checked with)."""
-    body = tex.split(r"\begin{document}", 1)[-1]
-    return len(re.sub(r"\\[a-zA-Z]+(\[[^\]]*\])?(\{[^}]*\})?", " ", body).split())
+_TEX_COMMENT = re.compile(r"(?<!\\)%.*")
+_FRONT_LINE = re.compile(r"^\s*\\(author|affiliation|email|correspondingauthor|keywords|includegraphics|usepackage)\b"
+                         r".*$", re.MULTILINE)
+_ENV = re.compile(r"\\(begin|end)\{[^}]*\}(\[[^\]]*\]|\{\})?")
+_CITE = re.compile(r"\\cite[pt]?\{([^}]*)\}")
+_DATASET = re.compile(r"\\dataset\[([^\]]*)\]\{[^}]*\}")
+_BIBITEM = re.compile(r"\\bibitem\[[^\]]*\]\{[^}]*\}")
+_COMMAND = re.compile(r"\\[a-zA-Z]+\*?(\[[^\]]*\])?")
+
+
+def _count(tex: str) -> int:
+    """Words as the reader sees them: a citation as three (author, et al., year), a command's name dropped and its
+    argument kept (section titles and the caption count), tokens without a letter or digit not counted."""
+    tex = _CITE.sub(lambda m: " cite et-al year" * len(m.group(1).split(",")), tex)
+    tex = _DATASET.sub(lambda m: f" {m.group(1)} ", tex)
+    tex = _BIBITEM.sub(" ", _ENV.sub(" ", tex))
+    tex = _COMMAND.sub(" ", tex.replace("\\&", " & ").replace("~", " "))
+    tex = re.sub(r"[{}$]", " ", tex)
+    return sum(1 for w in tex.split() if re.search(r"[A-Za-z0-9]", w))
+
+
+def _between(tex: str, env: str) -> tuple[str, str]:
+    """(inside the environment, the text with it cut out); ("", tex) when it is absent."""
+    m = re.search(rf"\\begin\{{{env}\}}(.*?)\\end\{{{env}\}}", tex, re.DOTALL)
+    return (m.group(1), tex[:m.start()] + tex[m.end():]) if m else ("", tex)
+
+
+def note_words(tex: str) -> dict:
+    """The rendered note's words between ``\\begin{document}`` and ``\\end{document}`` (comments stripped first, so a
+    mention in the frame's comment is never the start): ``abstract``, ``body`` (title, headings, text, caption),
+    ``references`` (the reference list) and ``total``, the number the RNAAS limit of 1,500 applies to. The author
+    block and keywords are not counted."""
+    text = "\n".join(_TEX_COMMENT.sub("", line) for line in tex.splitlines())
+    m = re.search(r"\\begin\{document\}(.*?)\\end\{document\}", text, re.DOTALL)
+    text = _FRONT_LINE.sub(" ", m.group(1) if m else text)
+    abstract, text = _between(text, "abstract")
+    refs, text = _between(text, "thebibliography")
+    out = {"abstract": _count(abstract), "body": _count(text), "references": _count(refs)}
+    out["total"] = out["abstract"] + out["body"] + out["references"]
+    return out
+
+
+def note_problems(words: dict, tex: str = "") -> list[str]:
+    """What breaks the RNAAS limits (``NOTE_LIMITS``), in words; empty when the note fits."""
+    out = []
+    if words["total"] > NOTE_LIMITS["total"]:
+        out.append(f"the note has {words['total']:,} words, over the limit of {NOTE_LIMITS['total']:,}")
+    if words["abstract"] > NOTE_LIMITS["abstract"]:
+        out.append(f"the abstract has {words['abstract']} words, over the limit of {NOTE_LIMITS['abstract']}")
+    displays = len(re.findall(r"\\begin\{(figure|table|deluxetable)\*?\}", tex))
+    if displays > NOTE_LIMITS["figures_or_tables"]:
+        out.append(f"the note has {displays} figures and tables; RNAAS takes one")
+    return out
 
 
 # ---------------------------------------------------------------------------------------------------- the numbers
@@ -219,10 +284,11 @@ def references(data: dict) -> dict[str, bool]:
     star_ok = route != "none" and value_text(star.get("radius")) is not None      # as numbers()["star_ok"]
     cls = _fpp_class(data)
     notes = json.dumps((data.get("fpp") or {}).get("scenarios") or [])
-    return {"kbonus": True, "morton2012": True,
+    return {"kbonus": True, "kbonushlsp": True, "morton2012": True,
             "dressing2015": cls == "M", "fressin2013": cls != "M" or "Fressin" in notes,
-            "pecaut2013": star_ok and route in ("mann", "mamajek"), "mann2015": star_ok and route == "mann",
-            "mann2019": star_ok and route == "mann",
+            "pecaut2013": star_ok and route in ("mann", "mamajek") and value_text(star.get("teff")) is not None,
+            "mann2015": star_ok and route == "mann",
+            "mann2019": star_ok and route == "mann" and value_text(star.get("mass")) is not None,
             "lindegren2021": star_ok and star.get("distance_pc") is not None,
             "kopparapu2013": star_ok and _hz_where(planet) is not None}
 
@@ -231,9 +297,11 @@ BIBLIOGRAPHY = (
     ("dressing2015", r"{Dressing} \& {Charbonneau}(2015)",
      r"Dressing, C.~D., \& Charbonneau, D. 2015, ApJ, 807, 45"),
     ("fressin2013", r"{Fressin} et~al.(2013)", r"Fressin, F., Torres, G., Charbonneau, D., et~al. 2013, ApJ, 766, 81"),
-    ("kbonus", r"{Mart{\'\i}nez-Palomera} et~al.(2023)",
-     (r"Mart{\'\i}nez-Palomera, J., et~al. 2023, KBonus Kepler Background high-level science product, MAST, "
-      r"\dataset[doi:10.17909/7jbr-w430]{https://doi.org/10.17909/7jbr-w430}")),
+    ("kbonus", r"{Mart{\'\i}nez-Palomera} et~al.(2023a)",
+     r"Mart{\'\i}nez-Palomera, J., Hedges, C., \& Dotson, J. 2023a, AJ, 166, 265, doi:10.3847/1538-3881/ad0727"),
+    ("kbonushlsp", r"{Mart{\'\i}nez-Palomera} et~al.(2023b)",
+     (r"Mart{\'\i}nez-Palomera, J., Hedges, C., \& Dotson, J. 2023b, KBonus Kepler Background (KBONUS-BKG) "
+      r"high-level science product, MAST, doi:10.17909/7jbr-w430")),
     ("kopparapu2013", r"{Kopparapu} et~al.(2013)",
      (r"Kopparapu, R.~K., Ramirez, R., Kasting, J.~F., et~al. 2013, ApJ, 765, 131 (erratum: 2013, ApJ, 770, 82, "
       r"whose coefficients are used)")),
@@ -436,6 +504,7 @@ def numbers(data: dict, tex: bool = False) -> dict:
         "stellar parameters", "hz_where": _hz_where(planet), "hz_inner": _f(planet.get("hz_inner_au"), 3),
         "hz_outer": _f(planet.get("hz_outer_au"), 3),
         "fap_text": fap_text, "fpp_text": fpp_text, "caveats": caveats,
+        "abstract": abstract_text(data),
         "caveat_text": " ".join(f"{c['title'].rstrip('.')}." for c in caveats) or "No caveat is recorded.",
         "window_h": _f(plots.get("window_h"), 1), "bin_minutes": _f(duration * 60 / 8, 0) if duration else None,
         "model_words": "transit fit" if plots.get("model_kind") == "fit" else "box model of the detection",
@@ -443,11 +512,47 @@ def numbers(data: dict, tex: bool = False) -> dict:
     }
 
 
+def abstract_text(data: dict) -> str:
+    """The note's abstract (RNAAS requires one, at most 150 words): the signal, where the pixels put it, the planet
+    when the star is characterized, both probabilities and the candidate status, each from the stored numbers."""
+    target, eph = data.get("target") or {}, data.get("ephemeris") or {}
+    name = target.get("name") or target.get("target_id")
+    parts = [(f"This note reports a transit candidate on {name}, a star that Kepler recorded only in the background "
+              "of other targets' pixels."),
+             (f"In its KBonus Kepler Background light curve a dip of {_f(eph.get('depth_ppm'), 0, True)} ppm lasting "
+              f"{_f(eph.get('duration_h'), 2)} hours repeats every {_f(eph.get('period_days'), 5)} days over "
+              f"{eph.get('n_events')} transits.")]
+    row = _test(data, "rung5_pixels")
+    seasons = [s for s in ((row or {}).get("metrics") or {}).get("seasons") or [] if isinstance(s, dict)]
+    if row is None:
+        parts.append("The pixel check has not run, so a neighbouring star could still cause the dip.")
+    elif row.get("status") == "undetermined" or not seasons:
+        parts.append("The pixel check gave no verdict on which star dims.")
+    else:
+        near = sum(1 for s in seasons if s.get("nearer") == "target")
+        parts.append(f"Difference images place the lost light on this star in {near} of {len(seasons)} observing "
+                     "seasons." if row.get("status") != "fail" else
+                     "Difference images place the lost light nearer a neighbouring star.")
+    rp, a = (data.get("planet") or {}).get("rp_rearth"), (data.get("planet") or {}).get("a_au")
+    if isinstance(rp, dict) and _num(rp.get("median")) is not None:
+        orbit = f" on a {_num(a.get('median')):.3f} AU orbit" if isinstance(a, dict) and _num(a.get("median")) else ""
+        parts.append(f"With the stellar radius from Gaia photometry the planet would be about "
+                     f"{_num(rp['median']):.1f} Earth radii{orbit}.")
+    fap, fpp = data.get("fap") or {}, data.get("fpp") or {}
+    against = (f" against {fap['n']:,} null searches of this source" if fap.get("calibrated") and fap.get("n")
+               else "")
+    tail = ", provisional until its factor tables are reviewed" if not fpp.get("signed_off") else ""
+    parts.append(f"The false-alarm probability{against} is {fap.get('words') or 'not computed'}, and a three-scenario "
+                 f"estimate puts the false-positive probability at {fpp.get('words') or 'not computed'}{tail}.")
+    parts.append("It remains a candidate until independent follow-up confirms it.")
+    return " ".join(parts)
+
+
 def archive_paragraph(data: dict, doi: str, tic: str | None) -> str:
     n = numbers(data)
     where = f" (Gaia DR3 {n['gaia_id']}, RA {n['ra']} deg, Dec {n['dec']} deg)" if n["gaia_id"] else ""
     rp = f", which gives a planet radius of {n['rp_text']} Earth radii" if n["rp_text"] else ""
-    exofop = f"under TIC {tic}" if tic else "under the star's TIC id"
+    exofop = f"under TIC {tic}" if tic else f"on the {n['name']} page"
     return (f"I write to report a transit candidate on {n['name']}{where}, found in the KBonus Kepler Background "
             f"light curves and published as a Research Note of the AAS (doi:{RNAAS_DOI_PLACEHOLDER}). The signal "
             f"repeats every {n['period']} days with a depth of {n['depth']} ppm and a duration of {n['duration']} "
@@ -471,13 +576,24 @@ def _authors(citation: dict | None) -> list[dict]:
     return out or [{"name": "AUTHOR NAME TO FILL IN", "orcid": None}]
 
 
+def doi_shown(doi: str | None) -> str:
+    """The DOI as the plain texts print it: the placeholder without one, and a sandbox DOI (``10.5072/``, which never
+    resolves) only with the words that it must be replaced."""
+    if not doi:
+        return DOI_PLACEHOLDER
+    return f"{doi}, a {SANDBOX_DOI_NOTE}" if doi.startswith(SANDBOX_DOI_PREFIX) else doi
+
+
 def render_note(data: dict, doi_placeholder: str = DOI_PLACEHOLDER, *, citation: dict | None = None) -> str:
-    """The AASTeX Research Note draft (RNAAS option): the frame in ``data/rnaas/aastex_template.tex`` and the body
-    from ``note.tex.j2``, under 1,000 words, citing exactly the works the dossier used."""
+    """The Research Note draft: the AASTeX v7 frame in ``data/rnaas/aastex_template.tex`` and the body from
+    ``note.tex.j2`` (title, abstract, sections, one figure, references), citing exactly the works the dossier used.
+    A sandbox DOI is printed with the words that it must be replaced before submission."""
     refs = references(data)
     bib = [(key, Raw(label), Raw(text)) for key, label, text in BIBLIOGRAPHY if refs.get(key)]
+    doi = doi_placeholder or DOI_PLACEHOLDER
+    note = f", a {SANDBOX_DOI_NOTE}" if doi.startswith(SANDBOX_DOI_PREFIX) else ""
     body = _env(tex=True).get_template("note.tex.j2").render(
-        n=numbers(data, tex=True), refs=refs, bib=bib, doi=doi_placeholder, authors=_authors(citation))
+        n=numbers(data, tex=True), refs=refs, bib=bib, doi=doi, doi_note=note, authors=_authors(citation))
     return AASTEX_FRAME.read_text(encoding="utf-8") + "\n" + body
 
 
@@ -492,7 +608,7 @@ EXOFOP_CONTENTS = (("lightcurve", "data/lightcurve.csv",
 
 FILE_NOTES = {
     "README.md": "these instructions",
-    "note/note.tex": "the Research Note draft (AASTeX, RNAAS)",
+    "note/note.tex": "the Research Note draft (AASTeX v7)",
     "note/figure1.svg": "the note's figure (the folded transit)",
     "note/figure1.pdf": "the note's figure as PDF, for pdflatex",
     "note/figure1.png": "the note's figure as PNG",
@@ -506,45 +622,70 @@ FILE_NOTES = {
     "dossier.html": "the standalone dossier (opens offline in any browser)",
     "archive_email.txt": "the paragraph for the NASA Exoplanet Archive help desk (step 4)",
     "zenodo_metadata.json": "the Zenodo metadata, for a deposit made by hand (step 1)",
-    "provenance/versions.json": "pack, dossier, search and ladder versions and the git commit",
+    "provenance/versions.json": "pack, dossier, search and ladder versions, the git commit and where the creators "
+                                "came from",
     "provenance/queries.json": "every catalogue and data request for this target, with URL, time, status and SHA-256",
     "provenance/hashes.json": "the SHA-256 of every other file in the pack",
     "provenance/calibration.json": "the null-search counts behind the false-alarm probability",
-    "exofop/note.txt": "the text for the ExoFOP upload's notes field (step 2)",
+    "exofop/note.txt": "the text for the ExoFOP upload's description (step 2)",
 }
 
 
-def exofop_name(tic: str | None, date: str, tag: str, content: str, ext: str) -> str:
-    """ExoFOP's file name ``<TIC>_<UTC date>_<observer tag>_<content>.<ext>``; ``TIC-unknown`` when the TIC id is
-    not known yet. A "TIC" prefix and spaces are dropped; anything but digits in the id raises ValueError."""
-    if tic is None:
-        tid = "TIC-unknown"
-    else:
-        tid = re.sub(r"^TIC", "", str(tic).strip(), flags=re.IGNORECASE).strip()
-        if not tid.isdigit():
-            raise ValueError(f"a TIC id is digits, not {tic!r}")
+def _safe_target(target_id: str) -> str:
+    if not _TARGET.fullmatch(str(target_id)):
+        raise PackError(f"not a target id: {target_id!r}")
+    return str(target_id).replace(":", "-")
+
+
+def exofop_name(target_id: str, date: str, content: str, ext: str) -> str:
+    """The pack's name for a file it offers for ExoFOP, ``<target>_<UTC yyyymmdd>_<content>.<ext>``. ExoFOP enforces
+    no file name (an upload is grouped by the Data Tag set on its form); this one says what the file is and which
+    build it came from. Raises PackError for a bad target id, date, content or extension."""
     if not re.fullmatch(r"\d{8}", date):
-        raise ValueError(f"the date is yyyymmdd, not {date!r}")
-    for value, rule, what in ((tag, _TAG, "observer tag"), (content, _CONTENT, "content"), (ext, _EXT, "extension")):
+        raise PackError(f"the date is yyyymmdd, not {date!r}")
+    for value, rule, what in ((content, _CONTENT, "content"), (ext, _EXT, "extension")):
         if not rule.fullmatch(value):
-            raise ValueError(f"not a valid {what}: {value!r}")
-    return f"{tid}_{date}_{tag}_{content}.{ext}"
+            raise PackError(f"not a valid {what}: {value!r}")
+    return f"{_safe_target(target_id)}_{date}_{content}.{ext}"
 
 
-def _exofop_list(tic, date, tag, png: bool, pixels_figure: bool) -> list[tuple[str, str, str]]:
-    """(ExoFOP name, pack source, what it is) for the files step 2 attaches: each figure once, as PNG when the PNGs
+def check_tic(tic: str | None) -> str | None:
+    """The TIC id as digits ("TIC 169822650" gives "169822650"), or None; PackError for anything else."""
+    if tic is None:
+        return None
+    digits = re.sub(r"^TIC", "", str(tic).strip(), flags=re.IGNORECASE).strip()
+    if not digits.isdigit():
+        raise PackError(f"a TIC id is digits, not {tic!r}")
+    return digits
+
+
+def check_tag(tag: str) -> str:
+    if not _TAG.fullmatch(tag or ""):
+        raise PackError(f"the tag is 1 to 32 letters, digits and hyphens, starting with a letter or digit, not "
+                        f"{tag!r}")
+    return tag
+
+
+def _exofop_list(target_id, date, png: bool, pixels_figure: bool) -> list[tuple[str, str, str]]:
+    """(file name, pack source, what it is) for the files step 2 attaches: each figure once, as PNG when the PNGs
     were drawn, else as SVG."""
     out = []
     for content, source, what in EXOFOP_CONTENTS:
         if content == "centroids" and not pixels_figure:
             continue
         ext = ("png" if png else "svg") if "{ext}" in source else source.rsplit(".", 1)[1]
-        out.append((exofop_name(tic, date, tag, content, ext), source.format(ext=ext), what))
+        out.append((exofop_name(target_id, date, content, ext), source.format(ext=ext), what))
     return out
+
+
+def zip_name(target_id: str, date: str) -> str:
+    """The pack's zip, ``<target>_<yyyymmdd>_skysift_pack.zip``: the name Zenodo and a download show."""
+    return f"{_safe_target(target_id)}_{date}_skysift_pack.zip"
 
 
 def _fields(data: dict, f: dict) -> dict:
     f = dict(f)
+    target_id = (data.get("target") or {}).get("target_id") or "target"
     f.setdefault("approved", False)
     f.setdefault("stale_reason", None)
     f.setdefault("tic", None)
@@ -553,19 +694,26 @@ def _fields(data: dict, f: dict) -> dict:
     f.setdefault("png", False)
     f.setdefault("zenodo", None)
     f.setdefault("pixels_figure", bool(data.get("pixels")))
-    f.setdefault("zip_name", "the pack's zip")
+    f.setdefault("zip_name", zip_name(target_id, f["date"]))
     f.setdefault("files", [])
     f.setdefault("built_words", date_words(datetime.now(UTC)))
     f.setdefault("pack_version", PACK_VERSION)
+    f.setdefault("creators_source", "no CITATION.cff found, so the creators are placeholders")
     doi = (f.get("zenodo") or {}).get("doi")
-    f.setdefault("doi_shown", doi or DOI_PLACEHOLDER)
+    f.setdefault("doi", doi or DOI_PLACEHOLDER)
+    f.setdefault("doi_shown", doi_shown(doi))
     if "note_words" not in f:
-        f["note_words"] = note_words(render_note(data, f["doi_shown"]))
+        tex = render_note(data, f["doi"])
+        f["note_words"], f["note_problems"] = note_words(tex), note_problems(note_words(tex), tex)
+    f.setdefault("note_problems", note_problems(f["note_words"]))
+    f.setdefault("limits", NOTE_LIMITS)
+    f.setdefault("data_tag", f"{f['date']}_<username>_{f['tag']}-{_safe_target(target_id)}")
     f.setdefault("exofop", [(name, what) for name, _src, what in
-                            _exofop_list(f["tic"], f["date"], f["tag"], f["png"], f["pixels_figure"])])
+                            _exofop_list(target_id, f["date"], f["png"], f["pixels_figure"])])
     f.setdefault("file_notes", [(name, FILE_NOTES.get(name) or _figure_note(name)) for name in sorted(f["files"])
                                 if not name.startswith("exofop/") or name == "exofop/note.txt"])
     f.setdefault("exofop_url", EXOFOP_URL)
+    f.setdefault("exofop_help_url", EXOFOP_HELP_URL)
     f.setdefault("helpdesk_url", HELPDESK_URL)
     return f
 
@@ -581,10 +729,10 @@ def _figure_note(name: str) -> str:
 def render_readme(data: dict, report_fields: dict) -> str:
     """The README: the five steps in order (``STEPS``), each with its account, files, text and what the engine did
     or cannot do. ``report_fields`` carries the build's own values (approved, tic, date, tag, files, png, zenodo,
-    stale_reason, zip_name, pixels_figure); missing ones take defaults."""
+    stale_reason, zip_name, pixels_figure, note_words, creators_source); missing ones take defaults."""
     f = _fields(data, report_fields)
     return _env(tex=False).get_template("README.md.j2").render(
-        n=numbers(data), f=f, titles=dict(STEPS),
+        n=numbers(data), f=f, titles=dict(STEPS), sandbox_note=SANDBOX_DOI_NOTE,
         archive_paragraph=archive_paragraph(data, f["doi_shown"], f["tic"]))
 
 
@@ -955,23 +1103,6 @@ def _rel(out_dir: Path) -> list[str]:
     return sorted(p.relative_to(out_dir).as_posix() for p in out_dir.rglob("*") if p.is_file())
 
 
-def _prepare(out_dir: Path) -> None:
-    """An empty folder for the pack: a missing one is made, an earlier pack (it holds ``MARKER``) is replaced, and
-    any other non-empty folder is refused, so a pack never deletes files it did not write."""
-    if out_dir.exists():
-        if not out_dir.is_dir():
-            raise FileExistsError(f"{out_dir} is a file, not a folder")
-        if any(out_dir.iterdir()):
-            try:
-                marker = json.loads((out_dir / MARKER).read_text(encoding="utf-8"))
-            except (OSError, ValueError):
-                marker = None
-            if not isinstance(marker, dict) or "pack_version" not in marker:
-                raise FileExistsError(f"{out_dir} is not empty and is not a submission pack; choose another --out")
-            shutil.rmtree(out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-
-
 def _zip(out_dir: Path, zip_path: Path, top: str) -> None:
     tmp = zip_path.with_name(zip_path.name + ".tmp")
     with zipfile.ZipFile(tmp, "w", compression=zipfile.ZIP_DEFLATED) as z:
@@ -980,13 +1111,32 @@ def _zip(out_dir: Path, zip_path: Path, top: str) -> None:
     tmp.replace(zip_path)
 
 
-def load_citation(path: Path = CITATION_FILE) -> dict | None:
+def load_citation(path: Path = CITATION_FILE) -> tuple[dict | None, str]:
+    """(citation, where it came from) for the note's authors and the Zenodo creators: the repository's
+    ``CITATION.cff`` when present (a source checkout), else the installed package's author metadata (from
+    ``pyproject.toml``), else (None, a sentence saying the creators are placeholders)."""
     import yaml
     try:
         data = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
     except (OSError, yaml.YAMLError):
-        return None
-    return data if isinstance(data, dict) else None
+        data = None
+    if isinstance(data, dict) and data.get("authors"):
+        return data, "CITATION.cff in the source checkout"
+    from importlib import metadata as md
+    try:
+        meta = md.metadata("skysift")
+        fields = [*(meta.get_all("Author") or []), *(meta.get_all("Author-email") or [])]
+    except md.PackageNotFoundError:
+        fields = []
+    names: list[str] = []
+    for field in fields:
+        for part in str(field).split(","):
+            name = re.sub(r"<[^>]*>", "", part).strip().strip('"')
+            if name and "@" not in name and name not in names:
+                names.append(name)
+    if names:
+        return {"authors": [{"name": n} for n in names]}, "the installed package's author metadata (pyproject.toml)"
+    return None, "no CITATION.cff and no package author metadata, so the creators are placeholders"
 
 
 def _approval(store: Store, target_id: str, signal_id: int) -> tuple[bool, str | None]:
@@ -1004,51 +1154,137 @@ def _approval(store: Store, target_id: str, signal_id: int) -> tuple[bool, str |
     return approved, None
 
 
-def _calibration(data: dict) -> dict:
-    prov = data.get("provenance") or {}
-    path = prov.get("calibration_file")
+_LOCAL_PATH = re.compile(r"^(?:[A-Za-z]:[\\/]|\\\\|/(?!/))")
+
+
+def _looks_local(text: str) -> bool:
+    return (len(text) < 1024 and "\n" not in text and "://" not in text and bool(_LOCAL_PATH.match(text))
+            and (text[1:2] == ":" or text.startswith("\\\\") or (" " not in text and text.count("/") >= 2)))
+
+
+def public_paths(obj, data_dir: Path):
+    """A copy of ``obj`` with every absolute local path cut to a name relative to ``data_dir`` (or to its file name
+    when it lies elsewhere): a pack is meant for a public record and must not carry the user's folders."""
+    base = str(Path(data_dir).resolve()).replace("\\", "/").rstrip("/").lower()
+
+    def fix(value):
+        if isinstance(value, dict):
+            return {k: fix(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [fix(v) for v in value]
+        if isinstance(value, str) and _looks_local(value):
+            norm = value.replace("\\", "/")
+            if norm.lower().startswith(base + "/"):
+                return norm[len(base) + 1:]
+            return PureWindowsPath(value).name if "\\" in value or value[1:2] == ":" else Path(value).name
+        return value
+    return fix(copy.deepcopy(obj))
+
+
+def _calibration_path(raw: dict, data_dir: Path) -> Path | None:
+    path = (raw.get("provenance") or {}).get("calibration_file")
+    if not path:
+        return None
+    path = Path(path)
+    return path if path.is_absolute() else Path(data_dir) / path
+
+
+def _calibration(raw: dict, data: dict, data_dir: Path) -> dict:
+    """The null-search counts behind the FAP. The file is read at its stored path (a relative one against the data
+    folder, not the current folder) and named relative to the data folder."""
+    path = _calibration_path(raw, data_dir)
     counts: dict[str, int] = {}
-    if path and Path(path).is_file():
-        for r in cal.read_rows(Path(path)):
+    if path is not None and path.is_file():
+        for r in cal.read_rows(path):
             v = str(r.get("search_version"))
             counts[v] = counts.get(v, 0) + 1
-    return {"fap": data.get("fap"), "calibration_file": path, "rows_by_version": counts,
+    return {"fap": data.get("fap"), "calibration_file": (data.get("provenance") or {}).get("calibration_file"),
+            "calibration_sha256": _sha(path)["sha256"] if path is not None and path.is_file() else None,
+            "rows_by_version": counts,
             "rule": "FAP = (k + 1) / (n + 1) over both null kinds of every row; not calibrated below "
                     f"{cal.MIN_NULLS} null searches"}
+
+
+def _check_out(out_dir: Path) -> None:
+    """Refuse an output folder before any work: one without a name (a drive root), a file, or a non-empty folder
+    that is not an earlier pack (it would be replaced, so a pack never deletes files it did not write)."""
+    if not out_dir.name:
+        raise PackError(f"{out_dir} has no folder name; give --out a folder such as packs/<target>")
+    if not out_dir.exists():
+        return
+    if not out_dir.is_dir():
+        raise PackError(f"{out_dir} is a file, not a folder")
+    if any(out_dir.iterdir()):
+        try:
+            marker = json.loads((out_dir / MARKER).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            marker = None
+        if not isinstance(marker, dict) or "pack_version" not in marker:
+            raise PackError(f"{out_dir} is not empty and is not a submission pack; choose another --out")
+
+
+def _prepare(out_dir: Path) -> None:
+    """An empty folder for the pack (``_check_out`` has passed): an earlier pack is replaced."""
+    if out_dir.exists() and any(out_dir.iterdir()):
+        shutil.rmtree(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+
+def _write_texts(out_dir: Path, zip_path: Path, data: dict, fields: dict, citation: dict | None) -> dict:
+    """The four texts, then the hashes and the zip, for the DOI in ``fields`` (written again once a Zenodo draft
+    reserved one). Returns the note's word counts."""
+    tex = render_note(data, fields["doi"], citation=citation)
+    _write(out_dir / "note" / "note.tex", tex)
+    words = note_words(tex)
+    fields = {**fields, "note_words": words, "note_problems": note_problems(words, tex)}
+    _write(out_dir / "exofop" / "note.txt", _render_plain("exofop_note.txt.j2", data, fields))
+    _write(out_dir / "archive_email.txt", _render_plain("archive_email.txt.j2", data, fields))
+    files = sorted({*_rel(out_dir), "README.md", "provenance/hashes.json"})
+    _write(out_dir / "README.md", render_readme(data, {**fields, "files": files}))
+    hashes = {name: _sha(out_dir / name) for name in _rel(out_dir) if name != "provenance/hashes.json"}
+    _write(out_dir / "provenance" / "hashes.json", jsonutil.dumps(hashes, indent=1))
+    _zip(out_dir, zip_path, zip_path.stem)
+    return words
 
 
 def build_pack(store, blob, settings, target_id: str, *, out_dir: Path | None = None, tic: str | None = None,
                observer_tag: str = "skysift", zenodo: ZenodoClient | None = None,
                log: Callable[[str], None] | None = None) -> PackReport:
-    """Write the submission pack of ``target_id`` from its stored dossier and zip it to ``<out_dir>.zip``; the default
-    ``out_dir`` is ``<data_dir>/packs/<target_id>/<UTC yyyymmdd>/`` (an earlier pack there is replaced). With a
-    ``zenodo`` client the deposition is created first, so the note carries its reserved DOI, then filled and given the
-    zip; it is never published. Records the folder on the dossiers row and the candidate row. Raises NoDossier,
-    ``dossier.LightCurveReleased`` (nothing is downloaded), FileExistsError for a foreign folder, ValueError for a bad
-    TIC id or tag and ``zenodo.ZenodoError``."""
+    """Write the submission pack of ``target_id`` from its stored dossier and zip it beside the folder as
+    ``<target>_<yyyymmdd>_skysift_pack.zip``; the default folder is ``<data_dir>/packs/<target_id>/<UTC yyyymmdd>/``
+    (an earlier pack there is replaced). Everything is checked and written first; only then, with a ``zenodo``
+    client, is the draft created, its reserved DOI written into the texts (a sandbox DOI with the words that it must
+    be replaced), the metadata filled and the zip uploaded. The draft is never published, and a live draft is refused
+    for a candidate no reviewer has approved. Records the folder on the dossiers row and the candidate row.
+
+    Raises NoDossier, ``dossier.LightCurveReleased`` (nothing is downloaded), PackError (bad TIC id, tag or folder; a
+    live draft before approval) before anything is written, and ``zenodo.ZenodoError`` naming the built pack and any
+    unfinished draft when Zenodo fails."""
     say = log or (lambda _text: None)
+    tic, observer_tag = check_tic(tic), check_tag(observer_tag)
+    _safe_target(target_id)
     row = store.dossier(target_id)
     if row is None or not row.get("data_path") or not Path(row["data_path"]).is_file():
         raise NoDossier(f"no dossier for {target_id}; run skysift dossier --target {target_id} first")
-    data = json.loads(Path(row["data_path"]).read_text(encoding="utf-8"))
+    raw = json.loads(Path(row["data_path"]).read_text(encoding="utf-8"))
     sid = int(row["signal_id"])
     now = datetime.now(UTC)
     date = now.strftime("%Y%m%d")
-    exofop_name(tic, date, observer_tag, "lightcurve", "csv")          # a bad TIC id or tag fails before any work
+    out_dir = Path(out_dir if out_dir is not None else Path(settings.data_dir) / "packs" / target_id / date).resolve()
+    _check_out(out_dir)
     approved, stale = _approval(store, target_id, sid)
+    if zenodo is not None and not zenodo.sandbox and not approved:
+        raise PackError(f"{target_id} is not yet approved by a reviewer, so no draft is made on zenodo.org; use "
+                        "--zenodo for a sandbox rehearsal")
     say("loading the light curve")
     target = ds._target_dict(store, target_id)
     lc = LightCurveLoader(store, blob, source_factory=ds._offline_factory(target_id, sid)).load(target, pin=True)
-    fnorm = ds.whitened(lc, data["signal"])
-    citation = load_citation()
-    deposition, zinfo = None, None
-    if zenodo is not None:
-        say("creating the Zenodo draft")
-        deposition = zenodo.create_deposition()
-        zinfo = {"deposition_id": deposition.get("id"), "draft_url": zenodo.draft_url(deposition),
-                 "sandbox": zenodo.sandbox, "doi": zenodo.reserved_doi(deposition)}
-    out_dir = Path(out_dir) if out_dir is not None else Path(settings.data_dir) / "packs" / target_id / date
-    zip_path = out_dir.with_name(out_dir.name + ".zip")
+    fnorm = ds.whitened(lc, raw["signal"])
+    citation, creators_source = load_citation()
+    if citation is None:
+        say("no CITATION.cff or package author found; the creators are placeholders")
+    data = public_paths(raw, settings.data_dir)
+    zip_path = out_dir.parent / zip_name(target_id, date)
     _prepare(out_dir)
     say(f"writing {out_dir}")
     figures, note, d = out_dir / "figures", out_dir / "note", out_dir / "data"
@@ -1063,9 +1299,9 @@ def build_pack(store, blob, settings, target_id: str, *, out_dir: Path | None = 
                                                  "planet": data.get("planet"),
                                                  "rows": [{c: r[c] for c in cols} for r in eph_rows]}, indent=1))
     ev_cols = ["epoch", "t_mid", "quarter", "depth_ppm", "err_ppm", "coverage", "ses"]
-    _csv(d / "events.csv", ["epoch", "t_mid_bkjd", "quarter", "depth_ppm", "err_ppm", "coverage", "ses"],
-         [[e.get(c) for c in ev_cols] for e in (data.get("plots") or {}).get("events") or []])
     plots = data.get("plots") or {}
+    _csv(d / "events.csv", ["epoch", "t_mid_bkjd", "quarter", "depth_ppm", "err_ppm", "coverage", "ses"],
+         [[e.get(c) for c in ev_cols] for e in plots.get("events") or []])
     _write(d / "periodogram.json", jsonutil.dumps({"sde": (data.get("ephemeris") or {}).get("sde"),
                                                    "period_days": (data.get("ephemeris") or {}).get("period_days"),
                                                    "spectrum": plots.get("spectrum"),
@@ -1085,40 +1321,50 @@ def build_pack(store, blob, settings, target_id: str, *, out_dir: Path | None = 
     if png:
         say("drawing the PNG figures")
         _png_figures(Figure, data, figures, note)
-    # the standalone page, provenance, texts
+    # the standalone page, provenance, the ExoFOP copies
     _write(out_dir / "dossier.html", ds.export_html(data))
     prov = data.get("provenance") or {}
     _write(out_dir / "provenance" / "queries.json", jsonutil.dumps(prov.get("queries") or [], indent=1))
-    _write(out_dir / "provenance" / "calibration.json", jsonutil.dumps(_calibration(data), indent=1))
-    _write(out_dir / MARKER, jsonutil.dumps(_versions(data, row, now, Figure), indent=1))
-    doi = (zinfo or {}).get("doi") or DOI_PLACEHOLDER
-    _write(note / "note.tex", render_note(data, doi, citation=citation))
+    _write(out_dir / "provenance" / "calibration.json",
+           jsonutil.dumps(_calibration(raw, data, settings.data_dir), indent=1))
+    _write(out_dir / MARKER, jsonutil.dumps(_versions(data, row, now, Figure, zip_path.name, creators_source),
+                                            indent=1))
     metadata = metadata_from(data, citation)
     _write(out_dir / "zenodo_metadata.json", jsonutil.dumps(metadata, indent=1))
-    fields = {"approved": approved, "stale_reason": stale, "tic": tic, "date": date, "tag": observer_tag,
-              "png": png, "zenodo": zinfo, "pixels_figure": pixels_figure, "zip_name": zip_path.name,
-              "built_words": date_words(now), "doi_shown": doi}
-    for name, source, _what in _exofop_list(tic, date, observer_tag, png, pixels_figure):
+    for name, source, _what in _exofop_list(target_id, date, png, pixels_figure):
         shutil.copyfile(out_dir / source, out_dir / "exofop" / name)
-    _write(out_dir / "exofop" / "note.txt", _render_plain("exofop_note.txt.j2", data, fields))
-    _write(out_dir / "archive_email.txt", _render_plain("archive_email.txt.j2", data, fields))
-    files = sorted({*_rel(out_dir), "README.md", "provenance/hashes.json"})
-    _write(out_dir / "README.md", render_readme(data, {**fields, "files": files}))
-    hashes = {name: _sha(out_dir / name) for name in _rel(out_dir) if name != "provenance/hashes.json"}
-    _write(out_dir / "provenance" / "hashes.json", jsonutil.dumps(hashes, indent=1))
-    _zip(out_dir, zip_path, f"{target_id}_pack_{out_dir.name}")
-    built = now.replace(tzinfo=None)
-    store.set_pack(target_id, str(out_dir), built)
+    fields = {"approved": approved, "stale_reason": stale, "tic": tic, "date": date, "tag": observer_tag,
+              "png": png, "zenodo": None, "pixels_figure": pixels_figure, "zip_name": zip_path.name,
+              "built_words": date_words(now), "doi": DOI_PLACEHOLDER, "doi_shown": DOI_PLACEHOLDER,
+              "creators_source": creators_source}
+    words = _write_texts(out_dir, zip_path, data, fields, citation)
+    store.set_pack(target_id, str(out_dir), now.replace(tzinfo=None))
     store.set_candidate_pack(sid, str(out_dir))
-    if zenodo is not None:
-        say("filling the Zenodo draft and uploading the zip")
-        zenodo.set_metadata(deposition, metadata)
-        zenodo.upload(deposition, zip_path)
     say(f"wrote {zip_path}")
-    return PackReport(target_id, out_dir, zip_path, _rel(out_dir), approved, zinfo, stale)
+    zinfo = None
+    if zenodo is not None:
+        deposition = None
+        try:
+            say("creating the Zenodo draft")
+            deposition = zenodo.create_deposition()
+            zinfo = {"deposition_id": deposition.get("id"), "draft_url": zenodo.draft_url(deposition),
+                     "sandbox": zenodo.sandbox, "doi": zenodo.reserved_doi(deposition)}
+            doi = zinfo["doi"] or DOI_PLACEHOLDER
+            words = _write_texts(out_dir, zip_path, data, {**fields, "zenodo": zinfo, "doi": doi,
+                                                           "doi_shown": doi_shown(zinfo["doi"])}, citation)
+            say("filling the Zenodo draft and uploading the zip")
+            zenodo.set_metadata(deposition, metadata)
+            zenodo.upload(deposition, zip_path)
+        except Exception as e:  # any failure after the files exist is reported with the draft
+            if deposition is None:
+                raise ZenodoError(f"{e}; the pack at {out_dir} was built without a Zenodo draft") from e
+            raise ZenodoError(f"{e}; the pack at {out_dir} was built, but the unpublished Zenodo draft "
+                              f"{deposition.get('id')} ({zenodo.draft_url(deposition)}) is unfinished: discard it on "
+                              "Zenodo, then run the command again") from e
+    return PackReport(target_id, out_dir, zip_path, _rel(out_dir), approved, zinfo, stale, words)
 
 
-def _versions(data: dict, row: dict, now: datetime, Figure) -> dict:
+def _versions(data: dict, row: dict, now: datetime, Figure, zip_file: str, creators_source: str) -> dict:
     from importlib import metadata as md
     try:
         version = md.version("skysift")
@@ -1135,4 +1381,5 @@ def _versions(data: dict, row: dict, now: datetime, Figure) -> dict:
             "git_commit": prov.get("git_commit"), "pack_git_commit": ds._git_commit(), "skysift_version": version,
             "python": platform.python_version(), "numpy": np.__version__, "matplotlib": mpl,
             "platform": sys.platform, "built_utc": now.isoformat(), "dossier_generated": data.get("generated"),
-            "dossier_row_generated": ds._iso(row.get("generated")), "kbonus_doi": KBONUS_DOI}
+            "dossier_row_generated": ds._iso(row.get("generated")), "kbonus_doi": KBONUS_DOI,
+            "zip_name": zip_file, "creators_source": creators_source}

@@ -552,7 +552,10 @@ def _fake_pack(app, settings, target_id=STAGE2_TARGET):
     out = settings.data_dir / "packs" / target_id / "20261021"
     out.mkdir(parents=True)
     (out / "README.md").write_text("# pack", encoding="utf-8")
-    zip_path = out.with_name("20261021.zip")
+    (out / "provenance").mkdir()
+    zip_name = f"{target_id}_20261021_skysift_pack.zip"
+    (out / "provenance" / "versions.json").write_text(json.dumps({"zip_name": zip_name}), encoding="utf-8")
+    zip_path = out.parent / zip_name
     zip_path.write_bytes(b"PK fake zip")
     app.state.store.set_pack(target_id, str(out), datetime(2026, 10, 21, 10, 0))
     return out, zip_path
@@ -566,11 +569,16 @@ def test_the_pack_zip_is_linked_and_served_once_built(seeded_dossier, settings):
     r = client.get(f"/dossiers/{STAGE2_TARGET}/pack.zip")
     assert r.status_code == 200 and r.content == zip_path.read_bytes()
     assert r.headers["content-type"] == "application/zip"
-    assert r.headers["content-disposition"] == f'attachment; filename="{STAGE2_TARGET}_pack_20261021.zip"'
+    assert r.headers["content-disposition"] == f'attachment; filename="{zip_path.name}"'
+    assert zip_path.name == f"{STAGE2_TARGET}_20261021_skysift_pack.zip"
     page = client.get(f"/dossiers/{STAGE2_TARGET}").text
     assert f'href="/dossiers/{STAGE2_TARGET}/pack.zip"' in page and "Download the submission pack" in page
     tile = client.get(f"/partials/dossiers/{STAGE2_TARGET}/tile").text
     assert f'href="/dossiers/{STAGE2_TARGET}/pack.zip"' in tile
+    versions = _out / "provenance" / "versions.json"
+    versions.write_text(json.dumps({"zip_name": "../../secret.zip"}), encoding="utf-8")
+    assert client.get(f"/dossiers/{STAGE2_TARGET}/pack.zip").status_code == 404           # a name, never a path
+    versions.write_text(json.dumps({"zip_name": zip_path.name}), encoding="utf-8")
     zip_path.unlink()
     assert client.get(f"/dossiers/{STAGE2_TARGET}/pack.zip").status_code == 404           # a zip moved away
     assert client.get("/dossiers/bad%20id;x/pack.zip").status_code == 400

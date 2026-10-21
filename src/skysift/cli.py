@@ -300,16 +300,19 @@ def dossier(target: str = typer.Option(..., "--target", help="The target id, e.g
 def pack_command(target: str = typer.Option(..., "--target", help="The target id, e.g. kic-006146676."),
                  out: str | None = typer.Option(None, "--out", help="The pack folder (default <data_dir>/packs/"
                                                 "<target>/<UTC yyyymmdd>); the zip is written beside it."),
-                 tic: str | None = typer.Option(None, "--tic", help="The star's TIC id, for the ExoFOP file names."),
-                 tag: str = typer.Option("skysift", "--tag", help="The observer tag in the ExoFOP file names."),
+                 tic: str | None = typer.Option(None, "--tic", help="The star's TIC id, named in the ExoFOP "
+                                                "upload note."),
+                 tag: str = typer.Option("skysift", "--tag", help="The word that starts the description of the "
+                                         "suggested ExoFOP Data Tag."),
                  zenodo_draft: bool = typer.Option(False, "--zenodo", help="Also make a Zenodo draft (sandbox) with "
                                                    "the token in SKYSIFT_ZENODO_TOKEN; it is never published."),
                  zenodo_live: bool = typer.Option(False, "--zenodo-live", help="Make the Zenodo draft on zenodo.org "
-                                                  "instead of the sandbox (implies --zenodo).")):
+                                                  "instead of the sandbox (implies --zenodo); refused before a "
+                                                  "reviewer approves the candidate.")):
     """Build the submission pack from the target's stored dossier: the README's five steps, the Research Note draft,
     the data files, figures, provenance and the ExoFOP copies, and a zip. With --zenodo, also a Zenodo draft
-    deposition holding the zip; publishing it is your click on Zenodo. Prints the report: a table in a terminal,
-    JSON when piped."""
+    deposition holding the zip, made after every file is written; publishing it is your click on Zenodo. Prints the
+    report: a table in a terminal, JSON when piped."""
     from skysift import dossier as ds
     from skysift import pack as pk
     from skysift import zenodo as zn
@@ -324,15 +327,11 @@ def pack_command(target: str = typer.Option(..., "--target", help="The target id
     except (pk.NoDossier, ds.NoSignal) as e:
         _plain(console, str(e))
         raise typer.Exit(1) from None
-    except ds.LightCurveReleased as e:
+    except (ds.LightCurveReleased, pk.PackError) as e:
         _plain(console, str(e))
         raise typer.Exit(2) from None
-    except (FileExistsError, ValueError) as e:
-        raise typer.BadParameter(str(e)) from None
     except zn.ZenodoError as e:
-        row = store.dossier(target) or {}
-        built = f"; the pack is at {row['pack_path']} without a finished Zenodo draft" if row.get("pack_path") else ""
-        _plain(console, f"{e}{built}")
+        _plain(console, str(e))            # names the built pack and any unfinished draft
         raise typer.Exit(1) from None
     report = rep.as_dict()
     if sys.stdout.isatty():

@@ -38,7 +38,7 @@ The two numbers answer different questions and are never combined: the first is 
 
 ## Why there are five steps
 
-No portal accepts a new Kepler candidate from someone outside a mission team. The NASA Exoplanet Archive takes planets from the refereed literature and adds candidates only when a mission delivers them. ExoFOP (run by NExScI) is the community follow-up site: registered users upload files and notes there, and Kepler and K2 follow-up now sits in ExoFOP-TESS under the star's TIC id. A community TESS Object of Interest needs TESS evidence, which this candidate does not have. So the record goes out in five steps, in this order. The engine can do part of step 1 for you; every other step needs your own account and your own click, and the engine never posts to ExoFOP, arXiv or a journal.
+No portal accepts a new Kepler candidate from someone outside a mission team. The NASA Exoplanet Archive takes planets from the refereed literature and adds candidates only when a mission delivers them. ExoFOP (run by NExScI) is the community follow-up site: registered users upload files and notes there, and Kepler and K2 follow-up now sits in ExoFOP-TESS, which takes a KIC id directly. A community TESS Object of Interest needs TESS evidence, which this candidate does not have. So the record goes out in five steps, in this order. The engine can do part of step 1 for you; every other step needs your own account and your own click, and the engine never posts to ExoFOP, arXiv or a journal.
 
 ## Step 1. {{ titles["1"] }}
 
@@ -50,10 +50,10 @@ Zenodo gives the pack a DOI and freezes it, so the Research Note, the ExoFOP upl
 The engine made a draft deposition on {{ "the Zenodo sandbox (sandbox.zenodo.org, a test site whose records are not kept)" if f.zenodo.sandbox else "zenodo.org" }}: {{ f.zenodo.draft_url }} (deposition {{ f.zenodo.deposition_id }}{% if f.zenodo.doi %}, reserved DOI {{ f.zenodo.doi }}{% endif %}). It holds the metadata and `{{ f.zip_name }}`. The engine never publishes.
 {% if f.zenodo.sandbox %}
 
-A sandbox draft is a rehearsal. When it reads right, build the pack again with `skysift pack --target {{ n.target_id }} --zenodo-live` for the real record.
+A sandbox draft is a rehearsal, and its DOI ({{ f.zenodo.doi or "none reserved" }}) never resolves: the texts carry it only with the words "{{ sandbox_note }}". When the draft reads right and a reviewer has approved the candidate, build the pack again with `skysift pack --target {{ n.target_id }} --zenodo-live` for the real record.
 {% endif %}
 {% else %}
-The engine can make the draft for you: create a personal access token on Zenodo (Account, Applications, Personal access tokens, with the deposit:write scope only; publishing is your click on the website, so the token needs no more), set it in the environment as `SKYSIFT_ZENODO_TOKEN` (never in a file), and run `skysift pack --target {{ n.target_id }} --zenodo`. That makes a draft on the Zenodo sandbox (a test site); `--zenodo-live` makes it on zenodo.org. The engine fills the title, the creators from `CITATION.cff`, the description, the keywords, the CC BY 4.0 licence and the link to the KBonus light curves (doi:10.17909/7jbr-w430), uploads the zip and stops. It never publishes.
+The engine can make the draft for you: create a personal access token on Zenodo (Account, Applications, Personal access tokens, with the deposit:write scope only; publishing is your click on the website, so the token needs no more), set it in the environment as `SKYSIFT_ZENODO_TOKEN` (never in a file), and run `skysift pack --target {{ n.target_id }} --zenodo`. That makes a draft on the Zenodo sandbox (a test site); `--zenodo-live` makes it on zenodo.org, and only for a candidate a reviewer has approved. The engine writes every file first, then creates the draft, fills the title, the creators, the description, the keywords, the CC BY 4.0 licence and the link to the KBonus light curves (doi:10.17909/7jbr-w430), uploads the zip and stops. It never publishes.
 
 Without a token, do it by hand: on zenodo.org choose New upload, attach `{{ f.zip_name }}`, and copy the fields from `zenodo_metadata.json` (upload type Dataset, title, creators, description, keywords, licence, related identifier).
 {% endif %}
@@ -62,34 +62,35 @@ What you do: open the draft, read every field, check that the uploaded zip holds
 
 ## Step 2. {{ titles["2"] }}
 
-Account: an ExoFOP registered-user login (request one on the ExoFOP site, {{ f.exofop_url }}; the ExoFOP team approves it, which can take a few days). The engine cannot upload for you.
+Account: an ExoFOP registered-user login (request one on the ExoFOP site, {{ f.exofop_url }}; the ExoFOP team approves it, which can take a few days). The engine cannot upload for you. The site's own help page is {{ f.exofop_help_url }}.
 
-{% if f.tic %}
-TIC id: TIC {{ f.tic }} (given when the pack was built). The files in `exofop/` already carry it.
-{% else %}
-TIC id: this pack was built without one, so the files in `exofop/` start with `TIC-unknown`. Find the id on ExoFOP-TESS: type Gaia DR3 {{ n.gaia_id or "(no Gaia id stored)" }} or the coordinates RA {{ n.ra }} deg, Dec {{ n.dec }} deg (J2000) into the target search, and the target's overview page shows the TIC id. The MAST Portal's TIC search by coordinates gives the same id. Then build the pack again with `skysift pack --target {{ n.target_id }} --tic <id>`, so every file name follows the rule.
-{% endif %}
+Where: the Kepler, K2 and TESS sites of ExoFOP are merged, and a KIC id is accepted directly, so search for {{ n.name }}{% if n.gaia_id %}, Gaia DR3 {{ n.gaia_id }}{% endif %} or the coordinates RA {{ n.ra }} deg, Dec {{ n.dec }} deg (J2000) and attach the files to the star's page.{% if f.tic %} The pack was built with TIC {{ f.tic }}, which the upload note names.{% endif %}{{ "" }}
 
-ExoFOP names files `<TIC>_<UTC date>_<observer tag>_<content>.<ext>`. This pack uses the date {{ f.date }} and the tag `{{ f.tag }}`. Attach these files to the star's page:
+Data Tag: every ExoFOP upload needs one, set on the upload form in the form `YYYYMMDD_username_description_nnnnn` (the description takes letters, numbers and hyphens). For this pack, something like `{{ f.data_tag }}`.
+
+Files: ExoFOP enforces no file name. The pack names its copies `<target>_<UTC date>_<content>.<ext>`, so each says what it is and which build it came from. Attach these:
 
 {% for name, what in f.exofop %}
 - `exofop/{{ name }}`: {{ what }}
 {% endfor %}
 
-What to write: paste `exofop/note.txt` into the upload's notes field. It gives the ephemeris, both probabilities, the pixel result and the Zenodo DOI.
+What to write: paste `exofop/note.txt` into the upload's description. It gives the ephemeris, both probabilities, the pixel result and the Zenodo DOI.
 
-Password protection: the upload form lets you protect files with a password, so only the people you give it to can read them. Leave them open once the Zenodo record is published (the files are public there anyway). Protect them only if you upload before the Zenodo record is out and want to show them to chosen observers first; remove the password when the record is published.
+Who sees it: uploads are public at once. ExoFOP offers a 12-month proprietary period only to members of the TESS Follow-up Observing Program Working Group (TFOP WG), so upload after the Zenodo record is published.
 
 ## Step 3. {{ titles["3"] }}
 
 Accounts: an AAS journals account (the submission system of the Research Notes of the AAS) and an arXiv account. A first submission to astro-ph.EP may need an endorsement from someone who has already posted there; arXiv tells you when you submit, and the endorsement request goes by email to a colleague who can endorse. The engine cannot submit for you.
 
-The draft is `note/note.tex` ({{ f.note_words }} words of body text, under the 1,000-word limit, with one figure, `note/figure1`). Before you submit:
+The limits (AAS research note guidelines): at most {{ "{:,}".format(f.limits.total) }} words including the title, headings, caption and references, of which up to {{ f.limits.abstract }} are the required abstract, and one figure or one table, not both. The draft is `note/note.tex`, with one figure, `note/figure1`: {{ f.note_words.total }} words in all ({{ f.note_words.body }} of title, headings, text and caption, {{ f.note_words.abstract }} of abstract, {{ f.note_words.references }} of references; the author block and keywords are not counted).
+{% if f.note_problems %}
+**Over the limit:** {{ f.note_problems | join("; ") }}. Shorten it before you submit.
+{% endif %}
 
 1. Fill in the author block (affiliation, email, ORCID) and add co-authors.
-2. Replace {{ f.doi_shown }} with the Zenodo DOI from step 1{% if f.zenodo and f.zenodo.doi %} (the draft's reserved DOI is already in place; check it matches the published record){% endif %}.
+2. Replace {{ f.doi_shown }} with the Zenodo DOI from step 1{% if f.zenodo and f.zenodo.doi and not f.zenodo.sandbox %} (the draft's reserved DOI is already in place; check it matches the published record){% endif %}.
 3. Read every sentence against `dossier.html`; the note is built from the stored numbers and says nothing the dossier does not.
-4. Compile it with AASTeX 6.31 and pdflatex (Overleaf has the AAS template). {% if f.png %}The figure is `note/figure1.pdf`.{% else %}matplotlib could not be imported when this pack was built, so there is no PDF figure: convert `note/figure1.svg` to PDF first (Inkscape: `inkscape figure1.svg --export-type=pdf`).{% endif %}
+4. Compile it with AASTeX v7 (aastex7.cls) and pdflatex; Overleaf has the AAS template. The UAT keywords can be changed in the submission form. {% if f.png %}The figure is `note/figure1.pdf`.{% else %}matplotlib could not be imported when this pack was built, so there is no PDF figure: convert `note/figure1.svg` to PDF first (Inkscape: `inkscape figure1.svg --export-type=pdf`).{% endif %}
 
 5. Submit it as a Research Note of the AAS. The editor reviews it for fit (there is no full peer review) and it gets a DOI when published.
 6. After acceptance, post the same text to arXiv in astro-ph.EP.
@@ -129,7 +130,7 @@ There is no centroid figure: the pixel step has not run for this signal, or its 
 
 ## Provenance
 
-`provenance/versions.json` names the pack format, the dossier format, the search and ladder versions and the git commit. `provenance/queries.json` lists every catalogue and data request made for this target (URL, time, status, SHA-256). `provenance/calibration.json` holds the null-search counts behind the false-alarm probability. `provenance/hashes.json` holds the SHA-256 of every other file in the pack. To rebuild the dossier from the archive files:
+`provenance/versions.json` names the pack format, the dossier format, the search and ladder versions and the git commit. The note's authors and the Zenodo creators came from {{ f.creators_source }}. `provenance/queries.json` lists every catalogue and data request made for this target (URL, time, status, SHA-256). `provenance/calibration.json` holds the null-search counts behind the false-alarm probability. `provenance/hashes.json` holds the SHA-256 of every other file in the pack. To rebuild the dossier from the archive files:
 
 {% for c in n.commands %}
     {{ c }}

@@ -67,9 +67,9 @@ class ZenodoClient:
             return {}
 
     def create_deposition(self) -> dict:
-        """A new, empty draft deposition; its JSON carries ``id``, ``links`` and the reserved DOI under
-        ``metadata.prereserve_doi``."""
-        return self._call("POST", f"{self.base}/deposit/depositions", json={})
+        """A new draft deposition that asks Zenodo to reserve a DOI; its JSON carries ``id``, ``links`` and the
+        reserved DOI under ``metadata.prereserve_doi``."""
+        return self._call("POST", f"{self.base}/deposit/depositions", json={"metadata": {"prereserve_doi": True}})
 
     def set_metadata(self, deposition: dict, metadata: dict) -> dict:
         return self._call("PUT", f"{self.base}/deposit/depositions/{deposition['id']}", json={"metadata": metadata})
@@ -175,6 +175,7 @@ def metadata_from(data: dict, citation: dict | None) -> dict:
         "license": "cc-by-4.0",
         "related_identifiers": [{"identifier": KBONUS_DOI, "relation": "isDerivedFrom", "scheme": "doi",
                                  "resource_type": "dataset"}],
+        "prereserve_doi": True,
     }
 
 

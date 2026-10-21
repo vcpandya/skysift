@@ -1,7 +1,7 @@
-((# The body of the Research Note draft (dossiers spec 5.9), from \begin{document} on; skysift.pack.render_note puts
-   data/rnaas/aastex_template.tex in front of it. Delimiters: \VAR{...} prints (every string LaTeX-escaped unless
-   pack.Raw), \BLOCK{...} is a statement. Under 1,000 words of body text, one figure, every sentence built from the
-   dossier's numbers. #))
+((# The body of the Research Note draft (dossiers spec 5.9), from the begin-document line on; skysift.pack.render_note
+   puts data/rnaas/aastex_template.tex in front of it. Delimiters: \VAR{...} prints (every string LaTeX-escaped unless
+   pack.Raw), \BLOCK{...} is a statement. Inside the RNAAS limits (pack.NOTE_LIMITS: 1,500 words with the references,
+   an abstract of up to 150, one figure), every sentence built from the dossier's numbers. #))
 \begin{document}
 
 \title{A \VAR{n.period_title} day transit candidate on \VAR{n.name}}
@@ -13,7 +13,11 @@
 \correspondingauthor{\VAR{authors[0].name}}
 \email{EMAIL TO FILL IN}
 
-\keywords{Exoplanets (498), Transit photometry (1709), Exoplanet detection methods (489)}
+\begin{abstract}
+\VAR{n.abstract}
+\end{abstract}
+
+\keywords{\uat{Exoplanet detection methods}{489}, \uat{Exoplanets}{498}, \uat{Transit photometry}{1709}}
 
 \section{The signal}
 
@@ -33,7 +37,7 @@ The SkySift engine (search version \VAR{n.search_version}, ladder version \VAR{n
 \section{The star and the planet}
 
 \BLOCK{if n.star_ok}
-The star's colour \BLOCK{if refs.pecaut2013}on the dwarf sequence of \citet{pecaut2013} \BLOCK{endif}gives \BLOCK{if n.spectral_type}a spectral type of \VAR{n.spectral_type} and \BLOCK{endif}an effective temperature of \VAR{n.teff} K. \BLOCK{if refs.lindegren2021}The Gaia parallax, corrected for its zero point \citep{lindegren2021}, puts it at \VAR{n.distance} pc. \BLOCK{endif}\BLOCK{if refs.mann2015}From the absolute $K_s$ magnitude the relations of \citet{mann2015} and \citet{mann2019} give \BLOCK{else}The star has \BLOCK{endif}a radius of \VAR{n.radius} $R_\odot$ and a mass of \VAR{n.mass} $M_\odot$.
+\BLOCK{if n.teff}The star's colour \BLOCK{if refs.pecaut2013}on the dwarf sequence of \citet{pecaut2013} \BLOCK{endif}gives \BLOCK{if n.spectral_type}a spectral type of \VAR{n.spectral_type} and \BLOCK{endif}an effective temperature of \VAR{n.teff} K. \BLOCK{endif}\BLOCK{if refs.lindegren2021}The Gaia parallax, corrected for its zero point \citep{lindegren2021}, puts it at \VAR{n.distance} pc. \BLOCK{endif}\BLOCK{if refs.mann2015}From the absolute $K_s$ magnitude the relations of \citet{mann2015}\BLOCK{if refs.mann2019} and \citet{mann2019}\BLOCK{endif} give \BLOCK{else}The star has \BLOCK{endif}a radius of \VAR{n.radius} $R_\odot$\BLOCK{if n.mass} and a mass of \VAR{n.mass} $M_\odot$\BLOCK{endif}.
 \BLOCK{if n.rp}
 \BLOCK{if n.fit_k}With the fitted radius ratio of \VAR{n.fit_k} the\BLOCK{else}The\BLOCK{endif} planet radius is \VAR{n.rp} $R_\oplus$, on an orbit of \VAR{n.a} AU\BLOCK{if n.teq} with an equilibrium temperature of \VAR{n.teq} K at a Bond albedo of 0.3\BLOCK{endif}\BLOCK{if n.insolation} and \VAR{n.insolation} times the insolation of Earth\BLOCK{endif}.
 \BLOCK{endif}
@@ -59,7 +63,7 @@ The star could not be characterized from Gaia photometry, so the planet radius, 
 
 \section{Data availability}
 
-The submission pack (the detrended light curve, the ephemeris and parameters with their errors, the per-event depths, the vetting metrics, the figures and the query log) is on Zenodo at \dataset[doi:\VAR{doi}]{https://doi.org/\VAR{doi}}. The light curves are from the KBonus Kepler Background high-level science product at MAST \citep{kbonus}.
+The submission pack (the detrended light curve, the ephemeris and parameters with their errors, the per-event depths, the vetting metrics, the figures and the query log) is on Zenodo at \dataset[doi:\VAR{doi}]{https://doi.org/\VAR{doi}}\VAR{doi_note}. The light curves are from the KBonus Kepler Background high-level science product at MAST \citep{kbonushlsp}.
 
 \begin{thebibliography}{}
 \BLOCK{for key, label, text in bib}
