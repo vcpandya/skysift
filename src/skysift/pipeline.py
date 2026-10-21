@@ -54,6 +54,7 @@ from skysift.vetting.rung1_events import Rung1Events
 from skysift.vetting.rung2_shape import Rung2Shape
 from skysift.vetting.rung3_stability import Rung3Stability
 from skysift.vetting.rung4_novelty import Rung4Novelty
+from skysift.vetting.rung5_pixels import Rung5Pixels
 
 log = logging.getLogger(__name__)
 # Ladder version 3 (18 Oct 2026, vetting best practice; spec 2026-10-18-skysift-vetting-best-practice-design.md):
@@ -121,9 +122,14 @@ def search_version(det, thresholds: Thresholds) -> str:
     return f"{det.version}+{h}"
 
 
-def build_ladder(version: str = DEFAULT_LADDER_VERSION, with_novelty: bool = True) -> Ladder:
+def build_ladder(version: str = DEFAULT_LADDER_VERSION, with_novelty: bool = True,
+                 with_pixels: bool = False) -> Ladder:
+    """The vetting ladder: the light-curve rungs, rung 4 unless ``with_novelty`` is False, and rung 5 (the pixel
+    files, about 50 MB per signal) only with ``with_pixels``; the sweep leaves it out and the recheck's pixel stage
+    runs it on the few signals that reach it."""
     rungs = [Rung1Detection(), Rung1Events(), Rung2Shape(), Rung3Stability()]
     if with_novelty: rungs.append(Rung4Novelty())
+    if with_pixels: rungs.append(Rung5Pixels())
     return Ladder(rungs, version)
 
 

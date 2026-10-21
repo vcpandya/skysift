@@ -49,6 +49,7 @@ UNAVAILABLE_PREFIX = "unavailable:"      # run error text for a service outage; 
 POOL_BROKE_ERROR = f"{UNAVAILABLE_PREFIX} worker pool broke"     # several runs held at a pool break: none charged
 WORKER_DIED_ERROR = "worker died: pool broke"                    # one run held: its target is charged an attempt
 PERIODOGRAM_URL = "skysift://periodogram/{target_id}"     # artifact url of a target's periodogram summary
+PIXELS_URL = "skysift://pixels/{signal_id}"               # artifact url of rung 5's per-season arrays (pixels.npz)
 RECHECK_JOB_PREFIX = "recheck:"     # job keys of the runs the stage-2 recheck starts (a P/2 signal's run)
 
 
@@ -127,7 +128,7 @@ class RecheckRow(Base):
     utc: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
-REVIEWER_DECIDED_REASON = "reviewer decided meanwhile"     # a step whose signal a reviewer rejected while it ran
+REVIEWER_DECIDED_REASON = "reviewer decided meanwhile"     # a step whose signal a reviewer decided on while it ran
 
 
 @dataclass
@@ -221,6 +222,8 @@ class ArtifactRow(Base):
     created: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     last_used: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime)
+    # raw (a light curve, released in stream mode) | summary (periodogram envelope) | dossier | tpf (a Kepler target
+    # pixel file, evicted only by budget unless pinned) | pixels (rung 5's season arrays, pinned with the signal)
     kind: Mapped[str] = mapped_column(String(16), default="raw", server_default="raw")
 
 
@@ -501,15 +504,15 @@ class Store:
         run finished "done"), the rechecks row (naming the derived signal), the signal's test rows pointing at it,
         and both statuses derived again. Either all of it lands or none does, so a failure never leaves a pending
         child, a running run or a rechecks row without its tests for the next run to mistake for done work. When a
-        reviewer rejected the signal while the step ran, only a rechecks row "skipped" with
+        reviewer decided on the signal while the step ran (any decision: approve, needs_data or reject; the queue
+        leaves out every decided signal, as the recheck's ``_decided`` does), only a rechecks row "skipped" with
         ``REVIEWER_DECIDED_REASON`` is written. Returns {"recheck_id", "child_id", "status", "written"}."""
         with self.session() as s:
             sig = s.get(SignalRow, write.signal_id)
             if sig is None:
                 raise KeyError(write.signal_id)
-            last = s.scalar(select(DecisionRow.decision).where(DecisionRow.signal_id == sig.id)
-                            .order_by(DecisionRow.id.desc()).limit(1))
-            if last == "reject":
+            decided = s.scalar(select(DecisionRow.id).where(DecisionRow.signal_id == sig.id).limit(1))
+            if decided is not None:
                 row = RecheckRow(signal_id=sig.id, step=write.step, ladder_version=write.ladder_version,
                                  outcome="skipped", reason=REVIEWER_DECIDED_REASON)
                 s.add(row); s.flush()
@@ -628,6 +631,15 @@ class Store:
         if target_id is not None: row.target_id = target_id
         if pinned: row.pinned = True
 
+    def live_artifact(self, url: str) -> dict | None:
+        """The newest undeleted artifact recorded for ``url`` ({"sha256", "local_path", "nbytes", "kind", "pinned"}),
+        or None."""
+        with self.session() as s:
+            a = s.scalars(select(ArtifactRow).where(ArtifactRow.url == url, ArtifactRow.deleted_at.is_(None))
+                          .order_by(ArtifactRow.created.desc())).first()
+            return None if a is None else {"sha256": a.sha256, "local_path": a.local_path, "nbytes": a.nbytes,
+                                           "kind": a.kind, "pinned": a.pinned}
+
     def touch_artifact(self, sha256: str) -> None:
         with self.session() as s:
             row = s.get(ArtifactRow, sha256)
@@ -719,3 +731,14 @@ class Store:
                                 ("candidates", CandidateRow), ("artifacts", ArtifactRow), ("queries", QueryRow)]:
                 out[name] = s.scalar(select(func.count()).select_from(model))
             return out
+
+    def set_candidate_pack(self, signal_id: int, pack_path: str) -> bool:
+        """Record the submission pack's folder on the signal's candidate row (dossiers spec 5.9). A signal no reviewer
+        has decided on has no candidate row, and none is made for it (a new row would read as "needs data"): nothing
+        is written and False is returned."""
+        with self.session() as s:
+            row = s.scalars(select(CandidateRow).where(CandidateRow.signal_id == signal_id)).first()
+            if row is None:
+                return False
+            row.pack_path = pack_path
+            return True

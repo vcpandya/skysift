@@ -7,7 +7,9 @@ stage-1 candidate of the current search version that no reviewer has decided on,
    half period's own harmonics, and vetted; the original is superseded unless the new one is undetermined for the
    same reason;
 3. the catalogue retry: when rung 4 could not reach a catalogue (``outage:``), rung 4 alone runs again;
-4. the pixel stage (``step_pixels``, a hook until ``rung5_pixels`` is wired in).
+4. the pixel stage (``step_pixels``): ``rung5_pixels`` alone on the Kepler target pixel files, for a stage-1
+   candidate or an undetermined signal whose reason only the pixels can settle; a pass promotes to stage 2, a dip on
+   the neighbouring star rejects. Once per signal: a rung 5 row other than an archive outage settles it.
 
 A step computes everything first and touches the store not at all: it returns a ``StepWrite`` (its ``rechecks`` row
 with the outcome, "skipped" and why when it could not run, the test rows that point back to it, and the P/2 signal
@@ -27,6 +29,7 @@ from skysift import net
 from skysift.config import Settings
 from skysift.detectors.base import get_detector
 from skysift.lc.loader import TARGET_FIELDS, LightCurveLoader
+from skysift.lc.tpf import fetch_tpfs
 from skysift.models import LightCurve, Signal, Target, TestResult, TestStatus
 from skysift.pipeline import (
     DEFAULT_LADDER_VERSION,
@@ -50,9 +53,11 @@ from skysift.store.db import (
     Store,
     TargetRow,
     final_status_for,
+    status_from_tests,
 )
 from skysift.vetting.base import Ladder
 from skysift.vetting.rung4_novelty import Rung4Novelty
+from skysift.vetting.rung5_pixels import Rung5Pixels
 
 logger = logging.getLogger(__name__)
 
@@ -144,6 +149,21 @@ def pixels_qualify(status: str, latest_tests: list[dict]) -> bool:
 
 def _latest(tests: list[dict], rung: str) -> dict | None:
     return next((t for t in tests if t["rung"] == rung), None)
+
+
+def wants_pixels(store: Store, sig: StoredSignal, tests: list[dict], status: str | None = None) -> bool:
+    """Step 4 applies: the signal is open and qualifies (``pixels_qualify``) on its rows other than rung 5's, and its
+    pixels are not settled. A rung 5 row settles them unless it could not reach the pixel archive (``outage:``),
+    which the next recheck retries; a verdict, or a reason the pixels gave themselves ("pixels: ..."), is final for
+    the signal, so a signal that stays in the queue is not fetched and localized at every recheck."""
+    status = store.signal_status(sig.id) if status is None else status
+    if status not in OPEN_STATUSES:
+        return False
+    rung5 = _latest(tests, "rung5_pixels")
+    if rung5 is not None and not str(rung5["reason"]).startswith("outage:"):
+        return False
+    others = [t for t in tests if t["rung"] != "rung5_pixels"]
+    return pixels_qualify(final_status_for(status_from_tests(others), others), others)
 
 
 def _deciding_reason(results: list[TestResult]) -> str:
@@ -241,9 +261,16 @@ def step_catalogue(ctx: RecheckContext, sig: StoredSignal) -> StepWrite | None:
 
 
 def step_pixels(ctx: RecheckContext, sig: StoredSignal) -> StepWrite | None:
-    """Step 4, the pixel stage: ``rung5_pixels`` through ``ctx.tpf_loader`` (Task 5 of the recheck plan). Not wired
-    yet: writes nothing."""
-    return None
+    """Step 4, the pixel stage (``wants_pixels``): ``rung5_pixels`` alone, its pixel files through ``ctx.tpf_loader``
+    (``fetch_tpfs`` by default, kept in the blob), in the bundle ``revet`` builds; it stores the season arrays as the
+    signal's ``pixels.npz``. The fetch and the localization happen here, before the step's one write: the rung 5 row
+    pointing at the rechecks row (outcome the rung's status, reason its reason); the status is derived again."""
+    if not wants_pixels(ctx.store, sig, ctx.store.latest_tests(sig.id)):
+        return None
+    rung = Rung5Pixels(tpf_loader=ctx.tpf_loader or fetch_tpfs, blob=ctx.blob, signal_id=sig.id)
+    _outcome, results, timings = ctx.vet(sig.signal, Ladder([rung], DEFAULT_LADDER_VERSION), ctx.flux(sig))
+    r = results[0]
+    return _write(sig, "pixels", r.status.value, r.reason, results, timings)
 
 
 STEPS: tuple[tuple[str, Callable[[RecheckContext, StoredSignal], StepWrite | None],
@@ -297,7 +324,7 @@ def _recheck_one(store: Store, blob, settings: Settings, loader: LightCurveLoade
         return "skipped"
     tests, status = store.latest_tests(sig.id), store.signal_status(sig.id)
     if not (any(wants(store, sig, tests, with_novelty) for _name, _step, wants in STEPS)
-            or (pixels and pixels_qualify(status, tests))):
+            or (pixels and wants_pixels(store, sig, tests, status))):
         return status                       # nothing applies: the light curve is not loaded
     try:
         if target is None:
@@ -323,21 +350,26 @@ def _recheck_one(store: Store, blob, settings: Settings, loader: LightCurveLoade
             _commit(store, say, sig, _write(sig, name, "skipped", f"exception: {type(e).__name__}"))
             break
     else:
-        status = store.signal_status(sig.id)
-        if pixels and pixels_qualify(status, store.latest_tests(sig.id)):
-            write = step_pixels(ctx, sig)
-            if write is not None and _commit(store, say, sig, write):
-                report.steps["pixels"] += 1
+        if pixels and wants_pixels(store, sig, store.latest_tests(sig.id)):
+            try:
+                write = step_pixels(ctx, sig)
+                if write is not None and _commit(store, say, sig, write):
+                    report.steps["pixels"] += 1
+            except Exception as e:          # a broken step leaves the signal as it is for a person
+                logger.exception("recheck step pixels failed for signal %s", sig.id)
+                _commit(store, say, sig, _write(sig, "pixels", "skipped", f"exception: {type(e).__name__}"))
     return store.signal_status(sig.id)
 
 
 def recheck(store: Store, blob, settings: Settings, *, fetch=net.fetch, signal_ids: list[int] | None = None,
             pixels: bool = True, detector_version: str | None = None, log=None, with_novelty: bool = True,
-            tpf_loader: Callable | None = None, stop_requested: Callable[[], bool] | None = None) -> RecheckReport:
+            tpf_loader: Callable | None = fetch_tpfs,
+            stop_requested: Callable[[], bool] | None = None) -> RecheckReport:
     """Recheck the open signals of ``detector_version`` (default: the search version of the newest finished sweep
     run), or only those of ``signal_ids`` among them. A signal one of the steps applies to has its light curve
     loaded through ``LightCurveLoader`` (the kept raw file, else a verified re-fetch); steps 1 to 3 run in order
-    while the signal stays open, then the pixel stage when ``pixels`` and the signal qualifies (``pixels_qualify``).
+    while the signal stays open, then the pixel stage when ``pixels`` and the signal qualifies (``wants_pixels``),
+    its pixel files through ``tpf_loader`` (``fetch_tpfs``; None means the same).
     ``fetch`` serves the catalogues (the target id is bound into every request); ``with_novelty=False`` leaves rung 4
     out, as in a sweep run without it. ``stop_requested`` is polled before each signal: once it answers True the
     recheck returns the report so far with ``stopped`` set (every finished step is committed). A signal a reviewer

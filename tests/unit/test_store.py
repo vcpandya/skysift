@@ -428,3 +428,24 @@ def test_error_capped_targets_add_up_attempts_across_compatible_ladders(tmp_path
     # a recheck's own run (P/2 signal) is not the target's latest sweep job
     s.finish_run(s.start_run("recheck:P/2:1", "split", "box_dip", ver, "4"), "done")
     assert s.error_capped_targets(3) == 1
+
+
+@pytest.mark.parametrize("decision", ["approve", "needs_data", "reject"])
+def test_a_recheck_step_is_refused_after_any_reviewer_decision(tmp_path, decision):
+    """The queue leaves out every signal a reviewer decided on, so a decision found at write time arrived while the
+    step ran: whatever it was (approve, needs_data or reject), only the single skipped row is written."""
+    from skysift.store.db import REVIEWER_DECIDED_REASON, StepWrite
+    s = make_store(tmp_path)
+    s.upsert_target(Target(source="kbonus_bkg", target_id="kic-1", ra=1.0, dec=2.0))
+    rid = s.start_run(make_job_key("kic-1", "box_dip", "1", "4"), "kic-1", "box_dip", "1", "4")
+    sid = s.add_signal(Signal(target_id="kic-1", detector="box_dip", detector_version="1", period=10.0, t0=1.0,
+                              duration=0.1, depth_ppm=1000, snr=20, sde=12, n_events=40), rid)
+    s.add_test(sid, TestResult(rung="rung1_detection", status=TestStatus.PASS), 0.0)
+    s.refresh_status(sid)
+    s.decide(sid, decision, note="looked at it")
+    tests_before = s.counts()["tests"]
+    done = s.commit_recheck_step(StepWrite(signal_id=sid, step="pixels", ladder_version="4", outcome="pass",
+                                           tests=[(TestResult(rung="rung5_pixels", status=TestStatus.PASS), 1.0)]))
+    assert done["written"] is False and s.counts()["tests"] == tests_before
+    assert [(r["step"], r["outcome"], r["reason"]) for r in s.rechecks(sid)] == [
+        ("pixels", "skipped", REVIEWER_DECIDED_REASON)]

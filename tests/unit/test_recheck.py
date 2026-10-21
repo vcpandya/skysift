@@ -22,10 +22,12 @@ from skysift.net import ServiceUnavailable
 from skysift.recheck import PIXEL_REASON_PREFIXES, RecheckReport, pixels_qualify, recheck
 from skysift.sources import PARSERS
 from skysift.store.blob import blob_from_url
-from skysift.store.db import QueryRow, RunRow, SignalRow, Store, make_job_key, status_from_tests
+from skysift.store.db import ArtifactRow, QueryRow, RunRow, SignalRow, Store, make_job_key, status_from_tests
 from skysift.vetting.rung2_shape import Rung2Shape
 from tests.synthetic import _with_dip, inject_transit, make_lightcurve
 from tests.unit import fake_fetch
+from tests.unit.synthetic_tpf import tpf_name, tpf_quarters
+from tests.unit.test_pixels import EPH
 
 LC_RUNGS = ("rung1_detection", "rung1_events", "rung2_shape", "rung3_stability", "rung4_novelty")
 HALVING = "equal secondary at phase 0.5: true period may be P / 2 (8 d)"
@@ -46,21 +48,40 @@ class Env:
         self.version = pipeline.search_version(get_detector("box_dip"), self.settings.thresholds)
         monkeypatch.setitem(PARSERS, "fake", pickle.loads)        # the fake source's raw file is the pickled curve
         self.n = 0
+        self.tpfs: dict[int, tuple[str, tuple[float, float]]] = {}   # Kepler target kic -> (dip on, target RA/Dec)
+        self.tpf_calls: list[int] = []
+
+    def tpf_loader(self, kic, *, fetch, blob, store, target_id, timeout=600.0):
+        """The archive's pixel files of the Kepler target ``kic``: the synthetic scene seeded for it, the dip on the
+        target or on the neighbour, the target at its catalogue RA/Dec."""
+        from skysift.lc.tpf import parse_tpf
+        self.tpf_calls.append(kic)
+        mode, radec = self.tpfs[kic]
+        return [parse_tpf(b, tpf_name(kic, b.quarter)) for b in tpf_quarters(mode, target_radec=radec, kic=kic)]
 
     def seed_signal(self, ladder_version: str = "4", tests=(), metrics: dict | None = None, raw_file: bool = True,
                     source_down: bool = False, lc=None, period: float = 10.0, t0: float = 140.0,
                     duration: float = 0.12, depth_ppm: float = 3000.0, version: str | None = None,
-                    prewhitening: dict | None = None) -> int:
+                    prewhitening: dict | None = None, tpfs: str | None = None, status: str | None = None) -> int:
         """One target's sweep result, written by ``record_results``: every light-curve rung passes unless ``tests``
         ((rung, status, reason) tuples, with ``metrics`` per rung) says otherwise. Without ``raw_file`` the curve must
-        be re-fetched, which the ``fake`` source cannot do (it has no live adapter: ``source_down``)."""
+        be re-fetched, which the ``fake`` source cannot do (it has no live adapter: ``source_down``). ``tpfs`` ("target"
+        or "neighbour") makes the target a KBonus star in the pixels of a Kepler target of its own whose synthetic
+        pixel files put the dip on that star, the signal at the scene's ephemeris; ``status``, when given, is the
+        status the seeded rows must give."""
         assert raw_file or source_down, "the fake source has no live adapter: a signal without its file is unloadable"
         self.n += 1
         tid = f"t{self.n}"
+        kic, meta = None, {}
+        if tpfs is not None:
+            kic, period, t0, duration = 6146000 + self.n, EPH.period, EPH.t0, EPH.duration
+            meta = {"tpf_org": 7146000 + self.n}
+            self.tpfs[meta["tpf_org"]] = (tpfs, (10.0 + self.n, 20.0))
         version = version or self.version
         lc = lc if lc is not None else inject_transit(make_lightcurve(noise_ppm=400, seed=3), period, t0, duration,
                                                       depth_ppm)
-        self.store.upsert_target(Target(source="fake", target_id=tid, ra=10.0 + self.n, dec=20.0, gmag=16.5))
+        self.store.upsert_target(Target(source="fake", target_id=tid, ra=10.0 + self.n, dec=20.0, gmag=16.5, kic=kic,
+                                        meta=meta))
         lc = dataclasses.replace(lc, meta={**lc.meta, "target_id": tid})      # one raw file per target, never shared
         if raw_file:
             data = pickle.dumps(lc)
@@ -74,15 +95,17 @@ class Env:
                             "search_window": {"min_period_days": 0.5, "max_period_days": 200.0},
                             **({"prewhitening": prewhitening} if prewhitening is not None else {})})
         rows = {rung: TestResult(rung=rung, status=TestStatus.PASS) for rung in LC_RUNGS}
-        for rung, status, reason in tests:
-            rows[rung] = TestResult(rung=rung, status=TestStatus(status), reason=reason,
+        for rung, st, reason in tests:
+            rows[rung] = TestResult(rung=rung, status=TestStatus(st), reason=reason,
                                     metrics=(metrics or {}).get(rung, {}))
         dumped = [r.model_dump() for r in rows.values()]
         item = {"signal": sig.model_dump(), "outcome": status_from_tests(dumped), "tests": dumped,
                 "timings": [0.0] * len(dumped)}
         self.store.record_results(rid, tid, [item], [], pin_evidence=True)
         with self.store.session() as s:
-            return s.scalar(select(SignalRow.id).where(SignalRow.run_id == rid))
+            sid = s.scalar(select(SignalRow.id).where(SignalRow.run_id == rid))
+        assert status is None or self.store.signal_status(sid) == status
+        return sid
 
     def seed_doubled_planet(self, child_reason: str | None = None, lc=None, prewhitening: dict | None = None) -> int:
         """An 8 d, 2500 ppm, 0.1 d planet stored as a 16 d signal whose rung 2 found the equal secondary at phase 0.5.
@@ -274,7 +297,7 @@ def test_pixel_stage_takes_stage_1_candidates_and_pixel_reasons_only():
                                      "period matches")
 
 
-def test_the_pixel_step_is_a_hook_that_writes_nothing_yet(env, monkeypatch):
+def test_the_pixel_step_receives_the_tpf_loader_and_runs_only_with_pixels(env, monkeypatch):
     sid = env.seed_signal()
     seen = []
     monkeypatch.setattr(recheck_mod, "step_pixels", lambda ctx, sig: seen.append((sig.id, ctx.tpf_loader)) or None)
@@ -430,3 +453,64 @@ def test_the_half_period_signal_is_restored_at_its_own_harmonics(env, monkeypatc
     assert child["final_status"] == "candidate_stage1" and env.store.signal_status(sid) == "superseded"
     record = child["extra"]["prewhitening"]
     assert not record.get("restored") and [c["frequency"] for c in record["components"]] == [f]
+
+
+def test_pixel_step_promotes_a_candidate_to_stage_2(env):
+    sid = env.seed_signal(ladder_version="4", status="candidate_stage1", tpfs="target")
+    rep = recheck(env.store, env.blob, env.settings, fetch=fake_fetch.fetch, tpf_loader=env.tpf_loader)
+    assert rep.steps["pixels"] == 1 and env.store.signal_status(sid) == "candidate_stage2"
+    row = env.store.rechecks(sid)[-1]
+    assert (row["step"], row["outcome"]) == ("pixels", "pass") and row["ladder_version"] == "4"
+    rung5 = env.store.latest_tests(sid)[-1]
+    assert rung5["rung"] == "rung5_pixels" and rung5["recheck_id"] == row["id"] and rung5["metrics"]["n_tpf"] == 5
+    assert rep.outcomes["candidate_stage2"] == 1
+    with env.store.session() as s:          # the season arrays the dossier draws, pinned with the signal
+        art = s.scalars(select(ArtifactRow).where(ArtifactRow.url == f"skysift://pixels/{sid}")).one()
+        assert art.kind == "pixels" and art.pinned and art.sha256 == rung5["metrics"]["pixels_sha256"]
+    before = env.store.counts()
+    rep = recheck(env.store, env.blob, env.settings, fetch=fake_fetch.fetch, tpf_loader=env.tpf_loader)
+    assert rep.considered == 0 and env.store.counts() == before        # stage 2 leaves the queue
+
+
+def test_pixel_step_rejects_a_neighbour_dip_and_runs_for_pixel_reasons(env):
+    sid = env.seed_signal(ladder_version="4", tests=[("rung3_stability", "undetermined",
+                                                      "season-dependent depth (p=5.7e-04)")], tpfs="neighbour")
+    recheck(env.store, env.blob, env.settings, fetch=fake_fetch.fetch, tpf_loader=env.tpf_loader)
+    assert env.store.signal_status(sid) == "rejected"
+    row = env.store.rechecks(sid)[-1]
+    assert (row["step"], row["outcome"]) == ("pixels", "fail")
+    assert row["reason"].startswith("the dip is on a neighbouring star (")
+
+
+def test_pixel_step_does_not_run_for_outage_reasons(env):
+    sid = env.seed_signal(ladder_version="4", tests=[("rung4_novelty", "undetermined", "outage:exoarchive: HTTP 403")])
+    recheck(env.store, env.blob, env.settings, fetch=outage_fetch, tpf_loader=env.tpf_loader)
+    assert [r["step"] for r in env.store.rechecks(sid)] == ["catalogue"]
+    assert env.tpf_calls == []
+
+
+def test_a_settled_pixel_step_is_not_run_again(env):
+    """An undetermined signal whose pixels put the dip on the target stays undetermined (rung 3 still disagrees) and
+    in the queue; the next recheck does not fetch or localize it again."""
+    sid = env.seed_signal(tests=[("rung3_stability", "undetermined", "season-dependent depth (p=5.7e-04)")],
+                          tpfs="target")
+    rep = recheck(env.store, env.blob, env.settings, fetch=fake_fetch.fetch, tpf_loader=env.tpf_loader)
+    assert rep.steps["pixels"] == 1 and env.store.signal_status(sid) == "undetermined"
+    assert env.store.latest_tests(sid)[-1]["status"] == "pass"
+    before, rows = env.store.counts(), env.store.rechecks(sid)
+    rep = recheck(env.store, env.blob, env.settings, fetch=fake_fetch.fetch, tpf_loader=env.tpf_loader)
+    assert rep.steps["pixels"] == 0 and env.store.counts() == before and env.store.rechecks(sid) == rows
+    assert len(env.tpf_calls) == 1
+
+
+def test_a_pixel_archive_outage_is_retried_by_the_next_recheck(env):
+    sid = env.seed_signal(tpfs="target")
+
+    def down(kic, **_kw):
+        raise ServiceUnavailable("mast https://archive.stsci.edu -> HTTP 503")
+    recheck(env.store, env.blob, env.settings, fetch=fake_fetch.fetch, tpf_loader=down)
+    row = env.store.rechecks(sid)[-1]
+    assert (row["step"], row["outcome"]) == ("pixels", "undetermined") and row["reason"].startswith("outage:mast: ")
+    assert env.store.signal_status(sid) == "undetermined"
+    rep = recheck(env.store, env.blob, env.settings, fetch=fake_fetch.fetch, tpf_loader=env.tpf_loader)
+    assert rep.steps["pixels"] == 1 and env.store.signal_status(sid) == "candidate_stage2"
