@@ -405,3 +405,26 @@ def test_dossier_rows_round_trip_and_join_status(store_with_signals):
         store.upsert_dossier(target_id="kic-4", colour="red")
     with pytest.raises(KeyError):
         store.set_pack("kic-9", "p", datetime(2026, 10, 22))
+
+
+def test_error_capped_targets_add_up_attempts_across_compatible_ladders(tmp_path):
+    """The dashboard's give-up count follows the sweep's selection: failed attempts and pool breaks under ladder 3
+    and ladder 4 (LADDER_COMPATIBLE) add up for the same search, and a done run under either clears the target."""
+    from skysift.store.db import POOL_BROKE_ERROR
+    s = make_store(tmp_path)
+    ver = "1+abcdef01"
+
+    def run(tid, lad, status="error", error="boom"):
+        s.finish_run(s.start_run(make_job_key(tid, "box_dip", ver, lad), tid, "box_dip", ver, lad), status, error)
+
+    for lad in ("3", "3", "4"): run("split", lad)                       # 2 + 1: given up
+    for lad in ("3", "4"): run("two", lad)                              # 1 + 1: not yet
+    for lad in ("3", "3", "3"): run("done4", lad)
+    run("done4", "4", "done", "")                                       # done under ladder 4: not given up
+    for lad in ("3", "4", "4"): run("breaks", lad, error=POOL_BROKE_ERROR)   # three uncharged pool breaks
+    assert s.error_capped_targets(3) == 1
+    assert s.error_capped_targets(3, max_pool_breaks=3) == 2
+    assert s.error_capped_targets(3, ladders=("4",)) == 0              # one ladder alone: no target reaches three
+    # a recheck's own run (P/2 signal) is not the target's latest sweep job
+    s.finish_run(s.start_run("recheck:P/2:1", "split", "box_dip", ver, "4"), "done")
+    assert s.error_capped_targets(3) == 1

@@ -12,6 +12,8 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    and_,
+    case,
     create_engine,
     event,
     func,
@@ -46,6 +48,7 @@ UNAVAILABLE_PREFIX = "unavailable:"      # run error text for a service outage; 
 POOL_BROKE_ERROR = f"{UNAVAILABLE_PREFIX} worker pool broke"     # several runs held at a pool break: none charged
 WORKER_DIED_ERROR = "worker died: pool broke"                    # one run held: its target is charged an attempt
 PERIODOGRAM_URL = "skysift://periodogram/{target_id}"     # artifact url of a target's periodogram summary
+RECHECK_JOB_PREFIX = "recheck:"     # job keys of the runs the stage-2 recheck starts (a P/2 signal's run)
 
 
 class TargetRow(Base):
@@ -296,25 +299,35 @@ class Store:
                 RunRow.job_key == job_key, RunRow.status == "error",
                 RunRow.error.in_((POOL_BROKE_ERROR, WORKER_DIED_ERROR))))
 
-    def error_capped_targets(self, max_attempts: int, max_pool_breaks: int | None = None) -> int:
-        """Targets left for a human: their latest job key has no done run and either at least ``max_attempts``
-        failed attempts or, when ``max_pool_breaks`` is given, at least that many runs lost in a broken CPU pool
-        (the same give-up rules the sweep's target selection applies)."""
+    def error_capped_targets(self, max_attempts: int, max_pool_breaks: int | None = None,
+                             ladders: tuple[str, ...] | None = None) -> int:
+        """Targets left for a human: their latest sweep job (search and ladder of the target's newest run outside the
+        recheck) has no done run and either at least ``max_attempts`` failed attempts or, when ``max_pool_breaks`` is
+        given, at least that many runs lost in a broken CPU pool. The same give-up rules the sweep's target selection
+        applies: the runs of every ladder version in ``ladders`` (default: the current ladder and the versions
+        ``LADDER_COMPATIBLE`` lists for it) count as one job, so attempts under ladder 3 and ladder 4 add up and a done
+        run under either clears the target. A run under any other ladder version counts on its own."""
+        if ladders is None:
+            from skysift.pipeline import DEFAULT_LADDER_VERSION, LADDER_COMPATIBLE  # pipeline imports this module
+            ladders = (DEFAULT_LADDER_VERSION, *LADDER_COMPATIBLE.get(DEFAULT_LADDER_VERSION, ()))
+        group = case((RunRow.ladder_version.in_(ladders), ladders[0]), else_=RunRow.ladder_version)
+        sweep = RunRow.job_key.not_like(f"{RECHECK_JOB_PREFIX}%")
+        latest = select(func.max(RunRow.id)).where(sweep).group_by(RunRow.target_id)
+        job = (select(RunRow.target_id, RunRow.detector, RunRow.detector_version, group.label("ladders"))
+               .where(RunRow.id.in_(latest)).subquery())
+        same_job = and_(RunRow.target_id == job.c.target_id, RunRow.detector == job.c.detector,
+                        RunRow.detector_version == job.c.detector_version, group == job.c.ladders, sweep)
+        done = select(job.c.target_id).join(RunRow, same_job).where(RunRow.status == "done").correlate(None)
+
+        def reached(limit: int, *errors):
+            return (select(job.c.target_id).join(RunRow, same_job)
+                    .where(job.c.target_id.not_in(done), RunRow.status == "error", *errors)
+                    .group_by(job.c.target_id).having(func.count() >= limit))
+
+        given_up = reached(max_attempts, *_ATTEMPT_FILTERS)
+        if max_pool_breaks is not None:
+            given_up = given_up.union(reached(max_pool_breaks, RunRow.error.in_((POOL_BROKE_ERROR, WORKER_DIED_ERROR))))
         with self.session() as s:
-            latest = select(func.max(RunRow.id)).group_by(RunRow.target_id)
-            keys = select(RunRow.job_key).where(RunRow.id.in_(latest))
-            done = select(RunRow.job_key).where(RunRow.status == "done")
-            capped = (select(RunRow.job_key)
-                      .where(RunRow.job_key.in_(keys), RunRow.job_key.not_in(done), RunRow.status == "error",
-                             *_ATTEMPT_FILTERS)
-                      .group_by(RunRow.job_key).having(func.count() >= max_attempts))
-            given_up = select(capped.subquery().c.job_key)
-            if max_pool_breaks is not None:
-                broken = (select(RunRow.job_key)
-                          .where(RunRow.job_key.in_(keys), RunRow.job_key.not_in(done), RunRow.status == "error",
-                                 RunRow.error.in_((POOL_BROKE_ERROR, WORKER_DIED_ERROR)))
-                          .group_by(RunRow.job_key).having(func.count() >= max_pool_breaks))
-                given_up = given_up.union(select(broken.subquery().c.job_key))
             return s.scalar(select(func.count()).select_from(given_up.subquery()))
 
     def start_run(self, job_key, target_id, detector, detector_version, ladder_version) -> int:
@@ -333,16 +346,17 @@ class Store:
             r = s.get(RunRow, run_id); r.status, r.error, r.finished = status, error, utcnow()
 
     def add_signal(self, sig: Signal, run_id: int, parent_signal_id: int | None = None,
-                   ladder_version: str | None = None) -> int:
+                   ladder_version: str | None = None, branch: str | None = None) -> int:
         """Add a signal to a run, or return the run's signal at the same period (within 1e-4 d). A recheck's
-        re-measured signal names the signal it came from (``parent_signal_id``) and the ladder that vets it."""
+        re-measured signal names the signal it came from (``parent_signal_id``), the ladder that vets it and its
+        ``branch`` ("recheck:P/2"; the column default when None)."""
         with self.session() as s:
             existing = s.scalars(select(SignalRow).where(SignalRow.run_id == run_id, SignalRow.detector == sig.detector,
                                                          SignalRow.period.between(sig.period - 1e-4, sig.period + 1e-4))).first()
             if existing:
                 return existing.id
             row = SignalRow(run_id=run_id, parent_signal_id=parent_signal_id, ladder_version=ladder_version,
-                            **sig.model_dump())
+                            **({"branch": branch} if branch else {}), **sig.model_dump())
             s.add(row); s.flush(); return row.id
 
     def signal_status(self, signal_id: int) -> str:

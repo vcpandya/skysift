@@ -374,12 +374,14 @@ def _stamped_fetch(fetch: Callable, target_id: str) -> Callable:
 
 
 def revet(lc: LightCurve, target: Target, th: Thresholds, sig: Signal, ladder: Ladder, *, fetch=net.fetch,
-          store=None, on_result=None) -> tuple[str, list[TestResult]]:
+          store=None, on_result=None, flux: tuple | None = None) -> tuple[str, list[TestResult]]:
     """Vet a stored signal again, on the flux the sweep vetted it on (``revet_flux``), through ``ladder`` (the
     recheck: a newer ladder, a P/2 signal, a catalogue retry with a one-rung ladder), in the sweep's bundle
     (``_bundle``, then ``_vetting_bundle`` for a second-pass signal's mask). ``fetch`` and ``store`` go to the rungs
     as in the worker (rung 4's catalogue queries, logged through ``store.log_query`` with this target's id).
-    ``on_result(result, seconds)`` is called after each rung. Returns the ladder's (outcome, results). Raises
+    ``on_result(result, seconds)`` is called after each rung. ``flux``, when given, is ``revet_flux``'s triple for
+    this light curve and signal, already built (the recheck builds it once per signal for all its steps; a P/2
+    signal carries its parent's record, so its flux is the parent's). Returns the ladder's (outcome, results). Raises
     ValueError for a signal of another search version: the flux would not be the one it was found and vetted on
     (spec 4.3 rechecks the current search version only)."""
     current = search_version(get_detector(sig.detector), th)
@@ -387,7 +389,7 @@ def revet(lc: LightCurve, target: Target, th: Thresholds, sig: Signal, ladder: L
         raise ValueError(f"signal of search version {sig.detector_version}, not the current {current}: "
                          "the recheck re-vets only the current search version")
     lc.meta.setdefault("target_id", target.target_id)
-    fn, fn_alt, fn_detrended = revet_flux(lc, th, sig)
+    fn, fn_alt, fn_detrended = revet_flux(lc, th, sig) if flux is None else flux
     bundle = _bundle(lc, target, th, fn, fn_alt, fn_detrended, store, _stamped_fetch(fetch, target.target_id))
     return ladder.run(sig, _vetting_bundle(bundle, sig), on_result=on_result)
 
@@ -523,7 +525,7 @@ _cpu_pool, _terminate_workers = cpu_pool, terminate_workers     # the former pri
 
 def run(source, store: Store, blob: Blob, settings: Settings, filter: dict, detector_name: str = "box_dip",
         max_targets: int | None = None, progress=None, with_novelty: bool = True, fetch_module: str | None = None,
-        stop_requested: Callable[[], bool] | None = None) -> dict:
+        stop_requested: Callable[[], bool] | None = None, recheck: bool = True) -> dict:
     """Bounded two-pool scheduler: at most 2*workers_io fetches (fetched light curves waiting for a CPU slot
     included) and 2*workers_cpu CPU jobs are in flight, so memory and disk stay flat however long the sweep.
 
@@ -531,7 +533,10 @@ def run(source, store: Store, blob: Blob, settings: Settings, filter: dict, dete
     exist). Once it answers True no further fetch is started; every target already fetched or being fetched is still
     vetted and written, and the summary carries ``"stopped": "graceful"``. Nothing is left 'running' for the next
     sweep to supersede. An exception (Ctrl+C a second time, a disk budget breach) is the hard stop: in-flight work is
-    dropped and the interrupted runs are superseded when redone."""
+    dropped and the interrupted runs are superseded when redone.
+
+    ``recheck`` runs the stage-2 recheck (``skysift.recheck``) after the sweep, with the sweep's search version and
+    fetch and without the pixel stage, and puts its report under ``summary["recheck"]``; a stopped sweep skips it."""
     det = get_detector(detector_name)
     if stop_requested is None:
         stop_path = stop_request_path(settings.data_dir)
@@ -663,4 +668,20 @@ def run(source, store: Store, blob: Blob, settings: Settings, filter: dict, dete
         raise
     io_pool.shutdown(); workers.shutdown()
     summary["seconds"] = time.time() - start
+    if recheck and not summary.get("stopped"):
+        summary["recheck"] = _recheck_after_sweep(store, blob, settings, fetch_module, version, with_novelty)
     return summary
+
+
+def _recheck_after_sweep(store: Store, blob: Blob, settings: Settings, fetch_module: str | None, version: str,
+                         with_novelty: bool) -> dict:
+    """The stage-2 recheck at the end of a sweep: the same fetch as the sweep's rungs, its search version, no pixel
+    files. The sweep's results are committed by now, so a recheck that crashes is logged and reported, never raised."""
+    from skysift import recheck as stage2  # imported here: the recheck module imports this one
+    fetch = importlib.import_module(fetch_module).fetch if fetch_module else net.fetch
+    try:
+        return stage2.recheck(store, blob, settings, fetch=fetch, pixels=False, detector_version=version,
+                              with_novelty=with_novelty).as_dict()
+    except Exception as e:
+        log.exception("the recheck after the sweep failed")
+        return {"error": repr(e)}

@@ -141,8 +141,11 @@ def run(source: str = typer.Option(...), gmag_max: float = 19.0,
         max_period: float | None = typer.Option(None, help="Override the maximum search period (days)."),
         periodogram: str | None = typer.Option(None, "--periodogram",
                                                help="Store the SDE envelope per target: all (default), signals, off."),
+        no_recheck: bool = typer.Option(False, "--no-recheck",
+                                        help="Skip the stage-2 recheck of open signals after the sweep."),
         verbose: bool = False):
-    """Sweep a source: fetch, detect, vet, store, release files."""
+    """Sweep a source: fetch, detect, vet, store, release files; then recheck the open signals (stage 2, without the
+    pixel stage) unless --no-recheck."""
     logging.basicConfig(level=logging.INFO if verbose else logging.WARNING,
                         format="%(asctime)s %(levelname)s %(name)s %(message)s")
     console = _console(stderr=True)
@@ -170,7 +173,7 @@ def run(source: str = typer.Option(...), gmag_max: float = 19.0,
                                progress=lambda sm: _plain(
                                    console, f"processed {sm['processed']} signals {sm['signals']} outcomes {sm['outcomes']}",
                                    end="\r"),
-                               stop_requested=interrupt.check)
+                               stop_requested=interrupt.check, recheck=not no_recheck)
     except DiskBudgetExceeded as e:
         # an operator condition, not a crash: the work done so far on stdout, a plain message, exit code 3
         if getattr(e, "summary", None) is not None: _plain(_console(), jsonutil.dumps(e.summary, indent=1))
@@ -181,6 +184,17 @@ def run(source: str = typer.Option(...), gmag_max: float = 19.0,
     if summary.get("stopped"):
         _plain(console, "\nstopped early: the same command resumes with the targets not yet done")
     _plain(_console(), jsonutil.dumps(summary, indent=1))
+    if summary.get("recheck") is not None:
+        _plain(console, f"recheck: {_recheck_line(summary['recheck'])}")
+
+
+def _recheck_line(report: dict) -> str:
+    """One line for a recheck report: signals considered, the steps that ran and the outcomes that occurred."""
+    if "error" in report:
+        return f"failed, {report['error']}"
+    steps = ", ".join(f"{k} {v}" for k, v in report.get("steps", {}).items() if v) or "no step ran"
+    outcomes = ", ".join(f"{k} {v}" for k, v in report.get("outcomes", {}).items() if v) or "none"
+    return f"considered {report.get('considered', 0)}; steps: {steps}; outcomes: {outcomes}"
 
 
 @app.command()
@@ -279,6 +293,26 @@ def dossier(target: str = typer.Option(..., "--target", help="The target id, e.g
         _console().print(t)
     else:
         _plain(_console(), jsonutil.dumps(report, indent=1))
+
+
+_SIGNAL_IDS = typer.Option(None, "--signal-id", help="Recheck only this signal (repeat for several).")
+
+
+@app.command("recheck")
+def recheck_command(signal_id: list[int] | None = _SIGNAL_IDS,
+                    no_pixels: bool = typer.Option(False, "--no-pixels", help="Leave out the pixel stage."),
+                    verbose: bool = False):
+    """Stage 2: recheck the undetermined signals and stage-1 candidates of the current search version that no reviewer
+    has decided on (ladder re-vet, half-period re-vet, catalogue retry, pixel stage). Prints the report as JSON."""
+    from skysift import net
+    from skysift import recheck as stage2
+    logging.basicConfig(level=logging.INFO if verbose else logging.WARNING,
+                        format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    console = _console(stderr=True)
+    s, store, blob = _ctx()
+    rep = stage2.recheck(store, blob, s, fetch=net.fetch, signal_ids=signal_id or None, pixels=not no_pixels,
+                         log=lambda text: _plain(console, text))
+    _plain(_console(), jsonutil.dumps(rep.as_dict(), indent=1))
 
 
 @app.command()

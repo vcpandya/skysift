@@ -311,3 +311,49 @@ def test_inject_report_prints_the_table(tmp_path):
     assert r.exit_code == 0, r.output
     assert "1+aaaa0000" in r.stdout and "nominal SNR" in r.stdout and "red-noise SNR" in r.stdout and "0-5" in r.stdout
     assert CliRunner().invoke(app, ["inject-report", str(tmp_path / "missing.jsonl")]).exit_code != 0
+
+
+class _EmptySource:
+    """A source with no targets: the sweep has nothing to fetch, so no worker process starts."""
+    name = "fake"
+
+    def list_targets(self, flt):
+        return []
+
+
+@pytest.fixture
+def cli_env(settings, monkeypatch):
+    from skysift import cli
+    monkeypatch.setattr(cli, "_source", lambda name, store, blob: _EmptySource())
+    return settings
+
+
+runner = CliRunner()
+
+
+def test_recheck_command_prints_a_report(cli_env):
+    r = runner.invoke(app, ["recheck", "--no-pixels"])
+    assert r.exit_code == 0 and '"considered"' in r.stdout
+    assert json.loads(r.stdout)["considered"] == 0
+
+
+def test_recheck_command_passes_signal_ids_and_pixels(cli_env, monkeypatch):
+    from skysift.recheck import RecheckReport
+    seen = {}
+    monkeypatch.setattr("skysift.recheck.recheck", lambda *a, **k: seen.update(k) or RecheckReport(considered=2))
+    r = runner.invoke(app, ["recheck", "--signal-id", "4", "--signal-id", "9"])
+    assert r.exit_code == 0, r.output
+    assert seen["signal_ids"] == [4, 9] and seen["pixels"] is True and json.loads(r.stdout)["considered"] == 2
+    runner.invoke(app, ["recheck", "--no-pixels"])
+    assert seen["signal_ids"] is None and seen["pixels"] is False
+
+
+def test_run_calls_the_recheck_unless_disabled(cli_env, monkeypatch):
+    from skysift.recheck import RecheckReport
+    calls = []; monkeypatch.setattr("skysift.recheck.recheck", lambda *a, **k: calls.append(k) or RecheckReport())
+    r = runner.invoke(app, ["run", "--source", "fake", "--limit", "1"]); assert calls
+    assert r.exit_code == 0, r.output
+    assert calls[0]["pixels"] is False and json.loads(r.stdout)["recheck"]["considered"] == 0
+    assert "recheck: considered 0" in r.stderr
+    r = runner.invoke(app, ["run", "--source", "fake", "--limit", "1", "--no-recheck"]); assert len(calls) == 1
+    assert r.exit_code == 0 and "recheck" not in json.loads(r.stdout) and "recheck:" not in r.stderr
