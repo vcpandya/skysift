@@ -12,8 +12,8 @@ can print the whole table on the Expert level.
 Without the Gaia neighbour list (the cone query failed, or the target has no G) the BEB term cannot be judged, so the
 result says "not computed (no neighbour data)" and carries no value outward (``reported_value`` is None).
 
-Pure arithmetic over ``priors``; no I/O. The numbers are provisional until the sign-off gate of spec 4.2
-(``SIGNED_OFF``)."""
+Pure arithmetic over ``priors``; no I/O. The numbers were provisional until the sign-off gate of spec 4.2
+(``SIGNED_OFF``, 21 October 2026)."""
 from __future__ import annotations
 
 import math
@@ -26,14 +26,14 @@ from skysift.priors import (
     ECCENTRICITY_ALLOWANCE,
     F_BIN,
     F_EB,
-    PIXEL_ARCSEC,
+    NO_PIXEL_CONFUSION_ARCSEC,
     PSF_BLEND_ARCSEC,
     binary_period_fraction,
     planet_prior,
     spectral_class,
 )
 
-SIGNED_OFF = False          # flipped after the review of spec 4.2; the tile says "provisional" while False
+SIGNED_OFF = True           # the review of spec 4.2 (21 October 2026); the tile says "provisional" while False
 
 FALLBACK_RADIUS = 0.5       # Rsun, when the star has no radius
 FALLBACK_MASS = 0.5         # Msun, when the star has no mass
@@ -216,7 +216,7 @@ def _exclusion(s: float, r_c: float, sigma_c: float | None) -> float:
 
 def _background(inputs: FppInputs) -> tuple[ScenarioWeight, float, tuple[dict, ...]]:
     sigma_c = inputs.centroid_sigma_arcsec
-    r_c = max(3 * sigma_c, CONFUSION_FLOOR_ARCSEC) if sigma_c is not None else PIXEL_ARCSEC
+    r_c = max(3 * sigma_c, CONFUSION_FLOOR_ARCSEC) if sigma_c is not None else NO_PIXEL_CONFUSION_ARCSEC
     rows, bright_x = [], []
     for n in inputs.neighbours:
         ratio = 10 ** (-0.4 * (n.gmag - inputs.gmag))

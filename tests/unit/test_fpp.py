@@ -36,14 +36,17 @@ def test_four_scenarios_sum_to_the_fpp():
     assert f.value == pytest.approx((w["BEB"] + w["EB-P"] + w["EB-2P"]) / sum(w.values()))
     assert 0 <= f.value <= 0.6
     # PL by hand. f_pl: the Dressing grid's bin centres around (2.61 Re, 40.29 d) are 2.236/2.739 Re and
-    # 33.13/109.8 d; u = (log 2.61 - log 2.236) / (log 2.739 - log 2.236) = 0.763, t = 0.163; rows 2.0-2.5 Re
-    # (27.58, 18.08 percent) -> 0.2603 and 2.5-3.0 Re (14.51, 8.61 percent) -> 0.1355; f_pl = 0.237 * 0.2603 +
-    # 0.763 * 0.1355 = 0.1651. R_star / a: a = (0.495 * (40.29 / 365.25)^2)^(1/3) = 0.1819 AU, R/a = 0.498 *
-    # 0.00465047 / 0.1819 = 0.01273. D_shape: T14_fit = 40.29 / pi * asin(sqrt(1.048^2 - 0.885^2) / 44) = 0.1636 d
-    # against T14_circ = 0.1632 d, z = 0.007, D_shape = 1.000. Weight 0.1651 * 0.01273 * 1.000 = 2.10e-3.
+    # 33.13/109.8 d; u = (log 2.61 - log 2.236) / (log 2.739 - log 2.236) = 0.763, t = 0.163. The cells as planets
+    # per star per dex^2 (cell / (0.520 dex of period x 0.0969 or 0.0792 dex of radius)): 2.0-2.5 Re 27.58 -> 5.470
+    # and 18.08 -> 3.583, 2.5-3.0 Re 14.51 -> 3.522 and 8.61 -> 2.088; bilinear 0.237 * (0.837 * 5.470 + 0.163 *
+    # 3.583) + 0.763 * (0.837 * 3.522 + 0.163 * 2.088) = 3.733 per dex^2; times the window 0.602 x 0.269 = 0.1619
+    # dex^2 gives f_pl = 0.6042 (21 October 2026 ruling: one density scale and one window for both grids).
+    # R_star / a: a = (0.495 * (40.29 / 365.25)^2)^(1/3) = 0.1819 AU, R/a = 0.498 * 0.00465047 / 0.1819 = 0.01273.
+    # D_shape: T14_fit = 40.29 / pi * asin(sqrt(1.048^2 - 0.885^2) / 44) = 0.1636 d against T14_circ = 0.1632 d,
+    # z = 0.007, D_shape = 1.000. Weight 0.6042 * 0.01273 * 1.000 = 7.691e-3.
     assert pl.weight == pytest.approx(pl.prior * pl.geometric * pl.data)
-    assert pl.weight == pytest.approx(0.1651 * 0.01273 * 1.0, rel=0.2)
-    assert pl.prior == pytest.approx(0.1651, rel=0.01) and pl.geometric == pytest.approx(0.01273, rel=0.01)
+    assert pl.weight == pytest.approx(0.6042 * 0.01273 * 1.0, rel=0.02)
+    assert pl.prior == pytest.approx(0.6042, rel=0.01) and pl.geometric == pytest.approx(0.01273, rel=0.01)
     assert all(n["exclusion"] < 1e-6 for n in f.neighbours)        # k = 24.5 and 45.5 beyond r_c = 2.0"
     # BEB geometric: an equal-mass solar pair (2.0 Msun) at 2P = 80.58 d, a = (2.0 * (80.58 / 365.25)^2)^(1/3) =
     # (2.0 * 0.048671)^(1/3) = 0.46001 AU, (R1 + R2) / a = 2 * 0.00465047 / 0.46001 = 0.020219
@@ -68,29 +71,32 @@ def test_four_scenarios_sum_to_the_fpp():
     assert eb_2p.data == pytest.approx(0.01123, rel=0.01) and eb_2p.factors["S_oe"] == eb_2p.data
     assert eb_p.factors["S_v"] == eb_2p.factors["S_v"] == 1.0
     assert eb_p.weight == pytest.approx(5.259e-6, rel=0.01) and eb_2p.weight == pytest.approx(1.2675e-6, rel=0.01)
-    # FPP: (BEB ~1e-134 + 5.259e-6 + 1.2675e-6) / (PL 2.1012e-3 + 6.526e-6) = 3.096e-3
-    assert f.value == pytest.approx(3.096e-3, rel=0.01)
+    # FPP: (BEB ~1e-134 + 5.259e-6 + 1.2675e-6) / (PL 7.6904e-3 + 6.526e-6) = 8.478e-4
+    assert f.value == pytest.approx(8.478e-4, rel=0.01)
     # spec 4.2 as first written, kept for the sign-off: one EB at 2P with the prior in full and S_sec x S_oe,
-    # 0.010742 * 0.010507 * 3.978e-4 = 4.490e-8, so (4.490e-8) / (2.1012e-3 + 4.490e-8) = 2.137e-5
+    # 0.010742 * 0.010507 * 3.978e-4 = 4.490e-8, so (4.490e-8) / (7.6904e-3 + 4.490e-8) = 5.838e-6
     assert f.product_eb_weight == pytest.approx(4.490e-8, rel=0.01)
-    assert f.product_value == pytest.approx(2.137e-5, rel=0.01)
+    assert f.product_value == pytest.approx(5.838e-6, rel=0.01)
 
 
 def test_an_unlocalized_bright_neighbour_dominates_the_fpp():
-    # Without a pixel stage r_c is 3.98". At its real 10.8" the G 12.8 star is far outside (X = 1e-6) and the G 19.77
-    # star at 7.14" drives BEB (X = 0.052), giving only 0.7 percent; so, as ruled, the G 12.8 star sits at 3.0" here.
+    # Without a pixel stage r_c is two Kepler pixels (7.96", 21 October 2026 ruling): the G 19.77 star at 7.14" is
+    # not excluded at all (X = 1) and the G 12.8 star at 10.8" keeps X = exp(-(10.8 - 7.96)^2 / (2 x 1.3^2)) = 0.092,
+    # so the FPP without pixels is 3.9 percent against 0.085 percent with them: the pixel stage is what the
+    # candidate needs. By hand, X_mean = (1 + 0.092) / 2 = 0.546, BEB = 0.014 x 2 x 0.020219 x 0.546 = 3.09e-4;
+    # with the two on-target EB terms (5.26e-6 + 1.27e-6) FPP = (3.09e-4 + 6.53e-6) / (7.690e-3 + 3.09e-4 +
+    # 6.53e-6) = 0.0394.
     unplaced = compute(no_pixels(base()))
-    assert unplaced.neighbours[0]["exclusion"] > 1e3 * unplaced.neighbours[1]["exclusion"]
+    assert unplaced.neighbours[0]["exclusion"] == 1.0
+    assert unplaced.neighbours[1]["exclusion"] == pytest.approx(0.092, rel=0.02)
+    assert unplaced.value == pytest.approx(0.0394, rel=0.02) and unplaced.value > 40 * compute(base()).value
+    # the G 12.8 star moved inside the two pixels: both neighbours count in full, X_mean = 1, BEB = 5.66e-4, 6.9 percent
     far = dataclasses.replace(base().neighbours[1], sep_arcsec=3.0)
     f = compute(no_pixels(base(neighbours=(base().neighbours[0], far))))
     assert f.label() == "False positive (no pixel data yet)" and not f.pixels
     assert f.neighbours[1]["bright_enough"] and f.neighbours[1]["exclusion"] == 1.0
     assert f.scenarios[1].weight > f.scenarios[2].weight
-    # The ruling asked for f.value > 0.5. The model cannot reach it: a fully unexcluded neighbour adds F_EB x
-    # 2 Rsun / a(2P, 2 Msun) = 0.014 * 0.0202 = 2.8e-4 of weight against PL 2.10e-3. By hand, sum X = 1 + 0.052,
-    # BEB = 0.014 * 0.0202 * 1.052 = 2.98e-4; with the two on-target EB terms (5.26e-6 + 1.27e-6) FPP =
-    # (2.98e-4 + 6.53e-6) / (2.10e-3 + 2.98e-4 + 6.53e-6) = 0.127. Flagged for sign-off.
-    assert f.value == pytest.approx(0.127, rel=0.02)
+    assert f.value == pytest.approx(0.0693, rel=0.02)
 
 
 def test_bright_neighbour_far_from_the_centroid_is_excluded():
@@ -104,10 +110,10 @@ def test_bright_neighbour_far_from_the_centroid_is_excluded():
     assert near["exclusion"] < 1e-6
 
 
-def test_compute_without_pixels_uses_one_pixel_confusion_radius():
+def test_compute_without_pixels_uses_a_two_pixel_confusion_radius():
     f = compute(no_pixels(base()))
-    assert not f.pixels and f.confusion_radius_arcsec == 3.98 and f.label() == "False positive (no pixel data yet)"
-    assert f.neighbours[1]["exclusion"] == pytest.approx(math.exp(-(10.8 - 3.98) ** 2 / (2 * 1.3 ** 2)))
+    assert not f.pixels and f.confusion_radius_arcsec == 7.96 and f.label() == "False positive (no pixel data yet)"
+    assert f.neighbours[1]["exclusion"] == pytest.approx(math.exp(-(10.8 - 7.96) ** 2 / (2 * 1.3 ** 2)))
 
 
 def test_a_deep_secondary_raises_the_eb_weight():
@@ -140,7 +146,7 @@ def test_as_dict_is_json_ready_and_carries_every_factor():
     assert [s["name"] for s in d["scenarios"]] == ["PL", "BEB", "EB-P", "EB-2P"]
     assert "S_sec" in d["scenarios"][2]["factors"] and "S_oe" in d["scenarios"][3]["factors"]
     assert d["neighbours_known"] is True and d["value_without_beb"] is None and d["value"] == compute(base()).value
-    assert d["spec_product"]["value"] == pytest.approx(2.137e-5, rel=0.01)
+    assert d["spec_product"]["value"] == pytest.approx(5.838e-6, rel=0.01)
 
 
 def test_an_unknown_neighbour_list_is_not_computed():
@@ -173,5 +179,5 @@ def test_invalid_inputs_raise(field, value):
 def test_without_pixels_a_stray_centroid_separation_is_ignored():
     f = compute(base(centroid_sigma_arcsec=None))        # neighbours still carry centroid_sep_arcsec
     assert not f.pixels and f.neighbours[1]["s_arcsec"] == 10.8
-    assert f.neighbours[1]["exclusion"] == pytest.approx(math.exp(-(10.8 - 3.98) ** 2 / (2 * 1.3 ** 2)))
+    assert f.neighbours[1]["exclusion"] == pytest.approx(math.exp(-(10.8 - 7.96) ** 2 / (2 * 1.3 ** 2)))
     assert f.value == compute(no_pixels(base())).value

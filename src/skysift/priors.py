@@ -3,12 +3,18 @@
 dwarfs), the eclipsing-binary fraction, the binary fractions and the Raghavan et al. 2010 period distribution, and the
 arcsec scales of the confusion radius. Pure numbers and small lookups; ``fpp`` does the scenario arithmetic.
 
-The FPP numbers built from these priors are provisional until the sign-off gate of spec 4.2: Vikram's review of the
-factor tables of KIC 6146676 and KIC 5689121, after which they become the golden tests.
+The FPP numbers built from these priors were provisional until the sign-off gate of spec 4.2; the factor tables of
+KIC 6146676 and KIC 5689121 were reviewed and signed off on 21 October 2026 (the golden test holds them), with two
+rulings recorded there: the planet prior reads a density per dex over one fixed window, and without pixel data no
+neighbour inside two Kepler pixels is excluded.
 
 The occurrence cells are transcribed from the per-bin tables of the two papers (percent there, planets per star here);
 a cell the paper does not estimate is ``nan`` and is never guessed, and a one-sided upper limit is stored as half its
-value. ``OccurrenceGrid`` fills each ``nan`` from the nearest finite cell along the period axis when it is built."""
+value. ``OccurrenceGrid`` fills each ``nan`` from the nearest finite cell along the period axis when it is built. The
+two grids have different bin widths (a Fressin period bin is about 0.23 dex, a Dressing one 0.52 dex), so a per-bin
+rate is not one scale across the FGK and M routes: ``f_pl`` turns each cell into planets per star per dex of period
+and dex of radius and reads the density at (Rp, P) times one window, a factor of two in period either way and 30
+percent in radius either way (the ``rbin_width`` of vespa, Morton 2012), the same width for both routes."""
 from __future__ import annotations
 
 import math
@@ -33,6 +39,10 @@ F_BIN = {"M": 0.26, "FGK": 0.44}          # Winters et al. 2019; Raghavan et al.
 RAGHAVAN_LOGP = (5.03, 2.28)              # mean and sigma of log10(P/day), Raghavan et al. 2010
 PIXEL_ARCSEC = 3.98
 CONFUSION_FLOOR_ARCSEC = 2.0              # half a Kepler pixel
+NO_PIXEL_CONFUSION_ARCSEC = 2 * PIXEL_ARCSEC   # without pixel data, no neighbour inside two pixels is excluded
+# the planet hypothesis window: within a factor of two of the period either way, within 30 percent of the radius
+PL_PERIOD_WINDOW_DEX = 2 * math.log10(2.0)
+PL_RADIUS_WINDOW_DEX = math.log10(1.3 / 0.7)
 PSF_BLEND_ARCSEC = 1.3                    # KBonus PSF photometry blend scale
 ECCENTRICITY_ALLOWANCE = 0.30
 
@@ -45,6 +55,7 @@ class OccurrenceGrid:
     rate: tuple[tuple[float, ...], ...]   # planets per star per bin, [radius bin][period bin]
     citation: str
     _filled: np.ndarray = field(init=False, repr=False, compare=False)
+    _density: np.ndarray = field(init=False, repr=False, compare=False)   # planets per star per dex^2
     _log_p: np.ndarray = field(init=False, repr=False, compare=False)
     _log_r: np.ndarray = field(init=False, repr=False, compare=False)
 
@@ -53,23 +64,34 @@ class OccurrenceGrid:
         if grid.shape != (len(self.radius_edges) - 1, len(self.period_edges) - 1):
             raise ValueError(f"rate is {grid.shape}, the edges need "
                              f"{(len(self.radius_edges) - 1, len(self.period_edges) - 1)}")
-        filled = grid.copy()
+        width_p = np.diff(np.log10(np.asarray(self.period_edges, float)))
+        width_r = np.diff(np.log10(np.asarray(self.radius_edges, float)))
+        density = grid / np.outer(width_r, width_p)
+        filled, filled_density = grid.copy(), density.copy()
         for i, row in enumerate(grid):
             finite = np.flatnonzero(np.isfinite(row))
             if finite.size == 0: raise ValueError(f"radius bin {i} has no finite cell")
             for j in np.flatnonzero(~np.isfinite(row)):
-                filled[i, j] = row[finite[np.argmin(np.abs(finite - j))]]   # nearest; the shorter period on a tie
+                k = finite[np.argmin(np.abs(finite - j))]              # nearest; the shorter period on a tie
+                filled[i, j], filled_density[i, j] = row[k], density[i, k]   # the density is held, not the count
         object.__setattr__(self, "_filled", filled)
+        object.__setattr__(self, "_density", filled_density)
         object.__setattr__(self, "_log_p", _log_centres(self.period_edges))
         object.__setattr__(self, "_log_r", _log_centres(self.radius_edges))
 
-    def f_pl(self, rp: float, period: float) -> float:
-        """The rate at (rp, period): bilinear in (log10 P, log10 Rp) between the bin centres, held at the outermost
-        centres beyond them; a blank cell takes its nearest finite period neighbour."""
+    def density(self, rp: float, period: float) -> float:
+        """Planets per star per dex of period and dex of radius at (rp, period): bilinear in (log10 P, log10 Rp)
+        between the bin centres, held at the outermost centres beyond them; a blank cell takes its nearest finite
+        period neighbour."""
         i, u = _bracket(self._log_r, math.log10(rp))
         j, t = _bracket(self._log_p, math.log10(period))
-        g = self._filled
+        g = self._density
         return float((1 - u) * ((1 - t) * g[i, j] + t * g[i, j + 1]) + u * ((1 - t) * g[i + 1, j] + t * g[i + 1, j + 1]))
+
+    def f_pl(self, rp: float, period: float) -> float:
+        """Planets per star within the planet window around (rp, period): the density there times
+        ``PL_PERIOD_WINDOW_DEX x PL_RADIUS_WINDOW_DEX``, the same window on both grids."""
+        return self.density(rp, period) * PL_PERIOD_WINDOW_DEX * PL_RADIUS_WINDOW_DEX
 
     def total(self, period_max: float, rp_min: float = 0.0, rp_max: float = math.inf) -> float:
         """Planets per star summed over the bins lying wholly at periods up to ``period_max`` and radii in
@@ -138,6 +160,11 @@ CITATIONS = {
     "M_TEFF_MAX": DRESSING_2015,
     "PIXEL_ARCSEC": "Kepler plate scale, 3.98 arcsec per pixel (Kepler Instrument Handbook)",
     "CONFUSION_FLOOR_ARCSEC": "half a Kepler pixel: the Gaussian PSF fit does not separate closer sources (spec 4.2)",
+    "NO_PIXEL_CONFUSION_ARCSEC": "two Kepler pixels: a neighbour 1.8 pixels away leaked 4.4 percent of its dip into "
+                                 "the target's KBonus photometry (KIC 5689121 and 5689116, 20 October 2026), so "
+                                 "without pixel data no neighbour inside two pixels is excluded (spec 4.2)",
+    "PL_PERIOD_WINDOW_DEX": "a factor of two in period either way, the width of the binary period window (spec 4.2)",
+    "PL_RADIUS_WINDOW_DEX": f"30 percent in radius either way, the rbin_width of vespa ({MORTON_2012})",
     "PSF_BLEND_ARCSEC": "KBonus Kepler PSF photometry blend scale (spec 4.2)",
     "ECCENTRICITY_ALLOWANCE": "SkySift allowance for the duration of an eccentric orbit (spec 4.2)",
     # the scenario model and the references the dossier's stellar and planet parameters rest on

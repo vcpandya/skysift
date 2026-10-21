@@ -5,7 +5,7 @@ def test_defaults_load_from_yaml(tmp_path, monkeypatch):
     monkeypatch.delenv("SKYSIFT_RETENTION", raising=False)
     s = load_settings()
     assert s.retention == "stream"
-    assert s.thresholds.sde_min == 11.0
+    assert s.thresholds.sde_min == 12.0
     assert s.thresholds.min_events == 3
 
 

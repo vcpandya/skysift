@@ -45,7 +45,7 @@ def test_every_module_constant_is_cited_and_the_brief_strings_are_verbatim():
         assert text in CITATIONS.values()
     assert OCCURRENCE["FGK"].citation == "Fressin, F. et al. 2013, ApJ 766, 81"
     assert OCCURRENCE["M"].citation == "Dressing, C. D. and Charbonneau, D. 2015, ApJ 807, 45"
-    assert "provisional" in priors.__doc__ and chr(0x2014) not in priors.__doc__
+    assert "signed off on 21 October 2026" in priors.__doc__ and chr(0x2014) not in priors.__doc__
 
 
 def test_constant_values():
@@ -85,21 +85,45 @@ def test_grid_shapes_and_units():
     assert math.isnan(fgk.rate[0][8]) and math.isnan(m.rate[0][3])     # blank cells stay nan, never guessed
 
 
-def test_f_pl_returns_the_cell_value_at_a_bin_centre():
+WINDOW = 2 * math.log10(2) * math.log10(1.3 / 0.7)                 # dex^2: P/2..2P by 0.7..1.3 Rp
+
+
+def density(rate: float, p_lo: float, p_hi: float, r_lo: float, r_hi: float) -> float:
+    """A paper cell (planets per star in the bin) as planets per star per dex of period and dex of radius."""
+    return rate / (math.log10(p_hi / p_lo) * math.log10(r_hi / r_lo))
+
+
+def test_f_pl_is_the_cell_density_times_the_window_at_a_bin_centre():
     g = OCCURRENCE["M"]
     p = math.sqrt(5.5 * 18.2); r = math.sqrt(2.0 * 2.5)
-    assert g.f_pl(r, p) == pytest.approx(0.1873)
+    d = density(0.1873, 5.5, 18.2, 2.0, 2.5)                        # 18.73 percent in a 0.52 x 0.097 dex cell
+    assert g.density(r, p) == pytest.approx(d)
+    assert g.f_pl(r, p) == pytest.approx(d * WINDOW)
+    assert g.f_pl(r, p) == pytest.approx(0.602, rel=1e-3)           # by hand: 3.719 per dex^2 x 0.1619 dex^2
     p2 = math.sqrt(18.2 * 60.3)
     mid = g.f_pl(r, math.sqrt(p * p2))                             # halfway in log P between two centres
-    assert mid == pytest.approx((0.1873 + 0.2758) / 2)
+    assert mid == pytest.approx((d + density(0.2758, 18.2, 60.3, 2.0, 2.5)) / 2 * WINDOW)
+    assert priors.PL_PERIOD_WINDOW_DEX == pytest.approx(2 * math.log10(2))
+    assert priors.PL_RADIUS_WINDOW_DEX == pytest.approx(math.log10(1.3 / 0.7))
+
+
+def test_the_two_grids_read_on_one_scale():
+    # a cell of the same planets-per-star rate in a Fressin bin (0.23 x 0.30 dex) and a Dressing bin (0.52 x 0.08
+    # dex) must not give the same f_pl: the density differs by the ratio of the bin areas
+    fgk, m = OCCURRENCE["FGK"], OCCURRENCE["M"]
+    rf = fgk.density(math.sqrt(2 * 4), math.sqrt(17 * 29)) / fgk.rate[2][5]
+    rm = m.density(math.sqrt(2.0 * 2.5), math.sqrt(5.5 * 18.2)) / m.rate[3][2]
+    assert rf == pytest.approx(1 / (math.log10(29 / 17) * math.log10(4 / 2)))
+    assert rm == pytest.approx(1 / (math.log10(18.2 / 5.5) * math.log10(2.5 / 2.0)))
 
 
 def test_a_blank_cell_holds_its_nearest_finite_period_neighbour():
     fgk, m = OCCURRENCE["FGK"], OCCURRENCE["M"]
-    # Earths beyond 85 d: the 50-85 d value (3.46 percent) held out to the last edge
-    assert fgk.f_pl(math.sqrt(0.8 * 1.25), math.sqrt(245 * 418)) == pytest.approx(0.0346)
-    # M dwarfs of 0.5-1 Re beyond 18.2 d: the 5.5-18.2 d value held
-    assert m.f_pl(math.sqrt(0.5 * 1.0), 100.0) == pytest.approx(0.2059)
+    # Earths beyond 85 d: the 50-85 d density (3.46 percent over that cell) held out to the last edge
+    assert fgk.f_pl(math.sqrt(0.8 * 1.25), math.sqrt(245 * 418)) == pytest.approx(
+        density(0.0346, 50, 85, 0.8, 1.25) * WINDOW)
+    # M dwarfs of 0.5-1 Re beyond 18.2 d: the 5.5-18.2 d density held
+    assert m.f_pl(math.sqrt(0.5 * 1.0), 100.0) == pytest.approx(density(0.2059, 5.5, 18.2, 0.5, 1.0) * WINDOW)
     for g in (fgk, m):
         for rp in (0.6, 1.1, 1.7, 3.3, 5.0, 12.0):
             for period in (0.6, 3.0, 20.0, 150.0, 400.0):

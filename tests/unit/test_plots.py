@@ -43,7 +43,7 @@ def test_build_plots_shapes_and_fold_centres_the_dip():
     assert out["seasons"] == {"season": [0, 1], "depth_ppm": [2900.0, 3100.0], "err_ppm": [150.0, 160.0],
                               "mean_ppm": pytest.approx(2993.6, abs=1.0)}
     pg = out["periodogram"]
-    assert pg["sde_min"] == 11.0 and pg["detected_period"] == 7.3 and pg["aliases"] == [3.65, 14.6, 21.9]
+    assert pg["sde_min"] == 12.0 and pg["detected_period"] == 7.3 and pg["aliases"] == [3.65, 14.6, 21.9]
     assert len(pg["period"]) == 256 and pg["systematic_periods"] == [93.0, 46.5, 372.5, 186.25]
     text = jsonutil.dumps(out)
     assert "NaN" not in text and json.loads(text)["periodogram"]["sde"][0] is None

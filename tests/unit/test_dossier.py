@@ -461,7 +461,7 @@ def test_stored_fpp_inputs_recompute_the_stored_value(env):
     inputs = data["fpp"]["inputs"]
     assert len(inputs["neighbours"]) == 2 and isinstance(inputs["neighbours"][0], dict)
     assert compute(FppInputs(**inputs)).value == pytest.approx(data["fpp"]["value"], rel=1e-6)
-    assert data["fpp"]["signed_off"] is False
+    assert data["fpp"]["signed_off"] is True
 
 
 def test_a_released_light_curve_is_not_fetched_again(env):
@@ -571,7 +571,7 @@ def test_hand_built_values_agree_within_errors():
     # vanishes and the on-target EB term is killed by the secondary and odd/even limits, so KIC 6146676 reads
     # "under 1 percent"; the number is a sign-off item (ledger), and this test pins reproducibility, not the band
     assert gen["fpp"]["value"] == pytest.approx(compute(FppInputs(**gen["fpp"]["inputs"])).value, rel=1e-6)
-    assert gen["fpp"]["signed_off"] is False
+    assert gen["fpp"]["signed_off"] is True
     # the stored centroid error is the one the code computes from the stored rung 5 seasons
     est, inputs = centroid_estimate(rung5["metrics"]), gen["fpp"]["inputs"]
     assert (est.sigma_stat, est.sigma_scatter, est.sigma) == pytest.approx(

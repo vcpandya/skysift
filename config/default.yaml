@@ -6,7 +6,7 @@ workers_cpu: 2
 retention: stream
 store_periodogram: all
 thresholds:
-  sde_min: 11.0
+  sde_min: 12.0
   snr_min: 7.0
   min_events: 3
   duration_ratio_min: 0.3

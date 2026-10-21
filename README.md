@@ -94,7 +94,7 @@ Pages, in the order of the navigation, and two modes: **simple** (the default) e
   decision history.
 * **Dossiers**: one tile per candidate in the final set (stage 2 and reviewer-approved signals; stage 1 on demand),
   each with its two probability pills (**False alarm** from the null calibration, **False positive** from the
-  three-scenario estimate, labelled provisional until the priors are signed off). A tile opens the target's dossier
+  scenario estimate of spec 4.2, whose priors were signed off on 21 October 2026). A tile opens the target's dossier
   (`/dossiers/<target>`): the signal, whether it repeats, the checks, which star is dimming (the difference images of
   every season), the star and the planet from Gaia, an illustration to scale, the caveats and how to reproduce it. The
   page can generate or refresh the dossier, download it as one standalone HTML file, and build the submission pack
@@ -133,8 +133,8 @@ the folder (default `<data_dir>/packs/<target>/<UTC date>/`). The ExoFOP files a
 `<target>_<yyyymmdd>_<content>`; `--tic` puts the star's TIC id in the ExoFOP upload note and `--tag` starts the
 description of the suggested Data Tag. With `--zenodo` it also creates a Zenodo draft deposition holding the zip on the
 sandbox, with the personal access token in `SKYSIFT_ZENODO_TOKEN`. `--zenodo-live` makes it on zenodo.org instead, and
-is refused before a reviewer approves the candidate and while the false-positive estimate is provisional (spec 4.2's
-factor tables not yet signed off). The draft is never published: publishing is your click on
+is refused before a reviewer approves the candidate, and while `fpp.SIGNED_OFF` is False (the factor tables of
+spec 4.2 were signed off on 21 October 2026). The draft is never published: publishing is your click on
 Zenodo. With `--zenodo` and no token the pack is still built, without a deposition, and the command exits with code 2.
 
 The one-time check of the generated numbers against the hand-built KIC 6146676 study is
@@ -197,6 +197,18 @@ The rule used on 17 October 2026: `sde_min` sits above the maximum scrambled-nul
 with margin. The scrambled row is pure noise, so its tail is the false-alarm rate on a quiet star. The inverted row
 keeps systematics and variability; its tail shows what pre-whitening and the later rungs must still reject. On 30
 curves the scrambled maximum was 10.1, hence the interim value of 11.
+
+The rule used on 21 October 2026, on the 999-curve pilot at the production window (search version 5+42061727):
+`sde_min` is the lowest level at which the scrambled null gives at most 1 percent of curves, the 1 percent
+false-alarm convention of Hippke and Heller (2019) for transit searches. The scrambled row gave 18 of 999 at 11 and 8
+of 999 at 12 (3 at 15), so the default is 12. The cost in completeness, from the injection set
+(`inject_recovery.jsonl`, 30 injections per SNR): 2 of 30 recoveries at SNR 10 and 1 of 30 at SNR 15 sit between 11
+and 12. The inverted row hardly falls with the level (114 at 11, 96 at 12, 65 at 15): its tail is strong systematic
+features (inverted flares and ramps) that no threshold removes and rungs 2 to 5 must reject. `sde_min` is not part
+of the search version, so changing it keeps the calibration file and the stored signals valid; a stage 1 signal below
+the new value fails rung 1 at its next recheck. The false-alarm probability on a dossier counts both null kinds
+together (the conservative reading) and shows the split, so a candidate whose only null hits are inverted curves can
+be read either way.
 
 ## Production sweep checklist
 

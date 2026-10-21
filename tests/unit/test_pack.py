@@ -397,7 +397,7 @@ def test_note_is_aastex7_with_an_abstract_inside_the_rnaas_limits(env_with_dossi
     assert r"\uat{Transit photometry}{1709}" in tex
     assert tex.count(r"\begin{document}") == 1                          # the frame never names the begin line
     abstract = tex.split(r"\begin{abstract}")[1].split(r"\end{abstract}")[0]
-    assert "1 in 440" in abstract and "under 1 percent" in abstract and "provisional" in abstract
+    assert "1 in 440" in abstract and "under 1 percent" in abstract and "provisional" not in abstract   # signed off
     assert re.search(r"the dip is nearer this star than its brightest neighbour in \d of \d "
                      r"(observing seasons|seasons that voted)\.", abstract)
     assert "lost light" not in tex and "on this star in" not in tex
@@ -409,7 +409,7 @@ def test_note_is_aastex7_with_an_abstract_inside_the_rnaas_limits(env_with_dossi
     assert {"mann2015", "mann2019", "kopparapu2013", "lindegren2021", "dressing2015", "kbonus", "kbonushlsp"} <= items
     assert "fressin2013" not in items                                         # an M dwarf: the Dressing grid only
     assert "AJ, 166, 265, doi:10.3847/1538-3881/ad0727" in tex and "doi:10.17909/7jbr-w430" in tex
-    assert "40.290" in tex and "1 in 440" in tex and "provisional" in tex
+    assert "40.290" in tex and "1 in 440" in tex and "provisional" not in tex
     assert re.search(r"2\.61\$\^\{\+0\.09\}_\{-0\.08\}\$", tex)                 # Rp with its asymmetric errors
     assert "3,653$^{+90}_{-73}$ K" in tex                                      # thousands as the dossier prints
 
@@ -445,12 +445,12 @@ def test_note_escapes_latex_characters(env_with_dossier):
     assert r"KIC 6146676 \& 50\% of\_it" in tex
 
 
-def test_every_pack_text_gives_both_probabilities_and_says_provisional(env_with_dossier):
+def test_every_pack_text_gives_both_probabilities_without_the_provisional_mark(env_with_dossier):
     rep = _build(env_with_dossier)
     fap, fpp = env_with_dossier.data["fap"]["words"], env_with_dossier.data["fpp"]["words"]
     for name in ("README.md", "note/note.tex", "exofop/note.txt", "archive_email.txt"):
         text = (rep.out_dir / name).read_text(encoding="utf-8")
-        assert fap in text and fpp in text and "provisional" in text, name
+        assert fap in text and fpp in text and "provisional" not in text, name       # signed off 21 October 2026
         assert EM_DASH not in text and "discover" not in text.lower() and not ISE.search(text), name
 
 
@@ -678,7 +678,7 @@ def test_a_live_draft_waits_for_the_fpp_sign_off(env_with_dossier, fake_session,
     from skysift import fpp
     env = env_with_dossier
     _approve(env)
-    assert fpp.SIGNED_OFF is False
+    monkeypatch.setattr(fpp, "SIGNED_OFF", False)                # the gate before the sign-off
     live = ZenodoClient("t", sandbox=False, session=fake_session)
     with pytest.raises(PackError, match="provisional until spec 4.2's factor tables are signed off"):
         _build(env, zenodo=live)
@@ -749,6 +749,8 @@ def test_cli_pack_prints_json_and_records_the_path(cli_env, monkeypatch, tmp_pat
 
 
 def test_cli_pack_refuses_zenodo_live_before_the_fpp_sign_off(cli_env, monkeypatch):
+    from skysift import fpp
+    monkeypatch.setattr(fpp, "SIGNED_OFF", False)
     monkeypatch.setenv("SKYSIFT_ZENODO_TOKEN", "a-secret")
     _approve(cli_env)
     r = runner.invoke(app, ["pack", "--target", STAGE2_TARGET, "--zenodo-live"])
