@@ -1,0 +1,474 @@
+"""Errors on the ephemeris and on the transit shape, the numbers a referee asks for before anything else.
+
+The period and the epoch come from the times of the single transits. Each event is timed by sliding a fixed template
+across a window of plus and minus three durations and taking the shift that minimises the chi-square of the whitened
+flux: the rung 2 uniform-disc model when its fit is ok, else the search box of the stored depth and duration. The
+template is averaged over each cadence's exposure (the median time step, 29.4 minutes for Kepler long cadence), as
+Kipping 2010 asks of any model compared with integrated photometry; a box sampled at single instants makes the
+chi-square a staircase in the shift, with no curvature to read an error from. The shift runs over a one minute grid,
+the minimum is refined by a parabola through the lowest grid point and its two neighbours, and the error is the
+half-width of that parabola at a chi-square one above the minimum, inflated by the square root of the reduced
+chi-square when that exceeds one. The per-point error is the robust scatter of the window's points beyond one duration.
+A weighted straight line through the mid-times gives the period, the reference time and their covariance, with the
+reference epoch at the error-weighted centre of the series, where its error is smallest, and the error of a prediction
+grows with the distance from that centre (Deeg 2015). Events more than five median absolute deviations from a first
+line are dropped and the line is fitted again (Holczer et al. 2016).
+
+The radius ratio, impact parameter, a/R*, duration and model depth carry errors from a bootstrap over whole transits:
+the events are drawn with replacement, their points are concatenated and the uniform-disc fit is run on each
+resample (Schmitt et al. 2014, the Planet Hunters practice). The point value stays the rung 2 fit; the errors are the
+distances from it to the 16th and 84th percentiles of the resamples. Without a fit the box depth keeps its per-event
+error and the box duration gets percentiles from the width that maximises the depth over its error on each resample.
+
+Odd and even depths are the weighted means of the per-event box depths of each parity, and the secondary block turns
+rung 2's phase 0.5 depth into a 3-sigma limit and a geometric-albedo limit. Pure numerics; no I/O."""
+from __future__ import annotations
+
+import math
+from dataclasses import dataclass
+
+import numpy as np
+
+from skysift.lc.ops import event_depths, measure_at
+from skysift.lc.transit_model import fit_transit, uniform_disc_flux
+
+BKJD_OFFSET = 2454833.0
+EVENT_IN_MIN, EVENT_OUT_MIN, EVENT_OUT_SIDE_MIN = 3, 6, 2     # the pixel rung's event rules
+GRID_STEP_MIN = 1.0            # minutes, the shift grid of the per-transit chi-square
+GRID_HALF_DURATIONS = 1.0      # the grid spans plus and minus one duration
+OUTLIER_MAD = 5.0              # Holczer et al. 2016
+MIN_EVENTS = 3                 # fewer used events: no ephemeris error
+N_BOOT, BOOT_MIN_CONVERGED, BOOT_SEED = 200, 20, 20261022
+BOX_DURATION_FACTORS = (0.5, 2.0)      # the box-duration grid, times the search duration, 40 steps in log
+EPHEMERIS_METHOD = ("weighted linear fit of per-transit mid-times, reference epoch at the centre of the series "
+                    "(Deeg 2015; Holczer et al. 2016)")
+SHAPE_METHOD = "bootstrap over transits of the uniform-disc fit (Schmitt et al. 2014)"
+
+WINDOW_DURATIONS = 3.0         # an event's window: the points within this many durations of the predicted mid-time
+BOX_DURATION_STEPS = 40
+EXPOSURE_RESOLUTION_MIN = 0.1  # minutes, the sampling of the template before it is averaged over the exposure
+MAD_TO_SIGMA = 1.4826
+
+
+def _f(x) -> float | None:
+    """A Python float for JSON, None for NaN, inf and missing values."""
+    if x is None:
+        return None
+    x = float(x)
+    return x if math.isfinite(x) else None
+
+
+def _finite(*xs) -> bool:
+    return all(x is not None and math.isfinite(float(x)) for x in xs)
+
+
+@dataclass(frozen=True)
+class Template:
+    """The fixed dip an event is timed with. ``depth`` is a fraction and is not fitted (the per-event depths are a
+    separate measurement): the box is ``1 - depth`` within half a duration, the "fit" kind is the uniform-disc model
+    of ``k``, ``b`` and ``a_over_r`` with its dip scaled to ``depth`` at mid-transit."""
+    kind: str                  # "fit" | "box"
+    depth: float
+    duration_days: float
+    k: float | None = None
+    b: float | None = None
+    a_over_r: float | None = None
+
+    def flux(self, dt_days: np.ndarray, period: float) -> np.ndarray:
+        dt = np.atleast_1d(np.asarray(dt_days, dtype=float))
+        if self.kind == "box":
+            return np.where(np.abs(dt) < 0.5 * self.duration_days, 1.0 - self.depth, 1.0)
+        model = uniform_disc_flux(dt, period, self.k, self.b, self.a_over_r)
+        own = 1.0 - float(uniform_disc_flux(np.array([0.0]), period, self.k, self.b, self.a_over_r)[0])
+        if not own > 0:
+            return np.ones_like(dt)
+        return 1.0 - (1.0 - model) * (self.depth / own)
+
+
+def template_from(shape_metrics: dict, depth_ppm: float, duration_days: float) -> Template:
+    """The rung 2 uniform-disc model when ``fit_ok`` is true and ``fit_k``, ``fit_b`` and ``fit_a_over_r`` are
+    finite, else the search box; either way of depth ``depth_ppm`` and duration ``duration_days``."""
+    k, b, a = (shape_metrics.get(key) for key in ("fit_k", "fit_b", "fit_a_over_r"))
+    if shape_metrics.get("fit_ok") is True and _finite(k, b, a):
+        return Template("fit", depth_ppm * 1e-6, duration_days, float(k), float(b), float(a))
+    return Template("box", depth_ppm * 1e-6, duration_days)
+
+
+@dataclass(frozen=True)
+class TransitTime:
+    epoch: int
+    t_bkjd: float | None       # mid-time; None when the event is not timed
+    err_days: float | None
+    chi2_red: float | None     # chi-square minimum over (window points - 1)
+    n_in: int                  # points within half a duration of the predicted mid-time
+    n_out: int                 # points one to three durations from it
+    used: bool
+    reason: str | None         # why the event is not used; None when it is
+
+    def as_dict(self) -> dict:
+        t = _f(self.t_bkjd)
+        return {"epoch": int(self.epoch), "t_bkjd": t, "t_bjd": None if t is None else t + BKJD_OFFSET,
+                "err_days": _f(self.err_days), "chi2_red": _f(self.chi2_red), "n_in": int(self.n_in),
+                "n_out": int(self.n_out), "used": bool(self.used), "reason": self.reason}
+
+
+def _exposure_averaged(template: Template, period: float, exposure: float, span: float):
+    """``template.flux`` averaged over an exposure of ``exposure`` days centred on each offset, as a function valid
+    for offsets within ``span`` days (a running mean of a finely sampled template, then linear interpolation)."""
+    step = EXPOSURE_RESOLUTION_MIN / 1440.0
+    n_avg = max(1, round(exposure / step))
+    half = span + 0.5 * n_avg * step
+    x = np.arange(-half, half + step, step)
+    fine = template.flux(x, period)
+    csum = np.concatenate([[0.0], np.cumsum(fine)])
+    avg = (csum[n_avg:] - csum[:-n_avg]) / n_avg
+    centres = x[: avg.size] + 0.5 * (n_avg - 1) * step
+    return lambda d: np.interp(d, centres, avg)
+
+
+def _time_one(d, y, shifts, model, n_in, n_out, epoch, mid, duration_days) -> TransitTime:
+    out = np.abs(d) >= duration_days
+    level = float(np.median(y[out]))
+    sigma = MAD_TO_SIGMA * float(np.median(np.abs(y[out] - level)))
+    if not sigma > 0:           # a flat baseline gives no per-point error
+        return TransitTime(epoch, None, None, None, n_in, n_out, False, "too few out-of-transit points")
+    chi2 = np.sum(((y[None, :] - level * model(d[None, :] - shifts[:, None])) / sigma) ** 2, axis=1)
+    j = int(np.argmin(chi2))
+    red = float(chi2[j]) / max(1, d.size - 1)
+    if j == 0 or j == shifts.size - 1:
+        return TransitTime(epoch, None, None, red, n_in, n_out, False, "no minimum inside the grid")
+    h = shifts[1] - shifts[0]
+    curv = chi2[j - 1] - 2.0 * chi2[j] + chi2[j + 1]
+    if not curv > 0:
+        return TransitTime(epoch, None, None, red, n_in, n_out, False, "no minimum inside the grid")
+    vertex = shifts[j] + 0.5 * h * (chi2[j - 1] - chi2[j + 1]) / curv
+    err = h * math.sqrt(2.0 / curv) * max(1.0, math.sqrt(red))     # chi2 = (curv / 2h^2) (s - vertex)^2 + c
+    if err > 0.5 * duration_days:
+        return TransitTime(epoch, None, None, red, n_in, n_out, False, "shift error above half a duration")
+    return TransitTime(epoch, float(mid + vertex), float(err), red, n_in, n_out, True, None)
+
+
+def transit_times(time, fnorm, period: float, t0: float, duration_days: float, template: Template) -> list[TransitTime]:
+    """The mid-time of each event with a point within three durations of its predicted time ``t0 + epoch period``,
+    in epoch order. An event needs ``EVENT_IN_MIN`` points within half a duration and ``EVENT_OUT_MIN`` from one to
+    three durations, ``EVENT_OUT_SIDE_MIN`` on each side (the pixel rung's rules); otherwise, or when the chi-square
+    has no minimum inside the grid or the shift error exceeds half a duration, it is kept with ``used`` false and the
+    reason. The template is ``template`` averaged over the median time step of the data (module docstring)."""
+    time, fnorm = np.asarray(time, float), np.asarray(fnorm, float)
+    good = np.isfinite(time) & np.isfinite(fnorm)
+    t, f = time[good], fnorm[good]
+    if t.size == 0:
+        return []
+    order = np.argsort(t)
+    t, f = t[order], f[order]
+    epoch = np.round((t - t0) / period).astype(np.int64)
+    dt = t - (t0 + epoch * period)
+    near = np.abs(dt) <= WINDOW_DURATIONS * duration_days
+    exposure = float(np.median(np.diff(t))) if t.size > 1 else 0.0
+    n_half = round(GRID_HALF_DURATIONS * duration_days * 1440.0 / GRID_STEP_MIN)
+    shifts = np.arange(-n_half, n_half + 1) * GRID_STEP_MIN / 1440.0
+    model = _exposure_averaged(template, period, exposure,
+                               (WINDOW_DURATIONS + GRID_HALF_DURATIONS) * duration_days)
+    rows = []
+    for e in (int(x) for x in np.unique(epoch[near])):
+        w = near & (epoch == e)
+        d, y = dt[w], f[w]
+        a = np.abs(d)
+        n_in = int((a < 0.5 * duration_days).sum())
+        out = a >= duration_days
+        n_out = int(out.sum())
+        sides = min(int((out & (d < 0)).sum()), int((out & (d > 0)).sum()))
+        if n_in < EVENT_IN_MIN:
+            rows.append(TransitTime(e, None, None, None, n_in, n_out, False, "too few in-transit points"))
+        elif n_out < EVENT_OUT_MIN or sides < EVENT_OUT_SIDE_MIN:
+            rows.append(TransitTime(e, None, None, None, n_in, n_out, False, "too few out-of-transit points"))
+        else:
+            rows.append(_time_one(d, y, shifts, model, n_in, n_out, e, t0 + e * period, duration_days))
+    return rows
+
+
+@dataclass(frozen=True)
+class LinearEphemeris:
+    ok: bool
+    reason: str | None
+    period: float
+    period_err: float | None
+    t_ref: float | None
+    t_ref_err: float | None
+    epoch_ref: int | None
+    cov: float | None          # covariance of (t_ref, period), inflated as the square
+    t0: float                  # at epoch 0
+    t0_err: float | None
+    chi2: float | None
+    dof: int | None
+    inflation: float | None    # max(1, sqrt(chi2 / dof)), applied to every error
+    rms_min: float | None      # rms of the used residuals, minutes
+    n_used: int
+    n_measured: int
+    n_outliers: int
+    times: tuple[TransitTime, ...]     # every event passed in; outliers with used False and reason "outlier (x MAD)"
+
+    def predict(self, epoch: int) -> tuple[float, float | None]:
+        """Mid-time at ``epoch`` (BKJD) and its error in days: sigma squared is t_ref_err squared plus
+        (epoch - epoch_ref) squared period_err squared (Deeg 2015). No error without an ok fit."""
+        if not self.ok:
+            return self.t0 + epoch * self.period, None
+        de = epoch - self.epoch_ref
+        return self.t_ref + de * self.period, math.hypot(self.t_ref_err, de * self.period_err)
+
+    def next_transits(self, after_bkjd: float, n: int = 3) -> list[dict]:
+        """The first ``n`` predicted transits after ``after_bkjd``, each {"epoch", "t_bkjd", "t_bjd", "err_days"}."""
+        e = math.floor((after_bkjd - self.t0) / self.period)
+        while self.predict(e)[0] <= after_bkjd:
+            e += 1
+        rows = []
+        for epoch in range(e, e + n):
+            t, err = self.predict(epoch)
+            rows.append({"epoch": epoch, "t_bkjd": _f(t), "t_bjd": _f(t + BKJD_OFFSET), "err_days": _f(err)})
+        return rows
+
+    def as_dict(self) -> dict:
+        return {"ok": self.ok, "reason": self.reason, "method": EPHEMERIS_METHOD, "period": _f(self.period),
+                "period_err": _f(self.period_err), "t_ref": _f(self.t_ref),
+                "t_ref_bjd": None if _f(self.t_ref) is None else self.t_ref + BKJD_OFFSET,
+                "t_ref_err": _f(self.t_ref_err), "epoch_ref": self.epoch_ref, "cov": _f(self.cov),
+                "t0": _f(self.t0), "t0_bjd": None if _f(self.t0) is None else self.t0 + BKJD_OFFSET,
+                "t0_err": _f(self.t0_err), "chi2": _f(self.chi2), "dof": self.dof, "inflation": _f(self.inflation),
+                "rms_min": _f(self.rms_min), "n_used": self.n_used, "n_measured": self.n_measured,
+                "n_outliers": self.n_outliers, "times": [t.as_dict() for t in self.times]}
+
+
+def _wls(epochs: np.ndarray, t: np.ndarray, err: np.ndarray):
+    """Weighted straight line t = t_ref + period (epoch - epoch_ref), epoch_ref the rounded weighted mean epoch:
+    (t_ref, period, var_t_ref, var_period, cov, epoch_ref, residuals)."""
+    w = 1.0 / err ** 2
+    e_ref = round(float(np.sum(w * epochs) / np.sum(w)))
+    x = epochs - e_ref
+    s, sx, sxx, sy, sxy = np.sum(w), np.sum(w * x), np.sum(w * x * x), np.sum(w * t), np.sum(w * x * t)
+    det = s * sxx - sx * sx
+    period = (s * sxy - sx * sy) / det
+    t_ref = (sxx * sy - sx * sxy) / det
+    return float(t_ref), float(period), float(sxx / det), float(s / det), float(-sx / det), e_ref, \
+        t - (t_ref + period * x)
+
+
+def _no_ephemeris(reason, period, t0, times, n_measured, n_outliers) -> LinearEphemeris:
+    n_used = sum(1 for t in times if t.used)
+    return LinearEphemeris(False, reason, float(period), None, None, None, None, None, float(t0), None, None, None,
+                           None, None, n_used, n_measured, n_outliers, tuple(times))
+
+
+def linear_fit(times: list[TransitTime], period: float, t0: float) -> LinearEphemeris:
+    """The linear ephemeris of the used events of ``times`` (epochs counted from ``t0`` at ``period``): a first
+    weighted fit, the Holczer et al. 2016 rule (events more than ``OUTLIER_MAD`` median absolute deviations of the
+    residuals from the line are dropped), and the fit again. Errors are inflated by ``max(1, sqrt(chi2 / dof))``.
+    With fewer than ``MIN_EVENTS`` used events it is not ok and carries the input period and t0 with no errors."""
+    times = list(times)
+    idx = [i for i, t in enumerate(times) if t.used and _finite(t.t_bkjd, t.err_days) and t.err_days > 0]
+    n_measured = len(idx)
+    if n_measured < MIN_EVENTS:
+        return _no_ephemeris(f"fewer than {MIN_EVENTS} timed transits ({n_measured})", period, t0, times,
+                             n_measured, 0)
+    ep = np.array([times[i].epoch for i in idx], dtype=float)
+    tt = np.array([times[i].t_bkjd for i in idx])
+    er = np.array([times[i].err_days for i in idx])
+    resid = _wls(ep, tt, er)[-1]
+    mad = float(np.median(np.abs(resid - np.median(resid))))
+    keep = np.ones(ep.size, bool)
+    if mad > 0:
+        dev = np.abs(resid) / mad
+        keep = dev <= OUTLIER_MAD
+        for j in np.flatnonzero(~keep):
+            i = idx[j]
+            times[i] = TransitTime(times[i].epoch, times[i].t_bkjd, times[i].err_days, times[i].chi2_red,
+                                   times[i].n_in, times[i].n_out, False, f"outlier ({dev[j]:.1f} MAD)")
+    n_outliers = int((~keep).sum())
+    if keep.sum() < MIN_EVENTS:
+        return _no_ephemeris(f"fewer than {MIN_EVENTS} timed transits after the outlier cut ({int(keep.sum())})",
+                             period, t0, times, n_measured, n_outliers)
+    ep, tt, er = ep[keep], tt[keep], er[keep]
+    t_ref, p, var_t, var_p, cov, e_ref, resid = _wls(ep, tt, er)
+    chi2 = float(np.sum((resid / er) ** 2))
+    dof = int(ep.size - 2)
+    infl = max(1.0, math.sqrt(chi2 / dof)) if dof > 0 else 1.0
+    var_t, var_p, cov = var_t * infl ** 2, var_p * infl ** 2, cov * infl ** 2
+    t0_fit = t_ref - p * e_ref
+    var_t0 = max(var_t + e_ref ** 2 * var_p - 2.0 * e_ref * cov, 0.0)
+    return LinearEphemeris(True, None, p, math.sqrt(var_p), t_ref, math.sqrt(var_t), e_ref, cov, t0_fit,
+                           math.sqrt(var_t0), chi2, dof, infl, float(np.sqrt(np.mean(resid ** 2)) * 1440.0),
+                           int(ep.size), n_measured, n_outliers, tuple(times))
+
+
+def predict_from(timing: dict, epoch: int) -> tuple[float, float | None]:
+    """``LinearEphemeris.predict`` from a stored ``as_dict()`` block."""
+    if not timing.get("ok"):
+        return float(timing["t0"]) + epoch * float(timing["period"]), None
+    de = epoch - int(timing["epoch_ref"])
+    return (float(timing["t_ref"]) + de * float(timing["period"]),
+            math.hypot(float(timing["t_ref_err"]), de * float(timing["period_err"])))
+
+
+@dataclass(frozen=True)
+class ShapeErrors:
+    ok: bool
+    reason: str | None
+    method: str
+    n_boot: int
+    n_converged: int
+    seed: int
+    # each {"median": the rung 2 point value, "minus", "plus", "boot_median"}; None without a fit or when not ok
+    k: dict | None
+    b: dict | None
+    a_over_r: dict | None
+    t14_h: dict | None
+    model_depth_ppm: dict | None
+    box_depth_ppm: dict | None          # {"median": depth_ppm, "minus": err, "plus": err} from event_depths
+    box_duration_h: dict | None         # only without a fit: {"median", "minus", "plus"} over the resamples
+
+    def as_dict(self) -> dict:
+        def block(d):
+            return None if d is None else {key: _f(v) for key, v in d.items()}
+        return {"ok": self.ok, "reason": self.reason, "method": self.method, "n_boot": self.n_boot,
+                "n_converged": self.n_converged, "seed": self.seed, "k": block(self.k), "b": block(self.b),
+                "a_over_r": block(self.a_over_r), "t14_h": block(self.t14_h),
+                "model_depth_ppm": block(self.model_depth_ppm), "box_depth_ppm": block(self.box_depth_ppm),
+                "box_duration_h": block(self.box_duration_h)}
+
+
+def _spread(samples, median: float, with_boot: bool = True) -> dict:
+    p16, p50, p84 = np.percentile(np.asarray(samples, float), [16, 50, 84])
+    out = {"median": float(median), "minus": max(0.0, float(median - p16)), "plus": max(0.0, float(p84 - median))}
+    if with_boot:
+        out["boot_median"] = float(p50)
+    return out
+
+
+def _best_box_duration(t, f, period, t0, durations) -> float | None:
+    best, best_snr = None, -np.inf
+    for dur in durations:
+        snr = measure_at(t, f, period, t0, dur).snr
+        if np.isfinite(snr) and snr > best_snr:
+            best, best_snr = float(dur), float(snr)
+    return best
+
+
+def bootstrap_shape(time, fnorm, period, t0, duration_days, point: dict | None, *, n_boot: int = N_BOOT,
+                    seed: int = BOOT_SEED, used_epochs=None) -> ShapeErrors:
+    """Errors on the transit shape from ``n_boot`` resamples of the events, drawn with replacement among
+    ``used_epochs`` (every epoch with a point within three durations, or six without a fit, when None). With
+    ``point`` (rung 2's {"k", "b", "a_over_r", "t14_h", "fit_depth_ppm"} when its fit is ok) each resample is fitted
+    with ``fit_transit``; without it, the box duration that maximises the depth over its error on a grid from half
+    to twice ``duration_days`` is kept per resample. The box depth always comes from ``event_depths`` over the same
+    epochs, with its scaled error. Fewer than ``BOOT_MIN_CONVERGED`` converged resamples give no shape errors."""
+    time, fnorm = np.asarray(time, float), np.asarray(fnorm, float)
+    good = np.isfinite(time) & np.isfinite(fnorm)
+    t, f = time[good], fnorm[good]
+    epoch = np.round((t - t0) / period).astype(np.int64)
+    dt = t - (t0 + epoch * period)
+    reach = WINDOW_DURATIONS * duration_days * (1.0 if point is not None else BOX_DURATION_FACTORS[1])
+    near = np.abs(dt) <= reach
+    pool = np.unique(epoch[near])
+    if used_epochs is not None:
+        pool = np.intersect1d(pool, np.asarray(list(used_epochs), dtype=np.int64))
+    in_pool = np.isin(epoch, pool)
+    ev = event_depths(t[in_pool], f[in_pool], np.zeros(int(in_pool.sum()), int), period, t0, duration_days)
+    box_depth = ({"median": float(ev.mean), "minus": float(ev.err_scaled), "plus": float(ev.err_scaled)}
+                 if ev.n and _finite(ev.mean, ev.err_scaled) else None)
+    members = {int(e): np.flatnonzero(near & (epoch == e)) for e in pool}
+    rng = np.random.default_rng(seed)
+    durations = np.geomspace(BOX_DURATION_FACTORS[0] * duration_days, BOX_DURATION_FACTORS[1] * duration_days,
+                             BOX_DURATION_STEPS)
+    samples = []
+    for _ in range(n_boot if pool.size else 0):
+        sel = np.concatenate([members[int(e)] for e in rng.choice(pool, size=pool.size, replace=True)])
+        if point is not None:
+            fit = fit_transit(t[sel], f[sel], period, t0, duration_days)
+            row = (fit.k, fit.b, fit.a_over_r, fit.t14_days * 24.0, fit.depth_ppm)
+            if fit.ok and _finite(*row):
+                samples.append(row)
+        else:
+            best = _best_box_duration(t[sel], f[sel], period, t0, durations)
+            if best is not None:
+                samples.append((best * 24.0,))
+    n_conv = len(samples)
+    if n_conv < BOOT_MIN_CONVERGED:
+        return ShapeErrors(False, f"{n_conv} of {n_boot} resamples converged (fewer than {BOOT_MIN_CONVERGED})",
+                           SHAPE_METHOD, n_boot, n_conv, seed, None, None, None, None, None, box_depth, None)
+    s = np.array(samples)
+    if point is None:
+        return ShapeErrors(True, None, SHAPE_METHOD, n_boot, n_conv, seed, None, None, None, None, None, box_depth,
+                           _spread(s[:, 0], float(np.median(s[:, 0])), with_boot=False))
+    keys = ("k", "b", "a_over_r", "t14_h", "fit_depth_ppm")
+    k, b, a, t14, depth = (_spread(s[:, i], float(point[key])) for i, key in enumerate(keys))
+    return ShapeErrors(True, None, SHAPE_METHOD, n_boot, n_conv, seed, k, b, a, t14, depth, box_depth, None)
+
+
+@dataclass(frozen=True)
+class ParityDepths:
+    odd: dict                  # {"depth_ppm", "err_ppm", "n", "inflation"}
+    even: dict
+    difference_sigma: float | None      # |odd - even| over the two errors in quadrature
+
+    def as_dict(self) -> dict:
+        def block(d):
+            return {"depth_ppm": _f(d["depth_ppm"]), "err_ppm": _f(d["err_ppm"]), "n": int(d["n"]),
+                    "inflation": _f(d["inflation"])}
+        return {"odd": block(self.odd), "even": block(self.even), "difference_sigma": _f(self.difference_sigma)}
+
+
+def _parity(depths: np.ndarray, errors: np.ndarray) -> dict:
+    ok = np.isfinite(depths) & np.isfinite(errors) & (errors > 0)
+    d, e = depths[ok], errors[ok]
+    if d.size == 0:
+        return {"depth_ppm": None, "err_ppm": None, "n": 0, "inflation": None}
+    w = 1.0 / e ** 2
+    mean = float(np.sum(w * d) / np.sum(w))
+    chi2 = float(np.sum(w * (d - mean) ** 2))
+    infl = max(1.0, math.sqrt(chi2 / (d.size - 1))) if d.size > 1 else 1.0
+    return {"depth_ppm": mean, "err_ppm": infl / math.sqrt(float(np.sum(w))), "n": int(d.size), "inflation": infl}
+
+
+def parity_depths(events) -> ParityDepths:
+    """Odd and even depths of ``events`` (``lc.ops.EventDepths``): the weighted mean of the per-event box depths of
+    each parity, its error inflated by the square root of the parity's reduced chi-square when above one."""
+    epochs = np.asarray(events.epochs, dtype=np.int64)
+    depths, errors = np.asarray(events.depths, float), np.asarray(events.errors, float)
+    odd = _parity(depths[epochs % 2 == 1], errors[epochs % 2 == 1])
+    even = _parity(depths[epochs % 2 == 0], errors[epochs % 2 == 0])
+    sigma = None
+    if odd["n"] and even["n"]:
+        err = math.hypot(odd["err_ppm"], even["err_ppm"])
+        sigma = abs(odd["depth_ppm"] - even["depth_ppm"]) / err if err > 0 else None
+    return ParityDepths(odd, even, sigma)
+
+
+@dataclass(frozen=True)
+class SecondaryLimit:
+    depth_ppm: float | None             # rung 2's depth at phase 0.5
+    err_ppm: float | None               # rung 2's control rms
+    limit_3sigma_ppm: float | None      # max(depth, 0) + 3 err
+    strongest_ppm: float | None         # the strongest secondary at any phase
+    strongest_phase: float | None
+    strongest_sigma: float | None
+    albedo_limit: float | None          # limit x (a/R* / k)^2, an occultation of A_g (Rp / a)^2; None without a fit
+
+    def as_dict(self) -> dict:
+        return {"depth_ppm": _f(self.depth_ppm), "err_ppm": _f(self.err_ppm),
+                "limit_3sigma_ppm": _f(self.limit_3sigma_ppm), "strongest_ppm": _f(self.strongest_ppm),
+                "strongest_phase": _f(self.strongest_phase), "strongest_sigma": _f(self.strongest_sigma),
+                "albedo_limit": _f(self.albedo_limit)}
+
+
+def secondary_limit(shape_metrics: dict) -> SecondaryLimit | None:
+    """The secondary block from the rung 2 metrics; None when ``secondary_ppm`` or ``control_rms_ppm`` is missing."""
+    depth, err = _f(shape_metrics.get("secondary_ppm")), _f(shape_metrics.get("control_rms_ppm"))
+    if depth is None or err is None:
+        return None
+    limit = max(depth, 0.0) + 3.0 * err
+    k, a = _f(shape_metrics.get("fit_k")), _f(shape_metrics.get("fit_a_over_r"))
+    albedo = None
+    if shape_metrics.get("fit_ok") is True and k is not None and a is not None and k > 0 and a > 0:
+        albedo = limit * 1e-6 * (a / k) ** 2
+    return SecondaryLimit(depth, err, limit, _f(shape_metrics.get("free_secondary_ppm")),
+                          _f(shape_metrics.get("free_secondary_phase")), _f(shape_metrics.get("free_secondary_sigma")),
+                          albedo)
