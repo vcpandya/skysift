@@ -26,10 +26,9 @@ VERSIONS = ("current", "all")
 SECTION_IDS = ("signal", "repeat", "checks", "pixels", "star", "look", "caveats", "reproduce")
 # where a section_errors entry shows its notice; any other name shows in the caveats section
 ERROR_SECTION = {"periodogram": "signal", "pixels": "pixels", "plots": "repeat", "star": "star", "look": "look"}
-CLOSE_SIGMA = 3.5               # a voting season nearer 3 sigma than this gets the Monte Carlo caveat
-CLOSE_CALL = ("The centroid error comes from 200 Monte Carlo draws, so a season this close to the 3 sigma threshold "
-              "can move by about 5 percent with the seed.")
+VOTE_WORDS = {True: "voting", False: "not voting", None: "vote not recorded"}
 BUSY = "another dossier job is running"
+STOP_POLLING = 286                # htmx swaps a 286 answer and stops the element's polling
 # the submission pack's steps (spec 5.9), in the order its README gives them
 PACK_STEPS = [
     (1, "Freeze the record",
@@ -129,27 +128,46 @@ def tile_partial(request: Request, target_id: str):
     return _bad_id(request, target_id) or _tile(request, target_id)
 
 
+@router.get("/partials/dossiers/{target_id}/status", response_class=HTMLResponse)
+def tile_status(request: Request, target_id: str):
+    """The poll of a generating tile's foot: 204 (nothing to swap, so focus and the live region are left alone) while
+    the job runs, then 286 (htmx swaps it and stops polling) with the new foot and the upper part out of band."""
+    bad = _bad_id(request, target_id)
+    if bad:
+        return bad
+    rows = queries.final_set(request.app.state.store, None, target_id=target_id)
+    if not rows:
+        return HTMLResponse(f"no signal for {target_id}", status_code=404)
+    r = _tiles(request, rows)[0]
+    if r["generating"]:
+        return Response(status_code=204)
+    return render(request, "partials/dossier_tile_status.html", status_code=STOP_POLLING, r=r)
+
+
 def _num(x) -> float | None:
     if isinstance(x, bool) or not isinstance(x, (int, float)) or not math.isfinite(x):
         return None
     return float(x)
 
 
-def pixel_seasons(data: dict) -> tuple[list[dict], bool]:
-    """Section 04's per-season rows from rung 5's metrics (voting seasons first in season order, then the rest) and
-    whether a voting season sits within ``CLOSE_SIGMA`` of the decision. A row stored before seasons voted counts
-    as voting."""
+def pixel_seasons(data: dict) -> tuple[list[dict], str | None]:
+    """Section 04's per-season rows from rung 5's metrics, voting seasons first, then those that did not vote, then
+    those whose vote was not recorded (a row stored before seasons voted), each in season order; and the Monte Carlo
+    sentence when the dossier's caveats carry it (``dossier.close_call`` decides, so the export says the same)."""
     tests = data.get("tests") or []
     m = next((t.get("metrics") or {} for t in tests if t.get("rung") == "rung5_pixels"), {})
     rows = []
     for s in m.get("seasons") or []:
         if not isinstance(s, dict):
             continue
-        rows.append({**s, "voting": s.get("voting", True) is not False,
+        vote = s.get("voting") if isinstance(s.get("voting"), bool) else None
+        rows.append({**s, "vote": vote, "vote_words": VOTE_WORDS[vote], "voting": vote is True,
                      "separation_sigma": _num(s.get("separation_sigma")),
                      "centroid_sigma_axis_pix": _num(s.get("centroid_sigma_axis_pix"))})
-    close = any(r["voting"] and r["separation_sigma"] is not None and abs(r["separation_sigma"]) < CLOSE_SIGMA
-                for r in rows)
+    rows.sort(key=lambda r: ({True: 0, False: 1, None: 2}[r["vote"]], not isinstance(r.get("season"), int),
+                             r["season"] if isinstance(r.get("season"), int) else 0))
+    close = next((c.get("text") for c in data.get("caveats") or []
+                  if isinstance(c, dict) and c.get("key") == "close_call"), None)
     return rows, close
 
 
@@ -190,7 +208,7 @@ def dossier_page(request: Request, target_id: str):
     return render(request, "dossier.html", dz=dz, data=data, target_id=target_id, r=rows[0] if rows else None,
                   page_title=(data.get("target") or {}).get("name") or target_id,
                   why_rows=data.get("why") or [], ladder=_ladder_rows(data.get("tests") or []),
-                  seasons=seasons, close_call=CLOSE_CALL if close else None, notices=_section_notices(data),
+                  seasons=seasons, close_call=close, notices=_section_notices(data),
                   payload=_payload(data) if data else None, sections=SECTION_IDS,
                   look_svg=Markup(planet_svg(look, 180)) if look else None,
                   look_words=look_sentence(look, look) if look else None,
@@ -230,6 +248,13 @@ def _start(request: Request, target_id: str, kind: str, force: bool) -> HTMLResp
         ds.pick_signal(st.store, target_id)
     except ds.NoSignal:
         return render(request, "error.html", status_code=404, error=f"no signal for {target_id}", log_hint="")
+    rows = queries.final_set(st.store, None, target_id=target_id) if kind == "pack" else []
+    if kind == "pack" and (not rows or rows[0]["group"] != "approved"):
+        resp = HTMLResponse("not approved", status_code=409)
+        toast = {"message": "Not started: a submission pack is built only for an approved candidate.",
+                 "tone": "undetermined"}
+        resp.headers["HX-Trigger"] = jsonutil.dumps({"toast": toast})
+        return resp
     if kind == "pack" and st.store.dossier(target_id) is None:
         resp = HTMLResponse("generate the dossier first", status_code=400)
         resp.headers["HX-Trigger"] = jsonutil.dumps({"toast": {"message": "Generate the dossier first; the pack is "

@@ -1,71 +1,14 @@
 {# One tile of the Dossiers page (dossiers spec 5.5): the thumbnail, the name, the star line, the sentence, the two
    probability pills (each opens the verdict popup at its Probabilities block), the status, and the generated date or
-   the Generate button. While a job for this target runs the tile polls itself every 5 s until the job ends.
-   Context: r (a queries.final_set row, decorated by routes.dossiers). #}
-{% from "partials/pill.html" import pill, reviewer_pill %}
+   the Generate button. While a job for this target runs, only the tile's foot (its live region) polls every 5 s: the
+   server answers 204 while the job runs, so nothing is swapped and focus stays put, and 286 with the new foot (and
+   the upper part out of band) when it ends, which also stops the polling. The forms swap the whole tile, found as
+   their closest article. Context: r (a queries.final_set row, decorated by routes.dossiers). #}
 {% set tid = r.target_id %}
-{% set verdict_src = "/partials/signals/" ~ r.signal_id ~ "/verdict" %}
-<article id="tile-{{ tid }}" class="card dossier-tile group-{{ r.group }}{% if r.generating %} is-generating{% endif %}"
-  {%- if r.generating %} hx-get="/partials/dossiers/{{ tid }}/tile" hx-trigger="every 5s" hx-swap="outerHTML"{% endif %} aria-labelledby="tile-name-{{ tid }}">
-  <div class="tile-top">
-    {%- if r.thumb %}
-    <div class="tile-thumb">{{ r.thumb }}</div>
-    {%- else %}
-    <div class="tile-thumb tile-thumb-empty" role="img" aria-label="No picture: no star parameters"><span>no star parameters</span></div>
-    {%- endif %}
-    <div class="tile-head">
-      <h2 class="tile-name" id="tile-name-{{ tid }}">
-        {%- if r.dossier %}<a href="/dossiers/{{ tid }}">{{ r.target.name }}</a>{% else %}{{ r.target.name }}{% endif -%}
-      </h2>
-      <p class="tile-id"><code>{{ tid }}</code></p>
-      <p class="tile-star">{{ r.star_line or "Spectral type and distance not known yet" }}</p>
-    </div>
-  </div>
-  <p class="tile-summary">{{ r.summary }}</p>
-  {%- if r.dossier %}
-  {% set fap = r.fap_detail %}{% set fpp = r.fpp_detail %}
-  <div class="tile-probs" role="group" aria-label="Probabilities">
-    <button type="button" class="pill pill-muted prob-pill" data-dialog-src="{{ verdict_src }}" data-dialog-at="probabilities" aria-haspopup="dialog"><span class="prob-name">False alarm</span> <span class="prob-num">{{ fap.get("words") or fap.get("text") or "not yet calibrated" }}</span></button>
-    <button type="button" class="pill pill-muted prob-pill" data-dialog-src="{{ verdict_src }}" data-dialog-at="probabilities" aria-haspopup="dialog"><span class="prob-name">{{ fpp.get("label") or "False positive" }}</span> <span class="prob-num">{{ fpp.get("words") or "not computed" }}</span></button>
-    {%- if not fpp.get("signed_off") %}
-    <span class="chip-provisional" title="The false-positive priors have not been reviewed yet">provisional</span>
-    {%- endif %}
-  </div>
-  {%- endif %}
-  <div class="tile-status">
-    {%- if r.v.reviewer %}{{ reviewer_pill(r.v.reviewer) }}{% endif %}
-    {{ pill(r.v.tone, r.v.word ~ (", " ~ r.v.stage if r.v.stage else ""), verdict_src) }}
-  </div>
-  <div class="tile-foot" aria-live="polite">
-    {%- if r.generating %}
-    <p class="tile-job">{{ pill("running", "generating") }} <span>{{ "Building the submission pack." if r.job_kind == "pack" else "Generating the dossier. This page checks again every 5 seconds." }}</span></p>
-    {%- else %}
-    {%- if r.dossier %}
-    <p class="tile-generated">Generated {{ r.generated_words }}{% if r.dossier.pack_path %} · <span>pack built</span>{% endif %}</p>
-    {%- endif %}
-    {%- if r.dossier and r.stale %}
-    <p class="tile-note">This dossier is stale: {{ r.stale_reason }}.</p>
-    {%- endif %}
-    {%- if r.failed_job %}
-    <p class="tile-note error">The last {{ (r.failed_job.request or {}).get("kind", "dossier") }} job ended with an error{% if r.failed_job.exit_code is not none %} (exit {{ r.failed_job.exit_code }}){% endif %}.<span class="only-expert"> Log: <code>{{ r.failed_job.log }}</code></span></p>
-    {%- endif %}
-    <div class="tile-actions">
-      {%- if r.dossier %}
-      <a class="btn" href="/dossiers/{{ tid }}">Open the dossier</a>
-      {%- endif %}
-      {%- if not r.dossier or r.stale %}
-      <form hx-post="/dossiers/{{ tid }}/generate" hx-target="#tile-{{ tid }}" hx-swap="outerHTML">
-        <input type="hidden" name="_token" value="{{ token }}">
-        <button class="{{ 'primary' if not r.dossier else '' }}">{{ "Regenerate" if r.dossier else "Generate" }}</button>
-      </form>
-      {%- endif %}
-      {%- if r.dossier and r.group == "approved" %}
-      <form hx-post="/dossiers/{{ tid }}/pack" hx-target="#tile-{{ tid }}" hx-swap="outerHTML">
-        <input type="hidden" name="_token" value="{{ token }}">
-        <button>Build submission pack</button>
-      </form>
-      {%- endif %}
-    </div>
-    {%- endif %}
+<article id="tile-{{ tid }}" class="card dossier-tile group-{{ r.group }}" aria-labelledby="tile-name-{{ tid }}">
+  <div class="tile-main" id="tile-main-{{ tid }}">{% include "partials/dossier_tile_main.html" %}</div>
+  <div class="tile-foot" id="tile-foot-{{ tid }}" aria-live="polite"
+    {%- if r.generating %} hx-get="/partials/dossiers/{{ tid }}/status" hx-trigger="every 5s" hx-swap="innerHTML"{% endif %}>
+    {%- include "partials/dossier_tile_foot.html" %}
   </div>
 </article>

@@ -7,8 +7,10 @@
   {%- if v.reviewer and v.reviewer != v.headline %} {{ reviewer_pill(v.reviewer) }}{% endif %}</p>
   <h2 id="dialog-title" class="verdict-head pill-{{ v.tone }}" tabindex="-1" data-dialog-focus>{{ v.headline }}</h2>
   {% with show_numbers = True %}{% include "partials/why.html" %}{% endwith %}
-  {%- if dossier %}
-  {% with fap = dossier.fap_detail or {}, fpp = dossier.fpp_detail or {}, target_id = dossier.target_id, link = True, heading_id = "probabilities-title" %}{% include "partials/probabilities.html" %}{% endwith %}
+  {%- if dossier and dossier.signal_id == signal_id %}
+  {% with fap = dossier.fap_detail or {}, fpp = dossier.fpp_detail or {}, target_id = dossier.target_id, link = True, block_id = "probabilities-popup", heading_id = "probabilities-popup-title" %}{% include "partials/probabilities.html" %}{% endwith %}
+  {%- elif dossier %}
+  <p id="probabilities-popup" class="prob-other" tabindex="-1">The dossier was built from another signal of this star. <a href="/dossiers/{{ dossier.target_id }}">Open the dossier</a></p>
   {%- endif %}
   <footer class="verdict-foot">
     <ul class="verdict-glossary">

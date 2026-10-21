@@ -64,6 +64,9 @@ log = logging.getLogger(__name__)
 
 DOSSIER_VERSION = "1"
 STATUS_ORDER = ("candidate_stage2", "approved", "candidate_stage1")
+CLOSE_SIGMA = 3.5               # a voting season nearer the 3 sigma decision than this gets the Monte Carlo caveat
+CLOSE_CALL = ("The centroid error comes from 200 Monte Carlo draws, so a season this close to the 3 sigma threshold "
+              "can move by about 5 percent with the seed.")
 SERIES_BIN_DAYS = 0.25
 GALLERY_HALF_HOURS = 8.0
 SPECTRUM_BINS = 1500
@@ -202,17 +205,18 @@ def target_name(target: dict) -> str:
 
 # ---------------------------------------------------------------------------------------------------- the signal
 
-def _reviewer_rejected(row: dict) -> bool:
-    return row.get("candidate_status") == "rejected" or row.get("decision") == "reject"
-
-
-def _rank(row: dict) -> tuple:
-    """A signal a reviewer rejected ranks below every other whatever its engine status (the store keeps the engine
-    status on a rejection); the rest by ``STATUS_ORDER``, then SDE."""
-    statuses = {row["final_status"]} | ({"approved"} if row.get("candidate_status") in ("approved", "published")
-                                        else set())
+def rank_key(signal: dict, decision: str | None) -> tuple:
+    """The sort key of a target's signals, best first, shared by ``pick_signal`` and the Dossiers tiles: a signal a
+    reviewer rejected ranks below every other whatever its engine status (the store keeps the engine status on a
+    rejection); the rest by ``STATUS_ORDER`` (an approved signal ranks as approved even when its engine status is
+    stage 1, and a stage-2 signal stays stage 2 when approved), then SDE, then id. ``signal`` holds ``id``,
+    ``final_status``, ``sde`` and ``candidate_status``; ``decision`` is the latest reviewer decision or None."""
+    cand = signal.get("candidate_status")
+    rejected = cand == "rejected" or decision == "reject"
+    approved = decision == "approve" or cand in ("approved", "published")
+    statuses = {signal["final_status"]} | ({"approved"} if approved else set())
     order = min((STATUS_ORDER.index(s) for s in statuses if s in STATUS_ORDER), default=len(STATUS_ORDER))
-    return _reviewer_rejected(row), order, -float(row["sde"]), row["id"]
+    return rejected, order, -float(signal.get("sde") or 0.0), signal["id"]
 
 
 def pick_signal(store: Store, target_id: str, signal_id: int | None = None) -> dict:
@@ -235,7 +239,7 @@ def pick_signal(store: Store, target_id: str, signal_id: int | None = None) -> d
             latest[d.signal_id] = d.decision
         rows = [{**{c.name: getattr(r, c.name) for c in SignalRow.__table__.columns},
                  "candidate_status": cand.get(r.id), "decision": latest.get(r.id)} for r in sigs]
-    return min(rows, key=_rank)
+    return min(rows, key=lambda r: rank_key(r, r["decision"]))
 
 
 def fingerprint(latest_tests: list[dict], final_status: str, decision: str | None) -> str:
@@ -542,6 +546,16 @@ def fpp_from_inputs(inputs: dict) -> Fpp:
 
 # ---------------------------------------------------------------------------------------------------- caveats
 
+def close_call(tests: list[dict]) -> bool:
+    """Whether a season that voted (``voting`` stored and true; a row without the key never counts) has a centroid
+    separation within ``CLOSE_SIGMA`` of the target, where the Monte Carlo error can tip its 3 sigma vote."""
+    for s in _pixel_seasons(_metrics(tests, "rung5_pixels")):
+        sep = _num(s, "separation_sigma")
+        if s.get("voting") is True and sep is not None and abs(sep) < CLOSE_SIGMA:
+            return True
+    return False
+
+
 def caveats(data: dict) -> list[dict]:
     """The section 07 list, [{"title", "text"}], by the rules of the plan in their order, each sentence built from
     the stored numbers."""
@@ -562,6 +576,8 @@ def caveats(data: dict) -> list[dict]:
     for name, err in (data.get("section_errors") or {}).items():
         out.append({"title": f"The {name} section could not be built",
                     "text": f"The {name} section could not be built: {err.get('error')}"})
+    if close_call(tests):
+        out.append({"key": "close_call", "title": "A season sits close to the 3 sigma line", "text": CLOSE_CALL})
     if fpp.get("pixels") is False:
         out.append({"title": "The false-positive estimate has no pixel exclusion",
                     "text": f"Without a difference-image centroid every neighbour within one Kepler pixel "

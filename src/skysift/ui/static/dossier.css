@@ -14,7 +14,8 @@
 
 .dossier-tile { display: flex; flex-direction: column; gap: 10px; }
 .dossier-tile.group-approved { border-top: 3px solid var(--pass); }
-.dossier-tile.is-generating { border-color: var(--running); }
+.dossier-tile:has(.tile-job) { border-color: var(--running); }   /* a job is running: the foot shows its line */
+.tile-main { display: flex; flex-direction: column; gap: 10px; }
 .tile-top { display: flex; gap: 12px; align-items: flex-start; }
 .tile-thumb { flex: none; width: 96px; height: 96px; line-height: 0; }
 .tile-thumb svg { width: 96px; height: 96px; }
@@ -97,6 +98,7 @@
 .pm { color: var(--fg-2); font-size: .85em; }
 .dossier-table caption { padding: 8px 12px; text-align: left; color: var(--fg-2); font-size: var(--fs-13); }
 .dossier-table tr.is-muted td, .dossier-table tr.is-muted th { color: var(--fg-2); background: var(--raised); }
+.dossier-caveats li.is-muted { color: var(--fg-2); }
 .dossier-expert { margin-top: 12px; }
 .dossier-caveats { padding-left: 20px; max-width: 80ch; }
 .dossier-caveats li { margin-bottom: 8px; }

@@ -10,7 +10,23 @@
   "use strict";
   const holder = document.getElementById("dossier-data");
   if (!holder) return;
-  const D = JSON.parse(holder.textContent);
+  let D;
+  try {
+    D = JSON.parse(holder.textContent);
+  } catch (err) {
+    // a damaged data block: say so where every figure would be (or in the empty standalone page), draw nothing
+    const say = (box, what) => {
+      const p = document.createElement("p");
+      p.className = "dossier-notice"; p.setAttribute("role", "note");
+      p.textContent = `The dossier's data could not be read, so ${what} is not drawn. Generate the dossier again.`;
+      box.replaceChildren(p);
+    };
+    document.querySelectorAll("[data-chart]").forEach((host) => say(host, "this figure"));
+    const standalone = document.getElementById("dossier");
+    if (standalone && !standalone.childElementCount) say(standalone, "the page");
+    if (window.console) console.error(err);
+    return;
+  }
   const root = document.documentElement;
   const NS = "http://www.w3.org/2000/svg";
   const P = D.plots || {};
@@ -427,14 +443,28 @@
     if (D.pixels) fig(3, "pixmaps", "Difference images by season: the ring marks this star, the square the neighbour, the cross the centroid.");
     else para(3, "The pixel step has not produced difference images for this signal.");
     const r5 = metrics("rung5_pixels");
-    list(3, (r5.seasons || []).map((s) => [`Season ${s.season}:`, s.voting === false ? `not voting, ${s.non_voting_reason || "no reason stored"}.`
-      : `nearer ${s.nearer === "target" ? "this star" : s.nearer || "neither"}, ${fmt(s.dist_target_pix, 2)} px from it and ${fmt(s.dist_neighbour_pix, 2)} px from the neighbour.`]));
+    // voting seasons first, then those that did not vote, then those whose vote was not recorded (as the dashboard)
+    const voteRank = (s) => (s.voting === true ? 0 : s.voting === false ? 1 : 2);
+    const seasons = (r5.seasons || []).filter((s) => s && typeof s === "object")
+      .sort((a, b) => voteRank(a) - voteRank(b) || (a.season ?? 99) - (b.season ?? 99));
+    const where = (s) => `nearer ${s.nearer === "target" ? "this star" : s.nearer || "neither"}, ${fmt(s.dist_target_pix, 2)} px from it and ${fmt(s.dist_neighbour_pix, 2)} px from the neighbour.`;
+    list(3, seasons.map((s) => [`Season ${s.season}:`,
+      s.voting === true ? `voting, ${where(s)}` : s.voting === false ? `not voting, ${s.non_voting_reason || "no reason stored"}.` : `vote not recorded, ${where(s)}`,
+      s.voting === true ? null : "is-muted"]));
+    const close = (D.caveats || []).find((c) => c && c.key === "close_call");
+    if (close) para(3, close.text, "dossier-caveat");
     const S = D.star || {}, PL = D.planet || {};
     const v = (x, d, unit) => (x && isNum(x.median) ? `${fmt(x.median, d)} (+${fmt(x.plus, d)} / -${fmt(x.minus, d)}) ${unit}` : "not known");
     list(4, [["Spectral type", S.spectral_type || "not known"], ["Distance", v(S.distance_pc, 0, "pc")], ["Temperature", v(S.teff, 0, "K")],
       ["Radius", v(S.radius, 3, "solar radii")], ["Mass", v(S.mass, 3, "solar masses")], ["Planet radius", v(PL.rp_rearth, 2, "Earth radii")],
       ["Orbit", v(PL.a_au, 3, "AU")], ["Equilibrium temperature", v(PL.teq_k, 0, "K")]]);
-    if (L) { ["look-star", "look-planet", "look-orbit", "look-sky"].forEach((n) => fig(5, n, "")); }
+    if (L) {
+      [["look-star", "The star beside the Sun, to scale. The colour follows the surface temperature."],
+        ["look-planet", "The planet beside Earth and Neptune, to scale. Its size is measured; its surface is a guess."],
+        ["look-orbit", "The orbit against the habitable zone, to scale (Kopparapu et al. 2013 edges; lighter is the optimistic zone)."],
+        ["look-sky", "The star seen from the planet, beside the Sun seen from Earth, at the same angular scale."]]
+        .forEach(([n, caption]) => fig(5, n, caption));
+    }
     else para(5, "The star could not be characterized, so the panel is not drawn.");
     list(6, (D.caveats || []).map((c) => [`${c.title}.`, c.text]));
     const prov = D.provenance || {};
@@ -449,7 +479,10 @@
   document.querySelectorAll("[data-chart]").forEach((host) => {
     const draw = DRAW[host.dataset.chart] || LOOK[host.dataset.chart];
     if (!draw || host.childElementCount) return;
-    try { draw(host); } catch (err) {
+    try {
+      draw(host);
+      if (!host.childElementCount) host.appendChild(h("p", "dossier-notice", "No data for this figure."));
+    } catch (err) {
       host.replaceChildren(h("p", "dossier-notice", "This figure could not be drawn from the stored data."));
       if (window.console) console.error(err);
     }

@@ -58,7 +58,7 @@
     <a class="btn prob-link" href="#checks"><span class="prob-name">{{ fpp.label or "False positive" }}</span> {{ fpp.words or "not computed" }}{% if not fpp.signed_off %} <span class="chip-provisional">provisional</span>{% endif %}</a>
   </div>
   <div class="dossier-actions">
-    <a class="btn primary" href="/dossiers/{{ target_id }}/export.html" download>Download standalone page</a>
+    <a class="btn primary" href="/dossiers/{{ target_id }}/export.html">Download standalone page</a>
     <a class="btn" href="/signals/{{ signal_id }}">Open in the candidate queue</a>
     <span class="muted">Generated {{ generated_words }} · search version {{ dz.search_version }} · ladder version {{ dz.ladder_version or "unknown" }}</span>
   </div>
@@ -165,7 +165,7 @@
 <section id="checks" class="dossier-section" aria-labelledby="checks-title">
   {{ section_head("03", "checks", "The checks", (status.headline or "") ~ ". Most repeating dips are not planets: they are eclipsing binaries, blended neighbours or instrument effects. Each check below looks for one of them.") }}
   {% with rows = why_rows, show_numbers = True, recheck_history = [] %}{% include "partials/why.html" %}{% endwith %}
-  {% with link = False, heading_id = "probabilities-page" %}{% include "partials/probabilities.html" %}{% endwith %}
+  {% with link = False, block_id = "probabilities", heading_id = "probabilities-page" %}{% include "partials/probabilities.html" %}{% endwith %}
   <div class="only-expert dossier-expert">
     <h3>The false-alarm counts</h3>
     {%- if fap.n is not none and fap.n is defined %}
@@ -209,8 +209,8 @@
     <thead><tr><th scope="col">season</th><th scope="col">vote</th><th scope="col">nearer</th><th scope="col" class="num">from this star, px</th><th scope="col" class="num">from the neighbour, px</th><th scope="col" class="num only-expert">centroid error along the axis, px</th><th scope="col" class="num">separation, sigma</th></tr></thead>
     <tbody>
     {%- for s in seasons %}
-    <tr class="{{ '' if s.voting else 'is-muted' }}"><th scope="row">{{ s.season }}</th>
-      <td>{% if s.voting %}voting{% else %}not voting: {{ s.non_voting_reason or "no reason stored" }}{% endif %}</td>
+    <tr{% if not s.voting %} class="is-muted"{% endif %}><th scope="row">{{ s.season }}</th>
+      <td>{% if s.vote is false %}not voting: {{ s.non_voting_reason or "no reason stored" }}{% else %}{{ s.vote_words }}{% endif %}</td>
       <td>{{ {"target": "this star", "neighbour": "the neighbour"}.get(s.nearer, s.nearer or "–") }}</td>
       <td class="num">{{ s.dist_target_pix | fmt(2) }}{% if s.centroid_sigma_pix is number %} ± {{ s.centroid_sigma_pix | fmt(2) }}{% endif %}</td>
       <td class="num">{{ s.dist_neighbour_pix | fmt(2) }}</td>

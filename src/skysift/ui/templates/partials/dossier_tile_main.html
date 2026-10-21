@@ -1,0 +1,34 @@
+{# The upper part of a Dossiers tile (inside #tile-main-<id>): thumbnail, name, star line, sentence, the two
+   probability pills and the status pills. Context: r, as partials/dossier_tile.html. #}
+{% from "partials/pill.html" import pill, reviewer_pill %}
+{% set tid = r.target_id %}
+{% set verdict_src = "/partials/signals/" ~ r.signal_id ~ "/verdict" %}
+  <div class="tile-top">
+    {%- if r.thumb %}
+    <div class="tile-thumb">{{ r.thumb }}</div>
+    {%- else %}
+    <div class="tile-thumb tile-thumb-empty" role="img" aria-label="No picture: no star parameters"><span>no star parameters</span></div>
+    {%- endif %}
+    <div class="tile-head">
+      <h2 class="tile-name" id="tile-name-{{ tid }}">
+        {%- if r.dossier %}<a id="tile-link-{{ tid }}" href="/dossiers/{{ tid }}">{{ r.target.name }}</a>{% else %}{{ r.target.name }}{% endif -%}
+      </h2>
+      <p class="tile-id"><code>{{ tid }}</code></p>
+      <p class="tile-star">{{ r.star_line or "Spectral type and distance not known yet" }}</p>
+    </div>
+  </div>
+  <p class="tile-summary">{{ r.summary }}</p>
+  {%- if r.dossier %}
+  {% set fap = r.fap_detail %}{% set fpp = r.fpp_detail %}
+  <div class="tile-probs" role="group" aria-label="Probabilities">
+    <button type="button" id="tile-fap-{{ tid }}" class="pill pill-muted prob-pill" data-dialog-src="{{ verdict_src }}" data-dialog-at="probabilities-popup" aria-haspopup="dialog"><span class="prob-name">False alarm</span> <span class="prob-num">{{ fap.get("words") or fap.get("text") or "not yet calibrated" }}</span></button>
+    <button type="button" id="tile-fpp-{{ tid }}" class="pill pill-muted prob-pill" data-dialog-src="{{ verdict_src }}" data-dialog-at="probabilities-popup" aria-haspopup="dialog"><span class="prob-name">{{ fpp.get("label") or "False positive" }}</span> <span class="prob-num">{{ fpp.get("words") or "not computed" }}</span></button>
+    {%- if not fpp.get("signed_off") %}
+    <span class="chip-provisional" title="The false-positive priors have not been reviewed yet">provisional</span>
+    {%- endif %}
+  </div>
+  {%- endif %}
+  <div class="tile-status">
+    {%- if r.v.reviewer %}{{ reviewer_pill(r.v.reviewer) }}{% endif %}
+    {{ pill(r.v.tone, r.v.word ~ (", " ~ r.v.stage if r.v.stage else ""), verdict_src, id="tile-verdict-" ~ tid) }}
+  </div>

@@ -111,11 +111,30 @@ def test_tile_without_a_dossier_offers_generate_and_marks_stale_ones(seeded_doss
     assert "stale" in current and f'hx-post="/dossiers/{STAGE2_TARGET}/generate"' in current
 
 
+def test_tile_and_dossier_rank_a_target_s_signals_the_same_way(seeded_dossier, settings):
+    from skysift import dossier as ds
+    from skysift.ui import queries
+    from tests.unit.ui_seed import add_older_version
+    client, app, ids, _data = seeded_dossier
+    store = app.state.store
+    other = add_older_version(store, STAGE2_TARGET)             # stage 1 of an older search, SDE 30, then approved
+    store.decide(other, "approve", "clean")
+    best = ds.pick_signal(store, STAGE2_TARGET)["id"]
+    assert best == ids["stage2"]                                # stage 2 ranks above an approved stage-1 signal
+    seed_dossier(store, settings.data_dir, target_id=STAGE2_TARGET)          # regenerated
+    for version in (None, queries.current_search_version(store)):
+        row = next(r for r in queries.final_set(store, version) if r["target_id"] == STAGE2_TARGET)
+        assert row["signal_id"] == best and row["stale"] is False and row["stale_reason"] is None
+    tile = client.get(f"/partials/dossiers/{STAGE2_TARGET}/tile").text
+    assert f'data-dialog-src="/partials/signals/{best}/verdict"' in tile and "stale" not in tile
+    assert "stale" not in client.get(f"/dossiers/{STAGE2_TARGET}").text.split("dossier-sections")[0]
+
+
 def test_tile_pills_open_the_verdict_at_the_probabilities(seeded_dossier):
     client, _app, ids, _data = seeded_dossier
     tile = client.get(f"/partials/dossiers/{STAGE2_TARGET}/tile").text
     assert tile.count(f'data-dialog-src="/partials/signals/{ids["stage2"]}/verdict"') >= 2
-    assert 'data-dialog-at="probabilities"' in tile and "<html" not in tile
+    assert 'data-dialog-at="probabilities-popup"' in tile and "<html" not in tile
     assert client.get("/partials/dossiers/kic-000000001/tile").status_code == 404
 
 
@@ -159,6 +178,37 @@ def test_dossier_page_reads_the_pixel_seasons(seeded_dossier, settings):
     assert "box incomplete: neighbour" in pixels and "not voting" in pixels
 
 
+def test_pixel_seasons_list_voting_first_and_a_missing_vote_as_not_recorded(seeded_dossier, settings):
+    client, app, ids, _data = seeded_dossier
+    far = {"separation_sigma": 4.2, "centroid_sigma_axis_pix": 0.04, "nearer": "target", "dist_target_pix": 0.2,
+           "dist_neighbour_pix": 2.9}
+    _set_rung5_seasons(app, ids["stage2"], [
+        {"season": 0, **far},                                                    # stored before seasons voted
+        {"season": 1, "voting": False, "non_voting_reason": "too few transits", **far},
+        {"season": 3, "voting": True, **far}, {"season": 2, "voting": True, **far}])
+    data = seed_dossier(app.state.store, settings.data_dir, target_id=STAGE2_TARGET)
+    assert not [c for c in data["caveats"] if c.get("key") == "close_call"]      # no season both voting and near
+    pixels = client.get(f"/dossiers/{STAGE2_TARGET}").text.split('id="pixels"')[1].split("</section>")[0]
+    rows = pixels.split("<tbody>")[1].split("</tbody>")[0].split("<tr")[1:]
+    assert [r.split('<th scope="row">')[1].split("<")[0] for r in rows] == ["2", "3", "1", "0"]     # voting first
+    assert "vote not recorded" in rows[3] and 'class="is-muted"' in rows[3] and "voting</td>" not in rows[3]
+    assert "not voting: too few transits" in rows[2] and 'class="is-muted"' in rows[2]
+    assert 'class="is-muted"' not in rows[0] and "voting</td>" in rows[0]
+    assert "200 Monte Carlo draws" not in pixels
+
+
+def test_the_monte_carlo_sentence_comes_from_the_dossier_caveats(seeded_dossier, settings):
+    from pathlib import Path
+    client, app, _ids, data = seeded_dossier
+    path = Path(app.state.store.dossier(STAGE2_TARGET)["data_path"])
+    sentence = "The centroid error comes from 200 Monte Carlo draws"
+    caveat = {"key": "close_call", "title": "A season sits close to the 3 sigma line", "text": f"{sentence}, so."}
+    path.write_text(json.dumps({**data, "caveats": [caveat]}), encoding="utf-8")
+    html = client.get(f"/dossiers/{STAGE2_TARGET}").text
+    assert sentence in html.split('id="pixels"')[1].split("</section>")[0]
+    assert sentence in html.split('id="caveats"')[1].split("</section>")[0]
+
+
 def _set_rung5_seasons(app, signal_id, seasons):
     from skysift.store.db import TestRow
     with app.state.store.session() as s:
@@ -198,6 +248,11 @@ def test_export_download_is_one_file(seeded_dossier):
     assert path and path.endswith(f"{STAGE2_TARGET}_dossier.html")
     assert client.get(f"/dossiers/{STAGE2_TARGET}/export.html").text == r.text                # served from the cache
     assert client.get("/dossiers/kic-000000001/export.html").status_code == 404
+    link = client.get(f"/dossiers/{STAGE2_TARGET}").text.split(f'href="/dossiers/{STAGE2_TARGET}/export.html"')[1]
+    assert not link.split(">")[0].strip()                       # no download attribute: the route names the file
+    assert r.headers["content-disposition"].startswith("attachment;")
+    assert "No data for this figure." in r.text and "could not be read" in r.text            # dossier.js guards
+    assert "The star beside the Sun, to scale." in r.text and "vote not recorded" in r.text   # its own captions
 
 
 # ---- jobs
@@ -221,12 +276,29 @@ def test_dossier_jobs_live_apart_from_the_sweeps(settings):
     assert jobs.stop_file.parent == jobs.dir                           # never the sweep's stop request
 
 
+def test_dossier_jobs_run_below_normal_priority(settings, monkeypatch):
+    import skysift.ui.sweeps as sw
+    seen = {}
+
+    def fake_popen(argv, **kwargs):
+        seen.update(argv=argv, **kwargs)
+        raise OSError("not started in this test")
+    monkeypatch.setattr(sw.subprocess, "Popen", fake_popen)
+    jobs = DossierJobs(settings.data_dir)
+    assert jobs.below_normal is True
+    with pytest.raises(OSError):
+        jobs.start(DossierRequest("dossier", STAGE2_TARGET, force=True))
+    assert seen["argv"][-5:] == ["skysift", "dossier", "--target", STAGE2_TARGET, "--force"]
+    assert {k: seen[k] for k in sw.spawn_options(True)} == sw.spawn_options(True)
+    assert jobs.active() is None
+
+
 def test_generate_button_starts_one_job_and_refuses_a_second(seeded_dossier, fake_jobs):
     client, app, _ids, _data = seeded_dossier
     assert client.post(f"/dossiers/{STAGE2_TARGET}/generate").status_code == 403         # no token
     r = client.post(f"/dossiers/{APPROVED_TARGET}/generate", data={"_token": token(app)})
     assert r.status_code == 200 and "generating" in r.text.lower()
-    assert f'hx-get="/partials/dossiers/{APPROVED_TARGET}/tile"' in r.text and 'hx-trigger="every 5s"' in r.text
+    assert f'hx-get="/partials/dossiers/{APPROVED_TARGET}/status"' in r.text and 'hx-trigger="every 5s"' in r.text
     active = fake_jobs.active()
     assert active["request"]["kind"] == "dossier" and active["request"]["target_id"] == APPROVED_TARGET
     r = client.post(f"/dossiers/{STAGE2_TARGET}/generate", data={"_token": token(app)})
@@ -238,6 +310,44 @@ def test_generate_button_starts_one_job_and_refuses_a_second(seeded_dossier, fak
     assert "every 5s" not in client.get(f"/partials/dossiers/{APPROVED_TARGET}/tile").text
     r = client.post("/dossiers/kic-000000001/generate", data={"_token": token(app)})
     assert r.status_code == 404
+
+
+def test_only_the_tile_s_foot_polls_and_the_forms_swap_their_own_tile(seeded_dossier, fake_jobs):
+    client, app, _ids, _data = seeded_dossier
+    html = client.get("/dossiers").text
+    tile = html.split(f'id="tile-{STAGE2_TARGET}"')[1].split("</article>")[0]
+    assert "every 5s" not in tile
+    assert 'hx-target="#tile-' not in html and 'hx-target="closest article"' in html
+    r = client.post(f"/dossiers/{APPROVED_TARGET}/generate", data={"_token": token(app)})
+    article = r.text.split("<article")[1].split(">")[0]
+    assert "hx-get" not in article and "hx-trigger" not in article                 # the article itself never polls
+    foot = r.text.split(f'id="tile-foot-{APPROVED_TARGET}"')[1].split(">")[0]
+    assert 'aria-live="polite"' in foot and 'hx-trigger="every 5s"' in foot and 'hx-swap="innerHTML"' in foot
+    assert f'hx-get="/partials/dossiers/{APPROVED_TARGET}/status"' in foot
+    status = client.get(f"/partials/dossiers/{APPROVED_TARGET}/status")
+    assert status.status_code == 204 and status.text == ""                       # running: nothing to swap
+    fake_jobs.stop()
+    status = client.get(f"/partials/dossiers/{APPROVED_TARGET}/status")
+    assert status.status_code == 286 and "<article" not in status.text            # ended: swap and stop polling
+    assert f'id="tile-main-{APPROVED_TARGET}" hx-swap-oob="true"' in status.text and "Generate" in status.text
+    assert client.get("/partials/dossiers/kic-000000001/status").status_code == 404
+    assert client.get("/partials/dossiers/bad%20id;x/status").status_code == 400
+
+
+def test_the_pack_is_offered_and_started_only_for_an_approved_candidate(seeded_dossier, fake_jobs, settings):
+    client, app, ids, _data = seeded_dossier
+    tile = client.get(f"/partials/dossiers/{STAGE2_TARGET}/tile").text
+    assert "Build submission pack" not in tile and "/pack" not in tile
+    r = client.post(f"/dossiers/{STAGE2_TARGET}/pack", data={"_token": token(app)})
+    assert r.status_code == 409 and "only for an approved candidate" in r.headers["HX-Trigger"]
+    assert fake_jobs.active() is None
+    r = client.post(f"/dossiers/{APPROVED_TARGET}/pack", data={"_token": token(app)})
+    assert r.status_code == 400 and "Generate the dossier first" in r.headers["HX-Trigger"]
+    app.state.store.decide(ids["stage2"], "approve", "clean")
+    seed_dossier(app.state.store, settings.data_dir, target_id=STAGE2_TARGET)
+    assert "Build submission pack" in client.get(f"/partials/dossiers/{STAGE2_TARGET}/tile").text
+    r = client.post(f"/dossiers/{STAGE2_TARGET}/pack", data={"_token": token(app)})
+    assert r.status_code == 200 and fake_jobs.active()["request"]["kind"] == "pack"
 
 
 def test_pack_steps_toggle_with_the_token(seeded_dossier):
@@ -268,12 +378,100 @@ def test_approved_page_links_the_dossier(seeded_dossier, settings):
 def test_verdict_popup_has_the_probabilities_block_only_with_a_dossier(seeded_dossier):
     client, _app, ids, _data = seeded_dossier
     html = client.get(f"/partials/signals/{ids['stage2']}/verdict").text
-    block = html.split('id="probabilities"')[1]
+    assert 'id="probabilities"' not in html                       # the dossier page's own block keeps that id
+    block = html.split('<section id="probabilities-popup"')[1]
+    assert 'aria-labelledby="probabilities-popup-title"' in block and 'id="probabilities-popup-title"' in block
     assert "False alarm" in block and "1 in 1,700" in block and "about 3 percent" in block
     assert "This is about noise." in block and "not a vespa" in block and "provisional" in block
     assert f'href="/dossiers/{STAGE2_TARGET}#checks"' in block
     html = client.get(f"/partials/signals/{ids['candidate']}/verdict").text
-    assert 'id="probabilities"' not in html and "False alarm" not in html
+    assert "probabilities" not in html and "False alarm" not in html
+
+
+def test_the_dossier_page_and_its_popup_never_share_an_id(seeded_dossier):
+    client, _app, _ids, _data = seeded_dossier
+    page = client.get(f"/dossiers/{STAGE2_TARGET}").text
+    assert page.count('id="probabilities"') == 1 and 'id="probabilities-page"' in page
+    assert 'id="probabilities-popup"' not in page and 'id="probabilities-popup-title"' not in page
+
+
+def test_the_popup_of_another_signal_of_the_star_names_the_dossier_s_signal(seeded_dossier):
+    from tests.unit.ui_seed import add_older_version
+    client, app, _ids, _data = seeded_dossier
+    other = add_older_version(app.state.store, STAGE2_TARGET)
+    html = client.get(f"/partials/signals/{other}/verdict").text
+    assert "The dossier was built from another signal of this star." in html
+    assert f'href="/dossiers/{STAGE2_TARGET}"' in html and 'id="probabilities-popup"' in html
+    assert "False alarm" not in html and "about 3 percent" not in html
+
+
+def _set_probabilities(app, target_id, fap=None, fpp=None, value=...):
+    row = app.state.store.dossier(target_id)
+    fields = {"fap_detail": {**row["fap_detail"], **(fap or {})}, "fpp_detail": {**row["fpp_detail"], **(fpp or {})}}
+    if value is not ...:
+        fields["fpp"] = value
+    app.state.store.upsert_dossier(target_id=target_id, **fields)
+
+
+@pytest.mark.parametrize(("fap", "words"), [
+    ({"calibrated": False, "words": "not yet calibrated", "fap": None, "one_in": None}, "not yet calibrated"),
+    ({"calibrated": False, "words": None, "fap": None, "one_in": None}, "not yet calibrated"),
+    ({"version_matches": False, "words": "calibration is for an older search", "versions": ["0+0ld0ld00"]},
+     "calibration is for an older search"),
+])
+def test_the_false_alarm_wording_without_a_current_calibration(seeded_dossier, fap, words):
+    client, app, ids, _data = seeded_dossier
+    _set_probabilities(app, STAGE2_TARGET, fap=fap)
+    tile = client.get(f"/partials/dossiers/{STAGE2_TARGET}/tile").text
+    assert f'<span class="prob-name">False alarm</span> <span class="prob-num">{words}</span>' in tile
+    assert "1 in 1,700" not in tile
+    popup = client.get(f"/partials/signals/{ids['stage2']}/verdict").text
+    assert f'<p class="prob-value">{words}</p>' in popup
+
+
+def test_the_dossier_page_explains_a_missing_or_older_calibration(seeded_dossier):
+    from pathlib import Path
+    client, app, _ids, data = seeded_dossier
+    path = Path(app.state.store.dossier(STAGE2_TARGET)["data_path"])
+    path.write_text(json.dumps({**data, "fap": {**data["fap"], "calibrated": False, "words": None}}), encoding="utf-8")
+    html = client.get(f"/dossiers/{STAGE2_TARGET}?mode=expert").text
+    assert "not yet calibrated" in html and "Not yet calibrated: at least 200 null searches" in html
+    older = {**data["fap"], "version_matches": False, "words": "calibration is for an older search",
+             "versions": ["0+0ld0ld00"]}
+    path.write_text(json.dumps({**data, "fap": older}), encoding="utf-8")
+    html = client.get(f"/dossiers/{STAGE2_TARGET}?mode=expert").text
+    assert "calibration is for an older search" in html
+    assert "The calibration is for an older search (0+0ld0ld00)" in html
+
+
+def test_tiles_sort_by_fpp_within_a_group_with_none_last(seeded_dossier, settings):
+    client, app, ids, _data = seeded_dossier
+    store = app.state.store
+    store.decide(ids["stage2"], "approve", "clean")
+    store.decide(ids["candidate"], "approve", "clean")
+    for tid in (APPROVED_TARGET, STAGE2_TARGET, STAGE1_TARGET):
+        seed_dossier(store, settings.data_dir, target_id=tid)
+    _set_probabilities(app, APPROVED_TARGET, value=None)
+    _set_probabilities(app, STAGE2_TARGET, value=0.2)
+    _set_probabilities(app, STAGE1_TARGET, value=0.01)
+    html = client.get("/dossiers?versions=all").text
+    assert html.index(f'id="tile-{STAGE1_TARGET}"') < html.index(f'id="tile-{STAGE2_TARGET}"') \
+        < html.index(f'id="tile-{APPROVED_TARGET}"')
+    assert html.count("group-approved") == 3
+
+
+def test_a_signed_off_fpp_is_not_provisional(seeded_dossier):
+    from pathlib import Path
+    client, app, ids, data = seeded_dossier
+    _set_probabilities(app, STAGE2_TARGET, fpp={"signed_off": True})
+    path = Path(app.state.store.dossier(STAGE2_TARGET)["data_path"])
+    path.write_text(json.dumps({**data, "fpp": {**data["fpp"], "signed_off": True}}), encoding="utf-8")
+    assert "provisional" not in client.get(f"/partials/dossiers/{STAGE2_TARGET}/tile").text
+    assert "provisional" not in client.get(f"/partials/signals/{ids['stage2']}/verdict").text
+    page = client.get(f"/dossiers/{STAGE2_TARGET}").text
+    assert "provisional" not in page.split('id="dossier-data"')[0]
+    _set_probabilities(app, STAGE2_TARGET, fpp={"signed_off": False})
+    assert "provisional" in client.get(f"/partials/dossiers/{STAGE2_TARGET}/tile").text
 
 
 def test_dossier_routes_reject_a_bad_target_id(seeded_dossier):

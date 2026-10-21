@@ -1,0 +1,34 @@
+{# The foot of a Dossiers tile (inside #tile-foot-<id>, the tile's live region): the job line while a job runs, else
+   the generated date, the stale and failure notes and the actions. Context: r, as partials/dossier_tile.html. #}
+{% from "partials/pill.html" import pill %}
+{% set tid = r.target_id %}
+    {%- if r.generating %}
+    <p class="tile-job">{{ pill("running", "generating") }} <span>{{ "Building the submission pack." if r.job_kind == "pack" else "Generating the dossier. This tile checks again every 5 seconds." }}</span></p>
+    {%- else %}
+    {%- if r.dossier %}
+    <p class="tile-generated">Generated {{ r.generated_words }}{% if r.dossier.pack_path %} · <span>pack built</span>{% endif %}</p>
+    {%- endif %}
+    {%- if r.dossier and r.stale %}
+    <p class="tile-note">This dossier is stale: {{ r.stale_reason }}.</p>
+    {%- endif %}
+    {%- if r.failed_job %}
+    <p class="tile-note error">The last {{ (r.failed_job.request or {}).get("kind", "dossier") }} job ended with an error{% if r.failed_job.exit_code is not none %} (exit {{ r.failed_job.exit_code }}){% endif %}.<span class="only-expert"> Log: <code>{{ r.failed_job.log }}</code></span></p>
+    {%- endif %}
+    <div class="tile-actions">
+      {%- if r.dossier %}
+      <a class="btn" href="/dossiers/{{ tid }}">Open the dossier</a>
+      {%- endif %}
+      {%- if not r.dossier or r.stale %}
+      <form hx-post="/dossiers/{{ tid }}/generate" hx-target="closest article" hx-swap="outerHTML">
+        <input type="hidden" name="_token" value="{{ token }}">
+        <button class="{{ 'primary' if not r.dossier else '' }}">{{ "Regenerate" if r.dossier else "Generate" }}</button>
+      </form>
+      {%- endif %}
+      {%- if r.dossier and r.group == "approved" %}
+      <form hx-post="/dossiers/{{ tid }}/pack" hx-target="closest article" hx-swap="outerHTML">
+        <input type="hidden" name="_token" value="{{ token }}">
+        <button>Build submission pack</button>
+      </form>
+      {%- endif %}
+    </div>
+    {%- endif %}

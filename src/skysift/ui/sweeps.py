@@ -34,10 +34,26 @@ PERIODOGRAM_MODES = ("all", "signals", "off")
 STAMP_FORMAT = "%Y%m%dT%H%M%S%fZ"                 # microseconds: two starts never share a stamp
 PROVISIONAL_TTL_S = 30.0                          # a lock without a pid older than this belongs to a dead starter
 STOP_WAIT_S = 5.0
+CREATE_NEW_PROCESS_GROUP = 0x00000200             # the Windows creation flags, spelt out so they exist on every OS
+BELOW_NORMAL_PRIORITY_CLASS = 0x00004000
+NICE_INCREMENT = 10                               # the POSIX stand-in for the below-normal priority class
 
 
 class SweepActive(RuntimeError):
     pass
+
+
+def _lower_priority() -> None:
+    os.nice(NICE_INCREMENT)
+
+
+def spawn_options(below_normal: bool, platform: str = sys.platform) -> dict:
+    """The ``Popen`` keywords of a launched child: its own process group on Windows (so a stop does not reach the
+    dashboard), and with ``below_normal`` the below-normal priority class there or a nice of ``NICE_INCREMENT``
+    elsewhere, so a job started beside a sweep yields the CPU to it."""
+    if platform == "win32":
+        return {"creationflags": CREATE_NEW_PROCESS_GROUP | (BELOW_NORMAL_PRIORITY_CLASS if below_normal else 0)}
+    return {"creationflags": 0, **({"preexec_fn": _lower_priority} if below_normal else {})}
 
 
 @dataclass
@@ -218,10 +234,11 @@ def _summary_from_log(log: str) -> dict | None:
 
 
 class SweepLauncher:
-    def __init__(self, data_dir: Path, command: list[str] | None = None):
+    def __init__(self, data_dir: Path, command: list[str] | None = None, below_normal: bool = False):
         self.dir = Path(data_dir) / "ui" / "sweeps"
         self.dir.mkdir(parents=True, exist_ok=True)
         self.command = command                     # tests replace the real engine command with a small script
+        self.below_normal = below_normal           # the sweep keeps normal priority; dossier jobs run below it
         self._proc: subprocess.Popen | None = None
         self._mu = threading.RLock()
 
@@ -340,10 +357,10 @@ class SweepLauncher:
                     if attempt or self._active() is not None:
                         raise SweepActive("a sweep is already running in this data directory") from None
             self._drop_stop_file()                            # a leftover request must not stop the new sweep at once
-            flags = subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0
+            options = spawn_options(self.below_normal)
             try:
                 with open(log, "w", encoding="utf-8") as fh:     # the child holds its own handle
-                    proc = subprocess.Popen(argv, stdout=fh, stderr=subprocess.STDOUT, env=env, creationflags=flags)
+                    proc = subprocess.Popen(argv, stdout=fh, stderr=subprocess.STDOUT, env=env, **options)
             except BaseException:
                 log.unlink(missing_ok=True); self._drop_lock(); raise
             self._proc = proc

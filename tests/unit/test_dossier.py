@@ -19,6 +19,7 @@ from skysift.cli import app
 from skysift.detectors import get_detector
 from skysift.detectors.periodogram import PeriodogramSummary
 from skysift.dossier import (
+    CLOSE_CALL,
     DOSSIER_VERSION,
     STATUS_ORDER,
     LightCurveReleased,
@@ -29,6 +30,7 @@ from skysift.dossier import (
     fingerprint,
     generate,
     pick_signal,
+    rank_key,
     status_label,
 )
 from skysift.fpp import FppInputs, compute
@@ -465,3 +467,34 @@ def test_an_unchanged_dossier_reports_its_stored_fap_and_a_version_bump_regenera
     again = generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch)
     assert again.generated and "format changed" in again.stale_reason
     assert env.store.dossier(STAGE2_TARGET)["dossier_version"] == "2"
+
+
+def test_rank_key_orders_stage_two_approved_stage_one_and_rejected_last():
+    def sig(i, status, sde, cand=None):
+        return {"id": i, "final_status": status, "sde": sde, "candidate_status": cand}
+    rows = [(sig(1, "candidate_stage1", 40.0), None), (sig(2, "candidate_stage1", 12.0, "approved"), "approve"),
+            (sig(3, "candidate_stage2", 9.0), None), (sig(4, "candidate_stage2", 50.0, "rejected"), "reject"),
+            (sig(5, "candidate_stage1", 41.0), "approve")]
+    order = [s["id"] for s, d in sorted(rows, key=lambda r: rank_key(*r))]
+    assert order == [3, 5, 2, 1, 4]            # stage 2, approved by SDE, stage 1, a rejection last whatever its SDE
+    assert rank_key(sig(6, "candidate_stage2", 9.0, "approved"), "approve")[1] == 0
+
+
+def _with_seasons(data: dict, seasons: list[dict]) -> dict:
+    return {**data, "tests": [{"rung": "rung5_pixels", "status": "pass", "metrics": {"seasons": seasons}}]}
+
+
+@pytest.mark.parametrize(("seasons", "close"), [
+    ([{"season": 0, "voting": True, "separation_sigma": 3.2}], True),
+    ([{"season": 0, "voting": True, "separation_sigma": -3.4}], True),
+    ([{"season": 0, "voting": True, "separation_sigma": 4.1}], False),
+    ([{"season": 0, "voting": False, "separation_sigma": 3.2}], False),
+    ([{"season": 0, "separation_sigma": 3.2}], False),                  # a vote not recorded is not a vote
+])
+def test_a_voting_season_near_three_sigma_gets_the_monte_carlo_caveat(env, seasons, close):
+    rep = generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch)
+    found = [c for c in caveats(_with_seasons(_data(rep), seasons)) if c.get("key") == "close_call"]
+    assert bool(found) is close
+    if close:
+        assert found[0]["text"] == CLOSE_CALL
+        assert "200 Monte Carlo draws" in found[0]["text"] and "—" not in found[0]["text"]

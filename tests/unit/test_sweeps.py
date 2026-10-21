@@ -222,3 +222,37 @@ def test_stale_stop_file_is_removed_on_start_and_on_hard_stop(tmp_path):
     assert launcher.request_stop() is True and stop_path(tmp_path).exists()
     assert launcher.stop() is True                                         # the hard stop still works while finishing
     assert launcher.history()[0]["reason"] == "stopped" and not stop_path(tmp_path).exists()
+
+
+def test_spawn_options_lower_the_priority_only_when_asked():
+    from skysift.ui.sweeps import BELOW_NORMAL_PRIORITY_CLASS, CREATE_NEW_PROCESS_GROUP, spawn_options
+    assert (CREATE_NEW_PROCESS_GROUP, BELOW_NORMAL_PRIORITY_CLASS) == (0x200, 0x4000)
+    assert spawn_options(False, "win32") == {"creationflags": CREATE_NEW_PROCESS_GROUP}
+    assert spawn_options(True, "win32") == {"creationflags": CREATE_NEW_PROCESS_GROUP | BELOW_NORMAL_PRIORITY_CLASS}
+    assert spawn_options(False, "linux") == {"creationflags": 0}
+    nice = spawn_options(True, "linux")
+    assert nice["creationflags"] == 0 and callable(nice["preexec_fn"])
+
+
+def test_the_sweep_keeps_normal_priority_and_passes_its_flags_to_popen(tmp_path, monkeypatch):
+    import skysift.ui.sweeps as sw
+    seen = {}
+
+    def fake_popen(argv, **kwargs):
+        seen.update(argv=argv, **kwargs)
+        raise OSError("not started in this test")
+    monkeypatch.setattr(sw.subprocess, "Popen", fake_popen)
+    launcher = SweepLauncher(tmp_path, command=["engine", "run"])
+    assert launcher.below_normal is False
+    with pytest.raises(OSError):
+        launcher.start(SweepRequest(source="kbonus_bkg"))
+    assert seen["argv"] == ["engine", "run"]
+    assert {k: seen[k] for k in sw.spawn_options(False)} == sw.spawn_options(False)
+    low = SweepLauncher(tmp_path, command=["engine", "run"], below_normal=True)
+    with pytest.raises(OSError):
+        low.start(SweepRequest(source="kbonus_bkg"))
+    if sys.platform == "win32":
+        assert seen["creationflags"] == sw.CREATE_NEW_PROCESS_GROUP | sw.BELOW_NORMAL_PRIORITY_CLASS
+    else:
+        assert callable(seen["preexec_fn"])
+    assert launcher.active() is None

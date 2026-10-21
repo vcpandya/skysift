@@ -49,10 +49,11 @@ class DossierRequest:
 class DossierJobs(SweepLauncher):
     """``SweepLauncher`` in ``<data_dir>/ui/dossier_jobs``: ``start`` raises ``JobBusy`` while a job runs, ``active``
     returns the lock with its ``request`` (``kind``, ``target_id``, ``force``), ``history`` the finished jobs newest
-    first. ``command`` replaces the engine command in tests."""
+    first. ``command`` replaces the engine command in tests. A job runs at below-normal priority so a sweep running
+    beside it keeps the CPU."""
 
     def __init__(self, data_dir: Path, command: list[str] | None = None):
-        super().__init__(data_dir, command=command)
+        super().__init__(data_dir, command=command, below_normal=True)
         self.dir = Path(data_dir) / "ui" / "dossier_jobs"
         self.dir.mkdir(parents=True, exist_ok=True)
 

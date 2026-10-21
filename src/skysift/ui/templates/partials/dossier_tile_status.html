@@ -1,0 +1,4 @@
+{# The answer to the foot's poll once the job has ended (status 286, which stops the polling): the new foot for the
+   live region, and the upper part of the tile out of band. Context: r, as partials/dossier_tile.html. #}
+{% include "partials/dossier_tile_foot.html" %}
+<div class="tile-main" id="tile-main-{{ r.target_id }}" hx-swap-oob="true">{% include "partials/dossier_tile_main.html" %}</div>

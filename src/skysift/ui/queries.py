@@ -547,13 +547,6 @@ def _group(final_status: str, decision: str | None, candidate_status: str | None
     return "stage2" if final_status == "candidate_stage2" else "stage1"
 
 
-def _final_rank(row: dict) -> tuple:
-    """As ``dossier.pick_signal`` ranks a target's signals: not rejected by a reviewer, then approved, stage 2,
-    stage 1, then SDE."""
-    rejected = row["decision"] == "reject" or row["candidate_status"] == "rejected"
-    return rejected, FINAL_GROUPS.index(row["group"]), -float(row["sde"] or 0.0), row["signal_id"]
-
-
 def stale_reason(store: Store, row: dict, best_signal_id: int | None = None) -> str | None:
     """Why the dossier ``row`` no longer describes its target (spec 5.4), or None when it is current: its data file
     is gone, the dossier format changed, another signal is now the target's best, or the fingerprint of the signal's
@@ -598,7 +591,9 @@ def _tile_facts(data: dict | None) -> dict:
 def final_set(store: Store, version: str | None, target_id: str | None = None) -> list[dict]:
     """One row per target for the Dossiers page: every ``candidate_stage2`` signal of ``version`` (None: every
     version), every signal of ``version`` whose latest decision is an approval, and every target with a dossier row
-    whatever its version. A target shows its best signal by ``_final_rank``. Rows carry ``target_id``,
+    whatever its version. A target shows its best signal by ``dossier.rank_key``, the ranking ``pick_signal`` builds
+    the dossier from; a target with a dossier ranks every signal it has, of any version, so its tile and its dossier
+    always name the same signal. ``group`` only orders the tiles. Rows carry ``target_id``,
     ``signal_id``, ``final_status``, ``decision``, ``dossier`` (the row or None), ``stale`` and ``stale_reason``,
     ``group`` ("approved", "stage2", "stage1"), ``fpp`` and ``fap``, plus what a tile prints; sorted approved,
     stage 2, stage 1, then FPP ascending with None last. With ``target_id``, the one row of that target (any of its
@@ -619,12 +614,13 @@ def final_set(store: Store, version: str | None, target_id: str | None = None) -
     dossiers = {d["target_id"]: d for d in store.dossiers() if target_id is None or d["target_id"] == target_id}
     with store.session() as s:
         found = list(s.execute(q))
-        have = {sig.id for sig, *_rest in found}
-        extra = [d["signal_id"] for d in dossiers.values() if d["signal_id"] not in have]
-        if extra:
-            found += list(s.execute(base.where(SignalRow.id.in_(extra))))
-        rows = []
+        if dossiers:
+            found += list(s.execute(base.where(SignalRow.target_id.in_(list(dossiers)))))
+        rows, have = [], set()
         for sig, t, decision, cand in found:
+            if sig.id in have:
+                continue
+            have.add(sig.id)
             target = {c.name: getattr(t, c.name) for c in TargetRow.__table__.columns}
             signal = {c.name: getattr(sig, c.name) for c in SignalRow.__table__.columns}
             rows.append({"target_id": sig.target_id, "signal_id": sig.id, "final_status": sig.final_status,
@@ -638,7 +634,8 @@ def final_set(store: Store, version: str | None, target_id: str | None = None) -
     out = []
     for tid, found_rows in by_target.items():
         d = dossiers.get(tid)
-        row = min(found_rows, key=_final_rank)
+        row = min(found_rows, key=lambda r: ds.rank_key({**r["signal"], "candidate_status": r["candidate_status"]},
+                                                        r["decision"]))
         data, error = dossier_json(d["data_path"]) if d else (None, None)
         reason = stale_reason(store, d, row["signal_id"]) if d else None
         facts = _tile_facts(data)

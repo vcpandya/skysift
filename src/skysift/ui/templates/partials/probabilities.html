@@ -1,9 +1,10 @@
 {# The two probabilities, side by side and never combined (dossiers spec 4.3): each with its name, its number and the
    sentence on what it does not cover, and the way to the dossier's section 03. Shared by the verdict popup and the
-   dossier page. Context: fap and fpp (the dossier's fap and fpp blocks), target_id; heading_id names the block. #}
+   dossier page. Context: fap and fpp (the dossier's fap and fpp blocks), target_id; block_id and heading_id are the
+   ids of the block and its heading, distinct per host so a popup opened over the dossier page adds no duplicate. #}
 {% set fap_words = fap.get("words") or fap.get("text") or "not yet calibrated" %}
 {% set fpp_words = fpp.get("words") or "not computed" %}
-<section id="probabilities" class="probabilities" tabindex="-1" aria-labelledby="{{ heading_id or 'probabilities-title' }}">
+<section id="{{ block_id or 'probabilities' }}" class="probabilities" tabindex="-1" aria-labelledby="{{ heading_id or 'probabilities-title' }}">
   <h3 id="{{ heading_id or 'probabilities-title' }}">Probabilities</h3>
   <p class="prob-intro">Two different questions, so two numbers. They are shown apart and never combined.</p>
   <dl class="prob-list">
