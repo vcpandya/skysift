@@ -17,7 +17,7 @@ from typer.testing import CliRunner
 
 from skysift import calibrate as cal
 from skysift import dossier as dossier_module
-from skysift import net
+from skysift import ephemeris, net
 from skysift.cli import app
 from skysift.detectors import get_detector
 from skysift.detectors.periodogram import PeriodogramSummary
@@ -835,8 +835,17 @@ def test_one_voting_season_keeps_the_no_pixel_rule(env):
 
 # ---------------------------------------------------------------------------------------------------- errors (v3)
 
-def test_the_inserted_geometry_reproduces_its_own_t14():
-    assert _t14(PERIOD, K, B, A_OVER_R) * 24.0 == pytest.approx(4.1597, rel=1e-3)
+def test_the_inserted_geometry_matches_the_injected_light_curve(env):
+    """The T14 inserted into the rung 2 row is the width of the dip in the injected curve. The bootstrap box width (the
+    box that maximises depth over error on each resample, 20 resamples, no fit) must agree with it within 10 percent.
+    The best box sits inside the contact points, about one ingress (12 minutes, 5 percent of 4.16 h) narrower than
+    T14, and is read off a grid with 3.6 percent steps; it gives 4.00 h here. An a/R* that made T14 the 2.3 h search
+    box would miss by 45 percent."""
+    sig = pick_signal(env.store, STAGE2_TARGET)
+    shape = ephemeris.bootstrap_shape(env.lc.time, whitened(env.lc, sig), PERIOD, T0, float(sig["duration"]), None,
+                                      n_boot=20)
+    inserted = _t14(PERIOD, K, B, A_OVER_R) * 24.0
+    assert shape.ok and shape.box_duration_h["median"] == pytest.approx(inserted, rel=0.10)
 
 
 def test_generate_writes_the_timing_shape_parity_and_secondary_blocks(env):
@@ -889,6 +898,9 @@ def test_generate_without_enough_transits_says_so(env, monkeypatch):
     assert keys.index("no_ephemeris_error") < keys.index("no_shape_error")
     hit = next(c for c in d["caveats"] if c.get("key") == "no_ephemeris_error")
     assert hit["title"] == "The ephemeris carries no error" and timing["reason"] in hit["text"]
+    assert "An error needs at least 3 transits" in hit["text"]
+    shape_hit = next(c for c in d["caveats"] if c.get("key") == "no_shape_error")
+    assert "and duration have no bootstrap error" in shape_hit["text"] and "depth" not in shape_hit["text"]
     json.dumps(d, allow_nan=False)
 
 
@@ -897,6 +909,10 @@ def test_the_error_caveats_follow_the_pixel_caveats_in_order():
             "timing": {"ok": False, "reason": "fewer than 3 timed transits (2)"},
             "shape": {"ok": False, "reason": "0 of 0 resamples converged (fewer than 20)"}}
     titles = [c["title"] for c in caveats(data)]
+    other = {**data, "timing": {"ok": False, "reason": "fewer than 3 timed transits after the outlier cut (2)"}}
+    assert "An error needs" in next(c["text"] for c in caveats(other) if c.get("key") == "no_ephemeris_error")
+    flat = {**data, "timing": {"ok": False, "reason": "no usable transit window"}}
+    assert "An error needs" not in next(c["text"] for c in caveats(flat) if c.get("key") == "no_ephemeris_error")
     i = titles.index("The false-positive estimate has no pixel exclusion")
     assert titles[i + 1:i + 4] == ["The ephemeris carries no error", "The transit shape carries no error",
                                    "The false-positive probability is not computed"]
@@ -917,6 +933,8 @@ def test_a_fit_that_does_not_dip_times_the_events_with_the_box(env):
              for t in env.store.latest_tests(sig["id"])]
     blocks = ephemeris_blocks(env.lc, whitened(env.lc, sig), sig, tests, n_boot=0)
     assert blocks["timing"]["template"] == "box" and "does not dip" in blocks["timing"]["template_reason"]
+    # the refused geometry is not bootstrapped either, so the duration is not called a fitted T14
+    assert blocks["shape"]["k"] is None and blocks["ephemeris_extra"]["duration_source"] == "search box"
     assert blocks["timing"]["ok"] and set(blocks) == {"ephemeris_extra", "timing", "shape", "parity", "secondary"}
 
 

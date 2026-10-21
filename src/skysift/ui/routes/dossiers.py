@@ -31,6 +31,9 @@ ERROR_SECTION = {"periodogram": "signal", "pixels": "pixels", "plots": "repeat",
                  "ephemeris": "signal"}
 VOTE_WORDS = {True: "voting", False: "not voting", None: "vote not recorded"}
 BUSY = "another dossier job is running"
+# how long a dossier job takes: the light curve, Gaia and the shape bootstrap (200 resamples, about 150 s)
+DOSSIER_TIME = "It takes about five minutes."
+PACK_TIME = "It takes one to three minutes."
 STOP_POLLING = 286                # htmx swaps a 286 answer and stops the element's polling
 # the submission pack's steps (spec 5.9), in the order its README gives them; pack.STEPS is the one list
 PACK_STEPS = [(int(n), title, STEP_TEXTS[n]) for n, title in STEPS]
@@ -189,7 +192,7 @@ def _missing(request: Request, target_id: str) -> HTMLResponse:
     rows = queries.final_set(request.app.state.store, None, target_id=target_id)
     tile = _tiles(request, rows)[0] if rows else None
     return render(request, "dossier.html", status_code=404, dz=None, target_id=target_id, r=tile,
-                  page_title="Dossier")
+                  page_title="Dossier", dossier_time=DOSSIER_TIME)
 
 
 @router.get("/dossiers/{target_id}", response_class=HTMLResponse)
@@ -311,8 +314,9 @@ def _start(request: Request, target_id: str, kind: str, force: bool) -> HTMLResp
         return resp
     resp = _tile(request, target_id)
     what = "the dossier" if kind == "dossier" else "the submission pack"
-    resp.headers["HX-Trigger"] = jsonutil.dumps({"toast": {"message": f"Building {what} for {target_id}. It takes "
-                                                           "one to three minutes.", "tone": "running"}})
+    took = DOSSIER_TIME if kind == "dossier" else PACK_TIME
+    resp.headers["HX-Trigger"] = jsonutil.dumps({"toast": {"message": f"Building {what} for {target_id}. {took}",
+                                                           "tone": "running"}})
     return resp
 
 

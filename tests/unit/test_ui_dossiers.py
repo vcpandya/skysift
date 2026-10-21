@@ -727,7 +727,7 @@ def test_dossier_page_prints_the_ephemeris_errors_in_expert(seeded_dossier):
     client.cookies.set("skysift_mode", "expert")
     html = client.get(f"/dossiers/{STAGE2_TARGET}").text
     hero = html.split('class="tiles dossier-tiles"')[1].split("</header>")[0]
-    assert '<span class="only-expert pm"> ± 0.000091</span>' in hero                    # the period, two figures
+    assert '40.289904<span class="only-expert pm"> ± 0.000091</span>' in hero          # value at the error's decimals
     assert '<span class="only-expert pm"> +0.07 −0.06</span>' in hero                   # the duration, asymmetric
     signal = html.split('id="signal"')[1].split('id="repeat"')[0]
     assert "T_ref (BJD_TDB)" in signal and "T_ref (BKJD)" in signal and "± 0.00041" in signal

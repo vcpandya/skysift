@@ -35,7 +35,7 @@
 <section class="page-head">
   <h1>No dossier for <code>{{ target_id }}</code> yet</h1>
   {%- if r %}
-  <p class="lede">This target has a signal, so a dossier can be generated from what is stored. It takes one to three minutes.</p>
+  <p class="lede">This target has a signal, so a dossier can be generated from what is stored. {{ dossier_time }}</p>
   {%- else %}
   <p class="lede">SkySift has no signal for this target, so there is nothing to build a dossier from.</p>
   {%- endif %}
@@ -84,7 +84,7 @@
   <p class="dossier-notice" role="alert">{{ dz.data_error[:1] | upper }}{{ dz.data_error[1:] }}. Generate the dossier again to rebuild it.</p>
   {%- endif %}
   <div class="tiles dossier-tiles">
-    <div class="tile"><div class="stat-value">{{ e.period_days | fmt(4) }}{% if e.period_err_days is number %}<span class="only-expert pm"> ± {{ e.period_err_days | fmt(err_digits(e.period_err_days)) }}</span>{% endif %}</div><div class="stat-label">period, days</div><p class="stat-gloss only-simple">Time from one dip to the next.</p></div>
+    <div class="tile">{% set hd = [4, err_digits(e.period_err_days)] | max if e.period_err_days is number else 4 %}<div class="stat-value">{{ e.period_days | fmt(hd) }}{% if e.period_err_days is number %}<span class="only-expert pm"> ± {{ e.period_err_days | fmt(hd) }}</span>{% endif %}</div><div class="stat-label">period, days</div><p class="stat-gloss only-simple">Time from one dip to the next.</p></div>
     <div class="tile"><div class="stat-value">{{ e.depth_ppm | fmt(0) }}{% if e.depth_ppm_err is number %}<span class="only-expert pm">{{ pm_err(e.depth_ppm_err, 0) }}</span>{% endif %}</div><div class="stat-label">depth, ppm</div><p class="stat-gloss only-simple">Share of the star's light the dip takes.</p></div>
     <div class="tile"><div class="stat-value">{{ e.duration_h | fmt(2) }}{% if e.duration_h_err %}<span class="only-expert pm">{{ pm_err(e.duration_h_err, 2) }}</span>{% endif %}</div><div class="stat-label">duration, hours</div><p class="stat-gloss only-simple">How long each dip lasts.</p></div>
     <div class="tile"><div class="stat-value">{{ e.sde | fmt(1) }}</div><div class="stat-label">SDE</div><p class="stat-gloss only-simple">How far the signal stands above the noise.</p></div>

@@ -406,7 +406,8 @@
     head.append(h("p", "dossier-kicker", `Candidate dossier · ${(D.target || {}).target_id || ""}`), h("h1", null, name),
       h("p", "hero-summary", D.summary), h("p", "dossier-status", st.headline || st.label || ""), toggle);
     const tiles = h("div", "tiles dossier-tiles");
-    [["period, days", fmt(E.period_days, 4), isNum(E.period_err_days) ? ` ± ${fmt(E.period_err_days, errDigits(E.period_err_days))}` : ""],
+    const hd = isNum(E.period_err_days) ? Math.max(4, errDigits(E.period_err_days)) : 4;
+    [["period, days", fmt(E.period_days, hd), pmErr(E.period_err_days, hd)],
       ["depth, ppm", fmt(E.depth_ppm), pmErr(E.depth_ppm_err, 0)], ["duration, hours", fmt(E.duration_h, 2), pmErr(E.duration_h_err, 2)],
       ["SDE", fmt(E.sde, 1), ""]]
       .forEach(([k, v, err]) => {

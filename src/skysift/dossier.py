@@ -495,7 +495,8 @@ def ephemeris_blocks(lc: LightCurve, fnorm, signal: dict, tests: list[dict], *, 
     metrics = _metrics(tests, "rung2_shape")
     timing = _timing(time, fnorm, signal, metrics)
     used = [t["epoch"] for t in timing["times"] if t["used"]] if timing["ok"] else None
-    point = _fit_point(metrics)
+    # a geometry template_from refused (it does not dip) is not bootstrapped either: timing and shape use one model
+    point = _fit_point(metrics) if timing["template"] == "fit" else None
     shape = eph.bootstrap_shape(time, fnorm, period, t0, dur, point, n_boot=n_boot, used_epochs=used).as_dict()
     parity = eph.parity_depths(event_depths(time, fnorm, np.asarray(lc.quarter), period, t0, dur)).as_dict()
     secondary = eph.secondary_limit(metrics)
@@ -770,13 +771,15 @@ def _error_caveats(data: dict) -> list[dict]:
     timing, shape = data.get("timing"), data.get("shape")
     out = []
     if isinstance(timing, dict) and timing.get("ok") is False:
+        reason = timing.get("reason") or "no reason stored"
+        need = (f" An error needs at least {eph.MIN_EVENTS} transits timed one by one."
+                if reason.startswith(f"fewer than {eph.MIN_EVENTS}") else "")
         out.append({"key": "no_ephemeris_error", "title": "The ephemeris carries no error",
                     "text": f"The period and the mid-transit time are the search values, quoted without an error "
-                            f"({timing.get('reason') or 'no reason stored'}). An error needs at least {eph.MIN_EVENTS} "
-                            "transits timed one by one."})
+                            f"({reason}).{need}"})
     if isinstance(shape, dict) and shape.get("ok") is False:
         out.append({"key": "no_shape_error", "title": "The transit shape carries no error",
-                    "text": f"The radius ratio, impact parameter, a/R*, duration and depth have no bootstrap error "
+                    "text": f"The radius ratio, impact parameter, a/R* and duration have no bootstrap error "
                             f"({shape.get('reason') or 'no reason stored'})."})
     k = (shape or {}).get("k") if isinstance(shape, dict) and shape.get("ok") else None
     vals = [(k or {}).get(x) for x in ("median", "boot_median", "minus", "plus")]
