@@ -20,8 +20,10 @@ Real target pixel files change stamp shape between quarters, and the stars' pixe
 ``QuarterData`` per quarter, each with its own stamp and positions. Within a season every quarter is placed by the
 integer offset of its rounded target position relative to the season's first usable quarter; the season frame is
 the union of all the shifted stamps (as the study built it from CRVAL1P/CRVAL2P), with invalid padding wherever a
-quarter has no pixel. A season votes only when both stars' 3x3 boxes lie complete on valid pixels of that frame: a
-truncated box pulls the centroid towards the frame interior and could reject a real candidate or pass a blend.
+quarter has no pixel. A season votes when both stars' 3x3 boxes lie complete on valid pixels of that frame, or when a
+box cut by the frame edge or a dead pixel keeps its centre and at least ``BOX_PIXELS_MIN`` of its 9 pixels. A cut box
+pulls the centroid towards the frame interior, so the shift a point source would suffer (``edge_allowance``) is added
+in quadrature to the centroid error and the season votes only when it is still decisive; complete boxes are unchanged.
 ``localise`` is the single-grid convenience wrapper. "Season" is the Kepler archive SEASON (0 to 3) each
 ``QuarterData`` carries from its TPF header (Q0 shares Q1's module and roll, so it shares Q1's season), and the
 same numbering derived from the quarter when it is not known (``quarter_season``).
@@ -102,12 +104,48 @@ def quarter_season(qd: QuarterData) -> int:
 _NAN2 = (math.nan, math.nan)
 
 
+def _finite2(p) -> bool:
+    return p is not None and all(math.isfinite(float(x)) for x in p)
+
+
+_BOX_OFFSETS = tuple((dc, dr) for dr in (-1, 0, 1) for dc in (-1, 0, 1))   # (dcol, drow), row-major
+
+
+@dataclass(frozen=True)
+class BoxCoverage:
+    """How much of a star's 3x3 box lies on valid pixels: the count, whether the centre pixel is one of them, and
+    the (dcol, drow) offsets of the missing pixels in row-major order."""
+    valid: int
+    centre: bool
+    missing: tuple[tuple[int, int], ...]
+
+    @property
+    def complete(self) -> bool:
+        return self.valid == 9
+
+    @property
+    def partial(self) -> bool:
+        return self.centre and BOX_PIXELS_MIN <= self.valid < 9
+
+    @property
+    def eligible(self) -> bool:
+        return self.complete or self.partial
+
+    def metrics(self) -> dict:
+        return {"pixels": self.valid, "missing": [[dc, dr] for dc, dr in self.missing]}
+
+
+ALL_MISSING = BoxCoverage(0, False, _BOX_OFFSETS)      # the coverage of a star with no position
+
+
 @dataclass
 class SeasonImage:
     """A season's stacked images on its union frame. ``offsets_pix`` is each quarter's integer (col, row) offset
     from the season's first usable quarter (round of the target-position difference), ``residual_offsets_pix`` the
-    target's leftover fractional (col, row) offset (at most 0.5 px by construction). ``target_on_frame`` and
-    ``neighbour_on_frame`` say whether that star's 3x3 box lies complete on valid frame pixels."""
+    target's leftover fractional (col, row) offset (at most 0.5 px by construction). ``box_target`` and
+    ``box_neighbour`` measure how much of that star's 3x3 box lies on valid frame pixels; ``target_on_frame`` and
+    ``neighbour_on_frame`` say whether the box is eligible to vote (complete, or cut with its centre and at least
+    BOX_PIXELS_MIN pixels)."""
     season: int
     quarters: list[int]
     n_events: int
@@ -119,6 +157,8 @@ class SeasonImage:
     pos_neighbour: tuple[float, float] = _NAN2
     offsets_pix: list[tuple[int, int]] = field(default_factory=list)
     residual_offsets_pix: list[tuple[float, float]] = field(default_factory=list)
+    box_target: BoxCoverage = ALL_MISSING
+    box_neighbour: BoxCoverage = ALL_MISSING
     target_on_frame: bool = False
     neighbour_on_frame: bool = False
 
@@ -138,16 +178,24 @@ class SeasonResult:
     depth_neighbour_ppm: tuple[float, float]
     max_snr: float
     quarters: list[int] = field(default_factory=list)
-    two_source: bool = False                    # the two-source fit ran (both stars on the frame)
-    voting: bool = False                        # both stars on the frame, a finite centroid, >= SEASON_EVENTS_MIN
-    on_frame: bool = False                      # both stars' 3x3 boxes complete on valid frame pixels
+    two_source: bool = False                    # the two-source fit ran (both stars' boxes eligible: ``on_frame``)
+    voting: bool = False                        # both boxes eligible, a finite centroid, >= SEASON_EVENTS_MIN, and
+    #                                             a cut box decisive
+    on_frame: bool = False                      # both stars' 3x3 boxes eligible (complete, or cut but >= BOX_PIXELS_MIN)
     pos_target: tuple[float, float] = _NAN2     # season-frame (col, row)
     pos_neighbour: tuple[float, float] = _NAN2
     centroid_sigma_axis_pix: float = math.nan   # centroid error along the neighbour-to-target axis
     non_voting_reason: str | None = None        # "box incomplete: target" | "box incomplete: neighbour" |
+    #                                             "box cut: ..." (a cut box that was not decisive) |
     #                                             "centroid not measured"; None for a voting season
     shift_pix: tuple[float, float] = _NAN2      # the two-source fit's common (col, row) shift of both stars
     psf_sigma_pix: float = math.nan             # the two-source fit's Gaussian PSF width
+    box_target: BoxCoverage = ALL_MISSING
+    box_neighbour: BoxCoverage = ALL_MISSING
+    box_partial: bool = False                   # on the frame with at least one box cut: the allowance is in the error
+    edge_bias_pix: float = 0.0                  # the larger allowance of the cut boxes, in the centroid error
+    edge_bias_axis_pix: float = 0.0             # ... and its part along the star-to-star axis, in the axis error
+    separation_sigma_raw: float = math.nan      # ``separation_sigma`` without the allowance
 
 
 def _f(x) -> float | None:
@@ -185,6 +233,11 @@ class Localisation:
             "two_source": bool(s.two_source), "voting": bool(s.voting), "non_voting_reason": s.non_voting_reason,
             "pos_target": [_f(x) for x in s.pos_target], "pos_neighbour": [_f(x) for x in s.pos_neighbour],
             "shift_pix": [_f(x) for x in s.shift_pix], "psf_sigma_pix": _f(s.psf_sigma_pix),
+            "box_pixels_target": int(s.box_target.valid), "box_pixels_neighbour": int(s.box_neighbour.valid),
+            "box_missing_target": s.box_target.metrics()["missing"],
+            "box_missing_neighbour": s.box_neighbour.metrics()["missing"],
+            "box_partial": bool(s.box_partial), "edge_bias_pix": _f(s.edge_bias_pix),
+            "edge_bias_axis_pix": _f(s.edge_bias_axis_pix), "separation_sigma_raw": _f(s.separation_sigma_raw),
         } for s in self.seasons]
         # the mean centroid error of the voting seasons (of all seasons with one when none votes)
         sig = [s["centroid_sigma_pix"] for s in seasons if s["centroid_sigma_pix"] is not None and s["voting"]]
@@ -238,40 +291,6 @@ def _quarter_events(qd: QuarterData, eph: Ephemeris, in_half: float, out_lo: flo
         warnings.simplefilter("ignore", RuntimeWarning)
         direct = np.where(valid, np.nanmean(np.where(valid, fl[outmask], np.nan), axis=0), np.nan)
     return events, valid, direct
-
-
-def _finite2(p) -> bool:
-    return p is not None and all(math.isfinite(float(x)) for x in p)
-
-
-_BOX_OFFSETS = tuple((dc, dr) for dr in (-1, 0, 1) for dc in (-1, 0, 1))   # (dcol, drow), row-major
-
-
-@dataclass(frozen=True)
-class BoxCoverage:
-    """How much of a star's 3x3 box lies on valid pixels: the count, whether the centre pixel is one of them, and
-    the (dcol, drow) offsets of the missing pixels in row-major order."""
-    valid: int
-    centre: bool
-    missing: tuple[tuple[int, int], ...]
-
-    @property
-    def complete(self) -> bool:
-        return self.valid == 9
-
-    @property
-    def partial(self) -> bool:
-        return self.centre and BOX_PIXELS_MIN <= self.valid < 9
-
-    @property
-    def eligible(self) -> bool:
-        return self.complete or self.partial
-
-    def metrics(self) -> dict:
-        return {"pixels": self.valid, "missing": [[dc, dr] for dc, dr in self.missing]}
-
-
-ALL_MISSING = BoxCoverage(0, False, _BOX_OFFSETS)      # the coverage of a star with no position
 
 
 def box_coverage(pos, valid: np.ndarray) -> BoxCoverage:
@@ -376,12 +395,13 @@ def season_images(quarters: list[QuarterData], eph: Ephemeris, *, in_half: float
         valid = wsum > 0
         safe = np.where(valid, wsum, 1.0)
         f_t, f_n = (p_t[0] - c_min, p_t[1] - r_min), (p_n[0] - c_min, p_n[1] - r_min)
+        box_t, box_n = box_coverage(f_t, valid), box_coverage(f_n, valid)
         images.append(SeasonImage(
             season=s, quarters=qs, n_events=n_events, diff=np.where(valid, num / safe, 0.0),
             var=np.where(valid, 1.0 / safe, np.inf),
             direct=np.where(valid & (dn > 0), dsum / np.maximum(dn, 1), np.nan), valid=valid,
             pos_target=f_t, pos_neighbour=f_n, offsets_pix=offsets, residual_offsets_pix=residuals,
-            target_on_frame=box_coverage(f_t, valid).complete, neighbour_on_frame=box_coverage(f_n, valid).complete))
+            box_target=box_t, box_neighbour=box_n, target_on_frame=box_t.eligible, neighbour_on_frame=box_n.eligible))
     return images
 
 
@@ -410,6 +430,7 @@ def difference_images(cube, time, quality, quarter, eph: Ephemeris, *, in_half: 
     if not known:
         for im in images:
             im.pos_target = im.pos_neighbour = _NAN2
+            im.box_target = im.box_neighbour = ALL_MISSING
             im.target_on_frame = im.neighbour_on_frame = False
     return images
 
@@ -618,6 +639,17 @@ def _on_neighbour(s: SeasonResult) -> bool:
                 or (d_n > NEIGHBOUR_DEPTH_SIGMA * e_n and d_t < TARGET_DEPTH_SIGMA * e_t))
 
 
+def partial_abstention(s: SeasonResult) -> str | None:
+    """Why a season with a cut box abstains, None when it is decisive and votes: a cut box votes only when it puts
+    the dip on the target (``_on_target``) or on the neighbour (``_on_neighbour``) with the allowance in its error.
+    Otherwise it is ambiguous (within SEPARATION_SIGMA of the bisector) or the neighbour depth disagrees."""
+    if _on_target(s) or _on_neighbour(s):
+        return None
+    if abs(s.separation_sigma) <= SEPARATION_SIGMA:
+        return f"box cut: ambiguous ({s.separation_sigma:.1f} sigma)"
+    return f"box cut: {_disagreement(s)}"
+
+
 def _neighbour_strength(s: SeasonResult) -> float:
     """The stronger of the two neighbour indicators, in sigma."""
     d_n, e_n = s.depth_neighbour_ppm
@@ -626,7 +658,8 @@ def _neighbour_strength(s: SeasonResult) -> float:
 
 
 def _voting(seasons: list[SeasonResult]) -> list[SeasonResult]:
-    """The seasons that vote, by season: both stars' boxes on the frame, a finite separation, enough events."""
+    """The seasons that vote, by season: both stars' boxes on the frame (a cut box only when decisive), a finite
+    separation, enough events."""
     return sorted((s for s in seasons if s.voting and s.n_events >= SEASON_EVENTS_MIN
                    and math.isfinite(s.separation_sigma)), key=lambda s: s.season)
 
@@ -658,8 +691,8 @@ def _disagreement(s: SeasonResult) -> str:
 
 
 def verdict(seasons: list[SeasonResult], n_events_used: int) -> tuple[str, str]:
-    """Spec 4.4 over the voting seasons (both stars' 3x3 boxes on the frame, a finite centroid and error, at least
-    SEASON_EVENTS_MIN events): undetermined with fewer than TRANSITS_MIN usable transits or no voting season; pass
+    """Spec 4.4 over the voting seasons (both stars' 3x3 boxes on the frame, complete or cut but decisive, a finite
+    centroid and error, at least SEASON_EVENTS_MIN events): undetermined with fewer than TRANSITS_MIN usable transits or no voting season; pass
     when every voting season, and at least PASS_SEASONS_MIN of them, is more than SEPARATION_SIGMA on the target's
     side of the bisector with a neighbour depth consistent with zero (one voting season alone is undetermined, naming
     why the others did not vote); fail when a majority is more than SEPARATION_SIGMA on the neighbour's side or puts
@@ -700,11 +733,12 @@ def localise(cube, time, quality, quarter, eph: Ephemeris, pos_target, pos_neigh
 def localise_quarters(quarters: list[QuarterData], eph: Ephemeris, *,
                       rng: np.random.Generator | None = None) -> Localisation:
     """Season images on union frames from per-quarter stamps (``season_images``), the S/N-box centroid and the
-    two-source fit in each season frame, and the verdict. A season votes only with both stars' 3x3 boxes complete
-    on valid frame pixels and a finite centroid and error; otherwise it is kept with ``nearer="unknown"`` (and
-    without the two-source fit when a star is off the frame). Quarters with non-finite star positions are
-    unusable. Every Monte Carlo draw comes from ``rng`` (default seeded with RNG_SEED), so the result is
-    deterministic."""
+    two-source fit in each season frame, and the verdict. A season votes with both stars' 3x3 boxes complete on valid
+    frame pixels, or cut but keeping the centre and BOX_PIXELS_MIN pixels (the box's edge allowance added in
+    quadrature to the centroid errors, and the season voting only when decisive: ``partial_abstention``), and a
+    finite centroid and error; otherwise it is kept with ``nearer="unknown"`` (and without the two-source fit when a
+    star's box is not eligible). Quarters with non-finite star positions are unusable. Every Monte Carlo draw comes
+    from ``rng`` (default seeded with RNG_SEED), so the result is deterministic."""
     rng = np.random.default_rng(RNG_SEED) if rng is None else rng
     images = season_images(quarters, eph)
     usable = sorted(q for im in images for q in im.quarters)
@@ -713,32 +747,50 @@ def localise_quarters(quarters: list[QuarterData], eph: Ephemeris, *,
     for im in images:
         (ct, rt), (cn, rn) = im.pos_target, im.pos_neighbour
         on_frame = im.target_on_frame and im.neighbour_on_frame
-        (col, row), sigma, max_snr, cov = snr_box_centroid(im.diff, im.var, im.valid, rng)
+        box_partial = on_frame and not (im.box_target.complete and im.box_neighbour.complete)
+        (col, row), sigma_mc, max_snr, cov = snr_box_centroid(im.diff, im.var, im.valid, rng)
         d_t, d_n = math.hypot(col - ct, row - rt), math.hypot(col - cn, row - rn)
         sep_pix = math.hypot(cn - ct, rn - rt)
-        sigma_axis = _axis_sigma(cov, (ct, rt), (cn, rn))
-        # signed distance of the centroid from the bisector, in units of the centroid error along the star axis
-        sep = ((d_n ** 2 - d_t ** 2) / (2.0 * sep_pix) / sigma_axis
-               if sep_pix > 0 and sigma_axis > 0 else math.nan)
-        voting = bool(on_frame and math.isfinite(sep) and im.n_events >= SEASON_EVENTS_MIN)
-        nearer = ("target" if sep > 0 else "neighbour") if voting else "unknown"
-        if voting:
-            why = None
-        elif not im.target_on_frame:
-            why = "box incomplete: target"
-        elif not im.neighbour_on_frame:
-            why = "box incomplete: neighbour"
-        else:
-            why = "centroid not measured"
+        sigma_axis_mc = _axis_sigma(cov, (ct, rt), (cn, rn))
         fit = two_source_fit(im.direct, im.diff, im.var, im.valid, (ct, rt), (cn, rn)) if on_frame else _nan_fit()
-        seasons.append(SeasonResult(
+        # the allowance of each cut box: how far its cut moves a point source's 3x3 centroid (the larger of the two)
+        bias = bias_axis = 0.0
+        if box_partial:
+            psf = float(fit["psf_sigma_pix"])
+            psf = psf if math.isfinite(psf) and 0.3 <= psf <= 3.0 else EDGE_PSF_SIGMA_PIX
+            cuts = [edge_allowance(star, im.valid, psf, other)
+                    for box, star, other in ((im.box_target, (ct, rt), (cn, rn)), (im.box_neighbour, (cn, rn), (ct, rt)))
+                    if box.partial]
+            if any(math.isnan(b) for b, _ in cuts):         # both are nan together: no allowance can be given
+                bias = bias_axis = math.nan
+            else:
+                bias, bias_axis = max(b for b, _ in cuts), max(a for _, a in cuts)
+        sigma, sigma_axis = math.hypot(sigma_mc, bias), math.hypot(sigma_axis_mc, bias_axis)
+        # signed distance of the centroid from the bisector, in units of the centroid error along the star axis
+        bisector = (d_n ** 2 - d_t ** 2) / (2.0 * sep_pix) if sep_pix > 0 else math.nan
+        sep = bisector / sigma_axis if sigma_axis > 0 else math.nan
+        sep_raw = bisector / sigma_axis_mc if sigma_axis_mc > 0 else math.nan
+        res = SeasonResult(
             season=im.season, n_events=im.n_events, centroid_colrow=(col, row), centroid_sigma_pix=sigma,
-            dist_target_pix=d_t, dist_neighbour_pix=d_n, nearer=nearer, separation_sigma=sep,
+            dist_target_pix=d_t, dist_neighbour_pix=d_n, nearer="unknown", separation_sigma=sep,
             depth_target_ppm=fit["depth_target_ppm"], depth_neighbour_ppm=fit["depth_neighbour_ppm"],
-            max_snr=max_snr, quarters=list(im.quarters), two_source=on_frame, voting=voting, on_frame=on_frame,
+            max_snr=max_snr, quarters=list(im.quarters), two_source=on_frame, voting=False, on_frame=on_frame,
             pos_target=(ct, rt), pos_neighbour=(cn, rn), centroid_sigma_axis_pix=sigma_axis,
-            non_voting_reason=why, shift_pix=tuple(float(x) for x in fit["shift_pix"]),
-            psf_sigma_pix=float(fit["psf_sigma_pix"])))
+            shift_pix=tuple(float(x) for x in fit["shift_pix"]), psf_sigma_pix=float(fit["psf_sigma_pix"]),
+            box_target=im.box_target, box_neighbour=im.box_neighbour, box_partial=box_partial,
+            edge_bias_pix=bias, edge_bias_axis_pix=bias_axis, separation_sigma_raw=sep_raw)
+        measured = bool(on_frame and math.isfinite(sep) and im.n_events >= SEASON_EVENTS_MIN)
+        abstention = partial_abstention(res) if measured and box_partial else None
+        res.voting = measured and abstention is None
+        if res.voting:
+            res.nearer = "target" if sep > 0 else "neighbour"
+        elif not im.box_target.eligible:
+            res.non_voting_reason = "box incomplete: target"
+        elif not im.box_neighbour.eligible:
+            res.non_voting_reason = "box incomplete: neighbour"
+        else:
+            res.non_voting_reason = abstention or "centroid not measured"
+        seasons.append(res)
     n_used = int(sum(im.n_events for im in images))
     v, reason = verdict(seasons, n_used)
     return Localisation(seasons=seasons, n_events_used=n_used, n_quarters_usable=len(usable),

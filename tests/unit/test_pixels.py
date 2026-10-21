@@ -9,6 +9,7 @@ from skysift.lc.pixels import (
     ALL_MISSING,
     BOX_PIXELS_MIN,
     N_MC,
+    SEPARATION_SIGMA,
     BoxCoverage,
     Ephemeris,
     QuarterData,
@@ -103,6 +104,7 @@ SHIFTED = ((10, 10), (-1, 0))       # one extra column on the left (stars one co
 SUBPIX = ((9, 9), (-0.3, 0))        # stamp 0.3 px off: target at col 4.3, rounds to the same pixel
 NO_NEIGHBOUR = ((9, 6), (0, 0))     # columns 0 to 5 only: the neighbour (col 6.8) is off the stamp
 NO_TARGET = ((9, 5), (4, 0))        # columns 4 to 8 only: the target sits on the stamp's first column
+CORNER_TARGET = ((5, 5), (4, 4))    # columns 4 to 8 and rows 4 to 8: the target on the stamp's corner pixel
 
 
 def _swap_season(cube, rest, season):
@@ -328,7 +330,8 @@ def test_metrics_carry_the_dashboard_keys_and_strict_json():
     keys = {"season", "quarters", "n_events", "centroid_colrow", "centroid_sigma_pix", "dist_target_pix",
             "dist_neighbour_pix", "nearer", "separation_sigma", "depth_target_ppm", "depth_neighbour_ppm", "max_snr",
             "two_source", "pos_target", "pos_neighbour", "voting", "non_voting_reason", "centroid_sigma_axis_pix",
-            "shift_pix", "psf_sigma_pix"}
+            "shift_pix", "psf_sigma_pix", "box_pixels_target", "box_pixels_neighbour", "box_missing_target",
+            "box_missing_neighbour", "box_partial", "edge_bias_pix", "edge_bias_axis_pix", "separation_sigma_raw"}
     assert all(set(s) == keys for s in m["seasons"]) and len(m["seasons"]) == 4
     assert isinstance(m["seasons"][0]["centroid_colrow"][0], float) and isinstance(m["n_events_used"], int)
     assert m["centroid_sigma_pix_mean"] == np.mean([s["centroid_sigma_pix"] for s in m["seasons"]])
@@ -388,17 +391,106 @@ def test_a_season_without_the_neighbour_does_not_vote():
         assert loc.verdict == expected and "3/3 seasons" in loc.reason
 
 
-def test_a_season_with_the_target_on_the_stamp_edge_does_not_vote():
-    loc = localise_quarters(make_quarters(layout={1: NO_TARGET, 5: NO_TARGET}), EPH)
-    s1 = _by_season(loc)[3]; im = next(i for i in loc.images if i.season == 3)
-    assert im.pos_target == (0.0, 4.0) and not im.target_on_frame and im.neighbour_on_frame
-    assert not s1.voting and s1.nearer == "unknown" and not s1.two_source
-    assert s1.non_voting_reason == "box incomplete: target"
+def test_complete_boxes_vote_exactly_as_before():
+    """Numbers of the committed code, taken before localise_quarters changed: complete boxes must not move."""
+    loc = localise(*make_cube("target"))
+    by = _by_season(loc)
+    assert all(not s.box_partial and s.edge_bias_pix == 0.0 and s.separation_sigma == s.separation_sigma_raw
+               for s in loc.seasons)
+    assert all(s.box_target.complete and s.box_neighbour.complete for s in loc.seasons)
+    assert [round(by[s].separation_sigma, 6) for s in (0, 1, 2, 3)] == [12.236112, 4.360287, 16.856287, 13.182444]
+    assert [round(by[s].centroid_sigma_pix, 6) for s in (0, 1, 2, 3)] == [0.136073, 0.253986, 0.21437, 0.17134]
+
+
+def test_a_season_with_the_target_on_the_stamp_edge_votes_with_an_allowance():
+    for dip_on, expected in (("target", "pass"), ("neighbour", "fail")):
+        loc = localise_quarters(make_quarters(dip_on, layout={1: NO_TARGET, 5: NO_TARGET}), EPH)
+        s1 = _by_season(loc)[3]; im = next(i for i in loc.images if i.season == 3)
+        assert im.pos_target == (0.0, 4.0) and im.box_target.partial and im.box_neighbour.complete
+        assert im.target_on_frame and s1.on_frame and s1.voting and s1.two_source and s1.box_partial
+        assert s1.box_target.metrics() == {"pixels": 6, "missing": [[-1, -1], [-1, 0], [-1, 1]]}
+        assert 0.0 < s1.edge_bias_pix < 0.6 and s1.edge_bias_axis_pix <= s1.edge_bias_pix + 1e-12
+        assert s1.centroid_sigma_pix > s1.edge_bias_pix and abs(s1.separation_sigma) < abs(s1.separation_sigma_raw)
+        assert s1.non_voting_reason is None
+        assert loc.verdict == expected and "4/4 seasons" in loc.reason
+        if dip_on == "target":
+            assert s1.nearer == "target" and s1.separation_sigma > SEPARATION_SIGMA
+        else:
+            assert s1.nearer == "neighbour" and s1.separation_sigma < -SEPARATION_SIGMA
+        m = loc.metrics(); json.dumps(m, allow_nan=False)
+        row = next(x for x in m["seasons"] if x["season"] == 3)
+        assert row["box_partial"] is True and row["box_pixels_target"] == 6 and row["box_pixels_neighbour"] == 9
+        assert row["box_missing_target"] == [[-1, -1], [-1, 0], [-1, 1]] and row["box_missing_neighbour"] == []
+        assert row["edge_bias_pix"] > 0 and row["separation_sigma_raw"] is not None
+
+
+def test_every_season_with_the_target_on_the_edge_is_eligible_and_carries_the_allowance():
+    """The target on the first column with a 0.9 px PSF puts 0.36 px of allowance in the axis error, so the 2.9 px
+    pair is only just decisive (2.8 to 3.0 sigma in a single-quarter season): each season either votes or says why
+    it did not with a stored "box cut" reason, and none is dropped as an incomplete box."""
+    loc = localise_quarters(make_quarters(layout={q: NO_TARGET for q in range(1, 6)}), EPH)
+    assert all(s.on_frame and s.two_source and s.box_partial and s.box_target.metrics()["pixels"] == 6
+               for s in loc.seasons)
+    assert all(0.3 < s.edge_bias_pix < 0.4 and abs(s.separation_sigma) < abs(s.separation_sigma_raw)
+               for s in loc.seasons)
+    assert all(s.voting if s.non_voting_reason is None else s.non_voting_reason.startswith("box cut: ambiguous")
+               for s in loc.seasons)
+    assert loc.reason != "pixels: no season holds both stars on the frame"
+
+
+def test_a_corner_box_does_not_vote():
+    loc = localise_quarters(make_quarters(layout={1: CORNER_TARGET, 5: CORNER_TARGET}), EPH)
+    s1 = _by_season(loc)[3]
+    assert s1.box_target.valid == 4 and not s1.on_frame and not s1.voting and not s1.two_source
+    assert s1.non_voting_reason == "box incomplete: target" and s1.nearer == "unknown"
     assert loc.verdict == "pass" and "3/3 seasons" in loc.reason
 
 
+def test_a_dead_pixel_in_the_box_votes_with_a_small_allowance():
+    qs = make_quarters()
+    for qd in qs:
+        if qd.quarter in (1, 5):
+            qd.cube[:, 3, 4] = math.nan                  # row 3, col 4: offset (0, -1) from the target's pixel
+    s1 = _by_season(localise_quarters(qs, EPH))[3]
+    assert s1.voting and s1.box_partial and s1.box_target.metrics() == {"pixels": 8, "missing": [[0, -1]]}
+    assert 0.0 < s1.edge_bias_pix < 0.15
+
+
+def test_a_cut_box_votes_only_when_decisive():
+    from dataclasses import replace
+
+    from skysift.lc.pixels import partial_abstention
+    partial = replace(_season(0), box_partial=True, edge_bias_pix=0.1)
+    assert partial_abstention(partial) is None                                     # 10 sigma on the target
+    assert partial_abstention(replace(_season(0, sep=-8.0), box_partial=True)) is None          # 8 sigma on the neighbour
+    assert partial_abstention(replace(_season(0, sep=1.7), box_partial=True)) == "box cut: ambiguous (1.7 sigma)"
+    assert partial_abstention(replace(_season(0, sep=-2.9), box_partial=True)) == "box cut: ambiguous (-2.9 sigma)"
+    assert (partial_abstention(replace(_season(0, d_n=(200.0, 60.0)), box_partial=True))
+            == "box cut: neighbour depth 200 +/- 60 ppm")
+    assert (partial_abstention(replace(_season(0, d_n=(math.nan, math.nan)), box_partial=True))
+            == "box cut: neighbour depth not measured")
+    # the verdict: an abstaining cut season is silent, the complete seasons decide
+    silent = replace(_season(3, sep=1.7, voting=False), box_partial=True,
+                     non_voting_reason="box cut: ambiguous (1.7 sigma)")
+    assert verdict([_season(0), _season(1), _season(2), silent], 20)[0] == "pass"
+    assert verdict([_season(0), silent], 20) == (
+        "undetermined", "pixels: only one season could vote (season 3: box cut: ambiguous (1.7 sigma))")
+
+
+def test_the_allowance_falls_back_to_the_default_width(monkeypatch):
+    import skysift.lc.pixels as px
+    monkeypatch.setattr(px, "two_source_fit", lambda *a, **k: px._nan_fit())
+    loc = localise_quarters(make_quarters(layout={1: NO_TARGET, 5: NO_TARGET}), EPH)
+    s1 = _by_season(loc)[3]; im = next(i for i in loc.images if i.season == 3)
+    assert s1.box_partial and math.isfinite(s1.separation_sigma) and math.isnan(s1.psf_sigma_pix)
+    want, want_axis = edge_allowance(im.pos_target, im.valid, px.EDGE_PSF_SIGMA_PIX, im.pos_neighbour)
+    assert s1.edge_bias_pix == want > 0 and s1.edge_bias_axis_pix == want_axis
+    # no fit, no neighbour depth: a cut box is not decisive on the target's side without it, so it abstains
+    assert not s1.voting and s1.non_voting_reason == "box cut: neighbour depth not measured"
+
+
 def test_no_season_with_both_stars_on_the_frame_is_undetermined():
-    layout = {q: NO_TARGET for q in range(1, 6)}
+    layout = {q: CORNER_TARGET for q in range(1, 6)}
     loc = localise_quarters(make_quarters(layout=layout), EPH)
     assert loc.verdict == "undetermined" and loc.reason == "pixels: no season holds both stars on the frame"
     assert all(s.nearer == "unknown" for s in loc.seasons) and "nan" not in loc.reason
