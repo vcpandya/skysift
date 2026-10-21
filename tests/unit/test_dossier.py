@@ -542,6 +542,11 @@ def test_hand_built_values_agree_within_errors():
     # "under 1 percent"; the number is a sign-off item (ledger), and this test pins reproducibility, not the band
     assert gen["fpp"]["value"] == pytest.approx(compute(FppInputs(**gen["fpp"]["inputs"])).value, rel=1e-6)
     assert gen["fpp"]["signed_off"] is False
+    # the stored centroid error is the one the code computes from the stored rung 5 seasons
+    est, inputs = centroid_estimate(rung5["metrics"]), gen["fpp"]["inputs"]
+    assert (est.sigma_stat, est.sigma_scatter, est.sigma) == pytest.approx(
+        (inputs["sigma_c_stat_arcsec"], inputs["sigma_c_scatter_arcsec"], inputs["centroid_sigma_arcsec"]), rel=1e-5)
+    assert est.source == inputs["sigma_c_source"]
 
 
 def test_the_compare_tool_reads_the_golden_block(monkeypatch, tmp_path, capsys):

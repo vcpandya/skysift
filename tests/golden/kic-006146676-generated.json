@@ -1,6 +1,6 @@
 {
  "dossier_version": "1",
- "generated": "2026-10-21T06:20:57.909089+00:00",
+ "generated": "2026-10-21T07:07:17.725520+00:00",
  "target": {
   "target_id": "kic-006146676",
   "source": "kbonus_bkg",
@@ -247,7 +247,7 @@
    ],
    "centroid_sigma_arcsec": 0.137343,
    "sigma_c_stat_arcsec": 0.137343,
-   "sigma_c_scatter_arcsec": 0.090046479,
+   "sigma_c_scatter_arcsec": 0.11028396,
    "sigma_c_source": "statistical"
   },
   "sentence_not_covered": "This counts the common impostors with simple priors. It is not a vespa or a Kepler DR25 false-positive probability, and it has no radial-velocity or imaging input."
@@ -704,6 +704,6 @@
    "rung4_novelty": "3",
    "rung5_pixels": "4"
   },
-  "git_commit": "f431ed0"
+  "git_commit": "2588897"
  }
 }

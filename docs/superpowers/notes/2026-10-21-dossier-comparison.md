@@ -49,7 +49,7 @@ Every engine command ran with `SKYSIFT_DATA_DIR=.superpowers/dossier-run`,
 `SKYSIFT_BLOB_URL=file://.superpowers/sample-run/blobs`, `SKYSIFT_DATABASE_URL=sqlite:///.superpowers/dossier-run/engine.db`
 and `PYTHONUTF8=1`. The dossier and pack commands ran below normal priority (`start /belownormal`).
 
-## Network calls (the copy's `queries` table, rows 3137 to 3171)
+## Network calls (the copy's `queries` table, rows 3137 to 3179)
 
 | Rows | Service | Status | What | Bytes |
 | --- | --- | --- | --- | --- |
@@ -62,6 +62,8 @@ and `PYTHONUTF8=1`. The dossier and pack commands ran below normal priority (`st
 | 3162, 3166 | gaia | 200 | the 2MASS Ks cross-match | 29, 29 |
 | 3163, 3167 | gaia | 200 | the neighbour cone again | 608, 527 |
 | 3168 to 3171 | gaia | 200 | fix round: the four queries of KIC 6146676 again, from the clean tree at f431ed0 (06:20:51 to 06:20:57 UTC) | 359, 57, 29, 608 |
+| 3172 to 3175 | gaia | 200 | re-review round: the same four queries, from a clean tree at 46db518, a commit later amended away (06:59:23 to 06:59:29 UTC) | 359, 57, 29, 608 |
+| 3176 to 3179 | gaia | 200 | re-review round: the same four queries, from the clean tree at 2588897, the run behind the golden block (07:07:11 to 07:07:17 UTC) | 359, 57, 29, 608 |
 
 Nothing else reached the network: no catalogue query (rung 4 was left out of the ladder recheck), no light curve
 download (both raw files were in the blob store) and no Zenodo call (no token).
@@ -132,11 +134,11 @@ a quiet M dwarf: inverting a light curve turns every brightening (flares, or the
 of the 999 calibration stars give a box-shaped peak above 50 that way. KIC 5689121 reads "1 in 51" (38 of 1,998; 37
 inverted, 1 scrambled at 20.2). Which nulls count is a decision for the FAP rule, not something to tune here.
 
-**8. Both FPPs fall below the 1 to 60 percent band of spec 4.2.** KIC 6146676 reads 0.0139 percent ("under 1
-percent"), KIC 5689121 0.90 percent without pixel data ("under 1 percent", label "no pixel data yet"). For KIC 6146676
-the background binary term vanishes (X_mean 2.2e-222). Since the fix round the averaged centroid uses the three voting
+**8. Both FPPs fall below the 1 to 60 percent band of spec 4.2.** KIC 6146676 reads 0.0139 percent ("under 1 percent"),
+KIC 5689121 0.90 percent without pixel data ("under 1 percent", label "no pixel data yet"). For KIC 6146676 the
+background binary term vanishes (X_mean 2.2e-222). Since the fix round the averaged centroid uses the three voting
 seasons only, and its error sigma_c is the larger of two numbers: the error of the inverse-variance weighted mean
-(0.1373 arcsec, 0.0345 pixel) and the seasons' RMS scatter about that mean over sqrt(3) (0.0900 arcsec). The
+(0.1373 arcsec, 0.0345 pixel) and the seasons' sample scatter (ddof 1) about that mean over sqrt(3) (0.1103 arcsec). The
 statistical error wins, so sigma_c is 0.1373 arcsec and the confusion radius stays at its 2.0 arcsec floor. The target
 sits 0.762 arcsec (about 5.5 sigma_c) from the averaged centroid, and the nearest bright neighbour, 6.38 arcsec from it,
 sits 32 sigma outside the confusion radius. Before the fix round all four seasons were averaged (sigma_c 0.125 arcsec,
@@ -269,7 +271,7 @@ Rung 5: pass, "the dip is on the target in 3/3 seasons (centroid >= 17.5 sigma n
 
 ### Provenance
 
-Search version 5+6cfe4cf4, effective ladder version 4, git f431ed0.
+Search version 5+6cfe4cf4, effective ladder version 4, git 2588897.
 
 | Rung | Status | Ladder version | Written |
 | --- | --- | --- | --- |
@@ -284,7 +286,7 @@ Search version 5+6cfe4cf4, effective ladder version 4, git f431ed0.
 
 False alarm: "1 in 170", 11 of 1998 null searches at or above SDE 50.5 (by null kind: inverted 11 of 999, scrambled 0 of 999), calibration version 5+42061727 (signal search 5+6cfe4cf4, version matches True).
 
-**KIC 6146676**: FPP 0.000139 ("under 1 percent", label "False positive", pixels True, signed off False), confusion radius 2 arcsec. Centroid error sigma_c 0.1373 arcsec, the statistical one of statistical 0.1373 and scatter 0.09005 arcsec.
+**KIC 6146676**: FPP 0.000139 ("under 1 percent", label "False positive", pixels True, signed off False), confusion radius 2 arcsec. Centroid error sigma_c 0.1373 arcsec, the statistical one of statistical 0.1373 and scatter 0.1103 arcsec.
 
 | Scenario | Prior | Geometric | Data | Weight | Share of the total |
 | --- | --- | --- | --- | --- | --- |
@@ -392,8 +394,9 @@ The Task 7 review asked for five changes and a set of minors. All of them are in
 1. The centroid uses the voting seasons only. `dossier.centroid_estimate` takes the inverse-variance weighted mean of
    `dist_target_pix` over the seasons that voted (a legacy row without the `voting` flag votes when `nearer` names a
    star), and the FPP inputs come from it. For KIC 6146676 that is seasons 0, 1 and 2: offset 0.762 arcsec.
-2. The centroid error is the larger of the error of the weighted mean (0.1373 arcsec) and the RMS scatter of the
-   voting seasons about the mean over sqrt(n) (0.0900 arcsec). `fpp.inputs` records `sigma_c_stat_arcsec`,
+2. The centroid error is the larger of the error of the weighted mean (0.1373 arcsec) and the sample scatter
+   (ddof 1) of the voting seasons about the mean over sqrt(n) (0.1103 arcsec; 0.0900 arcsec with ddof 0 before the
+   re-review). `fpp.inputs` records `sigma_c_stat_arcsec`,
    `sigma_c_scatter_arcsec` and `sigma_c_source` ("statistical" here); `FppInputs` accepts the three keys with
    defaults and the FPP ignores them. r_c = max(3 sigma_c, 2.0) is unchanged, so r_c is 2.0 arcsec. Result: sigma_c
    0.1373 arcsec, X_mean 2.23e-222, BEB weight 3.8e-225, FPP 0.000139 (0.0139 percent, "under 1 percent"), with the
@@ -420,9 +423,27 @@ The golden block was regenerated from a clean worktree at f431ed0 (the same code
 the golden itself), so its `git_commit` reads f431ed0 with no "-dirty" suffix. f431ed0 is the pre-amend hash of the
 same tree as 0ee90d6: the code is identical and only the note and the golden block differ, but f431ed0 itself is not
 on the branch. The re-review round below regenerates the golden block from a committed tree, so that its `git_commit`
-names a reachable commit. That run made 4 Gaia calls (rows 3168 to
+names a reachable commit. The fix-round run made 4 Gaia calls (rows 3168 to
 3171, all 200) for KIC 6146676 only. The KIC 5689121 dossier was not regenerated: it has no pixel data, so its FPP
 does not depend on the centroid, and its FAP split is 37 inverted and 1 scrambled of 38, with 999 searches of each kind.
 
 Tests: `tests/unit/test_dossier.py`, `test_stars.py`, `test_fap.py`, `test_fpp.py` and `test_cli.py -k dossier` pass
 (the `test_cli.py` selection is empty; the dossier CLI tests live in `test_dossier.py`). Ruff is clean.
+
+## Appendix: re-review round (21 October 2026)
+
+The re-review approved the fix round and asked for four minors, in two commits.
+
+1. The scatter term of `centroid_estimate` is the sample scatter (ddof 1) over sqrt(n), and 0 for a single season.
+   For KIC 6146676 it reads 0.1103 arcsec against the statistical 0.1373 arcsec, so the statistical error still wins:
+   sigma_c 0.1373 arcsec, r_c 2.0 arcsec, X_mean 2.23e-222 and FPP 0.000139 (0.0139 percent) are unchanged. The
+   golden test now checks that the stored `sigma_c_*` keys are the ones the code computes from the stored seasons.
+2. The compare tool builds the provenance table from `provenance.ladder_versions`, so the golden block gives the six
+   rows too, with the status and date where the block keeps the test row.
+3. The golden block was regenerated from a clean worktree at the code commit 2588897, so its `git_commit` reads
+   2588897, a commit on the branch. A first run from HEAD named the dashboard task's 46db518, which that task then
+   amended away, so the block was made again from 2588897, which no later amend touches. Each run made 4 Gaia calls
+   (rows 3172 to 3175 and 3176 to 3179, all 200). Against the fix-round golden only three fields changed: `generated`, `sigma_c_scatter_arcsec` and
+   `git_commit`.
+4. Without `--out` the compare tool prints the tables and writes nothing; with `--out` it writes the file and prints
+   nothing.
