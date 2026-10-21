@@ -2,7 +2,9 @@
 
 Reads the colour tokens of `:root` (light) and `:root[data-theme="dark"]` from src/skysift/ui/static/app.css, computes
 the WCAG 2 contrast ratio of each pair in PAIRS and lists every pair below its minimum. It also fails when the dark
-block that follows the system preference has drifted from the explicit dark block.
+block that follows the system preference has drifted from the explicit dark block, and when the pixel figure's
+standalone palettes (skysift.ui.pixel_figure.PALETTES, the hex values its downloadable SVG carries) or its inline rules
+have drifted from the stylesheet.
 
     python -m tools.contrast_check      # exit 0 when every pair passes, 1 otherwise
 """
@@ -11,6 +13,8 @@ from __future__ import annotations
 import re
 import sys
 from pathlib import Path
+
+from skysift.ui import pixel_figure
 
 CSS = Path(__file__).resolve().parents[1] / "src" / "skysift" / "ui" / "static" / "app.css"
 TEXT, LARGE = 4.5, 3.0      # AA: body text; large text and UI components
@@ -25,6 +29,8 @@ PAIRS: list[tuple[str, str, float]] = [
     *[(c, "raised", TEXT) for c in ("pass", "fail", "undet", "ion", "solar")],      # hover rows, toasts, chip counts
     ("surface", "ion", TEXT), ("surface", "fail", TEXT),
     ("space-fg", "space", TEXT),                    # captions inside the dossier drawings
+    # the pixel figure: its text (fg, fg-2 on bg above) and its marks on the page ground and in the standalone file
+    ("solar", "bg", LARGE), ("muted", "bg", LARGE),
 ]
 # The planet thumbnail's physical colours (skysift.ui.planet_svg): the four planet discs by equilibrium temperature
 # and the four star limbs by effective temperature. They are graphics, so the minimum is the UI one, against the
@@ -58,8 +64,24 @@ def ratio(a: str, b: str) -> float:
     return (hi + 0.05) / (lo + 0.05)
 
 
-def check(css: str | None = None) -> list[str]:
-    """Every failing pair as a sentence; an empty list means the stylesheet passes."""
+def figure_drift(themes: dict[str, dict[str, str]], css: str, palettes: dict | None = None) -> list[str]:
+    """The pixel figure's standalone palettes against the stylesheet's tokens, and its rules against app.css."""
+    palettes = pixel_figure.PALETTES if palettes is None else palettes
+    failures = []
+    for theme, palette in palettes.items():
+        for token in pixel_figure.TOKENS:
+            want = themes.get(theme, {}).get(token)
+            if palette.get(token, "").lower() != (want or "").lower():
+                failures.append(f"{theme}: pixel figure --{token} is {palette.get(token)!r}, "
+                                f"the stylesheet has {want!r}")
+    failures += [f"pixel figure rule missing from the stylesheet: {rule}"
+                 for rule in pixel_figure.css_rules() if rule not in css]
+    return failures
+
+
+def check(css: str | None = None, palettes: dict | None = None) -> list[str]:
+    """Every failing pair as a sentence; an empty list means the stylesheet passes. ``palettes`` stands in for the
+    pixel figure's (for tests)."""
     css = CSS.read_text(encoding="utf-8") if css is None else css
     failures = []
     themes = {}
@@ -88,7 +110,7 @@ def check(css: str | None = None) -> list[str]:
             r = ratio(colour, ground)
             if r < minimum:
                 failures.append(f"{theme}: thumbnail {colour} on --{bg} {ground} is {r:.2f}:1, needs {minimum}:1")
-    return failures
+    return failures + figure_drift(themes, css, palettes)
 
 
 def main() -> int:

@@ -1,0 +1,16 @@
+{#- The pixel stage's figure, drawn inline so app.css styles it on the theme tokens (skysift.ui.pixel_figure),
+    with a link to the standalone file of each theme. Needs pixel_figures and mode. #}
+<section class="signal-section" aria-labelledby="pixels-title">
+  <h2 id="pixels-title">Which star is dimming</h2>
+  <figure class="pixel-figure">
+    <div class="pixel-figure-scroll">{{ pixel_figures.svg }}</div>
+    <figcaption>One panel per archive season (the Kepler archive's SEASON, not the quarter groups of the stability
+      check). The ring is this star, the square the neighbour whose pixels hold it, and the cross the centroid of the
+      light lost in transit, with circles at 1 and 3 times its error. A greyed panel did not vote
+      {%- if mode == "expert" %}; the sigma is the centroid's signed distance from the line halfway between the two
+      stars, positive on this star's side{% endif %}. Download the figure:
+      {% for theme, href in pixel_figures.downloads -%}
+      <a href="{{ href }}" download>{{ theme }} SVG</a>{{ " or " if not loop.last }}
+      {%- endfor %}.</figcaption>
+  </figure>
+</section>

@@ -239,14 +239,15 @@ def add_older_version(store: Store, target_id: str = "kic-005689121", period: fl
         return s.query(SignalRow.id).filter(SignalRow.run_id == rid).scalar()
 
 
-PAIR_TARGET = "kic-006271633"      # the half-period role: 18.19 d superseded by a 9.10 d child rejected odd/even
+PAIR_TARGET = "kic-006271633"      # the half-period role: 18.19 d superseded by a 9.10 d child rejected at 50 sigma
 
 
 def add_superseded_pair(store: Store) -> dict:
     """A signal the recheck superseded and the P/2 child it made, written the way the recheck writes them: the sweep
     stores the 18.19 d signal undetermined (an equal secondary at phase 0.5), then one ``commit_recheck_step`` adds
-    the period row (outcome "superseded"), the 9.0975 d child in its own ``recheck:`` run with its tests (rejected
-    odd/even), and both statuses. Not part of ``seed`` so the seeded counts stay as they are. Returns
+    the period row (outcome "superseded"), the 9.0975 d child in its own ``recheck:`` run with its tests (rejected by
+    ``secondary_at_0.5`` at 50 sigma, equal odd and even depths, as KIC 6271633's child was in the real run), and both
+    statuses. Not part of ``seed`` so the seeded counts stay as they are. Returns
     {"superseded", "halved_child", "pair_recheck_run"}."""
     from skysift.store.db import RECHECK_JOB_PREFIX, ChildWrite, RunRow, StepWrite
     t = _target(PAIR_TARGET, kic=6271633, gaia="2101234567890123463", gmag=15.1)
@@ -268,8 +269,9 @@ def add_superseded_pair(store: Store) -> dict:
         "halving": {"from_period": 18.195}}})
     c1 = TestResult(rung="rung1_detection", status=TestStatus.PASS,
                     metrics={"sde": 26.5, "snr": 33.0, "n_events": 140, "duration_ratio": 1.0})
-    c2 = TestResult(rung="rung2_shape", status=TestStatus.FAIL, reason="odd_even 4.1 sigma",
-                    metrics={"depth_ppm": 4100.0, "odd_ppm": 4420.0, "even_ppm": 3780.0, "parity_sigma": 4.1})
+    c2 = TestResult(rung="rung2_shape", status=TestStatus.FAIL, reason="secondary_at_0.5 50.0 sigma",
+                    metrics={"depth_ppm": 4100.0, "odd_ppm": 4095.0, "even_ppm": 4105.0, "parity_sigma": 0.1,
+                             "secondary_ppm": 4010.0, "secondary_sigma": 50.0})
     done = store.commit_recheck_step(StepWrite(
         signal_id=pid, step="period", ladder_version="4", outcome="superseded",
         reason="re-measured at 9.0975 d: rejected",

@@ -240,6 +240,7 @@ def test_pixel_reasons_map_to_words(reason):
      "PIXELS_SAID"),
     ("pixels: no pixel files for this star", "no pixel files", "PIXELS_NONE"),
     ("pixels: no neighbour to test against", "no neighbour in its pixels", "PIXELS_NONE"),
+    ("pixels: no readable pixel files (3 listed)", "None of the archive's pixel files", "PIXELS_NONE"),
     ("pixels: 2 usable transits < 3", "The pixels could not show which star the dip is on", "PIXELS_SAID"),
     ("outage:mast: 3 of 16 pixel files unreachable", "The pixel archive did not answer", "PIXELS_RETRY"),
     ("outage:mast: HTTP 503", "The pixel archive did not answer", "PIXELS_RETRY"),
@@ -329,3 +330,38 @@ def test_next_step_says_when_the_recheck_already_took_it():
     assert done[2].next_step == "rechecked on 21 Oct 2026: superseded by the signal at 9.0975 d, now rejected"
     assert done[2].missing == rows[2].missing and done[0] == rows[0]
     assert explain.with_recheck_state(rows, [], []) == rows                         # not yet: the plain next step
+
+
+def test_vetted_statuses_are_the_engine_statuses_less_pending():
+    from skysift.store.db import ENGINE_STATUSES
+    assert explain.VETTED_STATUSES == tuple(s for s in ENGINE_STATUSES if s != "pending")
+
+
+def test_the_pixel_and_catalogue_steps_mark_their_next_step_taken():
+    rows = explain.why([{"rung": "rung4_novelty", "status": "undetermined", "metrics": {},
+                         "reason": "outage:exoarchive: HTTP 503"},
+                        {"rung": "rung5_pixels", "status": "undetermined", "metrics": {},
+                         "reason": "outage:mast: HTTP 503"}])
+    steps = [{"id": 1, "step": "catalogue", "ladder_version": "4", "outcome": "pass", "new_signal_id": None,
+              "reason": "", "utc": "2026-10-21T01:00:00"},
+             {"id": 2, "step": "pixels", "ladder_version": "4", "outcome": "fail", "new_signal_id": None,
+              "reason": "the dip is on a neighbouring star (4.1 sigma, 3/4 seasons)", "utc": "2026-10-21T02:00:00"}]
+    done = explain.with_recheck_state(rows, steps, [])
+    assert done[4].next_step == "rechecked on 21 Oct 2026: passed"
+    assert done[5].next_step == "rechecked on 21 Oct 2026: failed"
+    skipped = [{**steps[1], "outcome": "skipped", "reason": "reviewer decided meanwhile"}]
+    assert explain.with_recheck_state(rows, skipped, [])[5].next_step == explain.PIXELS_RETRY   # a skip takes no step
+
+
+def test_a_superseded_signal_unexamined_pixel_row_says_so():
+    rows = explain.why([{"rung": "rung1_detection", "status": "pass", "metrics": {}, "reason": ""},
+                        {"rung": "rung2_shape", "status": "undetermined", "metrics": {},
+                         "reason": "equal secondary at phase 0.5: true period may be P / 2 (9.0975 d)"}])
+    assert rows[5].status == "skipped"
+    assert explain.with_recheck_state(rows, [], [], "superseded")[5].sentence == "Not examined: superseded"
+    assert explain.with_recheck_state(rows, [], [], "undetermined")[5].sentence == rows[5].sentence
+
+
+def test_season_names():
+    assert explain.season_name({"season": 3}) == "archive season 3"
+    assert explain.season_name({}) == "archive season (unlabelled)"

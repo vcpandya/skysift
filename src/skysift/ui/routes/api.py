@@ -118,15 +118,25 @@ def sparkline_svg(request: Request, signal_id: int):
 
 
 @router.get("/api/signals/{signal_id}/pixels.svg")
-def pixels_svg(request: Request, signal_id: int):
-    """The pixel stage's season panels (``pixel_figure.render_svg``), drawn from the latest ``rung5_pixels`` row's
-    metrics alone; 404 when the signal is unknown or has no such row. Not cached: a recheck may write a newer row."""
+def pixels_svg(request: Request, signal_id: int, theme: str = "light"):
+    """The pixel stage's season panels as a standalone file (``pixel_figure.render_svg``) in the token values of
+    ``theme`` (light or dark), drawn from the latest ``rung5_pixels`` row's metrics alone; 404 when the signal is
+    unknown, has no such row or the row's metrics are not a mapping (logged). Not cached: a recheck may write a newer
+    row. The signal page draws the same figure inline on the theme tokens."""
+    if theme not in pixel_figure.THEMES:
+        return JSONResponse({"error": "bad request", "detail": f"theme is one of {', '.join(pixel_figure.THEMES)}"},
+                            status_code=400)
     store = request.app.state.store
     row = next((t for t in store.latest_tests(signal_id) if t["rung"] == "rung5_pixels"), None)
-    if row is None:
+    metrics = None if row is None else (row["metrics"] or {})
+    if metrics is not None and not isinstance(metrics, dict):
+        log.warning("pixels.svg %s: rung 5 row %s holds %s metrics, not a mapping", signal_id, row["id"],
+                    type(metrics).__name__)
+        metrics = None
+    if metrics is None:
         return JSONResponse({"error": "not found", "detail": f"no pixel check for signal {signal_id}"},
                             status_code=404)
-    svg = pixel_figure.render_svg(row["metrics"] or {}, signal_id, row["reason"] or "")
+    svg = pixel_figure.render_svg(metrics, signal_id, row["reason"] or "", theme=theme)
     return Response(svg, media_type=SVG, headers={"Cache-Control": "no-store"})
 
 

@@ -10,7 +10,7 @@ from fastapi.responses import HTMLResponse
 from markupsafe import Markup
 
 from skysift import jsonutil
-from skysift.ui import explain, plots, queries
+from skysift.ui import explain, pixel_figure, plots, queries
 from skysift.ui.app import render, require_token
 
 router = APIRouter()
@@ -110,7 +110,8 @@ def _explained(d: dict, signal_id: int) -> dict:
     glossary footer and where the pill opens the popup."""
     latest = d["latest_tests"]
     v = explain.verdict(d["signal"], latest, d["candidate"], d["decisions"])
-    rows = explain.with_recheck_state(explain.why(latest), d["rechecks"], d["children"])
+    rows = explain.with_recheck_state(explain.why(latest), d["rechecks"], d["children"],
+                                      d["signal"].get("final_status"))
     return {"v": v, "rows": rows, "ladder": _ladder_rows(latest), "glossary": _glossary(v),
             "recheck_history": explain.recheck_history(d["rechecks"], d["children"]),
             "lineage": explain.lineage(d["signal"], d["parent"], d["children"]),
@@ -118,12 +119,15 @@ def _explained(d: dict, signal_id: int) -> dict:
 
 
 def _pixel_figures(d: dict, signal_id: int) -> dict | None:
-    """The signal page's pixel section when rung 5 has a row: where its picture is and the row's sentence."""
+    """The signal page's pixel section when rung 5 has a row with readable metrics: the figure drawn inline on the
+    theme tokens (``pixel_figure.render_svg``) and the standalone download of each theme."""
     row = next((t for t in d["latest_tests"] if t["rung"] == "rung5_pixels"), None)
-    if row is None:
+    metrics = None if row is None else (row.get("metrics") or {})
+    if not isinstance(metrics, dict):
         return None
-    return {"src": f"/api/signals/{signal_id}/pixels.svg", "status": row["status"],
-            "n_seasons": len(explain.pixel_seasons(row.get("metrics") or {}))}
+    return {"svg": Markup(pixel_figure.render_svg(metrics, signal_id, row.get("reason") or "")),
+            "downloads": [(theme, f"/api/signals/{signal_id}/pixels.svg?theme={theme}")
+                          for theme in pixel_figure.THEMES]}
 
 
 VERSIONS = ("current", "all")

@@ -87,6 +87,8 @@ def funnel(rungs: dict[str, dict]) -> list[dict]:
 
 
 def summary(store: Store, retention: Retention, settings) -> dict:
+    """The overview's numbers. Its recent errors keep failed ``recheck:`` runs on purpose: a recheck that broke is an
+    error a person should see, so unlike the readers of sweep results this one does not filter them out."""
     from skysift.pipeline import MAX_ATTEMPTS, MAX_POOL_BREAKS
     counts = store.counts()
     with store.session() as s:

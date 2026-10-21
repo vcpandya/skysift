@@ -14,7 +14,7 @@ from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime
 
 from skysift.config import Thresholds
-from skysift.store.db import REVIEWER_DECIDED_REASON
+from skysift.store.db import ENGINE_STATUSES, REVIEWER_DECIDED_REASON
 
 LADDER_ORDER = ["rung1_detection", "rung1_events", "rung2_shape", "rung3_stability", "rung4_novelty", "rung5_pixels"]
 RUNG_NAMES = {"rung1_detection": "Detected above the noise", "rung1_events": "Seen in every transit with data",
@@ -105,6 +105,8 @@ REASONS: list[tuple[re.Pattern, str, str]] = [(re.compile(p), w, n) for p, w, n 
      "One season does not agree with the others on which star dims", PIXELS_SAID),
     (r"^pixels: no pixel files for this star",
      "The archive has no pixel files for the Kepler star whose pixels hold this one", PIXELS_NONE),
+    (r"^pixels: (?P<detail>no readable pixel files.*)",
+     "None of the archive's pixel files for this star could be read", PIXELS_NONE),
     (r"^pixels: no neighbour to test against",
      "This star is itself the Kepler target, so there is no neighbour in its pixels to test the dip against",
      PIXELS_NONE),
@@ -300,6 +302,12 @@ def season_votes(s: dict) -> bool:
     return bool(s["voting"]) if "voting" in s else s.get("nearer") in ("target", "neighbour")
 
 
+def season_name(s: dict) -> str:
+    """"archive season 2", or "archive season (unlabelled)" for a season stored without its label."""
+    label = _num(s, "season")
+    return f"archive season {s['season']}" if label is not None else "archive season (unlabelled)"
+
+
 def pixel_seasons(m: dict) -> list[dict]:
     """Rung 5's stored seasons in archive SEASON order (a season without a label last)."""
     seasons = [s for s in m.get("seasons") or [] if isinstance(s, dict)]
@@ -322,12 +330,12 @@ def _pixels(m: dict) -> tuple[str, str]:
     rows = []
     for s in seasons:
         if not season_votes(s):
-            rows.append(f"archive season {s.get('season')}: not voting "
+            rows.append(f"{season_name(s)}: not voting "
                         f"({s.get('non_voting_reason') or 'no reason stored'})")
             continue
         d_star, d_nbr, err = (_num(s, k) for k in ("dist_target_pix", "dist_neighbour_pix", "centroid_sigma_pix"))
         sep = _num(s, "separation_sigma")
-        rows.append(f"archive season {s.get('season')}: " + _join([
+        rows.append(f"{season_name(s)}: " + _join([
             d_star is not None and f"{d_star:.2f}" + (f" ± {err:.2f}" if err is not None else "") + " px from the star",
             d_nbr is not None and f"{d_nbr:.2f} from the neighbour",
             sep is not None and s.get("nearer") in NEARER and f"{abs(sep):.1f} σ nearer {NEARER[s['nearer']]}"]))
@@ -374,6 +382,7 @@ _ARCHIVE_SEASON = re.compile(r"\bseason (?=\d)")
 
 def _row(rung: str, row: dict) -> Why:
     status, reason, m = row.get("status") or "", row.get("reason") or "", row.get("metrics") or {}
+    m = m if isinstance(m, dict) else {}         # a row whose metrics are not a mapping reads as one with none
     passed, numbers = BUILDERS.get(rung, lambda _m: ("Passed", ""))(m)
     missing = nxt = None
     if status == "fail":
@@ -414,6 +423,8 @@ def why(tests: list[dict]) -> list[Why]:
     return out
 
 
+# the engine's statuses that carry a verdict (the store's list, the one source, less "pending")
+VETTED_STATUSES = tuple(s for s in ENGINE_STATUSES if s != "pending")
 REVIEWER = {"approved": "Approved by reviewer", "published": "Approved by reviewer", "rejected": "Rejected by reviewer"}
 
 
@@ -441,7 +452,7 @@ def verdict(signal: dict, tests: list[dict], decision: dict | None, decisions: l
     reviewer = _reviewer(decision, decisions)
     rows = why(tests)
     status = signal.get("final_status")
-    if status not in ("candidate_stage1", "candidate_stage2", "undetermined", "rejected", "superseded"):
+    if status not in VETTED_STATUSES:
         status = _derived(rows)
     if status == "candidate_stage1":
         return Verdict("Candidate", "stage 1", "pass", "Candidate, stage 1: every light-curve check passed", reviewer)
@@ -540,17 +551,23 @@ def recheck_history(rechecks: list[dict], children: list[dict] | None = None) ->
     return out
 
 
-# the next step a rechecks row of this step has taken (the period step is the one whose outcome replaces the signal)
-STEP_OF_NEXT = {HALVE: "period"}
+# the rechecks step that takes each next step: once it has run, "pixel stage" or "retry the catalogue" is done
+STEP_OF_NEXT = {HALVE: "period", PIXELS: "pixels", PIXELS_RETRY: "pixels", RETRY: "catalogue"}
+NOT_EXAMINED_SUPERSEDED = "Not examined: superseded"
 
 
-def with_recheck_state(rows: list[Why], rechecks: list[dict], children: list[dict] | None = None) -> list[Why]:
+def with_recheck_state(rows: list[Why], rechecks: list[dict], children: list[dict] | None = None,
+                       final_status: str | None = None) -> list[Why]:
     """The Why rows with each undetermined row's next step given its state once the recheck has taken it ("rechecked
-    on 21 Oct 2026: superseded by the signal at 40.2899 d, now a stage 1 candidate"); other rows as they are."""
+    on 21 Oct 2026: superseded by the signal at 40.2899 d, now a stage 1 candidate"), and, on a superseded signal, the
+    unexamined pixel row saying the recheck never will examine it; other rows as they are."""
     status = {c.get("id"): c.get("final_status") for c in children or []}
     history = recheck_history(rechecks, children)
     out = []
     for w in rows:
+        if final_status == "superseded" and w.rung == "rung5_pixels" and w.status == "skipped":
+            out.append(replace(w, sentence=NOT_EXAMINED_SUPERSEDED))
+            continue
         step = STEP_OF_NEXT.get(w.next_step or "")
         done = [h for r, h in zip(rechecks, history, strict=True) if step and r.get("step") == step
                 and r.get("outcome") != "skipped"]

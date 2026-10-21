@@ -674,6 +674,16 @@ def test_contrast_tool_reports_a_failing_pair():
     assert any("muted" in failure and "dark" in failure for failure in check(css))
 
 
+def test_contrast_tool_holds_the_pixel_figure_to_the_stylesheet():
+    """The standalone pixel figure carries hex values; a drift from app.css, or an inline rule app.css lacks, fails."""
+    from skysift.ui.pixel_figure import PALETTES
+    from tools.contrast_check import check
+    drifted = {**PALETTES, "dark": {**PALETTES["dark"], "ion": "#2a9fb8"}}
+    assert check(palettes=drifted) == ["dark: pixel figure --ion is '#2a9fb8', the stylesheet has '#4fd1e8'"]
+    css = (assets_static() / "app.css").read_text(encoding="utf-8").replace(".pf-err3{", ".pf-err3 {")
+    assert any("pixel figure rule missing" in failure and ".pf-err3" in failure for failure in check(css))
+
+
 def test_about_placeholder_and_shell_render_in_both_modes_and_themes(settings):
     client, _app = make_client(settings)
     for mode in ("simple", "expert"):

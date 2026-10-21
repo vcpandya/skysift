@@ -998,14 +998,107 @@ def test_pixels_svg_of_a_rung5_row_without_seasons_says_so(seeded):
     assert r.status_code == 200 and '<g class="season' not in r.text and "No season to draw" in r.text
 
 
-def test_signal_page_shows_the_pixel_figures_only_with_a_rung5_row(seeded):
+def _inline_figure(html: str) -> str:
+    start = html.index('<svg xmlns="http://www.w3.org/2000/svg" class="pf"')
+    return html[start:html.index("</svg>", start) + len("</svg>")]
+
+
+def test_signal_page_draws_the_pixel_figure_inline_only_with_a_rung5_row(seeded):
+    """The page draws the figure inline on the theme tokens (app.css styles its pf- classes), so the theme toggle
+    applies; the standalone file of each theme is a download."""
     client, ids = seeded
     for mode in ("simple", "expert"):
         html = client.get(f"/signals/{ids['stage2']}?mode={mode}").text
-        assert f'src="/api/signals/{ids["stage2"]}/pixels.svg"' in html and 'id="pixels-title"' in html, mode
+        svg = _inline_figure(html)
+        assert 'id="pixels-title"' in html and "<img" not in html.split('id="pixels-title"')[1].split("</figure>")[0]
+        assert "<style>" not in svg and not re.search(r"#[0-9a-fA-F]{3,6}\b", svg), mode    # no colour of its own
+        assert 'role="img"' in svg and svg.count('<g class="season') == 4
+        label = re.search(r'aria-label="([^"]*)"', svg).group(1)
+        assert label == ("Pixel check: 3 of 4 archive seasons nearer the target; archive season 3 not voting "
+                         "(box incomplete: target)")
+        for theme in ("light", "dark"):
+            assert f'href="/api/signals/{ids["stage2"]}/pixels.svg?theme={theme}" download' in html, (mode, theme)
     assert "pixels.svg" not in client.get(f"/signals/{ids['candidate']}").text
     html = client.get(f"/signals/{ids['stage2']}").text
     assert "Rechecks" in html and "Pixels checked: passed" in html
+    css = client.get("/static/app.css").text
+    from skysift.ui.pixel_figure import css_rules
+    assert all(rule in css for rule in css_rules())
+
+
+def test_pixels_svg_download_carries_the_token_values_of_its_theme(seeded):
+    import xml.etree.ElementTree as ET
+    client, ids = seeded
+    url = f"/api/signals/{ids['stage2']}/pixels.svg"
+    light, dark = client.get(f"{url}?theme=light").text, client.get(f"{url}?theme=dark").text
+    for svg in (light, dark):
+        ET.fromstring(svg)
+        assert "<style>" in svg and "var(--" not in svg and 'role="img"' in svg
+    assert "stroke:#a25d00" in light and "stroke:#0c7890" in light and 'fill="#f5f7fb"' in light
+    assert "stroke:#ffb454" in dark and "stroke:#4fd1e8" in dark and 'fill="#070b14"' in dark
+    assert "#a25d00" not in dark and "#ffb454" not in light
+    assert client.get(url).text == light                                   # light by default
+    r = client.get(f"{url}?theme=sepia")
+    assert r.status_code == 400 and "light, dark" in r.json()["detail"]
+
+
+def test_pixels_svg_renders_an_older_rung5_row_with_unlabelled_seasons(seeded):
+    """A rung 5 row written before the per-season voting, positions and archive SEASON were stored."""
+    client, ids = seeded
+    old = {"seasons": [{"centroid_colrow": [4.1, 3.9], "centroid_sigma_pix": 0.05, "nearer": "target",
+                        "separation_sigma": 12.0, "dist_target_pix": 0.1, "dist_neighbour_pix": 2.4}]}
+    _set_metrics(client.app, ids["stage2"], "rung5_pixels", old)
+    r = client.get(f"/api/signals/{ids['stage2']}/pixels.svg")
+    assert r.status_code == 200 and 'data-season="unlabelled"' in r.text
+    assert "Archive season (unlabelled)" in r.text and "nearer target, +12.0 sigma" in r.text
+    page = client.get(f"/signals/{ids['stage2']}?mode=expert")
+    assert page.status_code == 200 and "Archive season (unlabelled)" in _inline_figure(page.text)
+
+
+def test_pixels_svg_of_metrics_that_are_not_a_mapping_is_404_and_logged(seeded, caplog):
+    client, ids = seeded
+    _set_metrics(client.app, ids["stage2"], "rung5_pixels", [1, 2, 3])
+    with caplog.at_level("WARNING", logger="skysift.ui.routes.api"):
+        r = client.get(f"/api/signals/{ids['stage2']}/pixels.svg")
+    assert r.status_code == 404 and any("not a mapping" in m for m in caplog.messages)
+    page = client.get(f"/signals/{ids['stage2']}")
+    assert page.status_code == 200 and 'id="pixels-title"' not in page.text
+    assert client.get(f"/partials/signals/{ids['stage2']}/verdict").status_code == 200
+
+
+def test_the_half_period_note_is_said_once_with_two_rows_of_the_rung(settings, tmp_path):
+    """The hero reads the newest row of each rung: an older rung 2 row saying the same is not said again."""
+    from skysift.models import TestResult, TestStatus
+    client, app, ids, _launcher = make_seeded_app(settings, tmp_path)
+    _set_metrics(app, ids["candidate"], "rung2_shape", {"parity_sigma": 0.2, "suggested_period": 6.88475},
+                 status="undetermined")
+    app.state.store.add_test(ids["candidate"], TestResult(
+        rung="rung2_shape", status=TestStatus.UNDETERMINED,
+        reason="equal secondary at phase 0.5: true period may be P / 2 (6.8848 d)",
+        metrics={"parity_sigma": 0.2, "suggested_period": 6.88475}), 0.01)
+    html = client.get(f"/signals/{ids['candidate']}").text
+    assert html.count("the true period may be 6.8848 d") == 1
+
+
+def test_why_rows_take_the_words_of_the_newer_row(seeded):
+    from skysift.models import TestResult, TestStatus
+    client, ids = seeded
+    store = client.app.state.store
+    for reason in ("outage:exoarchive: HTTP 503", "schema:exoarchive: no column pl_orbper"):
+        store.add_test(ids["candidate"], TestResult(rung="rung4_novelty", status=TestStatus.UNDETERMINED,
+                                                    reason=reason, metrics={}), 0.01)
+    store.refresh_status(ids["candidate"])
+    html = client.get(f"/partials/signals/{ids['candidate']}/verdict").text
+    assert "A catalogue answered in a form we could not read" in html
+    assert "A catalogue did not answer when we asked" not in html
+
+
+def test_a_superseded_signal_says_its_pixels_were_not_examined(seeded_pair):
+    client, ids = seeded_pair
+    for page in (f"/partials/signals/{ids['superseded']}/verdict", f"/signals/{ids['superseded']}"):
+        html = client.get(page).text
+        assert "Not examined: superseded" in html, page
+    assert "Not examined: superseded" not in client.get(f"/partials/signals/{ids['halved_child']}/verdict").text
 
 
 def test_signal_page_links_superseded_pairs(seeded_pair):
