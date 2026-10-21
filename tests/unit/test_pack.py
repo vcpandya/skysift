@@ -7,6 +7,8 @@ import csv
 import hashlib
 import json
 import re
+import shutil
+import sys
 import zipfile
 from datetime import UTC, datetime
 from pathlib import Path
@@ -559,6 +561,73 @@ def test_a_crashed_build_leaves_no_folder_that_blocks_the_retry(env_with_dossier
     assert not fresh.exists() and not any(env.settings.data_dir.glob(".*building*"))
     monkeypatch.setattr(pack_module, "_write_texts", real)
     assert _build(env, out_dir=fresh).zip_path.is_file()                             # the retry goes through
+
+
+def _aside(folder: Path, kind: str) -> Path:
+    return folder.with_name(f".{folder.name}.{kind}")
+
+
+def test_a_failed_swap_keeps_the_earlier_pack_and_the_new_build(env_with_dossier, monkeypatch):
+    """Step 2 of the swap fails (the new folder will not rename into place): the earlier pack is renamed back, the
+    new build stays in its building folder, the dossiers row still points at the earlier pack."""
+    env = env_with_dossier
+    first = _build(env)
+    before = (first.out_dir / "README.md").read_bytes()
+    building = _aside(first.out_dir, "building")
+    real_rename = Path.rename
+
+    def rename(self, target):
+        if self == building:
+            raise PermissionError(13, "Access is denied")
+        return real_rename(self, target)
+    monkeypatch.setattr(Path, "rename", rename)
+    with pytest.raises(PackError, match="the earlier pack is back in place") as e:
+        _build(env)
+    assert str(building) in str(e.value)
+    assert (first.out_dir / "README.md").read_bytes() == before and first.zip_path.is_file()
+    assert (building / "README.md").is_file() and not _aside(first.out_dir, "old").exists()
+    assert env.store.dossier(STAGE2_TARGET)["pack_path"] == str(first.out_dir)
+    monkeypatch.setattr(Path, "rename", real_rename)
+    again = _build(env)                                                             # the retry goes through
+    assert again.zip_path.is_file() and [p.name for p in again.out_dir.parent.iterdir()] == [again.out_dir.name]
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="only Windows refuses to rename a folder with a file held open")
+def test_an_open_file_in_the_earlier_pack_stops_the_swap_before_anything_moves(env_with_dossier):
+    """The dashboard serving the zip holds it open: Windows then refuses to rename the earlier pack aside (step 1),
+    so nothing moves, the error names the finished build, and the next run goes through."""
+    env = env_with_dossier
+    first = _build(env)
+    before = first.zip_path.read_bytes()
+    with first.zip_path.open("rb"):
+        with pytest.raises(PackError, match="could not move the earlier pack") as e:
+            _build(env)
+        assert str(_aside(first.out_dir, "building")) in str(e.value)
+    assert first.zip_path.read_bytes() == before and (first.out_dir / "README.md").is_file()
+    assert (_aside(first.out_dir, "building") / "README.md").is_file()
+    assert _build(env).zip_path.is_file()
+
+
+def test_an_earlier_pack_that_cannot_be_deleted_is_left_behind_with_a_warning(env_with_dossier, monkeypatch):
+    """Step 3 fails (a file of the earlier pack, set aside, is still held): the new pack is in place and recorded,
+    the old folder stays as ``.<name>.old``, the log says so, and nothing is raised. The next run clears it."""
+    env = env_with_dossier
+    first = _build(env)
+    old = _aside(first.out_dir, "old")
+    real_rmtree = shutil.rmtree
+
+    def rmtree(path, *a, **kw):
+        if Path(path) == old:
+            raise PermissionError(32, "The process cannot access the file because it is being used by another process")
+        return real_rmtree(path, *a, **kw)
+    monkeypatch.setattr(shutil, "rmtree", rmtree)
+    lines = []
+    rep = _build(env, log=lines.append)
+    assert (rep.out_dir / "README.md").is_file() and rep.zip_path.is_file() and old.is_dir()
+    assert env.store.dossier(STAGE2_TARGET)["pack_path"] == str(rep.out_dir)
+    assert any(line.startswith("warning:") and str(old) in line for line in lines)
+    monkeypatch.setattr(shutil, "rmtree", real_rmtree)
+    assert _build(env).zip_path.is_file() and not old.exists()
 
 
 def test_build_pack_on_the_real_kic_6146676_dossier(env_with_dossier):

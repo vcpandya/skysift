@@ -1274,11 +1274,46 @@ def _building(out_dir: Path) -> Path:
     return work
 
 
-def _move_into_place(work: Path, out_dir: Path) -> None:
-    """The finished pack replaces ``out_dir`` (an earlier pack, or nothing)."""
-    if out_dir.exists():
-        shutil.rmtree(out_dir)
-    work.replace(out_dir)
+def _move_into_place(work: Path, out_dir: Path, say: Callable[[str], None]) -> None:
+    """The finished pack in ``work`` replaces ``out_dir`` without ever losing the earlier pack: (1) the earlier pack
+    is renamed aside to ``.<name>.old``, (2) the new one is renamed into place, (3) only then is the old one deleted.
+    A rename that fails raises PackError with the earlier pack where it was and the new one still in ``work`` (on
+    Windows a file held open in the earlier pack, such as the zip during a download, stops step 1). A deletion that
+    fails at step 3 only logs a warning: the new pack is in place by then, so nothing is raised."""
+    old = out_dir.with_name(f".{out_dir.name}.old")
+    keep = (f"the new pack is complete in {work} (the next run builds it again); close whatever holds the files and "
+            "run the command again")
+    if old.exists():
+        try:
+            shutil.rmtree(old)           # left by an earlier swap whose step 3 failed
+        except OSError as e:
+            raise PackError(f"could not delete {old}, left by an earlier build ({e}); the pack at {out_dir} is "
+                            f"untouched, and {keep}") from e
+    had_old = out_dir.exists()
+    if had_old:
+        try:
+            out_dir.rename(old)
+        except OSError as e:
+            raise PackError(f"could not move the earlier pack at {out_dir} aside ({e}); it is untouched, and "
+                            f"{keep}") from e
+    try:
+        work.rename(out_dir)
+    except OSError as e:
+        if not had_old:
+            raise PackError(f"could not move the new pack into {out_dir} ({e}); {keep}") from e
+        try:
+            old.rename(out_dir)
+        except OSError as back:
+            raise PackError(f"could not move the new pack into {out_dir} ({e}) nor the earlier pack back ({back}): "
+                            f"the earlier pack is in {old}, and {keep}") from e
+        raise PackError(f"could not move the new pack into {out_dir} ({e}); the earlier pack is back in place, and "
+                        f"{keep}") from e
+    if had_old:
+        try:
+            shutil.rmtree(old)
+        except OSError as e:
+            say(f"warning: the new pack is in {out_dir}, but the earlier one could not be deleted from {old} ({e}); "
+                "the next run deletes it, or delete that folder by hand")
 
 
 def _write_texts(out_dir: Path, zip_path: Path, data: dict, fields: dict, citation: dict | None) -> dict:
@@ -1302,13 +1337,13 @@ def build_pack(store, blob, settings, target_id: str, *, out_dir: Path | None = 
                observer_tag: str = "skysift", zenodo: ZenodoClient | None = None,
                log: Callable[[str], None] | None = None) -> PackReport:
     """Write the submission pack of ``target_id`` from its stored dossier and zip it inside the folder as
-    ``<target>_<yyyymmdd>_skysift_pack.zip``; the default folder is ``<data_dir>/packs/<target_id>/<UTC yyyymmdd>/``
-    (an earlier pack there is replaced only once the new one is complete: it is written in a hidden sibling folder
-    and moved into place, so a crash leaves the earlier pack and nothing that blocks a retry). Everything is
-    checked and written first; only then, with a ``zenodo`` client, is the draft created, its reserved DOI written
-    into the texts (a sandbox DOI with the words that it must be replaced), the metadata filled and the zip
-    uploaded. The draft is never published, and a live draft is refused
-    for a candidate no reviewer has approved. Records the folder on the dossiers row and the candidate row.
+    ``<target>_<yyyymmdd>_skysift_pack.zip``; the default folder is ``<data_dir>/packs/<target_id>/<UTC yyyymmdd>/`` (an
+    earlier pack there is replaced only once the new one is complete: it is written in a hidden sibling folder and
+    swapped in by renames, so a crash or a held file leaves the earlier pack and nothing that blocks a retry).
+    Everything is checked and written first; only then, with a ``zenodo`` client, is the draft created, its reserved DOI
+    written into the texts (a sandbox DOI with the words that it must be replaced), the metadata filled and the zip
+    uploaded. The draft is never published, and a live draft is refused for a candidate no reviewer has approved.
+    Records the folder on the dossiers row and the candidate row.
 
     Raises NoDossier, ``dossier.LightCurveReleased`` (nothing is downloaded), PackError (bad TIC id, tag or folder; a
     live draft before approval) before anything is written, and ``zenodo.ZenodoError`` naming the built pack and any
@@ -1343,10 +1378,10 @@ def build_pack(store, blob, settings, target_id: str, *, out_dir: Path | None = 
         zip_file, metadata, fields, words = _write_pack(
             out_dir, data, raw, row, lc, fnorm, target_id, date, now, settings, citation, creators_source,
             {"approved": approved, "stale_reason": stale, "tic": tic, "tag": observer_tag}, say)
-        _move_into_place(out_dir, final)
     except BaseException:
         shutil.rmtree(out_dir, ignore_errors=True)
         raise
+    _move_into_place(out_dir, final, say)
     out_dir, zip_path = final, final / zip_file
     store.set_pack(target_id, str(out_dir), now.replace(tzinfo=None))
     store.set_candidate_pack(sid, str(out_dir))
