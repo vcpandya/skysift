@@ -1110,6 +1110,58 @@ def test_a_catalogue_retry_that_met_the_outage_again_still_says_it_will_retry(se
     assert "Rechecked on" not in html
 
 
+def test_the_popup_never_promises_a_revet_that_will_not_come(seeded):
+    from skysift.models import TestResult, TestStatus
+    client, ids = seeded
+    store, sid = client.app.state.store, ids["candidate"]
+    store.add_test(sid, TestResult(rung="rung2_shape", status=TestStatus.UNDETERMINED,
+                                   reason="too few odd/even events", metrics={}), 0.01)
+    store.refresh_status(sid)
+
+    def nxt(ladder):
+        with store.session() as s:
+            s.execute(text("update signals set ladder_version = :v where id = :i"), {"v": ladder, "i": sid})
+            s.commit()
+        return client.get(f"/partials/signals/{sid}/verdict").text
+
+    assert "Re-vet under the current ladder" in nxt("3")
+    html = nxt("4")
+    assert "Re-vet under the current ladder" not in html and "Needs a person" in html
+    store.add_recheck(sid, "ladder", "4", "undetermined", "rung2_shape: too few odd/even events")
+    html = nxt("3")
+    assert "Re-vetted on" in html and "; a person decides" in html and "Re-vet under the current ladder" not in html
+
+
+def test_the_plots_draw_the_latest_rung3_row_and_redraw_after_a_recheck(seeded, monkeypatch):
+    from skysift.models import TestResult, TestStatus
+    _synthetic_curve(monkeypatch)
+    client, ids = seeded
+    store, sid = client.app.state.store, ids["candidate"]
+    url = f"/api/signals/{sid}/plots.json"
+    assert client.get(url).json()["seasons"]["season"] == [0, 1, 2, 3]
+    store.add_test(sid, TestResult(rung="rung3_stability", status=TestStatus.PASS, metrics={
+        "season_depths": {"0": 1790.0, "2": 1810.0}, "season_errs": {"0": 60.0, "2": 70.0}}), 0.01)
+    body = client.get(url).json()                       # a newer row: the cached payload is not served
+    assert body["seasons"]["season"] == [0, 2]
+    assert client.get(url).json() == body               # and the new payload is cached in turn
+    from skysift.ui.routes.api import plot_cache_key
+    assert plot_cache_key(store, sid)[0] == sid and plot_cache_key(store, 999999) == (999999, 0)
+
+
+def test_the_pixel_figure_scrolls_by_keyboard_at_its_own_size(seeded):
+    client, ids = seeded
+    html = client.get(f"/signals/{ids['stage2']}").text
+    box = html[html.index('class="pixel-figure-scroll"'):]
+    box = box[:box.index(">")]
+    assert 'tabindex="0"' in box and 'role="region"' in box and 'aria-label="Pixel figure' in box
+    css = client.get("/static/app.css").text
+    assert ".pixel-figure-scroll:focus-visible { outline: 2px solid var(--ion)" in css
+    rule = re.search(r"\.pixel-figure svg \{([^}]*)\}", css).group(1)
+    assert "max-width: none" in rule and "width: auto" in rule and "100%" not in rule    # never drawn below 11 px
+    svg = _inline_figure(html)
+    assert re.search(r'<svg [^>]*width="\d+" height="\d+"', svg)              # its own size, from its attributes
+
+
 def test_a_superseded_signal_says_its_pixels_were_not_examined(seeded_pair):
     client, ids = seeded_pair
     for page in (f"/partials/signals/{ids['superseded']}/verdict", f"/signals/{ids['superseded']}"):

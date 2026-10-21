@@ -241,6 +241,14 @@ def test_pixel_reasons_map_to_words(reason):
     ("pixels: no pixel files for this star", "no pixel files", "PIXELS_NONE"),
     ("pixels: no neighbour to test against", "no neighbour in its pixels", "PIXELS_NONE"),
     ("pixels: no readable pixel files (3 listed)", "None of the archive's pixel files", "PIXELS_NONE"),
+    ("pixels: only one season could vote (season 1: box incomplete: target; season 2: box incomplete: target)",
+     "Only one observing season had both stars on the frame", "PERSON_DECIDES"),
+    ("pixels: only one season could vote (no other season has data)", "one season is too few to vote",
+     "PERSON_DECIDES"),
+    ("pixels: season 3 disagrees (neighbour depth 400 +/- 50 ppm)", "The neighbour's own depth vetoes",
+     "PIXELS_SAID"),
+    ("pixels: season 3 disagrees (neighbour depth not measured)", "The neighbour's own depth vetoes", "PIXELS_SAID"),
+    ("pixels: no season localizes the dip", "No season's difference image places the dip", "PIXELS_SAID"),
     ("pixels: 2 usable transits < 3", "The pixels could not show which star the dip is on", "PIXELS_SAID"),
     ("outage:mast: 3 of 16 pixel files unreachable", "The pixel archive did not answer", "PIXELS_RETRY"),
     ("outage:mast: HTTP 503", "The pixel archive did not answer", "PIXELS_RETRY"),
@@ -390,3 +398,65 @@ def test_a_superseded_signal_unexamined_pixel_row_says_so():
 def test_season_names():
     assert explain.season_name({"season": 3}) == "archive season 3"
     assert explain.season_name({}) == "archive season (unlabelled)"
+
+
+def _undetermined(rung, reason):
+    return {"rung": rung, "status": "undetermined", "metrics": {}, "reason": reason}
+
+
+def test_a_revet_the_recheck_will_not_make_reads_a_person_decides():
+    """recheck.wants_ladder re-vets once per signal, and only a signal vetted under an older ladder."""
+    rows = explain.why([_undetermined("rung2_shape", "too few odd/even events")])
+    assert rows[2].next_step == explain.REVET
+    old = {"ladder_version": "3", "branch": "planet", "extra": {}}
+    assert explain.with_recheck_state(rows, [], signal=old)[2].next_step == explain.REVET       # it will come
+    current = {**old, "ladder_version": "4"}
+    assert explain.with_recheck_state(rows, [], signal=current)[2].next_step == explain.PERSON
+    ran = [_step(3, "ladder", "undetermined", "rung2_shape: too few odd/even events")]
+    assert (explain.with_recheck_state(rows, ran, signal=old)[2].next_step
+            == "re-vetted on 21 Oct 2026; a person decides")
+    skipped = [_step(3, "ladder", "skipped", "light curve unavailable: HTTP 503")]
+    assert explain.with_recheck_state(rows, skipped, signal=old)[2].next_step == explain.REVET
+    assert explain.with_recheck_state(rows, []) == rows                     # no signal given: the plain next step
+
+
+def test_a_crash_under_the_current_ladder_reads_a_person_decides_except_on_rung5():
+    rows = explain.why([_undetermined("rung2_shape", "exception: ValueError('x')"),
+                        _undetermined("rung5_pixels", "exception: ValueError('y')")])
+    current = {"ladder_version": "4", "branch": "planet", "extra": {}}
+    done = explain.with_recheck_state(rows, [], signal=current)
+    assert done[2].next_step == explain.PERSON
+    assert done[5].next_step == explain.REVET_CRASH                         # the pixel step retries a crash once
+
+
+def test_a_p2_signal_asked_to_halve_again_reads_a_person_decides():
+    rows = explain.why([_undetermined("rung2_shape",
+                                      "equal secondary at phase 0.5: true period may be P / 2 (4.5 d)")])
+    assert rows[2].next_step == explain.HALVE
+    child = {"ladder_version": "4", "branch": "recheck:P/2", "extra": {"halving": {"from_period": 18.195}}}
+    assert explain.with_recheck_state(rows, [], signal=child)[2].next_step == explain.PERSON
+    parent = {"ladder_version": "4", "branch": "planet", "extra": {}}
+    assert explain.with_recheck_state(rows, [], signal=parent)[2].next_step == explain.HALVE
+    from skysift.recheck import PERIOD_BRANCH
+    assert explain.PERIOD_BRANCH == PERIOD_BRANCH
+
+
+def test_the_pixel_localize_reason_reads_in_both_spellings():
+    for reason in ("pixels: no season localises the dip", "pixels: no season localizes the dip"):
+        missing, nxt = explain.reason_in_words(reason)
+        assert missing.startswith("No season's difference image places the dip") and nxt == explain.PIXELS_SAID
+
+
+def test_the_new_pixel_reasons_carry_their_detail_in_archive_seasons():
+    one = {"rung": "rung5_pixels", "status": "undetermined", "metrics": {},
+           "reason": "pixels: only one season could vote (season 1: box incomplete: target)"}
+    w = explain.why([one])[5]
+    assert w.sentence == ("No verdict: only one observing season had both stars on the frame, and one season is too "
+                          "few to vote (archive season 1: box incomplete: target)")
+    assert w.next_step == "a person decides"
+    veto = {**one, "reason": "pixels: season 3 disagrees (neighbour depth 400 +/- 50 ppm)"}
+    w = explain.why([veto])[5]
+    assert w.sentence == ("No verdict: the neighbour's own depth vetoes one season's vote (archive season 3 disagrees "
+                          "(neighbour depth 400 +/- 50 ppm))")
+    centroid = {**one, "reason": "pixels: season 1 disagrees (centroid nearer neighbour, 4.1 sigma)"}
+    assert explain.why([centroid])[5].sentence.startswith("No verdict: one season does not agree")

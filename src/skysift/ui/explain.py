@@ -67,6 +67,8 @@ HALVE = "re-vet at the suggested period"
 PIXELS = "pixel stage"
 RETRY = "retry the catalogue"
 PERSON = "needs a person"
+PERSON_DECIDES = "a person decides"
+REVET_CRASH = "re-vet under the current ladder; stays flagged for a person if it crashes again"
 FAILED = "no recheck: a failed check is final"
 # the pixel stage runs once per signal (an archive outage aside), so what its own "no verdict" leaves is for a person
 PIXELS_SAID = "a person reads the pixel figures"
@@ -88,19 +90,22 @@ REASONS: list[tuple[re.Pattern, str, str]] = [(re.compile(p), w, n) for p, w, n 
     (r"^schema:(?P<detail>.*)", "A catalogue answered in a form we could not read", RETRY),
     (r"^period matches (?P<detail>.+?) but epoch differs",
      "A catalogue has this period on a neighbour, but its transits fall at a different time", PIXELS),
-    (r"^exception:\s*(?P<detail>.*)", "The check crashed",
-     "re-vet under the current ladder; stays flagged for a person if it crashes again"),
+    (r"^exception:\s*(?P<detail>.*)", "The check crashed", REVET_CRASH),
     (r"^free_secondary_undetermined", "The search for a second dip away from phase 0.5 had too few points", PERSON),
     (r"^pixels: (?P<detail>\d+ usable transits? < \d+)", "The pixels could not show which star the dip is on",
      PIXELS_SAID),
     (r"^pixels: no season holds both stars on the frame",
      "No season's pixel stamp holds both this star and the neighbour, so the dip cannot be placed between them",
      PIXELS_SAID),
-    (r"^pixels: no season localises the dip",
+    (r"^pixels: no season locali[sz]es the dip",
      "No season's difference image places the dip well enough to vote on which star dims", PIXELS_SAID),
     (r"^pixels: (?P<detail>season \d+ ambiguous.*)",
      "In one season the centroid of the lost light sits too close to the line between the two stars to call",
      PIXELS_SAID),
+    (r"^pixels: only one season could vote \((?P<detail>.*)\)$",
+     "Only one observing season had both stars on the frame, and one season is too few to vote", PERSON_DECIDES),
+    (r"^pixels: (?P<detail>season \d+ disagrees \(neighbour depth.*)",
+     "The neighbour's own depth vetoes one season's vote", PIXELS_SAID),
     (r"^pixels: (?P<detail>season \d+ disagrees.*)",
      "One season does not agree with the others on which star dims", PIXELS_SAID),
     (r"^pixels: no pixel files for this star",
@@ -554,21 +559,51 @@ def recheck_history(rechecks: list[dict], children: list[dict] | None = None) ->
 
 
 # the rechecks step that takes each next step: once it has run, "pixel stage" or "retry the catalogue" is done
-STEP_OF_NEXT = {HALVE: "period", PIXELS: "pixels", PIXELS_RETRY: "pixels", RETRY: "catalogue"}
+STEP_OF_NEXT = {REVET: "ladder", REVET_CRASH: "ladder", HALVE: "period", PIXELS: "pixels", PIXELS_RETRY: "pixels",
+                RETRY: "catalogue"}
+PERIOD_BRANCH = "recheck:P/2"           # recheck.PERIOD_BRANCH: the branch of a signal the period step made
 # the next steps that ask the same source again; a retry that met the outage again writes the row being explained
 RETRIES = (RETRY, PIXELS_RETRY)
 NOT_EXAMINED_SUPERSEDED = "Not examined: superseded"
 
 
+def _current_ladder() -> str:
+    # late: the pipeline is heavy and imports the store
+    from skysift.pipeline import DEFAULT_LADDER_VERSION
+    return DEFAULT_LADDER_VERSION
+
+
+def _no_recheck_coming(w: Why, signal: dict | None, rechecks: list[dict], history: list[dict]) -> str | None:
+    """The "a person decides" next step when the recheck will not take the row's own (recheck.wants_ladder and
+    wants_period): the ladder re-vet runs once per signal, only for a signal vetted under an older ladder, and a
+    P/2 signal is never halved again. None when the recheck may still take it."""
+    if signal is None:
+        return None
+    if w.next_step in (REVET, REVET_CRASH) and w.rung != "rung5_pixels":      # a rung 5 crash: the pixel step retries
+        current = _current_ladder()
+        ran = [h for r, h in zip(rechecks, history, strict=True) if r.get("step") == "ladder"
+               and r.get("ladder_version") == current and r.get("outcome") != "skipped"]
+        if ran:
+            return f"re-vetted on {ran[-1]['date']}; {PERSON_DECIDES}"
+        if signal.get("ladder_version") == current:
+            return PERSON
+    if w.next_step == HALVE and (signal.get("branch") == PERIOD_BRANCH or (signal.get("extra") or {}).get("halving")):
+        return PERSON
+    return None
+
+
 def with_recheck_state(rows: list[Why], rechecks: list[dict], children: list[dict] | None = None,
-                       final_status: str | None = None) -> list[Why]:
+                       final_status: str | None = None, signal: dict | None = None) -> list[Why]:
     """The Why rows with each undetermined row's next step given its state once the recheck has taken it ("rechecked
     on 21 Oct 2026: superseded by the signal at 40.2899 d, now a stage 1 candidate"), and, on a superseded signal, the
     unexamined pixel row saying the recheck never will examine it; other rows as they are.
 
     The step that wrote a row (``Why.recheck_id``) never counts as having taken that row's next step: a catalogue or
     pixel retry that met the outage again leaves an outage row, and the recheck will retry it, so the row keeps its
-    retry wording with the attempt in front ("retried on 21 Oct 2026, still no answer; retry the catalogue")."""
+    retry wording with the attempt in front ("retried on 21 Oct 2026, still no answer; retry the catalogue").
+
+    With ``signal`` (its row: ladder_version, branch, extra), a next step the recheck will not take reads "a person
+    decides" instead (``_no_recheck_coming``)."""
     status = {c.get("id"): c.get("final_status") for c in children or []}
     history = recheck_history(rechecks, children)
     out = []
@@ -583,6 +618,10 @@ def with_recheck_state(rows: list[Why], rechecks: list[dict], children: list[dic
                  if w.recheck_id is not None and r.get("id") == w.recheck_id]
         if w.status == "undetermined" and w.next_step in RETRIES and wrote:
             out.append(replace(w, next_step=f"retried on {wrote[0]['date']}, still no answer; {w.next_step}"))
+            continue
+        person = _no_recheck_coming(w, signal, rechecks, history) if w.status == "undetermined" else None
+        if person:
+            out.append(replace(w, next_step=person))
             continue
         if w.status != "undetermined" or not done:
             out.append(w)

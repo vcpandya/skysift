@@ -12,6 +12,7 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
+from sqlalchemy import select
 from typer.testing import CliRunner
 
 from skysift import calibrate as cal
@@ -44,7 +45,7 @@ from skysift.pipeline import search_version
 from skysift.priors import PIXEL_ARCSEC
 from skysift.sources import PARSERS
 from skysift.store.blob import blob_from_url
-from skysift.store.db import PERIODOGRAM_URL, QueryRow, SignalRow, Store, make_job_key
+from skysift.store.db import PERIODOGRAM_URL, QueryRow, SignalRow, Store, TestRow, make_job_key
 from skysift.ui import explain
 from tests.synthetic import inject_model, make_lightcurve
 from tests.unit.ui_seed import (
@@ -173,10 +174,18 @@ def _pixels_npz(frames=SEASON_FRAMES, drop: str | None = None) -> bytes:
     return buf.getvalue()
 
 
-def _store_pixels(env, data: bytes) -> None:
+def _store_pixels(env, data: bytes, name_it: bool = True) -> str:
+    """Store ``data`` as the stage-2 signal's pixels.npz and, as rung 5 does, name its sha256 in the rung 5 row."""
     sid = env.ids["stage2"]
     sha, loc = env.blob.put(data, f"pixels_{sid}.npz")
     env.store.add_artifact(sha, len(data), f"skysift://pixels/{sid}", loc, STAGE2_TARGET, pinned=True, kind="pixels")
+    if name_it:
+        with env.store.session() as s:
+            row = s.scalars(select(TestRow).where(TestRow.signal_id == sid, TestRow.rung == "rung5_pixels")
+                            .order_by(TestRow.id.desc())).first()
+            row.metrics = {**(row.metrics or {}), "pixels_sha256": sha}
+            s.commit()
+    return sha
 
 
 @pytest.fixture
@@ -309,6 +318,27 @@ def test_pixels_section_comes_from_the_npz_artifact(env_with_npz):
     assert p["pos_target"] == [3.0, 4.0]
     assert p["quarters"] == []      # the seeded metrics name no quarters; none are worked out from quarter mod 4
     assert p["valid"][0][0] is True and data["pixels"][0]["direct"][0][0] is None
+
+
+def test_pixels_section_reads_the_npz_the_latest_rung5_row_names(env_with_npz):
+    """A newer npz at the same URL that no rung 5 row names (its step's rows never landed) is not drawn, and a row
+    that names no npz draws none."""
+    env = env_with_npz
+    with np.load(io.BytesIO(_pixels_npz())) as z:
+        arrays = {k: z[k] for k in z.files}
+    arrays["seasons"] = np.array([0])
+    buf = io.BytesIO()
+    np.savez_compressed(buf, **arrays)
+    _store_pixels(env, buf.getvalue(), name_it=False)                   # newer, but unnamed
+    data = _data(generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch))
+    assert [p["season"] for p in data["pixels"]] == [0, 2]
+    with env.store.session() as s:
+        row = s.scalars(select(TestRow).where(TestRow.signal_id == env.ids["stage2"], TestRow.rung == "rung5_pixels")
+                        .order_by(TestRow.id.desc())).first()
+        row.metrics = {**row.metrics, "pixels_sha256": None}
+        s.commit()
+    data = _data(generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch, force=True))
+    assert data["pixels"] is None and "pixels" not in data["section_errors"]
 
 
 def test_pixel_seasons_keep_their_own_frame_shapes(env_with_npz):
@@ -464,8 +494,8 @@ def test_status_label_comes_from_the_glossary():
 def test_an_unreadable_pixels_file_becomes_a_section_error(env):
     sid = env.ids["stage2"]
     bad = b"not an npz archive"
-    sha, loc = env.blob.put(bad, f"pixels_{sid}.npz")
-    env.store.add_artifact(sha, len(bad), f"skysift://pixels/{sid}", loc, STAGE2_TARGET, pinned=True, kind="pixels")
+    assert sid == env.ids["stage2"]
+    _store_pixels(env, bad)
     data = _data(generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch))
     assert data["pixels"] is None and data["section_errors"]["pixels"]["error"]
     hit = [c for c in data["caveats"] if c["title"] == "The pixels section could not be built"]
@@ -644,9 +674,9 @@ def test_cli_dossier_exits_3_when_a_gaia_query_failed(cli_env, monkeypatch):
 
 def test_pixel_seasons_are_the_archive_seasons_rung_5_wrote(env):
     frames = {0: ((7, 9), (2.0, 3.0), (4.5, 3.6)), 3: ((5, 7), (0.7, 3.0), (3.5, 2.2))}
-    _store_pixels(env, _pixels_npz(frames))
-    env.store.add_test(env.ids["stage2"], TestResult(rung="rung5_pixels", status="pass",
-                                                     metrics=stage2_pixel_metrics(quarters=True)), 1.0)
+    sha = _store_pixels(env, _pixels_npz(frames))
+    env.store.add_test(env.ids["stage2"], TestResult(rung="rung5_pixels", status="pass", metrics={
+        **stage2_pixel_metrics(quarters=True), "pixels_sha256": sha}), 1.0)
     pixels = _data(generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch))["pixels"]
     by_season = {p["season"]: p for p in pixels}
     assert set(by_season) == {0, 3}

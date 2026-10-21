@@ -148,9 +148,11 @@ def build_plots(lc: LightCurve, fnorm: np.ndarray, signal: dict, tests: list[dic
     sx, sy = scatter(ph2, f, k2)
     secondary = {"phase_h": _lst(sx, 4), "flux": _lst(sy, 7), "bin_phase_h": _lst(sc, 4), "bin_flux": _lst(sm, 7),
                  "window_h": window}
-    # per-season depths from rung 3
+    # per-season depths from the latest rung 3 row (``tests`` is in id order; a recheck's re-vet writes a newer row)
     seasons = None
-    r3 = next((x for x in tests if x["rung"] == "rung3_stability" and (x.get("metrics") or {}).get("season_depths")), None)
+    r3 = next((x for x in reversed(tests) if x["rung"] == "rung3_stability"), None)
+    if r3 is not None and not (isinstance(r3.get("metrics"), dict) and r3["metrics"].get("season_depths")):
+        r3 = None
     if r3:
         d = r3["metrics"]["season_depths"]; e = r3["metrics"].get("season_errs") or {}
         keys = sorted(d, key=int)

@@ -422,9 +422,11 @@ kbd { padding: 0 4px; font-size: var(--fs-12); border: 1px solid currentColor; b
 .why-history li { margin-bottom: 4px; overflow-wrap: anywhere; }
 .lineage { margin: 0 0 12px; padding: 0; list-style: none; color: var(--fg-2); font-size: var(--fs-13); }
 .pixel-figure { margin: 0; }
-.pixel-figure-scroll { overflow-x: auto; }
-.pixel-figure svg { display: block; width: 100%; min-width: 480px; max-width: 972px; height: auto; }
-/* The pixel figure (skysift.ui.pixel_figure.RULES with each {token} as var(--token); the standalone download carries
+.pixel-figure-scroll { overflow-x: auto; border-radius: 6px; }
+.pixel-figure-scroll:focus-visible { outline: 2px solid var(--ion); outline-offset: 2px; }
+/* drawn at its own size (11 px text), never scaled down: a narrow screen scrolls the panels sideways instead */
+.pixel-figure svg { display: block; width: auto; max-width: none; height: auto; }
+/* The pixel figure (skysift.ui.pixel_figure.RULES with each <token> as var(--token); the standalone download carries
    the same rules with the theme's hex values, and tools/contrast_check.py holds those values to these tokens) */
 .pf-text{font:11px 'IBM Plex Sans',system-ui,sans-serif;fill:var(--fg-2);text-anchor:middle}
 .pf-head{font-weight:600;fill:var(--fg)}

@@ -47,7 +47,8 @@ def _periodogram(request: Request, run: dict | None) -> tuple[PeriodogramSummary
 @router.get("/api/signals/{signal_id}/plots.json")
 def plots_json(request: Request, signal_id: int):
     st = request.app.state
-    cached = st.plot_cache.get(signal_id)
+    key = plot_cache_key(st.store, signal_id)
+    cached = st.plot_cache.get(key)
     if cached is not None:
         return Response(cached, media_type="application/json")
     d = queries.signal_detail(st.store, signal_id)
@@ -65,8 +66,14 @@ def plots_json(request: Request, signal_id: int):
     text = jsonutil.dumps(out)
     while len(st.plot_cache) >= CACHE_LIMIT:
         st.plot_cache.pop(next(iter(st.plot_cache)), None)      # oldest first; payloads are a few hundred kB each
-    st.plot_cache[signal_id] = text
+    st.plot_cache[key] = text
     return Response(text, media_type="application/json")
+
+
+def plot_cache_key(store, signal_id: int) -> tuple[int, int]:
+    """The plots cache key: the signal and its newest test row, so a recheck that wrote a row (in this process or a
+    separate ``skysift recheck``) is drawn afresh."""
+    return signal_id, max((t["id"] for t in store.latest_tests(signal_id)), default=0)
 
 
 def _not_cached(source: str, store, blob):

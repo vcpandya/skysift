@@ -111,7 +111,7 @@ def _explained(d: dict, signal_id: int) -> dict:
     latest = d["latest_tests"]
     v = explain.verdict(d["signal"], latest, d["candidate"], d["decisions"])
     rows = explain.with_recheck_state(explain.why(latest), d["rechecks"], d["children"],
-                                      d["signal"].get("final_status"))
+                                      d["signal"].get("final_status"), d["signal"])
     return {"v": v, "rows": rows, "ladder": _ladder_rows(latest), "glossary": _glossary(v),
             "recheck_history": explain.recheck_history(d["rechecks"], d["children"]),
             "lineage": explain.lineage(d["signal"], d["parent"], d["children"]),

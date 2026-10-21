@@ -489,15 +489,21 @@ def _season_arrays(z, season: int) -> dict:
 
 def pixels_section(store: Store, blob, signal_id: int, rung5_metrics: dict) -> list[dict] | None:
     """Section 04's per-season arrays from rung 5's ``pixels.npz`` artifact (``seasons``, an int array, and per season
-    ``s`` the keys of ``_season_arrays``) and its metrics, or None when the signal has no such artifact. Each season
+    ``s`` the keys of ``_season_arrays``) and its metrics, or None when the signal has no such artifact. The artifact
+    is the one the latest rung 5 row names (``metrics["pixels_sha256"]``), never merely the newest file at the URL: a
+    step whose row did not land (a reviewer decided meanwhile, or the commit failed) may have stored arrays the rows
+    do not describe. Each season
     keeps its own frame shape. Seasons are the Kepler archive SEASON (0 to 3; Q1 and Q5 are season 3) as rung 5 wrote
     them, from the npz ``seasons`` key, and a season's quarters are the ones its rung 5 metrics list; they are never
     worked out again from the quarter numbers (an empty list when the metrics do not name them). The S/N map is
     ``diff / sqrt(var)`` on valid pixels with a positive variance, None elsewhere. An artifact that cannot be read, or lacks a key, raises one of ``SECTION_ERRORS``."""
+    sha = rung5_metrics.get("pixels_sha256")
+    if not isinstance(sha, str) or not sha:
+        return None
     with store.session() as s:
-        row = s.scalars(select(ArtifactRow).where(ArtifactRow.url == PIXELS_URL.format(signal_id=signal_id),
-                                                  ArtifactRow.deleted_at.is_(None))
-                        .order_by(ArtifactRow.created.desc())).first()
+        row = s.scalars(select(ArtifactRow).where(ArtifactRow.sha256 == sha,
+                                                  ArtifactRow.url == PIXELS_URL.format(signal_id=signal_id),
+                                                  ArtifactRow.deleted_at.is_(None))).first()
         loc = None if row is None else row.local_path
     if loc is None:
         return None

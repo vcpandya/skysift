@@ -3,7 +3,10 @@
 <section class="signal-section" aria-labelledby="pixels-title">
   <h2 id="pixels-title">Which star is dimming</h2>
   <figure class="pixel-figure">
-    <div class="pixel-figure-scroll">{{ pixel_figures.svg }}</div>
+    <div class="pixel-figure-scroll" tabindex="0" role="region"
+         aria-label="Pixel figure, one panel per archive season; scroll sideways for every panel">
+      {{- pixel_figures.svg -}}
+    </div>
     <figcaption>One panel per archive season (the Kepler archive's SEASON, not the quarter groups of the stability
       check). The ring is this star, the square the neighbour whose pixels hold it, and the cross the centroid of the
       light lost in transit, with circles at 1 and 3 times its error. A greyed panel did not vote
