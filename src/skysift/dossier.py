@@ -24,6 +24,7 @@ import math
 import os
 import re
 import subprocess
+import zipfile
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -34,6 +35,7 @@ from sqlalchemy import select
 from skysift import calibrate as cal
 from skysift import jsonutil, net, stars
 from skysift.calibrate import FalseAlarm
+from skysift.detectors.base import get_detector
 from skysift.detectors.periodogram import PeriodogramSummary
 from skysift.fpp import Fpp, FppInputs, Neighbour, compute
 from skysift.lc.loader import TARGET_FIELDS, LightCurveLoader
@@ -41,8 +43,8 @@ from skysift.lc.ops import event_depths, event_quality, fold_phase, season_of
 from skysift.lc.transit_model import uniform_disc_flux
 from skysift.models import LightCurve, Target
 from skysift.net import ServiceUnavailable
+from skysift.pipeline import search_version
 from skysift.priors import PIXEL_ARCSEC
-from skysift.sources.factory import make_source
 from skysift.store.db import (
     PERIODOGRAM_URL,
     ArtifactRow,
@@ -85,8 +87,21 @@ FPP_NOT_COVERED = ("This counts the common impostors with simple priors. It is n
                    "false-positive probability, and it has no radial-velocity or imaging input.")
 SECTIONS = ("The signal", "Does it repeat", "The checks", "Which star is dimming", "The star and the planet",
             "How it might look", "What is not yet known", "How to reproduce")
-STATUS_LABEL = {"candidate_stage1": "Candidate, stage 1", "candidate_stage2": "Candidate, stage 2",
-                "undetermined": "Undetermined", "rejected": "Rejected"}
+RELEASED_REMEDY = "re-run the sweep for this target with --retention keep"
+# what a broken section raises: a missing or unreadable file, a bad archive, a missing array, a mis-shaped array
+SECTION_ERRORS = (OSError, ValueError, KeyError, IndexError, zipfile.BadZipFile)
+
+
+class NoSignal(KeyError):
+    """The target has no signal (or not the one asked for): there is nothing to build a dossier from."""
+
+    def __str__(self) -> str:
+        return str(self.args[0]) if self.args else "no signal"
+
+
+class LightCurveReleased(RuntimeError):
+    """The signal's raw light curve is no longer in the blob. A dossier is built offline except for the Gaia
+    queries (spec 5.8), so it is not fetched again."""
 
 
 @dataclass
@@ -95,7 +110,7 @@ class DossierReport:
     signal_id: int
     data_path: Path
     generated: bool                 # False when the fingerprint matched and not force
-    fap: FalseAlarm | None          # None when the source has no calibration file
+    fap: FalseAlarm | None          # as stored in the dossier (n = 0, not calibrated, without a calibration file)
     fpp: Fpp
     stale_reason: str | None        # why the stored dossier was regenerated; None when nothing was written
     comparison: dict = field(default_factory=dict)      # filled by Task 7's comparison tool
@@ -187,25 +202,31 @@ def target_name(target: dict) -> str:
 
 # ---------------------------------------------------------------------------------------------------- the signal
 
+def _reviewer_rejected(row: dict) -> bool:
+    return row.get("candidate_status") == "rejected" or row.get("decision") == "reject"
+
+
 def _rank(row: dict) -> tuple:
+    """A signal a reviewer rejected ranks below every other whatever its engine status (the store keeps the engine
+    status on a rejection); the rest by ``STATUS_ORDER``, then SDE."""
     statuses = {row["final_status"]} | ({"approved"} if row.get("candidate_status") in ("approved", "published")
                                         else set())
     order = min((STATUS_ORDER.index(s) for s in statuses if s in STATUS_ORDER), default=len(STATUS_ORDER))
-    return order, -float(row["sde"]), row["id"]
+    return _reviewer_rejected(row), order, -float(row["sde"]), row["id"]
 
 
 def pick_signal(store: Store, target_id: str, signal_id: int | None = None) -> dict:
     """The signal row (a dict of its columns plus ``candidate_status`` and the latest ``decision``) the dossier is
-    built from: ``signal_id`` when given (it must belong to the target), else the target's best signal by
-    ``STATUS_ORDER`` (an approved signal ranks as approved even when its engine status is stage 1) and then SDE.
-    Raises KeyError when there is none."""
+    built from: ``signal_id`` when given (it must belong to the target), else the target's best signal: not rejected
+    by a reviewer, then by ``STATUS_ORDER`` (an approved signal ranks as approved even when its engine status is
+    stage 1), then SDE. Raises NoSignal when there is none."""
     with store.session() as s:
         q = select(SignalRow).where(SignalRow.target_id == target_id)
         if signal_id is not None:
             q = q.where(SignalRow.id == signal_id)
         sigs = s.scalars(q).all()
         if not sigs:
-            raise KeyError(f"no signal {signal_id} for target {target_id}" if signal_id is not None
+            raise NoSignal(f"no signal {signal_id} for target {target_id}" if signal_id is not None
                            else f"no signal for target {target_id}")
         ids = [r.id for r in sigs]
         cand = {c.signal_id: c.status for c in s.scalars(select(CandidateRow).where(CandidateRow.signal_id.in_(ids)))}
@@ -368,8 +389,8 @@ def _grid(a: np.ndarray, valid: np.ndarray, nd: int) -> list[list]:
 
 def pixels_section(store: Store, blob, signal_id: int, rung5_metrics: dict, lc: LightCurve | None) -> list[dict] | None:
     """Section 04's per-season arrays from rung 5's ``pixels.npz`` artifact and its metrics, or None when the signal
-    has no such artifact (or it cannot be read). The S/N map is ``diff / sqrt(var)`` on valid pixels with a positive
-    variance, None elsewhere."""
+    has no such artifact. The S/N map is ``diff / sqrt(var)`` on valid pixels with a positive variance, None
+    elsewhere. An artifact that cannot be read raises one of ``SECTION_ERRORS``."""
     with store.session() as s:
         row = s.scalars(select(ArtifactRow).where(ArtifactRow.url == PIXELS_URL.format(signal_id=signal_id),
                                                   ArtifactRow.deleted_at.is_(None))
@@ -377,13 +398,9 @@ def pixels_section(store: Store, blob, signal_id: int, rung5_metrics: dict, lc: 
         loc = None if row is None else row.local_path
     if loc is None:
         return None
-    try:
-        with np.load(io.BytesIO(blob.get(loc))) as z:
-            arrays = {k: np.asarray(z[k]) for k in ("diff", "var", "direct", "valid", "seasons", "pos_target",
-                                                    "pos_neighbour")}
-    except Exception:
-        log.warning("pixels artifact of signal %s is unreadable; the dossier goes without it", signal_id, exc_info=True)
-        return None
+    with np.load(io.BytesIO(blob.get(loc))) as z:
+        arrays = {k: np.asarray(z[k]) for k in ("diff", "var", "direct", "valid", "seasons", "pos_target",
+                                                "pos_neighbour")}
     by_season = {int(s["season"]): s for s in _pixel_seasons(rung5_metrics) if s.get("season") is not None}
     observed = sorted({int(v) for v in lc.quarter}) if lc is not None else []
     out = []
@@ -497,9 +514,9 @@ def fpp_inputs(signal: dict, tests: list[dict], star: stars.StarParams, planet: 
 
 
 def fpp_from_inputs(inputs: dict) -> Fpp:
-    """Recompute the FPP from a dossier's stored ``fpp.inputs``."""
-    neighbours = tuple(Neighbour(**n) for n in inputs.get("neighbours") or [])
-    values = {**inputs, "neighbours": neighbours}
+    """Recompute the FPP from a dossier's stored ``fpp.inputs``: ``compute(FppInputs(**inputs))`` (``FppInputs``
+    rebuilds the neighbour dicts), with a target G stored as null (no G known) read back as NaN."""
+    values = dict(inputs)
     if values.get("gmag") is None:
         values["gmag"] = float("nan")
     return compute(FppInputs(**values))
@@ -524,6 +541,9 @@ def caveats(data: dict) -> list[dict]:
         missing, nxt = explain.reason_in_words(reason)
         out.append({"title": missing, "text": f"The pixel check gave no verdict ({reason or 'no reason stored'}). "
                                               f"What happens next: {nxt}."})
+    for name, err in (data.get("section_errors") or {}).items():
+        out.append({"title": f"The {name} section could not be built",
+                    "text": f"The {name} section could not be built: {err.get('error')}"})
     if fpp.get("pixels") is False:
         out.append({"title": "The false-positive estimate has no pixel exclusion",
                     "text": f"Without a difference-image centroid every neighbour within one Kepler pixel "
@@ -598,21 +618,15 @@ def _periodogram(store: Store, blob, target_id: str) -> PeriodogramSummary | Non
         loc = None if row is None else row.local_path
     if loc is None:
         return None
-    try:
-        return PeriodogramSummary.from_npz(blob.get(loc)) if blob.exists(loc) else None
-    except Exception:
-        log.warning("periodogram summary of %s is unreadable; the dossier goes without it", target_id, exc_info=True)
-        return None
+    return PeriodogramSummary.from_npz(blob.get(loc))       # unreadable or gone: one of SECTION_ERRORS
 
 
-def _source_factory(fetch):
-    """The loader's adapter factory with the KBonus adapter on the injected ``fetch``: a raw file released by
-    retention is re-fetched through it (logged), never behind the caller's back."""
+def _offline_factory(target_id: str, signal_id: int):
+    """The loader's adapter factory for a dossier: a raw file released by retention is not fetched again (spec 5.8,
+    offline except Gaia), so asking for an adapter means the light curve is gone."""
     def factory(name: str, store, blob):
-        if name == "kbonus_bkg":
-            from skysift.sources.kbonus_bkg import KBonusBkg
-            return KBonusBkg(blob, store, fetch=fetch)
-        return make_source(name, store, blob)
+        raise LightCurveReleased(f"the raw light curve of {target_id} (signal {signal_id}) is no longer stored and a "
+                                 f"dossier does not download it; {RELEASED_REMEDY}")
     return factory
 
 
@@ -656,12 +670,14 @@ def _record_artifact(store: Store, url: str, path: Path, text: str, target_id: s
             old.deleted_at = utcnow()
 
 
-def _stored_report(old: dict, data_path: Path, signal_id: int, target_id: str) -> DossierReport:
+def _stored_report(data_path: Path, signal_id: int, target_id: str) -> DossierReport:
+    """The report of an up-to-date dossier, from its stored JSON: the FAP as it was written and the FPP recomputed
+    from the stored inputs."""
     data = json.loads(data_path.read_text(encoding="utf-8"))
-    f = data["fap"]
+    f = data.get("fap") or {}
     fap = (FalseAlarm(k=f["k"], n=f["n"], fap=f["fap"], calibrated=f["calibrated"],
                       version_matches=f["version_matches"], versions=tuple(f["versions"]))
-           if data["provenance"].get("calibration_file") else None)
+           if {"k", "n", "fap", "calibrated", "version_matches", "versions"} <= set(f) else None)
     return DossierReport(target_id, signal_id, data_path, False, fap, fpp_from_inputs(data["fpp"]["inputs"]), None)
 
 
@@ -670,6 +686,8 @@ def _stale_reason(old: dict | None, signal: dict, force: bool, fp: str) -> str:
         return "no dossier yet"
     if old["signal_id"] != signal["id"]:
         return "another signal is now the target's best"
+    if old["dossier_version"] != DOSSIER_VERSION:
+        return f"the dossier format changed ({old['dossier_version']} to {DOSSIER_VERSION})"
     if old["tests_fingerprint"] == fp:
         return "forced" if force else "the data file is missing"
     if old["status_at_generation"] != signal["final_status"]:
@@ -677,11 +695,37 @@ def _stale_reason(old: dict | None, signal: dict, force: bool, fp: str) -> str:
     return "the test rows or the reviewer decision changed"
 
 
+def calibration_version_for(signal: dict, thresholds) -> str:
+    """The calibration search version this signal's FAP must be read against. Calibration searches with the
+    masked pass and the alias resolution off, so its version never equals the sweep's: when the signal was found by
+    today's sweep (its ``detector_version`` is today's sweep version) the matching calibration is today's
+    calibration version; otherwise the signal came from another search, and only rows written under its own
+    ``detector_version`` describe it. Rows under any other version read "calibration is for an older search"."""
+    try:
+        sweep_now = search_version(get_detector(signal["detector"]), thresholds)
+    except KeyError:                    # a detector no longer registered: no translation is possible
+        return str(signal["detector_version"])
+    if signal["detector_version"] == sweep_now:
+        return cal.search_version(cal.calibration_detector(), thresholds)
+    return str(signal["detector_version"])
+
+
+def _section(name: str, errors: dict, build: Callable[[], object]):
+    """``build()``, or None with ``errors[name] = {"error": message}`` when it raises one of ``SECTION_ERRORS``."""
+    try:
+        return build()
+    except SECTION_ERRORS as e:
+        log.warning("the %s section could not be built", name, exc_info=True)
+        errors[name] = {"error": str(e) or type(e).__name__}
+        return None
+
+
 def generate(store: Store, blob, settings, target_id: str, *, signal_id: int | None = None, force: bool = False,
              fetch=net.fetch, log: Callable[[str], None] | None = None) -> DossierReport:
     """Write ``<data_dir>/dossiers/<target_id>/dossier_data.json`` and its ``dossiers`` row (spec 5.4). A no-op
-    (``generated=False``, the file untouched) when the stored fingerprint matches and ``force`` is False. Raises
-    KeyError when the target has no signal (or not ``signal_id``)."""
+    (``generated=False``, the file untouched) when the stored fingerprint and dossier version match and ``force`` is
+    False. Raises NoSignal when the target has no signal (or not ``signal_id``) and LightCurveReleased when the raw
+    light curve is no longer stored (it is not downloaded again: offline except Gaia, spec 5.8)."""
     say = log or (lambda _text: None)
     signal = pick_signal(store, target_id, signal_id)
     sid = signal["id"]
@@ -692,16 +736,18 @@ def generate(store: Store, blob, settings, target_id: str, *, signal_id: int | N
     data_path = Path(settings.data_dir) / "dossiers" / target_id / "dossier_data.json"
     old = store.dossier(target_id)
     if (old is not None and not force and old["tests_fingerprint"] == fp and old["signal_id"] == sid
-            and data_path.is_file()):
+            and old["dossier_version"] == DOSSIER_VERSION and data_path.is_file()):
         say(f"dossier for {target_id} is current (signal {sid}); nothing to do")
-        return _stored_report(old, data_path, sid, target_id)
+        return _stored_report(data_path, sid, target_id)
     stale = _stale_reason(old, signal, force, fp)
     target = _target_dict(store, target_id)
     say(f"signal {sid} ({signal['final_status']}, SDE {signal['sde']:.1f}); loading the light curve")
-    lc = LightCurveLoader(store, blob, source_factory=_source_factory(fetch)).load(target, pin=True)
+    lc = LightCurveLoader(store, blob, source_factory=_offline_factory(target_id, sid)).load(target, pin=True)
     fnorm = whitened(lc, signal)
-    plots = plot_arrays(lc, fnorm, signal, tests, periodogram=_periodogram(store, blob, target_id))
-    pixels = pixels_section(store, blob, sid, _metrics(tests, "rung5_pixels"), lc)
+    errors: dict[str, dict] = {}
+    periodogram = _section("periodogram", errors, lambda: _periodogram(store, blob, target_id))
+    plots = plot_arrays(lc, fnorm, signal, tests, periodogram=periodogram)
+    pixels = _section("pixels", errors, lambda: pixels_section(store, blob, sid, _metrics(tests, "rung5_pixels"), lc))
     say("asking Gaia for the star and its neighbours")
     tgt = Target(**{k: target[k] for k in TARGET_FIELDS if target.get(k) is not None}, meta=target.get("meta") or {})
     star, planet, neighbours, gaia, gaia_errors = _lookup(tgt, signal, tests, fetch=fetch, store=store)
@@ -710,22 +756,37 @@ def generate(store: Store, blob, settings, target_id: str, *, signal_id: int | N
     fpp = compute(inputs)
     calibration = cal.default_path(settings.data_dir, target.get("source") or "kbonus_bkg")
     rows = cal.read_rows(calibration) if calibration.is_file() else []
-    version = cal.search_version(cal.calibration_detector(), settings.thresholds)
+    version = calibration_version_for(signal, settings.thresholds)
     fap = cal.false_alarm(rows, float(signal["sde"]), version)
     data = _assemble(store, signal, target, tests, decisions, plots, pixels, star, planet, gaia_errors, fap, fpp,
                      inputs, calibration, version)
+    data["section_errors"] = errors
     data["caveats"] = caveats(data)
     data = _tidy(data)
     text = jsonutil.dumps(data, separators=(",", ":"))
     _write_atomic(data_path, text)
     _record_artifact(store, DOSSIER_URL.format(target_id=target_id), data_path, text, target_id)
+    # export_path is cleared: an earlier export was rendered from the earlier JSON
     store.upsert_dossier(target_id=target_id, signal_id=sid, generated=utcnow().replace(tzinfo=None),
                          data_path=str(data_path), search_version=signal["detector_version"],
                          ladder_version=signal.get("ladder_version"), dossier_version=DOSSIER_VERSION,
                          fap=fap.fap, fpp=fpp.value, fap_detail=data["fap"], fpp_detail=data["fpp"],
-                         tests_fingerprint=fp, status_at_generation=signal["final_status"])
+                         tests_fingerprint=fp, status_at_generation=signal["final_status"], export_path="")
     say(f"wrote {data_path}")
-    return DossierReport(target_id, sid, data_path, True, fap if calibration.is_file() else None, fpp, stale)
+    return DossierReport(target_id, sid, data_path, True, fap, fpp, stale)
+
+
+def status_label(verdict) -> tuple[str, str | None]:
+    """(label, its glossary sentence) from ``explain.STATUS_GLOSSARY``: a reviewer's decision names the label when
+    there is one (the glossary's "Approved / Rejected by reviewer / Needs data" entry), otherwise the engine status
+    ("Candidate, stage 2", "Undetermined", ...). A status the glossary does not list keeps the verdict's word."""
+    if verdict.reviewer:
+        for term, text in explain.STATUS_GLOSSARY:
+            for name in term.split(" / "):
+                if verdict.reviewer == name or verdict.reviewer.startswith(name + " "):
+                    return name, text
+    engine = f"{verdict.word}, {verdict.stage}" if verdict.stage else verdict.word
+    return engine, dict(explain.STATUS_GLOSSARY).get(engine)
 
 
 def whitened(lc: LightCurve, signal: dict) -> np.ndarray:
@@ -739,7 +800,7 @@ def _assemble(store, signal, target, tests, decisions, plots, pixels, star, plan
                   "created": _iso(t["created"])} for t in tests]
     verdict = explain.verdict(signal, tests, {"status": signal.get("candidate_status")} if signal.get(
         "candidate_status") else None, decisions)
-    label = STATUS_LABEL.get(signal["final_status"], verdict.word)
+    label, label_text = status_label(verdict)
     star_d = {**dataclasses.asdict(star), "gaia_errors": list(gaia_errors)}
     period, t0, dur = float(signal["period"]), float(signal["t0"]), float(signal["duration"])
     return {
@@ -749,7 +810,7 @@ def _assemble(store, signal, target, tests, decisions, plots, pixels, star, plan
         "signal": {k: v for k, v in signal.items() if k not in ("candidate_status", "decision")},
         "status": {"final_status": signal["final_status"], "decision": decisions[0] if decisions else None,
                    "candidate_status": signal.get("candidate_status"), "label": label,
-                   "label_text": dict(explain.STATUS_GLOSSARY).get(label), "headline": verdict.headline,
+                   "label_text": label_text, "headline": verdict.headline,
                    "reviewer": verdict.reviewer},
         "summary": explain.summary_sentence(signal, target, tests),
         "ephemeris": {"period_days": period, "t0_bkjd": t0, "t0_bjd": t0 + BKJD_OFFSET, "duration_h": dur * 24,
@@ -758,7 +819,8 @@ def _assemble(store, signal, target, tests, decisions, plots, pixels, star, plan
         "plots": plots, "tests": test_rows, "why": [dataclasses.asdict(w) for w in explain.why(tests)],
         "rechecks": store.rechecks(signal["id"]), "children": store.children(signal["id"]),
         "fap": {**dataclasses.asdict(fap), "one_in": fap.one_in(), "words": fap.words(), "sde": float(signal["sde"]),
-                "calibration_version": version, "min_nulls": cal.MIN_NULLS, "sentence_not_covered": FAP_NOT_COVERED},
+                "signal_search_version": signal["detector_version"], "calibration_version": version,
+                "min_nulls": cal.MIN_NULLS, "sentence_not_covered": FAP_NOT_COVERED},
         "fpp": {**fpp.as_dict(), "inputs": dataclasses.asdict(inputs), "words": fpp.words(), "label": fpp.label(),
                 "sentence_not_covered": FPP_NOT_COVERED},
         "pixels": pixels, "star": star_d, "planet": dataclasses.asdict(planet), "look": look_numbers(star, planet),

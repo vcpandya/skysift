@@ -262,9 +262,12 @@ def dossier(target: str = typer.Option(..., "--target", help="The target id, e.g
     try:
         rep = ds.generate(store, blob, s, target, signal_id=signal, force=force, fetch=net.fetch,
                           log=lambda text: _plain(console, text))
-    except KeyError as e:
-        _plain(console, f"{e.args[0] if e.args else e}: nothing to build a dossier from")
+    except ds.NoSignal as e:
+        _plain(console, f"{e}: nothing to build a dossier from")
         raise typer.Exit(1) from None
+    except ds.LightCurveReleased as e:
+        _plain(console, str(e))
+        raise typer.Exit(2) from None
     report = rep.as_dict()
     if export:
         report["export_path"] = str(ds.write_export(store, rep, Path(export)))

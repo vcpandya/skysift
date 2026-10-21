@@ -72,6 +72,12 @@ class FppInputs:
     neighbours: tuple[Neighbour, ...]
     centroid_sigma_arcsec: float | None  # season-averaged centroid error; None without a pixel stage
 
+    def __post_init__(self) -> None:
+        """Neighbours given as dicts (a dossier's stored ``fpp.inputs``) become ``Neighbour`` again, so
+        ``compute(FppInputs(**inputs))`` recomputes the stored value."""
+        object.__setattr__(self, "neighbours", tuple(Neighbour(**n) if isinstance(n, dict) else n
+                                                     for n in self.neighbours))
+
 
 @dataclass(frozen=True)
 class ScenarioWeight:

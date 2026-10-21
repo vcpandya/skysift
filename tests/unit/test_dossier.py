@@ -13,22 +13,31 @@ import pytest
 from typer.testing import CliRunner
 
 from skysift import calibrate as cal
+from skysift import dossier as dossier_module
 from skysift import net
 from skysift.cli import app
+from skysift.detectors import get_detector
 from skysift.detectors.periodogram import PeriodogramSummary
 from skysift.dossier import (
     DOSSIER_VERSION,
     STATUS_ORDER,
+    LightCurveReleased,
+    NoSignal,
+    calibration_version_for,
     caveats,
     export_html,
     fingerprint,
     generate,
     pick_signal,
+    status_label,
 )
+from skysift.fpp import FppInputs, compute
 from skysift.models import Signal, TestResult, TestStatus
+from skysift.pipeline import search_version
 from skysift.sources import PARSERS
 from skysift.store.blob import blob_from_url
 from skysift.store.db import PERIODOGRAM_URL, QueryRow, SignalRow, Store, make_job_key
+from skysift.ui import explain
 from tests.synthetic import inject_model, make_lightcurve
 from tests.unit.ui_seed import STAGE1_TARGET, STAGE2_TARGET, VERSION, add_older_version, seed, seed_dossier
 
@@ -89,7 +98,10 @@ def _periodogram(store, blob, target_id):
                        kind="summary")
 
 
-def _make_env(settings, monkeypatch, responses=None, calibration=True):
+def _make_env(settings, monkeypatch, responses=None, calibration=True, calibration_version=VERSION):
+    """The seed with the stage-2 target's raw file and periodogram stored, the synthetic curve behind the parser and
+    220 calibration rows under ``calibration_version``: by default the seed signals' own search version, so their
+    FAP is read against a calibration of their search."""
     store = Store(settings.database_url); store.init_schema()
     blob = blob_from_url(settings.blob_url)
     ids = seed(store, blob)
@@ -102,11 +114,11 @@ def _make_env(settings, monkeypatch, responses=None, calibration=True):
     monkeypatch.setitem(PARSERS, "kbonus_bkg", lambda _data: lc)
     path = cal.default_path(settings.data_dir, "kbonus_bkg")
     if calibration:
-        version = cal.search_version(cal.calibration_detector(), settings.thresholds)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("".join(json.dumps(r) + "\n" for r in _calibration_rows(version)), encoding="utf-8")
+        path.write_text("".join(json.dumps(r) + "\n" for r in _calibration_rows(calibration_version)),
+                        encoding="utf-8")
     return SimpleNamespace(store=store, blob=blob, settings=settings, ids=ids, fetch=fake_fetch(responses),
-                           calibration_path=path, lc=lc)
+                           calibration_path=path, lc=lc, raw_sha=sha)
 
 
 @pytest.fixture
@@ -164,9 +176,9 @@ def test_pick_signal_prefers_stage_two_then_approved_then_sde(settings):
     assert store.signal_status(weak_stage2) == "candidate_stage2"
     assert pick_signal(store, STAGE1_TARGET)["id"] == weak_stage2
     assert pick_signal(store, STAGE1_TARGET, signal_id=first)["id"] == first
-    with pytest.raises(KeyError):
+    with pytest.raises(NoSignal):
         pick_signal(store, "kic-000000001")
-    with pytest.raises(KeyError):
+    with pytest.raises(NoSignal):
         pick_signal(store, STAGE1_TARGET, signal_id=ids["stage2"])     # a signal of another target
 
 
@@ -317,9 +329,92 @@ def test_cli_dossier_prints_json_when_piped(cli_env, tmp_path):
     again = json.loads(CliRunner().invoke(app, ["dossier", "--target", STAGE2_TARGET]).stdout)
     assert not again["generated"]
     forced = json.loads(CliRunner().invoke(app, ["dossier", "--target", STAGE2_TARGET, "--force"]).stdout)
-    assert forced["generated"]
+    assert forced["generated"] and cli_env.store.dossier(STAGE2_TARGET)["export_path"] == ""   # the old export is stale
 
 
 def test_cli_dossier_fails_plainly_for_a_target_without_signals(cli_env):
     r = CliRunner().invoke(app, ["dossier", "--target", "kic-000000001"])
     assert r.exit_code == 1 and "no signal" in r.output and "Traceback" not in r.output
+
+
+def test_cli_dossier_exits_2_when_the_light_curve_was_released(cli_env):
+    cli_env.store.mark_artifact_deleted(cli_env.raw_sha)
+    r = CliRunner().invoke(app, ["dossier", "--target", STAGE2_TARGET])
+    assert r.exit_code == 2 and "--retention keep" in r.output and "Traceback" not in r.output
+
+
+# ---------------------------------------------------------------------------------------------------- fix round 1
+
+def test_fap_rows_of_another_search_read_as_an_older_calibration(settings, monkeypatch):
+    env = _make_env(settings, monkeypatch, calibration_version="0+older")
+    data = _data(generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch))
+    fap = data["fap"]
+    assert fap["words"] == "calibration is for an older search" and not fap["version_matches"]
+    assert fap["fap"] == pytest.approx(1 / 441) and fap["versions"] == ["0+older"]       # still printed in Expert
+    assert fap["signal_search_version"] == VERSION == fap["calibration_version"]
+
+
+def test_calibration_version_follows_the_signal_search(settings):
+    th = settings.thresholds
+    today = {"detector": "box_dip", "detector_version": search_version(get_detector("box_dip"), th)}
+    assert calibration_version_for(today, th) == cal.search_version(cal.calibration_detector(), th)
+    assert calibration_version_for({"detector": "box_dip", "detector_version": VERSION}, th) == VERSION
+    assert calibration_version_for({"detector": "gone", "detector_version": "9+x"}, th) == "9+x"
+
+
+def test_stored_fpp_inputs_recompute_the_stored_value(env):
+    data = _data(generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch))
+    inputs = data["fpp"]["inputs"]
+    assert len(inputs["neighbours"]) == 2 and isinstance(inputs["neighbours"][0], dict)
+    assert compute(FppInputs(**inputs)).value == pytest.approx(data["fpp"]["value"], rel=1e-6)
+    assert data["fpp"]["signed_off"] is False
+
+
+def test_a_released_light_curve_is_not_fetched_again(env):
+    env.store.mark_artifact_deleted(env.raw_sha)
+    with pytest.raises(LightCurveReleased, match=r"kic-006146676 .*--retention keep"):
+        generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch)
+    assert env.store.dossier(STAGE2_TARGET) is None
+
+
+def test_pick_signal_ranks_a_reviewer_rejection_last(settings):
+    store = Store(settings.database_url); store.init_schema()
+    ids = seed(store)
+    stage1 = add_older_version(store, STAGE2_TARGET)          # stage 1, SDE 30, beside the stage-2 signal
+    assert pick_signal(store, STAGE2_TARGET)["id"] == ids["stage2"]
+    store.decide(ids["stage2"], "reject", "a neighbour after all")
+    assert pick_signal(store, STAGE2_TARGET)["id"] == stage1
+
+
+def test_status_label_comes_from_the_glossary():
+    glossary = dict(explain.STATUS_GLOSSARY)
+    approved = explain.verdict({"final_status": "candidate_stage1"}, [], {"status": "approved"},
+                               [{"decision": "approve"}])
+    assert status_label(approved) == ("Approved", glossary["Approved / Rejected by reviewer / Needs data"])
+    stage2 = explain.verdict({"final_status": "candidate_stage2"}, [], None, [])
+    assert status_label(stage2) == ("Candidate, stage 2", glossary["Candidate, stage 2"])
+    needs = explain.verdict({"final_status": "undetermined"}, [], {"status": "review"}, [{"decision": "needs_data"}])
+    assert status_label(needs)[0] == "Needs data"
+
+
+def test_an_unreadable_pixels_file_becomes_a_section_error(env):
+    sid = env.ids["stage2"]
+    bad = b"not an npz archive"
+    sha, loc = env.blob.put(bad, f"pixels_{sid}.npz")
+    env.store.add_artifact(sha, len(bad), f"skysift://pixels/{sid}", loc, STAGE2_TARGET, pinned=True, kind="pixels")
+    data = _data(generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch))
+    assert data["pixels"] is None and data["section_errors"]["pixels"]["error"]
+    hit = [c for c in data["caveats"] if c["title"] == "The pixels section could not be built"]
+    assert hit and hit[0]["text"].startswith("The pixels section could not be built: ")
+
+
+def test_an_unchanged_dossier_reports_its_stored_fap_and_a_version_bump_regenerates(env, monkeypatch):
+    seeded = seed_dossier(env.store, env.settings.data_dir, target_id=STAGE2_TARGET)
+    env.calibration_path.unlink()                      # the stored FAP is reported, not the file's
+    rep = generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch)
+    assert not rep.generated and rep.fap.words() == "1 in 1,700" == seeded["fap"]["words"]
+    assert rep.fpp.value == pytest.approx(compute(FppInputs(**seeded["fpp"]["inputs"])).value)
+    monkeypatch.setattr(dossier_module, "DOSSIER_VERSION", "2")
+    again = generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch)
+    assert again.generated and "format changed" in again.stale_reason
+    assert env.store.dossier(STAGE2_TARGET)["dossier_version"] == "2"

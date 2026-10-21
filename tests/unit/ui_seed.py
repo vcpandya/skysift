@@ -242,9 +242,9 @@ def _seed_probabilities(period: float, sde: float) -> tuple[dict, dict]:
            "neighbours": [{**neighbours[0], "s_arcsec": 10.2, "flux_fraction": 0.958, "bright_enough": True,
                            "exclusion": 0.0}],
            "scenarios": scenarios, "inputs": inputs, "sentence_not_covered": ds.FPP_NOT_COVERED}
-    fap = {"k": 0, "n": 1699, "fap": 1 / 1700, "calibrated": True, "version_matches": True, "versions": ["5+seed"],
-           "one_in": 1700, "words": "1 in 1,700", "sde": sde, "calibration_version": "5+seed", "min_nulls": 200,
-           "sentence_not_covered": ds.FAP_NOT_COVERED}
+    fap = {"k": 0, "n": 1699, "fap": 1 / 1700, "calibrated": True, "version_matches": True, "versions": [VERSION],
+           "one_in": 1700, "words": "1 in 1,700", "sde": sde, "signal_search_version": VERSION,
+           "calibration_version": VERSION, "min_nulls": 200, "sentence_not_covered": ds.FAP_NOT_COVERED}
     return fap, fpp
 
 
@@ -297,8 +297,9 @@ def seed_dossier(store: Store, data_dir, target_id: str = STAGE2_TARGET) -> dict
     period, t0, dur = float(sig["period"]), float(sig["t0"]), float(sig["duration"])
     star, planet, look = _seed_star()
     fap, fpp = _seed_probabilities(period, float(sig["sde"]))
-    verdict = explain.verdict(sig, tests, None, decisions)
-    label = ds.STATUS_LABEL.get(sig["final_status"], verdict.word)
+    cand = {"status": sig["candidate_status"]} if sig.get("candidate_status") else None
+    verdict = explain.verdict(sig, tests, cand, decisions)
+    label, label_text = ds.status_label(verdict)
     data = {
         "dossier_version": ds.DOSSIER_VERSION, "generated": "2026-10-21T09:00:00+00:00",
         "sections": [{"number": f"{i:02d}", "title": title} for i, title in enumerate(ds.SECTIONS, 1)],
@@ -306,7 +307,7 @@ def seed_dossier(store: Store, data_dir, target_id: str = STAGE2_TARGET) -> dict
         "signal": {k: v for k, v in sig.items() if k not in ("candidate_status", "decision")},
         "status": {"final_status": sig["final_status"], "decision": decisions[0] if decisions else None,
                    "candidate_status": sig.get("candidate_status"), "label": label,
-                   "label_text": dict(explain.STATUS_GLOSSARY).get(label), "headline": verdict.headline,
+                   "label_text": label_text, "headline": verdict.headline,
                    "reviewer": verdict.reviewer},
         "summary": explain.summary_sentence(sig, target, tests),
         "ephemeris": {"period_days": period, "t0_bkjd": t0, "t0_bjd": t0 + 2454833.0, "duration_h": dur * 24,
@@ -318,8 +319,10 @@ def seed_dossier(store: Store, data_dir, target_id: str = STAGE2_TARGET) -> dict
         "why": [dataclasses.asdict(w) for w in explain.why(tests)],
         "rechecks": store.rechecks(sid), "children": store.children(sid), "fap": fap, "fpp": fpp,
         "pixels": _seed_pixels(), "star": star, "planet": planet, "look": look, "caveats": [],
+        "section_errors": {},
         "provenance": {"search_version": sig["detector_version"], "ladder_version": sig["ladder_version"],
-                       "git_commit": "seed", "queries": [], "files": [], "calibration_file": None,
+                       "git_commit": "seed", "queries": [], "files": [],
+                       "calibration_file": str(Path(data_dir) / "calibration" / "kbonus_bkg.jsonl"),
                        "commands": [f"skysift vet --source kbonus_bkg --target-id {target_id}",
                                     "skysift calibrate --source kbonus_bkg",
                                     f"skysift dossier --target {target_id} --signal {sid} --force"]},
