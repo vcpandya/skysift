@@ -201,7 +201,8 @@ def _data(rep) -> dict:
 def test_pick_signal_prefers_stage_two_then_approved_then_sde(settings):
     store = Store(settings.database_url); store.init_schema()
     ids = seed(store)
-    assert STATUS_ORDER == ("candidate_stage2", "approved", "candidate_stage1")
+    assert STATUS_ORDER == ("candidate_stage2", "approved", "candidate_stage1", "undetermined", "pending", "rejected",
+                            "superseded")
     first = ids["candidate"]                                   # stage 1, SDE 21.1
     stronger = add_older_version(store, STAGE1_TARGET)         # stage 1, SDE 30.0, same target
     assert pick_signal(store, STAGE1_TARGET)["id"] == stronger
@@ -523,6 +524,12 @@ def test_rank_key_orders_stage_two_approved_stage_one_and_rejected_last():
     order = [s["id"] for s, d in sorted(rows, key=lambda r: rank_key(*r))]
     assert order == [3, 5, 2, 1, 4]            # stage 2, approved by SDE, stage 1, a rejection last whatever its SDE
     assert rank_key(sig(6, "candidate_stage2", 9.0, "approved"), "approve")[1] == 0
+    # an undetermined signal (the pixel stage could not decide) outranks every closed sibling whatever the SDE, so
+    # the Dossiers tile and pick_signal name the same signal (review of 47823bc)
+    closed = [(sig(7, "undetermined", 20.0), None), (sig(8, "superseded", 50.0), None), (sig(9, "rejected", 60.0), None),
+              (sig(10, "pending", 70.0), None)]
+    assert [s["id"] for s, d in sorted(closed, key=lambda r: rank_key(*r))] == [7, 10, 9, 8]
+    assert rank_key(sig(1, "candidate_stage1", 1.0), None) < rank_key(sig(7, "undetermined", 99.0), None)
 
 
 def _with_seasons(data: dict, seasons: list[dict]) -> dict:

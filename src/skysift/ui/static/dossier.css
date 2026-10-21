@@ -14,6 +14,7 @@
 
 .dossier-tile { display: flex; flex-direction: column; gap: 10px; }
 .dossier-tile.group-approved { border-top: 3px solid var(--pass); }
+.dossier-tile.group-pixels { border-top: 3px solid var(--undet); }
 .dossier-tile:has(.tile-job) { border-color: var(--running); }   /* a job is running: the foot shows its line */
 .tile-main { display: flex; flex-direction: column; gap: 10px; }
 .tile-top { display: flex; gap: 12px; align-items: flex-start; }

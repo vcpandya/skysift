@@ -707,6 +707,14 @@ def test_pixel_undecided_signals_join_the_page_but_other_undetermined_ones_do_no
     groups = [r["group"] for r in rows]
     assert groups == sorted(groups, key=queries.FINAL_GROUPS.index) and groups[-1] == "pixels"
     assert STAGE1_TARGET in [r["target_id"] for r in rows if r["group"] == "stage1"]
+    # a rejected sibling at a higher SDE does not take the tile or the dossier from the undetermined signal
+    rid2 = store.start_run(make_job_key(tid, "box_dip", VERSION, "8"), tid, "box_dip", VERSION, "8")
+    failed = {"signal": _signal(tid, 3.0565, 50.0).model_dump(), "outcome": "fail",
+              "tests": [r.model_dump() for r in _tests("fail")], "timings": [0.01, 0.01]}
+    store.record_results(rid2, tid, [failed], [], pin_evidence=False)
+    tile = next(r for r in queries.final_set(store, None) if r["target_id"] == tid)
+    assert tile["group"] == "pixels" and tile["signal"]["sde"] == 20.5
+    assert ds.pick_signal(store, tid)["id"] == tile["signal_id"]
     assert queries.pixels_undecided([{"rung": "rung2_shape", "status": "undetermined", "reason": "equal secondary"},
                                      {"rung": "rung5_pixels", "status": "undetermined", "reason": "pixels: x"}]) is False
     assert queries.pixels_undecided([{"rung": "rung5_pixels", "status": "undetermined", "reason": "outage:mast: 1"}]) is False

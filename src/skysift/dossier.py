@@ -68,7 +68,9 @@ from skysift.vetting.rung1_detection import SYSTEMATIC_PERIODS
 log = logging.getLogger(__name__)
 
 DOSSIER_VERSION = "2"           # 2: the FPP model version joins the fingerprint (21 October 2026)
-STATUS_ORDER = ("candidate_stage2", "approved", "candidate_stage1")
+# best first; an undetermined signal (the pixel stage could not decide) outranks every closed one, so a target's
+# tile and its dossier name the same signal when a superseded parent or a rejected sibling has the higher SDE
+STATUS_ORDER = ("candidate_stage2", "approved", "candidate_stage1", "undetermined", "pending", "rejected", "superseded")
 CLOSE_SIGMA = 3.5               # a voting season nearer the 3 sigma decision than this gets the Monte Carlo caveat
 MIN_VOTING_SEASONS = 2          # rung 5 passes on two voting seasons at least; below that the FPP keeps the no-pixel rule
 CLOSE_CALL = ("The centroid error comes from 200 Monte Carlo draws, so a season this close to the 3 sigma threshold "
@@ -221,7 +223,8 @@ def rank_key(signal: dict, decision: str | None) -> tuple:
     """The sort key of a target's signals, best first, shared by ``pick_signal`` and the Dossiers tiles: a signal a
     reviewer rejected ranks below every other whatever its engine status (the store keeps the engine status on a
     rejection); the rest by ``STATUS_ORDER`` (an approved signal ranks as approved even when its engine status is
-    stage 1, and a stage-2 signal stays stage 2 when approved), then SDE, then id. ``signal`` holds ``id``,
+    stage 1, a stage-2 signal stays stage 2 when approved, and an undetermined signal outranks a superseded, rejected
+    or pending one whatever their SDE), then SDE, then id. ``signal`` holds ``id``,
     ``final_status``, ``sde`` and ``candidate_status``; ``decision`` is the latest reviewer decision or None."""
     cand = signal.get("candidate_status")
     rejected = cand == "rejected" or decision == "reject"
