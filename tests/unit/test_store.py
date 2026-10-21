@@ -449,3 +449,21 @@ def test_a_recheck_step_is_refused_after_any_reviewer_decision(tmp_path, decisio
     assert done["written"] is False and s.counts()["tests"] == tests_before
     assert [(r["step"], r["outcome"], r["reason"]) for r in s.rechecks(sid)] == [
         ("pixels", "skipped", REVIEWER_DECIDED_REASON)]
+
+
+def test_set_candidate_pack_writes_only_an_existing_candidate_row(tmp_path):
+    """The pack folder goes on the signal's candidate row; a signal no reviewer decided on has none, and none is made
+    (a new row would read as "needs data")."""
+    from skysift.store.db import CandidateRow
+    s = make_store(tmp_path)
+    s.upsert_target(Target(source="kbonus_bkg", target_id="kic-1", ra=1.0, dec=2.0))
+    rid = s.start_run(make_job_key("kic-1", "box_dip", "1", "4"), "kic-1", "box_dip", "1", "4")
+    sid = s.add_signal(Signal(target_id="kic-1", detector="box_dip", detector_version="1", period=10.0, t0=1.0,
+                              duration=0.1, depth_ppm=1000, snr=20, sde=12, n_events=40), rid)
+    assert s.set_candidate_pack(sid, "/packs/kic-1/20261021") is False
+    assert s.counts()["candidates"] == 0
+    s.decide(sid, "approve", "clean")
+    assert s.set_candidate_pack(sid, "/packs/kic-1/20261021") is True
+    with s.session() as session:
+        row = session.scalars(select(CandidateRow).where(CandidateRow.signal_id == sid)).one()
+        assert row.pack_path == "/packs/kic-1/20261021" and row.status == "approved"

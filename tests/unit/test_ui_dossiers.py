@@ -330,7 +330,8 @@ def test_only_the_tile_s_foot_polls_and_the_forms_swap_their_own_tile(seeded_dos
     status = client.get(f"/partials/dossiers/{APPROVED_TARGET}/status")
     assert status.status_code == 286 and "<article" not in status.text            # ended: swap and stop polling
     assert f'id="tile-main-{APPROVED_TARGET}" hx-swap-oob="true"' in status.text and "Generate" in status.text
-    assert client.get("/partials/dossiers/kic-000000001/status").status_code == 404
+    gone = client.get("/partials/dossiers/kic-000000001/status")
+    assert gone.status_code == 286 and "no longer available" in gone.text      # stops the poll
     assert client.get("/partials/dossiers/bad%20id;x/status").status_code == 400
 
 
@@ -529,3 +530,48 @@ def test_planet_svg_without_a_habitable_zone_has_no_bar():
     svg = planet_svg({"teff_k": 5800, "rp_rearth": 1.0})
     ET.fromstring(svg)
     assert "data-part=\"hz\"" not in svg and "#fff3d6" in svg
+
+
+# ---- the submission pack (Task 6)
+
+def test_a_tile_whose_target_is_gone_stops_polling(seeded_dossier, fake_jobs):
+    client, _app, _ids, _data = seeded_dossier
+    r = client.get("/partials/dossiers/kic-000000001/status")
+    assert r.status_code == 286 and "no longer available" in r.text and "every 5s" not in r.text
+    assert "<html" not in r.text and "<article" not in r.text
+
+
+def test_the_dashboard_steps_come_from_the_pack_module():
+    from skysift.pack import STEP_TEXTS, STEPS
+    from skysift.ui.routes.dossiers import PACK_STEPS
+    assert [(str(n), title, text) for n, title, text in PACK_STEPS] == [(n, t, STEP_TEXTS[n]) for n, t in STEPS]
+
+
+def _fake_pack(app, settings, target_id=STAGE2_TARGET):
+    from datetime import datetime
+    out = settings.data_dir / "packs" / target_id / "20261021"
+    out.mkdir(parents=True)
+    (out / "README.md").write_text("# pack", encoding="utf-8")
+    zip_path = out.with_name("20261021.zip")
+    zip_path.write_bytes(b"PK fake zip")
+    app.state.store.set_pack(target_id, str(out), datetime(2026, 10, 21, 10, 0))
+    return out, zip_path
+
+
+def test_the_pack_zip_is_linked_and_served_once_built(seeded_dossier, settings):
+    client, app, _ids, _data = seeded_dossier
+    assert client.get(f"/dossiers/{STAGE2_TARGET}/pack.zip").status_code == 404           # not built yet
+    assert f'href="/dossiers/{STAGE2_TARGET}/pack.zip"' not in client.get(f"/dossiers/{STAGE2_TARGET}").text
+    _out, zip_path = _fake_pack(app, settings)
+    r = client.get(f"/dossiers/{STAGE2_TARGET}/pack.zip")
+    assert r.status_code == 200 and r.content == zip_path.read_bytes()
+    assert r.headers["content-type"] == "application/zip"
+    assert r.headers["content-disposition"] == f'attachment; filename="{STAGE2_TARGET}_pack_20261021.zip"'
+    page = client.get(f"/dossiers/{STAGE2_TARGET}").text
+    assert f'href="/dossiers/{STAGE2_TARGET}/pack.zip"' in page and "Download the submission pack" in page
+    tile = client.get(f"/partials/dossiers/{STAGE2_TARGET}/tile").text
+    assert f'href="/dossiers/{STAGE2_TARGET}/pack.zip"' in tile
+    zip_path.unlink()
+    assert client.get(f"/dossiers/{STAGE2_TARGET}/pack.zip").status_code == 404           # a zip moved away
+    assert client.get("/dossiers/bad%20id;x/pack.zip").status_code == 400
+    assert client.get("/dossiers/kic-000000001/pack.zip").status_code == 404

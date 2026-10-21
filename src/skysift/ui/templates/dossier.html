@@ -330,6 +330,9 @@
   {%- if (r and r.group == "approved") or dz.pack_path %}
   <h3 id="pack-title">The submission pack</h3>
   <p>No portal takes a new Kepler candidate from outside a mission, so the pack holds what each route needs. Tick a step when you have done it.{% if dz.pack_path %} The pack is at <code>{{ dz.pack_path }}</code>.{% endif %}</p>
+  {%- if pack_zip %}
+  <p><a class="btn" href="/dossiers/{{ target_id }}/pack.zip">Download the submission pack (zip)</a></p>
+  {%- endif %}
   {% include "partials/pack_steps.html" %}
   {%- endif %}
 </section>

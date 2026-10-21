@@ -296,6 +296,62 @@ def dossier(target: str = typer.Option(..., "--target", help="The target id, e.g
         _plain(_console(), jsonutil.dumps(report, indent=1))
 
 
+@app.command("pack")
+def pack_command(target: str = typer.Option(..., "--target", help="The target id, e.g. kic-006146676."),
+                 out: str | None = typer.Option(None, "--out", help="The pack folder (default <data_dir>/packs/"
+                                                "<target>/<UTC yyyymmdd>); the zip is written beside it."),
+                 tic: str | None = typer.Option(None, "--tic", help="The star's TIC id, for the ExoFOP file names."),
+                 tag: str = typer.Option("skysift", "--tag", help="The observer tag in the ExoFOP file names."),
+                 zenodo_draft: bool = typer.Option(False, "--zenodo", help="Also make a Zenodo draft (sandbox) with "
+                                                   "the token in SKYSIFT_ZENODO_TOKEN; it is never published."),
+                 zenodo_live: bool = typer.Option(False, "--zenodo-live", help="Make the Zenodo draft on zenodo.org "
+                                                  "instead of the sandbox (implies --zenodo).")):
+    """Build the submission pack from the target's stored dossier: the README's five steps, the Research Note draft,
+    the data files, figures, provenance and the ExoFOP copies, and a zip. With --zenodo, also a Zenodo draft
+    deposition holding the zip; publishing it is your click on Zenodo. Prints the report: a table in a terminal,
+    JSON when piped."""
+    from skysift import dossier as ds
+    from skysift import pack as pk
+    from skysift import zenodo as zn
+    console = _console(stderr=True)
+    s, store, blob = _ctx()
+    want_zenodo = zenodo_draft or zenodo_live
+    token = zn.token_from_env() if want_zenodo else None
+    client = zn.ZenodoClient(token, sandbox=not zenodo_live, session=zn.new_session()) if token else None
+    try:
+        rep = pk.build_pack(store, blob, s, target, out_dir=Path(out) if out else None, tic=tic, observer_tag=tag,
+                            zenodo=client, log=lambda text: _plain(console, text))
+    except (pk.NoDossier, ds.NoSignal) as e:
+        _plain(console, str(e))
+        raise typer.Exit(1) from None
+    except ds.LightCurveReleased as e:
+        _plain(console, str(e))
+        raise typer.Exit(2) from None
+    except (FileExistsError, ValueError) as e:
+        raise typer.BadParameter(str(e)) from None
+    except zn.ZenodoError as e:
+        row = store.dossier(target) or {}
+        built = f"; the pack is at {row['pack_path']} without a finished Zenodo draft" if row.get("pack_path") else ""
+        _plain(console, f"{e}{built}")
+        raise typer.Exit(1) from None
+    report = rep.as_dict()
+    if sys.stdout.isatty():
+        t = RTable(title=f"Submission pack {target}", show_header=False)
+        t.add_column("field"); t.add_column("value")
+        for key, value in report.items():
+            t.add_row(key, value if isinstance(value, str) else jsonutil.dumps(value))
+        _console().print(t)
+    else:
+        _plain(_console(), jsonutil.dumps(report, indent=1))
+    if rep.zenodo:
+        where = "sandbox draft" if rep.zenodo["sandbox"] else "draft"
+        _plain(console, f"Zenodo {where}, not published: {rep.zenodo['draft_url']}. Read it there and press Publish "
+                        "when it is right.")
+    if want_zenodo and client is None:
+        _plain(console, f"{zn.TOKEN_ENV} is not set; the pack was built without a Zenodo draft")
+        raise typer.Exit(2)
+
+
 _SIGNAL_IDS = typer.Option(None, "--signal-id", help="Recheck only this signal (repeat for several).")
 
 

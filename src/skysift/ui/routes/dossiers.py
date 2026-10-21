@@ -1,6 +1,6 @@
 """The Dossiers pages (dossiers spec 5.5): the tiles of the final set, one dossier page per target, the standalone
-download, the dossier and pack jobs, and the submission pack's step list. Reads go through ``ui.queries``; the writes
-are a job start (``ui.jobs.DossierJobs``), the export file (``dossier.write_export``) and the pack steps
+download, the dossier and pack jobs, the submission pack's step list and its zip. Reads go through ``ui.queries``;
+the writes are a job start (``ui.jobs.DossierJobs``), the export file (``dossier.write_export``) and the pack steps
 (``Store.set_pack_steps``)."""
 from __future__ import annotations
 
@@ -10,11 +10,12 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from fastapi import APIRouter, Depends, Form, Request
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from markupsafe import Markup
 
 from skysift import dossier as ds
 from skysift import jsonutil
+from skysift.pack import STEP_TEXTS, STEPS
 from skysift.ui import queries
 from skysift.ui.app import render, require_token
 from skysift.ui.jobs import DossierJobs, DossierRequest, JobBusy, valid_target_id
@@ -29,19 +30,9 @@ ERROR_SECTION = {"periodogram": "signal", "pixels": "pixels", "plots": "repeat",
 VOTE_WORDS = {True: "voting", False: "not voting", None: "vote not recorded"}
 BUSY = "another dossier job is running"
 STOP_POLLING = 286                # htmx swaps a 286 answer and stops the element's polling
-# the submission pack's steps (spec 5.9), in the order its README gives them
-PACK_STEPS = [
-    (1, "Freeze the record",
-     "Deposit the pack on Zenodo for a citable DOI. The engine can make the draft; you publish it."),
-    (2, "Upload to ExoFOP-TESS",
-     "Attach the dossier, the ephemeris and the note under the star's TIC id. This needs your own ExoFOP account."),
-    (3, "Write it up",
-     "Turn the Research Note draft into a submission to the AAS, with an arXiv endorsement if needed."),
-    (4, "Tell the archive",
-     "Send the NASA Exoplanet Archive help desk the one-paragraph note once it is published."),
-    (5, "Answer follow-up questions",
-     "Reply to observers who ask for the ephemeris or the data, from the pack's own files."),
-]
+# the submission pack's steps (spec 5.9), in the order its README gives them; pack.STEPS is the one list
+PACK_STEPS = [(int(n), title, STEP_TEXTS[n]) for n, title in STEPS]
+GONE_FOOT = '<p class="tile-note">This target is no longer available. Reload the page.</p>'
 
 
 def _jobs(request: Request) -> DossierJobs:
@@ -84,6 +75,7 @@ def _decorate(row: dict, running: str | None, last: dict[str, dict]) -> dict:
         if not d or finished[:19] > generated[:19]:
             failed = rec
     return {**row, "generating": running == tid, "failed_job": failed,
+            "pack_zip": pack_zip_path((row.get("dossier") or {}).get("pack_path")) is not None,
             "thumb": Markup(planet_svg(row["look"])) if row.get("look") else None,
             "generated_words": date_words(row["dossier"]["generated"]) if row.get("dossier") else None}
 
@@ -136,8 +128,8 @@ def tile_status(request: Request, target_id: str):
     if bad:
         return bad
     rows = queries.final_set(request.app.state.store, None, target_id=target_id)
-    if not rows:
-        return HTMLResponse(f"no signal for {target_id}", status_code=404)
+    if not rows:                    # a 404 would keep htmx polling every 5 s: answer 286 so the poll stops
+        return HTMLResponse(GONE_FOOT, status_code=STOP_POLLING)
     r = _tiles(request, rows)[0]
     if r["generating"]:
         return Response(status_code=204)
@@ -213,6 +205,7 @@ def dossier_page(request: Request, target_id: str):
                   look_svg=Markup(planet_svg(look, 180)) if look else None,
                   look_words=look_sentence(look, look) if look else None,
                   generated_words=date_words(dz["generated"]), pack_steps=PACK_STEPS,
+                  pack_zip=pack_zip_path(dz.get("pack_path")) is not None,
                   steps_done=dz.get("pack_steps") or {}, d=dz["detail"], signal_id=dz["signal_id"], error=None,
                   rung5=next((t for t in data.get("tests") or [] if t.get("rung") == "rung5_pixels"), None))
 
@@ -237,6 +230,33 @@ def export(request: Request, target_id: str):
         text = path.read_text(encoding="utf-8")
     return Response(text, media_type="text/html; charset=utf-8",
                     headers={"Content-Disposition": f'attachment; filename="{target_id}_dossier.html"'})
+
+
+def pack_zip_path(pack_path: str | None) -> Path | None:
+    """The zip ``skysift pack`` writes beside the pack folder (``<folder>.zip``), when the folder is recorded and the
+    zip is on disk."""
+    if not pack_path:
+        return None
+    folder = Path(pack_path)
+    path = folder.with_name(folder.name + ".zip")
+    return path if path.is_file() else None
+
+
+@router.get("/dossiers/{target_id}/pack.zip")
+def pack_download(request: Request, target_id: str):
+    """The submission pack's zip as an attachment, from the folder the dossiers row records."""
+    bad = _bad_id(request, target_id)
+    if bad:
+        return bad
+    row = request.app.state.store.dossier(target_id)
+    path = pack_zip_path((row or {}).get("pack_path"))
+    if path is None:
+        return render(request, "error.html", status_code=404, log_hint="",
+                      error=f"no submission pack for {target_id}; build it from the Dossiers page or with "
+                            f"skysift pack --target {target_id}")
+    return FileResponse(path, media_type="application/zip",
+                        headers={"Content-Disposition":
+                                 f'attachment; filename="{target_id}_pack_{Path(row["pack_path"]).name}.zip"'})
 
 
 def _start(request: Request, target_id: str, kind: str, force: bool) -> HTMLResponse:

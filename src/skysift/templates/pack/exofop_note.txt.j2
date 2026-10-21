@@ -1,0 +1,22 @@
+{# The text for the notes field of the ExoFOP-TESS upload (pack README, step 2). Plain text, one block per topic. #}
+{% if not f.approved %}
+NOT YET APPROVED BY A REVIEWER: do not upload this before the approval.
+
+{% endif %}
+SkySift transit candidate on {{ "TIC " ~ f.tic if f.tic else "TIC (to fill in)" }} = {{ n.name }}{% if n.gaia_id %} = Gaia DR3 {{ n.gaia_id }}{% endif %}
+
+Found in the KBonus Kepler Background light curve (doi:10.17909/7jbr-w430); Kepler recorded this star only in other targets' pixels.
+
+Ephemeris: P = {{ n.period }} d, T0 = BJD_TDB {{ n.t0_bjd }}, duration {{ n.duration }} h, depth {{ n.depth }} ppm, {{ n.n_events }} transits, SDE {{ n.sde }}, S/N {{ n.snr }}. No formal error on P or T0 yet; allow at least one duration either side of a predicted time.
+{% if n.rp_text %}
+Planet radius {{ n.rp_text }} Earth radii on a {{ n.a_text }} AU orbit{% if n.teq_text %}, Teq {{ n.teq_text }} K{% endif %}; host {{ n.host_text }}.
+{% endif %}
+
+Pixels: {{ n.pixel_plain }}
+
+{{ n.fap_text }}
+{{ n.fpp_text }}
+
+Files: the detrended light curve (CSV: time BKJD, relative flux and error in ppm, quarter), the ephemeris and parameters with errors (CSV), the folded, odd and even, periodogram{% if f.pixels_figure %} and centroid{% endif %} figures, and the standalone dossier (HTML, all vetting numbers).
+
+Frozen record: doi:{{ f.doi_shown }}. This is a candidate until independent follow-up confirms it.

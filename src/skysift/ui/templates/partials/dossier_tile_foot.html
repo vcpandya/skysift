@@ -6,7 +6,7 @@
     <p class="tile-job">{{ pill("running", "generating") }} <span>{{ "Building the submission pack." if r.job_kind == "pack" else "Generating the dossier. This tile checks again every 5 seconds." }}</span></p>
     {%- else %}
     {%- if r.dossier %}
-    <p class="tile-generated">Generated {{ r.generated_words }}{% if r.dossier.pack_path %} · <span>pack built</span>{% endif %}</p>
+    <p class="tile-generated">Generated {{ r.generated_words }}{% if r.dossier.pack_path %} · {% if r.pack_zip %}<a href="/dossiers/{{ tid }}/pack.zip">pack built (zip)</a>{% else %}<span>pack built</span>{% endif %}{% endif %}</p>
     {%- endif %}
     {%- if r.dossier and r.stale %}
     <p class="tile-note">This dossier is stale: {{ r.stale_reason }}.</p>

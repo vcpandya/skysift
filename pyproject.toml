@@ -30,6 +30,7 @@ where = ["src"]
 [tool.setuptools.package-data]
 "skysift.ui" = ["templates/*.html", "templates/partials/*.html", "static/*", "static/fonts/*"]
 "skysift.data" = ["*.txt", "rnaas/*"]
+"skysift" = ["templates/pack/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

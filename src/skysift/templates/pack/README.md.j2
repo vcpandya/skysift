@@ -1,0 +1,136 @@
+{# The pack's README (dossiers spec 5.9): the five steps in order, each naming the account it needs, what to attach,
+   what to write and what the engine did or cannot do. Plain text from skysift.pack.render_readme; n holds the numbers
+   as text, f the build's own fields. No em-dashes, -ize spellings, "candidate" never "discovery". #}
+{% if not f.approved %}
+This candidate is not yet approved by a reviewer. Build the record, but do not freeze or upload it before the approval.
+
+{% endif %}
+# Submission pack for {{ n.name }}
+
+{% if f.stale_reason %}
+**The dossier behind this pack is stale** ({{ f.stale_reason }}). Run `skysift dossier --target {{ n.target_id }} --force`, then build the pack again, before step 1.
+
+{% endif %}
+{{ n.summary }}
+
+This pack was built on {{ f.built_words }} by SkySift (pack format {{ f.pack_version }}) from the dossier generated on {{ n.generated_words }} for signal {{ n.signal_id }} (search version {{ n.search_version }}, ladder version {{ n.ladder_version }}). Every number below comes from that dossier.
+
+## The candidate in numbers
+
+| quantity | value |
+|---|---|
+| period | {{ n.period }} d |
+| first mid-transit | BJD_TDB {{ n.t0_bjd }} (BKJD {{ n.t0_bkjd }}) |
+| duration | {{ n.duration }} h |
+| depth | {{ n.depth }} ppm |
+| transits | {{ n.n_events }} |
+| signal detection efficiency (SDE) | {{ n.sde }} |
+| signal-to-noise ratio | {{ n.snr }} |
+{% for row in n.param_rows %}
+| {{ row.parameter }} | {{ row.text }} |
+{% endfor %}
+
+{{ n.fap_text }}
+
+{{ n.fpp_text }}
+
+The two numbers answer different questions and are never combined: the first is about noise alone, the second about the common astrophysical impostors (a background eclipsing binary, an eclipsing binary on the target).
+
+## Why there are five steps
+
+No portal accepts a new Kepler candidate from someone outside a mission team. The NASA Exoplanet Archive takes planets from the refereed literature and adds candidates only when a mission delivers them. ExoFOP (run by NExScI) is the community follow-up site: registered users upload files and notes there, and Kepler and K2 follow-up now sits in ExoFOP-TESS under the star's TIC id. A community TESS Object of Interest needs TESS evidence, which this candidate does not have. So the record goes out in five steps, in this order. The engine can do part of step 1 for you; every other step needs your own account and your own click, and the engine never posts to ExoFOP, arXiv or a journal.
+
+## Step 1. {{ titles["1"] }}
+
+Account: a Zenodo account (zenodo.org, free, sign-in with ORCID or GitHub works).
+
+Zenodo gives the pack a DOI and freezes it, so the Research Note, the ExoFOP upload and the archive can all point at the same files.
+
+{% if f.zenodo %}
+The engine made a draft deposition on {{ "the Zenodo sandbox (sandbox.zenodo.org, a test site whose records are not kept)" if f.zenodo.sandbox else "zenodo.org" }}: {{ f.zenodo.draft_url }} (deposition {{ f.zenodo.deposition_id }}{% if f.zenodo.doi %}, reserved DOI {{ f.zenodo.doi }}{% endif %}). It holds the metadata and `{{ f.zip_name }}`. The engine never publishes.
+{% if f.zenodo.sandbox %}
+
+A sandbox draft is a rehearsal. When it reads right, build the pack again with `skysift pack --target {{ n.target_id }} --zenodo-live` for the real record.
+{% endif %}
+{% else %}
+The engine can make the draft for you: create a personal access token on Zenodo (Account, Applications, Personal access tokens, with the deposit:write scope only; publishing is your click on the website, so the token needs no more), set it in the environment as `SKYSIFT_ZENODO_TOKEN` (never in a file), and run `skysift pack --target {{ n.target_id }} --zenodo`. That makes a draft on the Zenodo sandbox (a test site); `--zenodo-live` makes it on zenodo.org. The engine fills the title, the creators from `CITATION.cff`, the description, the keywords, the CC BY 4.0 licence and the link to the KBonus light curves (doi:10.17909/7jbr-w430), uploads the zip and stops. It never publishes.
+
+Without a token, do it by hand: on zenodo.org choose New upload, attach `{{ f.zip_name }}`, and copy the fields from `zenodo_metadata.json` (upload type Dataset, title, creators, description, keywords, licence, related identifier).
+{% endif %}
+
+What you do: open the draft, read every field, check that the uploaded zip holds the files `provenance/hashes.json` lists, then press Publish. Publishing cannot be undone: a published record keeps its files (a later version can be added, the first stays). Copy the DOI. On the dashboard, mark the candidate "published" with that DOI, and put the DOI in `note/note.tex` in place of {{ f.doi_shown }}.
+
+## Step 2. {{ titles["2"] }}
+
+Account: an ExoFOP registered-user login (request one on the ExoFOP site, {{ f.exofop_url }}; the ExoFOP team approves it, which can take a few days). The engine cannot upload for you.
+
+{% if f.tic %}
+TIC id: TIC {{ f.tic }} (given when the pack was built). The files in `exofop/` already carry it.
+{% else %}
+TIC id: this pack was built without one, so the files in `exofop/` start with `TIC-unknown`. Find the id on ExoFOP-TESS: type Gaia DR3 {{ n.gaia_id or "(no Gaia id stored)" }} or the coordinates RA {{ n.ra }} deg, Dec {{ n.dec }} deg (J2000) into the target search, and the target's overview page shows the TIC id. The MAST Portal's TIC search by coordinates gives the same id. Then build the pack again with `skysift pack --target {{ n.target_id }} --tic <id>`, so every file name follows the rule.
+{% endif %}
+
+ExoFOP names files `<TIC>_<UTC date>_<observer tag>_<content>.<ext>`. This pack uses the date {{ f.date }} and the tag `{{ f.tag }}`. Attach these files to the star's page:
+
+{% for name, what in f.exofop %}
+- `exofop/{{ name }}`: {{ what }}
+{% endfor %}
+
+What to write: paste `exofop/note.txt` into the upload's notes field. It gives the ephemeris, both probabilities, the pixel result and the Zenodo DOI.
+
+Password protection: the upload form lets you protect files with a password, so only the people you give it to can read them. Leave them open once the Zenodo record is published (the files are public there anyway). Protect them only if you upload before the Zenodo record is out and want to show them to chosen observers first; remove the password when the record is published.
+
+## Step 3. {{ titles["3"] }}
+
+Accounts: an AAS journals account (the submission system of the Research Notes of the AAS) and an arXiv account. A first submission to astro-ph.EP may need an endorsement from someone who has already posted there; arXiv tells you when you submit, and the endorsement request goes by email to a colleague who can endorse. The engine cannot submit for you.
+
+The draft is `note/note.tex` ({{ f.note_words }} words of body text, under the 1,000-word limit, with one figure, `note/figure1`). Before you submit:
+
+1. Fill in the author block (affiliation, email, ORCID) and add co-authors.
+2. Replace {{ f.doi_shown }} with the Zenodo DOI from step 1{% if f.zenodo and f.zenodo.doi %} (the draft's reserved DOI is already in place; check it matches the published record){% endif %}.
+3. Read every sentence against `dossier.html`; the note is built from the stored numbers and says nothing the dossier does not.
+4. Compile it with AASTeX 6.31 and pdflatex (Overleaf has the AAS template). {% if f.png %}The figure is `note/figure1.pdf`.{% else %}matplotlib could not be imported when this pack was built, so there is no PDF figure: convert `note/figure1.svg` to PDF first (Inkscape: `inkscape figure1.svg --export-type=pdf`).{% endif %}
+
+5. Submit it as a Research Note of the AAS. The editor reviews it for fit (there is no full peer review) and it gets a DOI when published.
+6. After acceptance, post the same text to arXiv in astro-ph.EP.
+
+## Step 4. {{ titles["4"] }}
+
+Account: none beyond an email address. The NASA Exoplanet Archive takes messages through its help desk form ({{ f.helpdesk_url }}). The engine cannot send it.
+
+When: after the Research Note is published, since the archive adds objects from the literature. Paste this paragraph (also in `archive_email.txt`), with the two DOIs filled in:
+
+> {{ archive_paragraph }}
+
+## Step 5. {{ titles["5"] }}
+
+Account: whatever the person asks through (ExoFOP messages, email). The engine cannot reply for you.
+
+Observers who plan a transit ask for the ephemeris first. Send `data/ephemeris.csv` and say: mid-transit times are T = {{ n.t0_bjd }} + E x {{ n.period }} (BJD_TDB, E a whole number of orbits), the transit lasts {{ n.duration }} h, and the dossier carries no formal error on the period or the first mid-transit (the box search does not give one), so a window of at least one transit duration either side of each predicted time is needed, more for times years after 2013. Send `data/lightcurve.csv` and `data/events.csv` to anyone checking the depth, and `dossier.html` to anyone who wants the full vetting. Point every request at the Zenodo DOI, so everyone works from the same frozen files.
+
+## What is not yet known
+
+{% for c in n.caveats %}
+- {{ c.title }}. {{ c.text }}
+{% endfor %}
+
+## What is in the pack
+
+{% for name, what in f.file_notes %}
+- `{{ name }}`: {{ what }}
+{% endfor %}
+
+{% if not f.png %}
+matplotlib could not be imported when this pack was built, so there are no PNG files: the SVG files are the figures.
+{% endif %}
+{% if not f.pixels_figure %}
+There is no centroid figure: the pixel step has not run for this signal, or its stored pixel arrays could not be read, so `figures/centroids.svg` is missing. The dossier's section "Which star is dimming" says which.
+{% endif %}
+
+## Provenance
+
+`provenance/versions.json` names the pack format, the dossier format, the search and ladder versions and the git commit. `provenance/queries.json` lists every catalogue and data request made for this target (URL, time, status, SHA-256). `provenance/calibration.json` holds the null-search counts behind the false-alarm probability. `provenance/hashes.json` holds the SHA-256 of every other file in the pack. To rebuild the dossier from the archive files:
+
+{% for c in n.commands %}
+    {{ c }}
+{% endfor %}
