@@ -1,4 +1,5 @@
 import json
+import logging
 import multiprocessing
 import pickle
 import threading
@@ -34,7 +35,7 @@ from skysift.store import db
 from skysift.store.blob import LocalBlob
 from skysift.store.db import Store, make_job_key
 from skysift.store.retention import DiskBudgetExceeded
-from tests.synthetic import inject_transit, inject_v_eclipse, make_lightcurve
+from tests.synthetic import _with_dip, inject_transit, inject_v_eclipse, make_lightcurve
 from tests.unit import fake_fetch
 
 TARGET = Target(source="fake", target_id="t", ra=0, dec=0, gmag=16.5)
@@ -1019,13 +1020,37 @@ def test_restore_leaves_a_wave_at_three_halves_of_the_detection_frequency():
     assert [c["frequency"] for c in new["components"]] == [1.5 * f] and new["n"] == 1
 
 
-def test_revet_reproduces_the_sweep_verdict(settings):
-    lc = inject_transit(make_lightcurve(noise_ppm=500, seed=5), 12.0, 140.0, 0.1, 3000.0)
+def _rows(results) -> list:
+    """Test results as the sweep stores them (strict JSON), for comparing a re-vet with the sweep rung by rung."""
+    return [(t["rung"], t["status"], t["reason"], t["metrics"])
+            for t in json.loads(jsonutil.dumps([r.model_dump() for r in results], default=str))]
+
+
+def test_revet_reproduces_the_sweep_verdict(settings, caplog):
+    """Rung by rung, the same status, reason and metrics as the sweep. A 2 d stellar wave (the sixth harmonic of the
+    12 d transit) is whitened away and then restored, from the 12, 24, 36 and 48 d detections of the first search,
+    so the restore replay is what is under test, the secondary flux included. With ``restored_for`` dropped (a
+    signal swept before it was stored) the re-vet says so at debug level and falls back to the signal's own period."""
+    base = inject_transit(make_lightcurve(noise_ppm=500, seed=5), 12.0, 140.0, 0.1, 3000.0)
+    lc = _with_dip(base, 1.0 + 500e-6 * np.sin(2 * np.pi * base.time / 2.0))
     out = json.loads(_cpu_work(pickle.dumps(lc), TARGET.model_dump_json(), settings.thresholds.model_dump_json(),
                                "box_dip", "4", True, fetch_module="tests.unit.fake_fetch"))
     item = out["signals"][0]; sig = Signal(**item["signal"])
-    outcome, results = revet(lc, TARGET, settings.thresholds, sig, build_ladder("4"), fetch=fake_fetch.fetch)
-    assert outcome == item["outcome"] and [r.rung for r in results] == [t["rung"] for t in item["tests"]]
+    pw = sig.extra["prewhitening"]
+    assert pw["restored"] and len(pw["restored_for"]) >= 2
+    with caplog.at_level(logging.DEBUG, logger="skysift.pipeline"):
+        outcome, results = revet(lc, TARGET, settings.thresholds, sig, build_ladder("4"), fetch=fake_fetch.fetch)
+    mine = [r for r in caplog.records if r.name == "skysift.pipeline"]
+    assert not [r for r in mine if r.levelno >= logging.WARNING or "restored_for" in r.getMessage()]
+    assert outcome == item["outcome"] and _rows(results) == [(t["rung"], t["status"], t["reason"], t["metrics"])
+                                                             for t in item["tests"]]
+    caplog.clear()
+    old = sig.model_copy(update={"extra": {**sig.extra, "prewhitening": {k: v for k, v in pw.items()
+                                                                         if k != "restored_for"}}})
+    with caplog.at_level(logging.DEBUG, logger="skysift.pipeline"):
+        revet(lc, TARGET, settings.thresholds, old, build_ladder("4", with_novelty=False))
+    assert any("no restored_for" in r.getMessage() and r.levelno == logging.DEBUG for r in caplog.records)
+    assert not [r for r in caplog.records if r.name == "skysift.pipeline" and r.levelno >= logging.WARNING]
 
 
 def test_halved_signal_measures_the_true_period():
@@ -1035,7 +1060,15 @@ def test_halved_signal_measures_the_true_period():
                      depth_ppm=2500, snr=30, sde=20, n_events=80)
     half = halved_signal(doubled, lc, fn)
     assert half.period == 8.0 and abs(half.depth_ppm - 2500) < 200 and half.n_events > doubled.n_events
-    assert half.extra["parent_period"] == 16.0 and half.sde == 20
+    assert half.extra["parent_period"] == 16.0 and half.sde == 20 and half.extra["depth_err_ppm"] > 0
+
+
+def test_halved_signal_without_points_in_transit_is_none():
+    """Too few points to measure at P/2: no signal with NaN fields; the recheck records a skipped step instead."""
+    lc = make_lightcurve(n_days=60, seed=4)
+    doubled = Signal(target_id="t", detector="box_dip", detector_version="v", period=16.0, t0=140.0, duration=0.1,
+                     depth_ppm=2500, snr=30, sde=20, n_events=4)
+    assert halved_signal(doubled, lc, np.full(lc.time.size, np.nan)) is None
 
 
 def test_build_ladder_version_4_is_the_default_and_three_is_compatible():
@@ -1054,3 +1087,79 @@ def test_select_targets_skips_a_target_done_under_ladder_3(settings, monkeypatch
     todo, skipped, gave_up, _unknown = _select_targets(src, store, {}, det, ver, "4", None)
     assert sorted(t.target_id for t, _k in todo) == ["fresh", "old2", "other"] and skipped == 1 and gave_up == 0
     assert all(k == make_job_key(t.target_id, "box_dip", ver, "4") for t, k in todo)
+
+
+def test_select_targets_counts_give_ups_across_compatible_ladders(settings, monkeypatch):
+    """A target given up under ladder 3 (three failed attempts, or a known worker killer) is not retried under
+    ladder 4, and attempts under the two versions add up."""
+    s, store, blob = _env(monkeypatch, settings)
+    targets = [_tgt("tried3"), _tgt("split"), _tgt("killer"), _tgt("fresh")]
+    src = ScriptedSource(targets, {t.target_id: make_lightcurve(n_days=60, seed=4) for t in targets}, store, blob)
+    det = get_detector("box_dip"); ver = search_version(det, s.thresholds)
+
+    def fail(tid, lad, error="boom"):
+        key = make_job_key(tid, "box_dip", ver, lad)
+        store.finish_run(store.start_run(key, tid, "box_dip", ver, lad), "error", error)
+
+    for _ in range(MAX_ATTEMPTS): fail("tried3", "3")
+    for lad in ["3"] * (MAX_ATTEMPTS - 1) + ["4"]: fail("split", lad)
+    for _ in range(pipeline.MAX_POOL_BREAKS): fail("killer", "3", db.POOL_BROKE_ERROR)
+    todo, skipped, gave_up, _unknown = _select_targets(src, store, {}, det, ver, "4", None)
+    assert [t.target_id for t, _k in todo] == ["fresh"] and skipped == 0 and gave_up == 3
+
+
+def _current_signal(th, **kw) -> Signal:
+    base = {"target_id": "t", "detector": "box_dip", "detector_version": search_version(get_detector("box_dip"), th),
+            "period": 5.0, "t0": 135.0, "duration": 0.1, "depth_ppm": 1000, "snr": 10, "sde": 10, "n_events": 10}
+    return Signal(**{**base, **kw})
+
+
+def test_revet_stamps_the_target_on_catalogue_queries(settings):
+    """Rung 4 passes no target id to fetch; a re-vet logs into the real store, so revet stamps its target."""
+    from skysift.vetting.base import Ladder
+    from skysift.vetting.rung4_novelty import Rung4Novelty
+    seen, logged = [], []
+
+    def fetch(url, **kw):
+        seen.append(kw.get("target_id"))
+        return fake_fetch.fetch(url, **kw)
+
+    class Log:
+        def log_query(self, *a, target_id=None, **k): logged.append(target_id)
+
+    lc = make_lightcurve(n_days=60, seed=4)
+    _outcome, results = revet(lc, TARGET, settings.thresholds, _current_signal(settings.thresholds),
+                              Ladder([Rung4Novelty()], "4"), fetch=fetch, store=Log())
+    assert [r.rung for r in results] == ["rung4_novelty"] and seen and set(seen) == {"t"} and set(logged) == {"t"}
+
+
+def test_revet_refuses_a_signal_of_another_search_version(settings):
+    from skysift.vetting.base import Ladder
+    sig = _current_signal(settings.thresholds, detector_version="0+00000000")
+    with pytest.raises(ValueError, match="search version"):
+        revet(make_lightcurve(n_days=60, seed=4), TARGET, settings.thresholds, sig, Ladder([], "4"))
+
+
+def test_restore_recorded_replays_a_restore_from_a_second_detection(caplog):
+    """The sweep restored from two detections, the signal at P and a peak at 2P: the component at 1.5 / P is a
+    harmonic of 1 / (2P) only, so the signal's own rule (the brief's fallback) would leave it out. The replay from the
+    stored record puts back exactly what the sweep put back."""
+    period, depth = 10.0, 3000.0
+    time = np.arange(0.0, 400.0, 0.02)
+
+    def comp(f, a):
+        return {"frequency": f, "amplitude_ppm": a * 1e6, "snr": 50.0, "coef": [0.0, a, 0.0, 0.0, 0.0]}
+
+    record = {"n": 3, "components": [comp(1 / period, 2e-4), comp(1.5 / period, 1e-4), comp(0.37, 3e-4)],
+              "skipped": [], "capped": False}
+    fn = 1.0 + np.random.default_rng(1).normal(0, 5e-4, time.size)
+    swept, stored = pipeline.restore_harmonics(time, fn, record, [(1 / period, depth), (1 / (2 * period), depth)])
+    assert sorted(round(r["frequency"], 6) for r in stored["restored"]) == [0.1, 0.15]
+    sig = Signal(target_id="t", detector="box_dip", detector_version="v", period=period, t0=0.0, duration=0.1,
+                 depth_ppm=depth, snr=20, sde=20, n_events=40)
+    with caplog.at_level(logging.WARNING, logger="skysift.pipeline"):
+        got = pipeline._restore_recorded(time, fn, record, stored, sig, [(1 / period, depth)])
+    assert not caplog.records
+    np.testing.assert_array_equal(got, swept)
+    own_rule = pipeline.restore_harmonics(time, fn, record, [(1 / period, depth)])[0]
+    assert np.max(np.abs(own_rule - got)) > 5e-5

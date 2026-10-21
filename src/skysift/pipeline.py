@@ -17,6 +17,9 @@ from concurrent.futures import FIRST_COMPLETED, Future, ProcessPoolExecutor, Thr
 from concurrent.futures.process import BrokenProcessPool
 from dataclasses import replace
 from itertools import islice
+from typing import NamedTuple
+
+import numpy as np
 
 from skysift import jsonutil, net
 from skysift.config import Settings, Thresholds, stop_request_path
@@ -175,7 +178,6 @@ def restore_harmonics(time, flux, record: dict, detections) -> tuple | None:
     there is nothing to restore, else (the flux plus their model, the record without them and with ``restored``:
     [{frequency, amplitude_ppm}, ...]), so ``detrend - prewhiten_model(record components)`` is still exactly the
     returned flux."""
-    import numpy as np
     time, flux = np.asarray(time, float), np.asarray(flux, float)
     t = time[np.isfinite(flux) & np.isfinite(time)]
     comps = record.get("components") or []
@@ -212,6 +214,39 @@ def search_with_restore(det, lc: LightCurve, fn, th: Thresholds, record: dict, *
     if detections is not None: detections.extend(detected)
     fn, record = restored
     return _search(det, lc, fn, th, keep_spectrum=keep_spectrum), fn, record
+
+
+class SweepFlux(NamedTuple):
+    """The fluxes the sweep derives from one light curve before any search (``_sweep_flux``)."""
+    fn: np.ndarray                  # detrended and pre-whitened primary flux
+    record: dict                    # its pre-whitening record (``extra["prewhitening"]`` before a restore)
+    detrend: dict                   # the detrend settings (``extra["detrend"]``)
+    detrended: np.ndarray           # the detrended primary flux before pre-whitening (rung 2's SWEET)
+    alt: np.ndarray | None          # the secondary (alternative aperture) flux treated the same way, or None
+    alt_record: dict | None
+
+
+def _sweep_flux(lc: LightCurve, th: Thresholds) -> SweepFlux:
+    """Primary and secondary flux detrended and pre-whitened with ``th``: the single place the sweep (``_cpu_work``)
+    and the recheck (``revet_flux``) build them, so a re-vet sees the flux the sweep saw."""
+    fn, record, detrend_record, fn_detrended = whitened_flux(lc, th)
+    fn_alt, alt_record = whitened_flux(lc, th, flux=lc.flux_alt)[:2] if lc.flux_alt is not None else (None, None)
+    return SweepFlux(fn, record, detrend_record, fn_detrended, fn_alt, alt_record)
+
+
+def _restore_alt(time, fn_alt, alt_record: dict | None, detections) -> np.ndarray | None:
+    """The secondary flux with the harmonics of ``detections`` put back, as the primary was (the rungs compare the
+    two, so both get the same treatment); ``fn_alt`` itself when there is no secondary flux or nothing to restore."""
+    if fn_alt is None or not detections:
+        return fn_alt
+    out = restore_harmonics(time, fn_alt, alt_record or {}, detections)
+    return fn_alt if out is None else out[0]
+
+
+def _bundle(lc: LightCurve, target: Target, th: Thresholds, fn, fn_alt, fn_detrended, store, fetch) -> DataBundle:
+    """The vetting bundle of the sweep and of the recheck (``_vetting_bundle`` then applies a signal's mask)."""
+    return DataBundle(lc=lc, fnorm=fn, fnorm_alt=fn_alt, target=target, thresholds=th, store=store, fetch=fetch,
+                      flux_detrended=fn_detrended)
 
 
 def _vetting_bundle(bundle: DataBundle, sig: Signal) -> DataBundle:
@@ -251,27 +286,25 @@ def _cpu_work(lc_pickle: bytes, target_json: str, thresholds_json: str, detector
     # KBonus and other adapters set target_id themselves; their value wins on purpose (setdefault), and sources
     # that leave it out get the pipeline's target id so detector output names the right star
     lc.meta.setdefault("target_id", target.target_id)
-    fn, prewhitening, detrend_record, fn_detrended = whitened_flux(lc, th)
-    fn_alt, alt_record = whitened_flux(lc, th, flux=lc.flux_alt)[:2] if lc.flux_alt is not None else (None, None)
+    flux = _sweep_flux(lc, th)
+    fn_detrended, detrend_record = flux.detrended, flux.detrend
     det = get_detector(detector_name)
     # a detection whose own harmonics were whitened away is searched once more on flux with them put back; that
     # second search (and its record, without the restored components) is the one stored. At most once per target.
     detected: list = []
-    res, fn, prewhitening = search_with_restore(det, lc, fn, th, prewhitening, keep_spectrum=spectrum_path is not None,
-                                                detections=detected)
-    if detected and fn_alt is not None:     # the rungs compare the secondary flux with the primary: same treatment
-        alt = restore_harmonics(lc.time, fn_alt, alt_record, detected)
-        if alt is not None: fn_alt = alt[0]
+    res, fn, prewhitening = search_with_restore(det, lc, flux.fn, th, flux.record,
+                                                keep_spectrum=spectrum_path is not None, detections=detected)
+    fn_alt = _restore_alt(lc.time, flux.alt, flux.alt_record, detected)
+    if detected:    # the detections the restore came from: the recheck restores the secondary flux from them exactly
+        prewhitening = {**prewhitening, "restored_for": [[float(f), float(d)] for f, d in detected]}
     signals = res.signals
     if spectrum_path and res.spectrum is not None:
-        import numpy as np
         np.savez_compressed(spectrum_path, **{k: np.asarray(v) for k, v in res.spectrum.items()})
     version = search_version(det, th)
     ladder = build_ladder(ladder_version, with_novelty=with_novelty)
     recorder = _QueryRecorder()
     fetch = importlib.import_module(fetch_module).fetch if fetch_module else net.fetch
-    bundle = DataBundle(lc=lc, fnorm=fn, fnorm_alt=fn_alt, target=target, thresholds=th, store=recorder, fetch=fetch,
-                        flux_detrended=fn_detrended)
+    bundle = _bundle(lc, target, th, fn, fn_alt, fn_detrended, recorder, fetch)
     out = []
     for sig in signals:
         sig.target_id, sig.detector_version = target.target_id, version
@@ -292,60 +325,86 @@ def _cpu_work(lc_pickle: bytes, target_json: str, thresholds_json: str, detector
     return jsonutil.dumps({"signals": out, "queries": recorder.rows, "periodogram": periodogram}, default=str)
 
 
-def _restore_recorded(time, fn, record: dict, stored: dict, sig: Signal):
+def _restore_recorded(time, fn, record: dict, stored: dict, sig: Signal, detections) -> np.ndarray:
     """``fn`` (freshly whitened, its pre-whitening ``record``) with the components the sweep put back for this
     signal's target: those whose frequencies the stored record lists under ``restored``. The whitening is
     deterministic, so they are components of ``record``; matching them by frequency replays the sweep exactly even
-    when another detection's harmonics were the ones restored. Should they not all match, the harmonics of the signal
-    itself are restored (``restore_harmonics``), which is the sweep's own rule for a single detection."""
-    import numpy as np
+    when another detection's harmonics were the ones restored. Should they not all match, the harmonics of
+    ``detections`` are restored (``restore_harmonics``, the sweep's own rule)."""
     want = np.array([float(r["frequency"]) for r in stored["restored"]])
     comps = record.get("components") or []
     back = [c for c in comps if np.isclose(want, float(c["frequency"]), rtol=1e-9, atol=0.0).any()]
     if len(back) == want.size:
         return fn + prewhiten_model(time, back)
-    log.warning("re-vet of %s: the restored components did not replay (%d of %d); restoring at the signal's period",
+    log.warning("re-vet of %s: the restored components did not replay (%d of %d); restoring from the detections",
                 sig.target_id, len(back), want.size)
-    out = restore_harmonics(time, fn, record, [(1.0 / sig.period, float(sig.depth_ppm))])
+    out = restore_harmonics(time, fn, record, detections)
     return fn if out is None else out[0]
+
+
+def revet_flux(lc: LightCurve, th: Thresholds, sig: Signal) -> tuple:
+    """The flux a stored signal was vetted on, rebuilt from its light curve: (primary, secondary or None, detrended
+    primary before pre-whitening). Built by ``_sweep_flux`` as in the sweep; when the signal's
+    ``extra["prewhitening"]`` records a restoration, the restored components go back in the primary flux
+    (``_restore_recorded``) and the harmonics of the detections the restore came from (``restored_for``) in the
+    secondary. A signal swept before ``restored_for`` was stored gets its own ``(1 / period, depth)`` as the only
+    detection, which differs from the sweep on a target with two detections. ``revet`` and the recheck's P/2 step
+    both vet on this."""
+    flux = _sweep_flux(lc, th)
+    stored = sig.extra.get("prewhitening") or {}
+    if not stored.get("restored"):
+        return flux.fn, flux.alt, flux.detrended
+    if stored.get("restored_for"):
+        detections = [(float(f), float(d)) for f, d in stored["restored_for"]]
+    else:
+        log.debug("re-vet of %s at %.6f d: no restored_for in the record (swept before it was stored); restoring "
+                  "at the signal's own period", sig.target_id, sig.period)
+        detections = [(1.0 / sig.period, float(sig.depth_ppm))]
+    fn = _restore_recorded(lc.time, flux.fn, flux.record, stored, sig, detections)
+    return fn, _restore_alt(lc.time, flux.alt, flux.alt_record, detections), flux.detrended
+
+
+def _stamped_fetch(fetch: Callable, target_id: str) -> Callable:
+    """``fetch`` with ``target_id`` filled in when the caller left it out: rung 4 does not pass one (the worker's
+    recorder rows are stamped by ``record_results``), but a re-vet logs straight into a real store."""
+    def stamped(*args, **kwargs):
+        if kwargs.get("target_id") is None: kwargs["target_id"] = target_id
+        return fetch(*args, **kwargs)
+    return stamped
 
 
 def revet(lc: LightCurve, target: Target, th: Thresholds, sig: Signal, ladder: Ladder, *, fetch=net.fetch,
           store=None, on_result=None) -> tuple[str, list[TestResult]]:
-    """Vet a stored signal again, on the flux the sweep vetted it on, through ``ladder`` (the recheck: a newer ladder,
-    a P/2 signal, a catalogue retry with a one-rung ladder). The bundle is built as ``_cpu_work`` builds it: primary
-    and secondary flux detrended and pre-whitened with ``th``; when the signal's ``extra["prewhitening"]`` records a
-    restoration, the restored components are put back in the primary flux (``_restore_recorded``) and the signal's
-    own harmonics in the secondary flux (``restore_harmonics``; the sweep restored the secondary from every detection
-    of its first search, which is not stored, so a target with two detections may differ there); a second-pass
-    signal sees its mask (``_vetting_bundle``). ``fetch`` and ``store`` go to the rungs as in the worker (rung 4's
-    catalogue queries; ``store`` receives ``log_query``). ``on_result(result, seconds)`` is called after each rung.
-    Returns the ladder's (outcome, results)."""
+    """Vet a stored signal again, on the flux the sweep vetted it on (``revet_flux``), through ``ladder`` (the
+    recheck: a newer ladder, a P/2 signal, a catalogue retry with a one-rung ladder), in the sweep's bundle
+    (``_bundle``, then ``_vetting_bundle`` for a second-pass signal's mask). ``fetch`` and ``store`` go to the rungs
+    as in the worker (rung 4's catalogue queries, logged through ``store.log_query`` with this target's id).
+    ``on_result(result, seconds)`` is called after each rung. Returns the ladder's (outcome, results). Raises
+    ValueError for a signal of another search version: the flux would not be the one it was found and vetted on
+    (spec 4.3 rechecks the current search version only)."""
+    current = search_version(get_detector(sig.detector), th)
+    if sig.detector_version != current:
+        raise ValueError(f"signal of search version {sig.detector_version}, not the current {current}: "
+                         "the recheck re-vets only the current search version")
     lc.meta.setdefault("target_id", target.target_id)
-    fn, record, _settings, fn_detrended = whitened_flux(lc, th)
-    fn_alt, alt_record = whitened_flux(lc, th, flux=lc.flux_alt)[:2] if lc.flux_alt is not None else (None, None)
-    stored = sig.extra.get("prewhitening") or {}
-    if stored.get("restored"):
-        fn = _restore_recorded(lc.time, fn, record, stored, sig)
-        if fn_alt is not None:
-            alt = restore_harmonics(lc.time, fn_alt, alt_record, [(1.0 / sig.period, float(sig.depth_ppm))])
-            if alt is not None: fn_alt = alt[0]
-    bundle = DataBundle(lc=lc, fnorm=fn, fnorm_alt=fn_alt, target=target, thresholds=th, store=store, fetch=fetch,
-                        flux_detrended=fn_detrended)
+    fn, fn_alt, fn_detrended = revet_flux(lc, th, sig)
+    bundle = _bundle(lc, target, th, fn, fn_alt, fn_detrended, store, _stamped_fetch(fetch, target.target_id))
     return ladder.run(sig, _vetting_bundle(bundle, sig), on_result=on_result)
 
 
-def halved_signal(sig: Signal, lc: LightCurve, fnorm) -> Signal:
+def halved_signal(sig: Signal, lc: LightCurve, fnorm) -> Signal | None:
     """The signal at half its period, for rung 2's ``suggested_period`` (an equal secondary at phase 0.5): ``t0`` and
-    ``duration`` kept, depth, snr and event count measured on ``fnorm`` (the whitened flux the signal was vetted on)
-    by ``measure_at``, whose depth error goes in ``extra["depth_err_ppm"]`` (None when it is not finite: too few
-    points). The SDE is the parent's (no search ran at P/2) and ``extra`` says so, with the parent's period and why it
-    was halved."""
+    ``duration`` kept, depth, snr and event count measured on ``fnorm`` (the whitened flux the signal was vetted on,
+    ``revet_flux``) by ``measure_at``, whose depth error goes in ``extra["depth_err_ppm"]``. The SDE is the parent's
+    (no search ran at P/2) and ``extra`` says so, with the parent's period and why it was halved. None when the depth
+    cannot be measured (too few points in or around the transit): the recheck then writes a rechecks row with
+    ``outcome="skipped"`` and the reason "half period: too few points in transit" instead of a signal."""
     period = sig.period / 2.0
     m = measure_at(lc.time, fnorm, period, sig.t0, sig.duration)
-    err = m.depth_err_ppm if math.isfinite(m.depth_err_ppm) else None
+    if not (math.isfinite(m.depth_ppm) and math.isfinite(m.depth_err_ppm) and math.isfinite(m.snr)):
+        return None
     extra = {**copy.deepcopy(sig.extra), "parent_period": sig.period, "sde_inherited": True,
-             "halving": "rung2 suggested_period", "depth_err_ppm": err}
+             "halving": "rung2 suggested_period", "depth_err_ppm": m.depth_err_ppm}
     return sig.model_copy(update={"period": period, "depth_ppm": m.depth_ppm, "snr": m.snr, "n_events": m.n_events,
                                   "extra": extra})
 
@@ -406,8 +465,10 @@ def _select_targets(source, store: Store, filter: dict, det, version: str, ladde
     otherwise take its neighbours' work down every sweep), and return (the top ``max_targets`` remaining targets by
     priority, highest first; skipped count; gave-up count). A job done under a ladder version that
     ``LADDER_COMPATIBLE`` lists for ``ladder_version`` (same detector version) counts as done: ladder 4 added the
-    recheck, not a new search, so no finished target is swept again."""
+    recheck, not a new search, so no finished target is swept again; the failed attempts and pool breaks of those
+    versions add to the current one's, so a target given up under ladder 3 stays given up."""
     todo, skipped, gave_up = [], 0, 0
+    ladders = (ladder_version, *LADDER_COMPATIBLE.get(ladder_version, ()))      # new jobs are keyed by the first
     wanted = filter.get("target_ids")           # a named list (`--targets FILE`): only these, in the list's order
     rank = None if wanted is None else {tid: i for i, tid in enumerate(wanted)}
     found = 0
@@ -415,11 +476,11 @@ def _select_targets(source, store: Store, filter: dict, det, version: str, ladde
         if rank is not None:
             if t.target_id not in rank: continue
             found += 1
-        key = make_job_key(t.target_id, det.name, version, ladder_version)
-        if any(store.job_done(make_job_key(t.target_id, det.name, version, lad))
-               for lad in (ladder_version, *LADDER_COMPATIBLE.get(ladder_version, ()))): skipped += 1
-        elif store.attempts(key) >= MAX_ATTEMPTS or store.pool_breaks(key) >= MAX_POOL_BREAKS: gave_up += 1
-        else: todo.append((t, key))
+        keys = [make_job_key(t.target_id, det.name, version, lad) for lad in ladders]
+        if any(store.job_done(k) for k in keys): skipped += 1
+        elif (sum(store.attempts(k) for k in keys) >= MAX_ATTEMPTS
+              or sum(store.pool_breaks(k) for k in keys) >= MAX_POOL_BREAKS): gave_up += 1
+        else: todo.append((t, keys[0]))
     if rank is None:
         todo.sort(key=lambda x: priority_score(x[0]), reverse=True)     # stable: ties keep source order
         unknown = 0
