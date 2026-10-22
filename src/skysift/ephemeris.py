@@ -50,6 +50,11 @@ BOX_DURATION_FACTORS = (0.5, 2.0)      # the box-duration grid, times the search
 EPHEMERIS_METHOD = ("weighted linear fit of per-transit mid-times, reference epoch at the centre of the series "
                     "(Deeg 2015; Holczer et al. 2016)")
 SHAPE_METHOD = "bootstrap over transits of the quadratic limb-darkened, exposure-integrated fit (Schmitt et al. 2014)"
+# the density-prior fit's bootstrap (fix round 1 of Task 10, I-1): a fixed prior would pin the flat k-b-a/R* valley at
+# its centre on every resample, so the resamples leave out the prior's own width
+SHAPE_PRIOR_DRAW = "with the density prior's centre drawn from its Gaussian on each resample"
+SHAPE_PRIOR_METHOD = SHAPE_METHOD.replace(" (Schmitt", f", {SHAPE_PRIOR_DRAW} (Schmitt")
+PRIOR_DRAW_FLOOR = 0.05        # a drawn density centre below this fraction of the mean is held there (never <= 0)
 CADENCE_MIN = 29.4             # Kepler long cadence, minutes: a shorter ingress leaves b and a/R* degenerate with k
 DEGENERACY_REASON = "ingress shorter than the cadence: b and a/R* are degenerate with k"
 GRAZING_REASON = "grazing point solution: b and a/R* are degenerate with k"
@@ -450,13 +455,13 @@ def bootstrap_shape(time, fnorm, period, t0, duration_days, point: dict | None, 
     errors. Every block quotes the resample median beside the full-data value (``_spread``).
 
     ``model`` is {"u1", "u2", "exposure_days", "density": (mean, sigma) | None, "free": ShapeFit, "prior": ShapeFit |
-    None, "quoted": "free" | "prior"}: the fits run with its limb darkening and exposure, each started at its own
-    full-data solution. k, T14 and the model depth come from the prior variant when there is one (spec 11.3: the radius
-    ratio from the prior fit), b and a/R* from the quoted one, and each block's ``point`` is the full-data value of
-    the variant its resamples come from. A variant none of the five values comes from is not fitted (a quoted prior
-    leaves the free fit unused), and a resample counts as converged when the fits it uses are ok. Without ``model``
-    (the module's own tests): no limb darkening, the ``CADENCE_MIN`` exposure, the free variant only, started at
-    ``point`` and with ``point``'s values as the full-data ones.
+    None, "quoted": "free" | "prior"}: only the quoted variant is refitted, with the model's limb darkening and
+    exposure and started at its full-data solution, and all five values and their ``point`` come from it (spec 11.3 as
+    amended in fix round 1: the radius ratio from the quoted fit). The prior variant draws the prior's centre on each
+    resample from N(mean, sigma) with its own generator seeded from ``seed``, sigma kept in the prior term, so a
+    parameter the data leave to the prior carries the prior's width (the perturbed-prior bootstrap; the method says
+    so, ``SHAPE_PRIOR_METHOD``). Without ``model`` (the module's own tests): no limb darkening, the ``CADENCE_MIN``
+    exposure, the free variant only, started at ``point`` and with ``point``'s values as the full-data ones.
 
     When the point geometry is degenerate between k, b and a/R* (``point_degeneracy``: an ingress shorter than
     ``CADENCE_MIN``, spec 3.4, ruling of 22 October 2026, or a grazing point solution) the block is marked
@@ -487,7 +492,7 @@ def bootstrap_shape(time, fnorm, period, t0, duration_days, point: dict | None, 
     rng = np.random.default_rng(seed)
     durations = np.geomspace(BOX_DURATION_FACTORS[0] * duration_days, BOX_DURATION_FACTORS[1] * duration_days,
                              BOX_DURATION_STEPS)
-    quoted = "free"
+    quoted, density = "free", None
     if point is not None:
         if model is None:
             u1 = u2 = 0.0
@@ -499,25 +504,22 @@ def bootstrap_shape(time, fnorm, period, t0, duration_days, point: dict | None, 
             if density is None or prior_start is None or not prior_start.ok:
                 density, prior_start = None, None
             quoted = "prior" if model.get("quoted") == "prior" and prior_start is not None else "free"
-            shape_fit, geo_fit = prior_start or free_start, prior_start if quoted == "prior" else free_start
-            k0, _b, _a, t14_0, d0 = _fit_row(shape_fit)
-            full = (k0, geo_fit.b, geo_fit.a_over_r, t14_0, d0)
-        need_free = prior_start is None or quoted == "free"
+            full = _fit_row(prior_start if quoted == "prior" else free_start)
+        start = prior_start if quoted == "prior" else free_start
+        if quoted == "free":
+            density = None
+    draw = np.random.default_rng([seed, 1])          # the prior centres, apart from the resample draws
     samples = []
     for _ in range(n_boot if pool.size else 0):
         sel = np.concatenate([members[int(e)] for e in rng.choice(pool, size=pool.size, replace=True)])
         if point is not None:
             kw = {"u1": u1, "u2": u2, "exposure_days": exposure}
-            free = (fit_shape(t[sel], f[sel], period, t0, duration_days, **kw, start=free_start) if need_free
-                    else None)
-            prior = (fit_shape(t[sel], f[sel], period, t0, duration_days, **kw, density=density, start=prior_start)
-                     if prior_start is not None else None)
-            if (free is not None and not free.ok) or (prior is not None and not prior.ok):
-                continue
-            k, _b, _a, t14, depth = _fit_row(prior or free)
-            geo = prior if quoted == "prior" else free
-            row = (k, geo.b, geo.a_over_r, t14, depth)
-            if _finite(*row):
+            if density is not None:
+                centre = max(float(draw.normal(density[0], density[1])), PRIOR_DRAW_FLOOR * density[0])
+                kw["density"] = (centre, density[1])
+            fit = fit_shape(t[sel], f[sel], period, t0, duration_days, **kw, start=start)
+            row = _fit_row(fit)
+            if fit.ok and _finite(*row):
                 samples.append(row)
         else:
             best = _best_box_duration(t[sel], f[sel], period, t0, durations)
@@ -535,7 +537,8 @@ def bootstrap_shape(time, fnorm, period, t0, duration_days, point: dict | None, 
     k, b, a, t14, depth = (_spread(s[:, i], full[i]) for i in range(5))
     if degenerate and quoted == "free":     # the resamples scatter around one solution in the k-b-a/R* valley
         b, a = ({"median": d["point"], "minus": None, "plus": None, "point": d["point"]} for d in (b, a))
-    return ShapeErrors(True, None, SHAPE_METHOD, n_boot, n_conv, seed, k, b, a, t14, depth, box_depth, None, *flags)
+    method = SHAPE_PRIOR_METHOD if density is not None else SHAPE_METHOD
+    return ShapeErrors(True, None, method, n_boot, n_conv, seed, k, b, a, t14, depth, box_depth, None, *flags)
 
 
 @dataclass(frozen=True)

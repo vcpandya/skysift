@@ -330,3 +330,65 @@ def test_parity_carries_the_stacked_estimator_beside_the_per_event_one(scene):
     assert st["odd"]["depth_ppm"] == pytest.approx(stacked_depth(lc.time, fn, P, T0, DUR, epochs="odd").depth_ppm)
     assert abs(st["difference_sigma"]) < 3 and abs(pd["difference_sigma"]) < 3
     assert parity_depths(event_depths(lc.time, fn, lc.quarter, P, T0, DUR)).as_dict()["stacked"] is None
+
+
+def _scene_model(scene, quoted: str, rel_sigma: float = 0.1) -> dict:
+    """``bootstrap_shape``'s model for the scene (no limb darkening, the Kepler exposure) with a density prior at the
+    injected density and ``rel_sigma`` of it, both full-data fits, and ``quoted``."""
+    from skysift.lc.transit_model import fit_shape, stellar_density
+    lc, fn, _times = scene
+    rho = stellar_density(A_R, P)
+    kw = {"u1": 0.0, "u2": 0.0, "exposure_days": CADENCE_MIN / 1440}
+    free = fit_shape(lc.time, fn, P, T0, DUR, **kw)
+    prior = fit_shape(lc.time, fn, P, T0, DUR, **kw, density=(rho, rel_sigma * rho))
+    assert free.ok and prior.ok
+    return {**kw, "density": (rho, rel_sigma * rho), "free": free, "prior": prior, "quoted": quoted}
+
+
+def test_the_prior_bootstrap_draws_the_density_centre_so_a_over_r_carries_the_prior_width(scene):
+    """Fix round 1, I-1: the ingress (about 10 minutes) is shorter than the cadence, so the data leave a/R* to the
+    prior; each resample draws the prior's centre from its Gaussian, so the a/R* spread is the prior's width (a/R*
+    goes as the cube root of the density: 12.9 x 0.1 / 3, about 0.43 each side), not the transit resampling alone.
+    Every block, k and T14 included, comes from the quoted prior fit, and the free fit is not refitted."""
+    from skysift import ephemeris as eph_module
+    model = _scene_model(scene, "prior")
+    lc, fn, _times = scene
+    calls = []
+    real = eph_module.fit_shape
+
+    def counted(*a, **kw):
+        calls.append(kw.get("density"))
+        return real(*a, **kw)
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(eph_module, "fit_shape", counted)
+        se = bootstrap_shape(lc.time, fn, P, T0, DUR, POINT, n_boot=20, seed=1, model=model)
+    assert se.ok and calls and all(d is not None for d in calls)             # the prior variant only
+    centres = [d[0] for d in calls]
+    assert len(set(centres)) == len(centres) and all(d[1] == model["density"][1] for d in calls)
+    assert np.std(centres) == pytest.approx(model["density"][1], rel=0.5)
+    width = 0.5 * (se.a_over_r["minus"] + se.a_over_r["plus"])
+    assert 0.2 < width < 0.9, se.a_over_r
+    prior = model["prior"]
+    assert (se.k["point"], se.b["point"], se.a_over_r["point"]) == (prior.k, prior.b, prior.a_over_r)
+    assert se.t14_h["point"] == pytest.approx(prior.t14_days * 24.0)
+    assert "with the density prior's centre drawn from its Gaussian on each resample" in se.method
+
+
+def test_a_quoted_free_fit_gives_every_block_and_the_prior_is_not_refitted(scene, monkeypatch):
+    """Fix round 1, M-9 (spec 11.3 as amended): when the free fit is quoted, k, T14 and the model depth come from it
+    too, so the five values are one solution."""
+    from skysift import ephemeris as eph_module
+    model = _scene_model(scene, "free")
+    lc, fn, _times = scene
+    calls = []
+    real = eph_module.fit_shape
+
+    def counted(*a, **kw):
+        calls.append(kw.get("density"))
+        return real(*a, **kw)
+    monkeypatch.setattr(eph_module, "fit_shape", counted)
+    se = bootstrap_shape(lc.time, fn, P, T0, DUR, POINT, n_boot=20, seed=1, model=model)
+    free = model["free"]
+    assert se.ok and calls and all(d is None for d in calls)
+    assert (se.k["point"], se.t14_h["point"]) == (free.k, pytest.approx(free.t14_days * 24.0))
+    assert se.model_depth_ppm["point"] == free.depth_ppm

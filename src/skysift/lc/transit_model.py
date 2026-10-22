@@ -241,11 +241,12 @@ LD_NODES = 32                        # Gauss-Legendre nodes of the annulus integ
 LD_TABLE_NODES = 256                 # separations per side of the contact |1 - k| in the exposure grid's table
 CONSTRAINED_DELTA_CHI2 = 2.0         # spec 11.3: within 2, the shape does not constrain b and a/R*
 G_CGS = 6.674e-8
-UNCONSTRAINED = "unconstrained at this cadence, consistent with the host's density"
+UNCONSTRAINED = "unconstrained at this cadence (the quoted values follow the host's density)"
 A_LABEL_STELLAR, A_LABEL_FITTED = "from the stellar parameters", "fitted"
 NO_DENSITY = "no stellar density, so no density prior"
 SHAPE_MIN_POINTS = 20                # fewer points in the window: no shape fit
 SHAPE_MAD_TO_SIGMA = 1.4826
+SCATTER_MIN_POINTS = 10        # fewer window points beyond one duration: the scatter of the whole window
 
 _GL_X, _GL_W = np.polynomial.legendre.leggauss(LD_NODES)
 _THETA = 0.5 * np.pi * (_GL_X + 1.0)          # the nodes on [0, pi]
@@ -441,11 +442,13 @@ def _shape_failed(variant, reason, n_points, u1, u2, exposure_days, prior) -> Sh
 def fit_shape(time, fnorm, period, t0, duration_days, *, u1: float, u2: float, exposure_days: float,
               density: tuple[float, float] | None = None, start: ShapeFit | None = None) -> ShapeFit:
     """Least-squares fit of ``exposure_flux`` (times a free baseline level ``c``) to the unbinned fold within
-    ``FIT_WINDOW_DURATIONS`` durations of mid-transit, every point weighted by the window's robust scatter (1.4826
-    times the median absolute deviation). The parameters (k, b, a_over_r, c) stay inside ``K_BOUNDS``, ``B_BOUNDS``,
-    ``A_BOUNDS`` and ``C_BOUNDS``. The solver starts from the nine geometries ``fit_transit`` uses (a central and two
-    grazing ones, each at ``START_DURATION_FACTORS`` times the duration), or from ``start`` alone when it is given and
-    ok (the bootstrap starts each resample at the full-data solution); the converged start with the lowest cost wins.
+    ``FIT_WINDOW_DURATIONS`` durations of mid-transit, every point weighted by the robust scatter (1.4826 times the
+    median absolute deviation) of the window's points beyond one duration, as ``ephemeris.transit_times`` takes it, so
+    the transit itself does not inflate it (the whole window below ``SCATTER_MIN_POINTS`` of them). The parameters
+    (k, b, a_over_r, c) stay inside ``K_BOUNDS``, ``B_BOUNDS``, ``A_BOUNDS`` and ``C_BOUNDS``. The solver starts from
+    the nine geometries ``fit_transit`` uses (a central and two grazing ones, each at ``START_DURATION_FACTORS`` times
+    the duration), or from ``start`` alone when it is given and ok (the bootstrap starts each resample at the full-data
+    solution); the converged start with the lowest cost wins.
 
     With ``density`` (mean and sigma in g/cm3) the residuals gain ``(stellar_density(a_over_r) - mean) / sigma``, a
     Gaussian prior on the stellar density, and the variant is "prior"; its square is ``chi2_prior``. Returns ``ok``
@@ -470,7 +473,8 @@ def fit_shape(time, fnorm, period, t0, duration_days, *, u1: float, u2: float, e
     if not inside.any():
         return _shape_failed(variant, "no point within half a duration of mid-transit", n, u1, u2, exposure_days,
                              prior)
-    sigma = SHAPE_MAD_TO_SIGMA * float(np.median(np.abs(y - np.median(y)))) or 1e-12
+    quiet = y[outside] if int(outside.sum()) >= SCATTER_MIN_POINTS else y
+    sigma = SHAPE_MAD_TO_SIGMA * float(np.median(np.abs(quiet - np.median(quiet)))) or 1e-12
     grid = _ExposureGrid(dt, float(period), float(exposure_days))
 
     def residuals(p):
@@ -513,9 +517,10 @@ def compare_fits(free: ShapeFit, prior: ShapeFit | None) -> dict:
     """Which fit the dossier quotes (spec 11.3). ``delta_chi2`` is the prior fit's chi-square, its prior term
     included, less the free fit's: the data term alone moves by under 1 when a wrong prior meets a shape that cannot
     resist it, so the prior term carries the tension. ``density_tension_sigma`` is the free solution's density less
-    the prior mean, in the prior's sigma. Without a prior fit, or with one that is not ok, the free fit is quoted with
-    ``constrained`` None, a/R* "fitted" and the reason ``NO_DENSITY`` (or the prior fit's own). A free fit that is not
-    ok, beside a prior fit that is, gives the prior fit with ``constrained`` None and the free fit's reason. Within
+    the prior mean, in the prior's sigma, stored only when ``constrained`` is True (in a flat valley the free fit's
+    density means nothing). Without a prior fit, or with one that is not ok, the free fit is quoted with ``constrained``
+    None, a/R* "fitted" and the reason ``NO_DENSITY`` (or the prior fit's own). A free fit that is not ok, beside a
+    prior fit that is, gives the prior fit with ``constrained`` None and the free fit's reason. Within
     ``CONSTRAINED_DELTA_CHI2`` the shape does not constrain b and a/R*: the prior fit is quoted, a/R* "from the
     stellar parameters", the reason ``UNCONSTRAINED``; beyond it the free fit is quoted and a/R* "fitted"."""
     def out(constrained, quoted, delta, tension, label, reason):
@@ -529,5 +534,5 @@ def compare_fits(free: ShapeFit, prior: ShapeFit | None) -> dict:
     delta = prior.chi2_total - free.chi2_total
     tension = (free.density_gcc - mean) / sigma
     if delta <= CONSTRAINED_DELTA_CHI2:
-        return out(False, "prior", delta, tension, A_LABEL_STELLAR, UNCONSTRAINED)
+        return out(False, "prior", delta, None, A_LABEL_STELLAR, UNCONSTRAINED)
     return out(True, "free", delta, tension, A_LABEL_FITTED, None)

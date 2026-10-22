@@ -484,11 +484,16 @@ def _minus_plus(block: dict | None) -> dict | None:
     return {"minus": block["minus"], "plus": block["plus"]}
 
 
+def _finite_or_none(x) -> float | None:
+    return float(x) if x is not None and math.isfinite(float(x)) else None
+
+
 def _timing(time, fnorm, signal: dict, shape: dict) -> dict:
     """The ``timing`` block: per-transit times against the rung 2 template (the search box when the fit is not ok,
     or when its geometry does not dip, which ``template_from`` refuses), the transits whose single-event S/N on the
     search ephemeris (``event_quality``) is below ``eph.SES_MIN`` set aside (``eph.drop_low_ses``, spec 11.3), the
-    linear ephemeris of the rest, and the template used."""
+    linear ephemeris of the rest, and the template used. Each timing row carries ``ses``, the statistic it was cut on
+    (None for an epoch ``event_quality`` has none for)."""
     period, t0, dur = float(signal["period"]), float(signal["t0"]), float(signal["duration"])
     depth = float(signal["depth_ppm"])
     note = None
@@ -501,8 +506,10 @@ def _timing(time, fnorm, signal: dict, shape: dict) -> dict:
     quality = event_quality(time, fnorm, period, t0, dur)
     ses = {int(e): float(s) for e, s in zip(quality.epochs, quality.ses, strict=True)}
     times = eph.drop_low_ses(eph.transit_times(time, fnorm, period, t0, dur, template), ses)
-    lin = eph.linear_fit(times, period, t0)
-    return {**lin.as_dict(), "template": template.kind, "template_reason": note}
+    lin = eph.linear_fit(times, period, t0).as_dict()
+    # each row keeps the statistic it was cut on, so events.csv prints that one (fix round 1 of Task 10, M-4)
+    lin["times"] = [{**t, "ses": _finite_or_none(ses.get(int(t["epoch"])))} for t in lin["times"]]
+    return {**lin, "template": template.kind, "template_reason": note}
 
 
 def shape_model(star: stars.StarParams | None, lc: LightCurve) -> dict:
@@ -527,9 +534,9 @@ def _ephemeris_extra(signal: dict, depth: dict, timing: dict, shape: dict, fitte
                      fold: dict) -> dict:
     """The ephemeris keys of version 3, each value beside its own error: the period and T0 of the linear fit when it
     is ok (else the search values with no error), the fitted T14 when the fit was bootstrapped (the resample median,
-    or without resamples the full-data T14 of the prior fit, of the free one when the prior fit is not ok; else the
-    bootstrap box width when the shape block is ok, else the search box), and since version 5 the depth on the fold
-    (``eph.fold_depth``) and the ephemeris that folded (``fold_ephemeris``)."""
+    or without resamples the quoted fit's full-data T14; else the bootstrap box width when the shape block is ok,
+    else the search box), and since version 5 the depth on the fold (``eph.fold_depth``) and the ephemeris that
+    folded (``fold_ephemeris``)."""
     fitted = fitted_t14_h is not None
     ok = timing.get("ok") is True
     out = {"period_days": float(signal["period"]), "t0_bkjd": float(signal["t0"]),
@@ -635,9 +642,8 @@ def ephemeris_blocks(lc: LightCurve, fnorm, signal: dict, tests: list[dict], *, 
     shape.update(fits=fits, comparison=comparison, limb_darkening=model["limb_darkening"],
                  exposure_min=model["exposure_days"] * 1440.0)
     secondary = eph.secondary_limit(metrics, degenerate=shape.get("degenerate") is True)
-    # T14, like k, is the prior fit's when it is ok (as the bootstrap takes it), so the duration and shape.csv agree
-    size = prior if prior is not None and prior.ok else free
-    fitted_t14 = size.t14_days * 24.0 if point is not None and size.ok else None
+    # the quoted fit gives all five values (spec 11.3 as amended in fix round 1), so the duration is its T14
+    fitted_t14 = point["t14_h"] if point is not None else None
     return {"ephemeris_extra": _ephemeris_extra(signal, depth, timing, shape, fitted_t14, fold), "timing": timing,
             "shape": shape, "parity": parity, "secondary": None if secondary is None else secondary.as_dict(),
             "stability": _stability(lc, fnorm, signal, fold, fnorm_alt=fnorm_alt, thresholds=thresholds,
@@ -1506,19 +1512,28 @@ def _alt_flux(lc: LightCurve, thresholds, signal: dict):
     return None if alt is None else apply_mask(lc.time, alt, (signal.get("extra") or {}).get("mask"))
 
 
+def quoted_radius_ratio(shape: dict | None) -> float | None:
+    """The one radius ratio every text prints and the planet radius is made from (spec 11.3 as amended in fix round 1
+    of Task 10, I-3): the quoted centre, the resample median of the quoted fit, when the bootstrap is ok, else the
+    quoted fit's full-data k; None without an ok quoted fit."""
+    shape = shape if isinstance(shape, dict) else {}
+    fit = quoted_fit(shape)
+    if fit is None:
+        return None
+    median = (shape.get("k") or {}).get("median") if shape.get("ok") is True else None
+    return _finite_or_none(median if median is not None else fit.get("k"))
+
+
 def _rederive(gaia, star: stars.StarParams, planet: stars.PlanetParams, blocks: dict | None):
-    """The star and planet again with the shape fit's radius ratio (spec 11.3: from the prior fit when it is ok, else
-    the free fit) at the fold's period and depth, when Gaia answered; the same seed, so the star's draws are those of
-    ``_lookup``. Unchanged without a fit."""
-    shape = (blocks or {}).get("shape") or {}
-    fits = shape.get("fits") or {}
-    fit = next((f for f in (fits.get("prior"), fits.get("free")) if isinstance(f, dict) and f.get("ok") is True), None)
-    if gaia is None or fit is None or fit.get("k") is None:
+    """The star and planet again with the quoted radius ratio (``quoted_radius_ratio``) at the fold's period and
+    depth, when Gaia answered; the same seed, so the star's draws are those of ``_lookup``. Unchanged without a
+    fit."""
+    k = quoted_radius_ratio((blocks or {}).get("shape"))
+    if gaia is None or k is None:
         return star, planet
     extra = blocks.get("ephemeris_extra") or {}
     depth = (_num(extra, "depth_ppm") or 0.0) / 1e6
-    return stars.derive(gaia, float(extra["period_days"]), float(fit["k"]), depth,
-                        np.random.default_rng(STARS_SEED))
+    return stars.derive(gaia, float(extra["period_days"]), k, depth, np.random.default_rng(STARS_SEED))
 
 
 def _model_line(shape: dict | None) -> dict | None:

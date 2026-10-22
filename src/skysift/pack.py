@@ -57,6 +57,7 @@ from skysift import dossier as ds
 from skysift import fpp as fpp_model
 from skysift import jsonutil
 from skysift import tess as tess_module
+from skysift.ephemeris import SES_MIN, SHAPE_PRIOR_DRAW
 from skysift.exofop import (
     EXOFOP_PLANET_TEMPLATE,
     EXOFOP_STELLAR_TEMPLATE,
@@ -71,7 +72,6 @@ from skysift.pack_rows import (
     PSFFRAC_DEFINITION,
     SHAPE_ROWS,
     _metrics,
-    _quoted_values,
     _test,
     dilution_rows,
     ephemeris_rows,
@@ -127,7 +127,8 @@ FACILITIES = "Kepler, Gaia, MAST, Exoplanet Archive"
 CODE_SENTENCE = (f"the SkySift code at the stated commit is archived at doi:{SOFTWARE_DOI_PLACEHOLDER} "
                  "(to be minted)")
 # the limits of the transit model, in the words of the referee pack spec (section 6)
-MODEL_CLAUSE = "a quadratic limb-darkened model on a circular orbit, integrated over the 29.4-minute exposure"
+MODEL_CLAUSE = "a quadratic limb-darkened model on a circular orbit, integrated over the {exposure}-minute exposure"
+KEPLER_EXPOSURE_MIN = 29.4      # the clause's exposure when the shape block does not record one
 MODEL_CITE_AFTER = "limb-darkened model"     # the Claret and Bloemen 2011 citation follows these words
 SANDBOX_DOI_PREFIX = "10.5072/"             # Zenodo sandbox DOIs never resolve
 SANDBOX_DOI_NOTE = "sandbox DOI, replace before submission"
@@ -451,12 +452,13 @@ def _bootstrapped(data: dict) -> bool:
 
 def methods_sentence(data: dict, tex: bool = False) -> str | None:
     """How the errors were made, in one sentence for the README's ephemeris section (ruling h, moved out of the
-    note in Task 8 fix round 3; the note keeps ``errors_pointer``): the linear fit of the
-    per-transit mid-times with the reference epoch at the centre of the series (Deeg 2015), the per-transit times by
-    template fit (Holczer et al. 2016), the shape errors from a bootstrap over transits quoted as the 16th to 84th
-    percentile spread about the bootstrap median (Schmitt et al. 2014), and which period and epoch the fold, the
-    per-event depths and the bootstrap use (M4; the linear fit since version 5, ``folded_on_linear_fit``). None when
-    neither block is ok."""
+    note in Task 8 fix round 3; the note keeps ``errors_pointer``): the linear fit of the per-transit mid-times with
+    the reference epoch at the centre of the series (Deeg 2015), the per-transit times by template fit (Holczer et
+    al. 2016) and none below the single-event S/N cut (``SES_MIN``; M-7 of Task 10's fix round 1), the shape errors
+    from a bootstrap over transits (Schmitt et al. 2014), with the density prior's centre drawn on each resample when
+    the method says so (I-1), quoted as the 16th to 84th percentile spread about the bootstrap median, and which
+    period and epoch the fold, the per-event depths and the bootstrap use (M4; the linear fit since version 5,
+    ``folded_on_linear_fit``). None when neither block is ok."""
     timed, boot = _timed(data), _bootstrapped(data)
     if not (timed or boot):
         return None
@@ -467,10 +469,13 @@ def methods_sentence(data: dict, tex: bool = False) -> str | None:
     if timed:
         parts += [("The period and the reference time come from a weighted linear fit of the per-transit "
                    "mid-times, its reference epoch at the centre of the series "), cite("deeg2015", "Deeg 2015"),
-                  ", each transit timed by a fit of the transit template ", cite("holczer2016", "Holczer et al. 2016")]
+                  ", each transit timed by a fit of the transit template ", cite("holczer2016", "Holczer et al. 2016"),
+                  f"; transits with a single-event S/N below {SES_MIN:g} are not timed ",
+                  cite("holczer2016", "Holczer et al. 2016")]
     if boot:
+        drawn = SHAPE_PRIOR_DRAW in str((data.get("shape") or {}).get("method") or "")
         parts += ["; the" if timed else "The", " shape errors come from a bootstrap over transits ",
-                  cite("schmitt2014", "Schmitt et al. 2014"),
+                  cite("schmitt2014", "Schmitt et al. 2014"), f", {SHAPE_PRIOR_DRAW}" if drawn else "",
                   ", quoted as the 16th to 84th percentile spread of the resamples about their median"]
     if folded_on_linear_fit(data):
         parts.append(". The fold, the per-event depths, odd and even, the bootstrap and the depth stability test use "
@@ -584,7 +589,8 @@ def shape_sentence(data: dict, tex: bool = False) -> str | None:
             nd = pm_digits(r["minus"], r["plus"])
             return _joined(tex, text, f" (full-data fit {point:.{nd}f})")
         return text
-    head = _model_words(tex) if cmp else [f"Fitting {LEGACY_MODEL_CLAUSE}"]
+    exposure = _num((data.get("shape") or {}).get("exposure_min")) or KEPLER_EXPOSURE_MIN
+    head = _model_words(tex, exposure) if cmp else [f"Fitting {LEGACY_MODEL_CLAUSE}"]
     if (data.get("shape") or {}).get("ok") is not True:
         parts = [*head, ", gives a radius ratio of ", val("k")]
         if "b" in rows:
@@ -603,18 +609,21 @@ LEGACY_MODEL_CLAUSE = ("a uniform-disc model without limb darkening on a circula
                        "cadence")
 
 
-def _model_words(tex: bool) -> list:
-    """"Fitting <MODEL_CLAUSE>" with the Claret and Bloemen 2011 citation after "limb-darkened model"."""
-    before, after = MODEL_CLAUSE.split(MODEL_CITE_AFTER, 1)
+def _model_words(tex: bool, exposure_min: float = KEPLER_EXPOSURE_MIN) -> list:
+    """"Fitting <MODEL_CLAUSE>" with the measured exposure to 0.1 minute (fix round 1 of Task 10, M-10) and the
+    Claret and Bloemen 2011 citation after "limb-darkened model"."""
+    before, after = MODEL_CLAUSE.format(exposure=f"{exposure_min:.1f}").split(MODEL_CITE_AFTER, 1)
     cite = Raw(r" \citep{claret2011}") if tex else " (Claret and Bloemen 2011)"
     return [f"Fitting {before}{MODEL_CITE_AFTER}", cite, after]
 
 
 def _geometry_words(data: dict, rows: dict, val, cmp: dict, tex: bool) -> list:
-    """b and one a/R* (spec 11.3). Version 5: a quoted prior fit says b and a/R* are unconstrained at this cadence and
-    gives a/R* from the stellar parameters; a quoted free fit gives the fitted a/R* and its tension with the host's
-    density in sigma (none without a density); a degenerate free b without errors names its reason. Before version 5
-    the old wording: b and a/R* with their errors, or alone with the degeneracy reason."""
+    """b and one a/R* (spec 11.3). Version 5: a prior fit quoted because the comparison left b and a/R* unconstrained
+    (``constrained`` False) says so and gives a/R* from the stellar parameters; a prior fit quoted because the free
+    fit failed (``constrained`` None) says that instead (fix round 1 of Task 10, M-2); a quoted free fit gives the
+    fitted a/R* and, when the comparison constrained it, its tension with the host's density in sigma; a degenerate
+    free b without errors names its reason. Before version 5 the old wording: b and a/R* with their errors, or alone
+    with the degeneracy reason."""
     b_note = f" ({rows['b']['note']})" if rows["b"]["minus"] is None and rows["b"].get("note") else ""
     if not cmp:
         if rows["b"]["minus"] is None:
@@ -623,13 +632,16 @@ def _geometry_words(data: dict, rows: dict, val, cmp: dict, tex: bool) -> list:
     if cmp.get("quoted") == "prior":
         stellar = value_text((data.get("planet") or {}).get("a_over_r"), tex)
         a_text = stellar if stellar is not None else val("a_over_r")
-        return [f"; b and a/R* are {UNCONSTRAINED}: b is ", val("b"), " and a/R* ", a_text,
-                f" {A_LABEL_STELLAR}"]
-    tension = _num(cmp.get("density_tension_sigma"))
+        why = UNCONSTRAINED if cmp.get("constrained") is False else FREE_FAILED
+        return [f"; b and a/R* are {why}: b is ", val("b"), " and a/R* ", a_text, f" {A_LABEL_STELLAR}"]
+    tension = _num(cmp.get("density_tension_sigma")) if cmp.get("constrained") is True else None
     words = ["; b is ", val("b"), " and a/R* ", val("a_over_r"), f" {A_LABEL_FITTED}"]
     if tension is not None:
         words.append(f", {abs(tension):.1f} sigma from the host's density")
     return [*words, b_note]
+
+
+FREE_FAILED = "from the density-prior fit (the free fit did not converge)"
 
 
 def _odd_even(data: dict, tex: bool) -> tuple[str, str] | None:
@@ -943,11 +955,12 @@ def software_line(data: dict) -> str:
 
 
 def fit_radius_ratio(data: dict) -> float | None:
-    """The radius ratio the planet radius was derived from: the shape fit's full-data k in version 5 (the prior fit's
-    when it is ok, as ``dossier._rederive`` takes it), before that rung 2's uniform-disc k when its fit is ok."""
-    k = _quoted_values(data.get("shape") or {}).get("k") if isinstance(data.get("shape"), dict) else None
-    if k is not None:
-        return _num(k)
+    """The radius ratio the planet radius was derived from: in version 5 the quoted centre
+    (``dossier.quoted_radius_ratio``, the one k every text prints), before that rung 2's uniform-disc k when its fit
+    is ok."""
+    shape = data.get("shape")
+    if isinstance(shape, dict) and shape.get("fits"):
+        return ds.quoted_radius_ratio(shape)
     sh = _metrics(data, "rung2_shape")
     return _num(sh.get("fit_k")) if sh.get("fit_ok") is True else None
 

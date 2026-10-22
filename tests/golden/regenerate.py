@@ -14,9 +14,9 @@ In this order: the working directory becomes ``--engine-root`` (the stored blob 
 live ``<data-dir>/engine.db`` is copied with SQLite's backup API (opened read-only) and
 ``<data-dir>/calibration/kbonus_bkg.jsonl`` copied beside it, into a fresh folder under the system temp directory;
 ``dossier.generate`` runs on the copy with ``force=True``, reading the light curves from the live blob folder; and
-``tools.dossier_compare.golden_block`` of the result is written to ``--out``. The live store and the blob folder are
-only read. When the dossier's ``dossier_version`` is not ``dossier.DOSSIER_VERSION`` nothing is written and the exit
-code is 1."""
+``tools.dossier_compare.golden_block`` of the result is written to ``--out``; the scratch folder is then removed
+(``--keep-scratch`` keeps it for inspection). The live store and the blob folder are only read. When the dossier's
+``dossier_version`` is not ``dossier.DOSSIER_VERSION`` nothing is written and the exit code is 1."""
 from __future__ import annotations
 
 import argparse
@@ -48,6 +48,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--data-dir", type=Path, required=True, help="the live data folder, relative to the engine root")
     ap.add_argument("--target", required=True)
     ap.add_argument("--out", type=Path, required=True, help="the golden JSON to write")
+    ap.add_argument("--keep-scratch", action="store_true", help="keep the scratch copy of the store")
     args = ap.parse_args(argv)
     out = args.out.resolve()
     os.chdir(args.engine_root)
@@ -67,14 +68,19 @@ def main(argv: list[str] | None = None) -> int:
                         blob_url=f"file://./{data_dir.as_posix()}/blobs")
     store = Store(settings.database_url)
     blob = blob_from_url(settings.blob_url)
-    report = dossier.generate(store, blob, settings, args.target, force=True, fetch=net.fetch, log=print)
-    data = json.loads(report.data_path.read_text(encoding="utf-8"))
+    try:
+        report = dossier.generate(store, blob, settings, args.target, force=True, fetch=net.fetch, log=print)
+        data = json.loads(report.data_path.read_text(encoding="utf-8"))
+    finally:
+        store.engine.dispose()              # Windows keeps a file it has open: release the copy before removing it
+        if not args.keep_scratch:
+            shutil.rmtree(scratch, ignore_errors=True)
     if data.get("dossier_version") != dossier.DOSSIER_VERSION:
         print(f"dossier version {data.get('dossier_version')!r} is not {dossier.DOSSIER_VERSION!r}; nothing written",
               file=sys.stderr)
         return 1
     out.write_text(jsonutil.dumps(golden_block(data), indent=1) + "\n", encoding="utf-8", newline="\n")
-    print(f"wrote {out} (scratch store {scratch})")
+    print(f"wrote {out}" + (f" (scratch store {scratch})" if args.keep_scratch else ""))
     return 0
 
 

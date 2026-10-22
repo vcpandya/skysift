@@ -237,6 +237,20 @@ def test_a_cadence_smeared_transit_leaves_b_and_a_over_r_to_the_density():
     assert cmp["constrained"] is False and cmp["quoted"] == "prior" and cmp["delta_chi2"] <= 2.0
     assert cmp["a_over_r_label"] == A_LABEL_STELLAR and cmp["reason"] == UNCONSTRAINED
     assert abs(prior.a_over_r - a) < 2.0
+    # fix round 1, M-1: in a flat valley the free fit's density means nothing, so no tension is stored
+    assert cmp["density_tension_sigma"] is None
+    assert UNCONSTRAINED == "unconstrained at this cadence (the quoted values follow the host's density)"
+
+
+def test_the_fit_weights_each_point_by_the_scatter_outside_the_transit():
+    """Fix round 1, M-6: the per-point error is the robust scatter of the window's points beyond one duration of
+    mid-transit, as ``ephemeris.transit_times`` takes it, so a deep transit does not inflate it: the reduced
+    chi-square of a good fit is about 1."""
+    period, t0, k, b, a = 5.4, 134.9, 0.1, 0.2, 12.9
+    lc = _ld_planet(period, t0, k, b, a, 0.42, 0.315, 300, 7)
+    fit = fit_shape(lc.time, detrend(lc), period, t0, _t14(period, k, b, a), u1=0.42, u2=0.315,
+                    exposure_days=EXPOSURE)
+    assert fit.ok and 0.9 < fit.chi2_data / fit.n_points < 1.1
 
 
 def test_a_shape_that_contradicts_the_density_is_quoted_free_with_the_tension():

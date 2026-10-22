@@ -19,10 +19,11 @@ from typer.testing import CliRunner
 
 from skysift import crosscheck as cross_check
 from skysift import dossier as dossier_module
-from skysift import exofop, net, pack_rows, pack_text, zenodo
+from skysift import ephemeris, exofop, net, pack_rows, pack_text, zenodo
 from skysift import pack as pack_module
 from skysift.cli import app
 from skysift.dossier import LightCurveReleased, generate, whitened
+from skysift.lc.transit_model import UNCONSTRAINED
 from skysift.pack import (
     NOTE_LIMITS,
     PACK_VERSION,
@@ -193,7 +194,7 @@ def test_data_files_carry_the_ephemeris_events_and_metrics(env_with_dossier):
     eph = json.loads((rep.out_dir / "data" / "ephemeris.json").read_text(encoding="utf-8"))
     assert eph["ephemeris"]["period_days"] == env.data["ephemeris"]["period_days"]
     rows = {r["parameter"]: r for r in eph["rows"]}
-    assert rows["planet radius"]["value"] == 2.48 and rows["planet radius"]["minus"] == 0.08
+    assert rows["planet radius"]["value"] == 2.47 and rows["planet radius"]["minus"] == 0.08
     assert rows["planet radius"]["unit"] == "Earth radii" and rows["planet radius"]["source"]
     with (rep.out_dir / "data" / "ephemeris.csv").open(encoding="utf-8", newline="") as fh:
         table = list(csv.DictReader(fh))
@@ -413,24 +414,27 @@ def test_note_is_aastex7_with_an_abstract_inside_the_rnaas_limits(env_with_dossi
     assert "fressin2013" not in items                                         # an M dwarf: the Dressing grid only
     assert "AJ, 166, 265, doi:10.3847/1538-3881/ad0727" in tex and "doi:10.17909/7jbr-w430" in tex
     assert "40.290" in tex and "1 in 440" in tex and "provisional" not in tex
-    assert r"2.48 $\pm$ 0.08 $R_\oplus$" in tex                                # Rp from the limb-darkened k
+    assert r"2.47 $\pm$ 0.08 $R_\oplus$" in tex                                # Rp from the limb-darkened k
     assert "3,653$^{+90}_{-73}$ K" in tex                                      # thousands as the dossier prints
 
 
 def test_the_note_names_the_radius_ratio_the_planet_radius_came_from(env_with_dossier):
-    """Task 10: a version 5 planet radius is k R* with the shape fit's full-data k (the prior fit's when it is ok),
-    so the note names that k and not rung 2's uniform-disc one."""
+    """Task 10 and its fix round 1 (I-3, M-9): one radius ratio per text. The planet radius is k R* with the quoted
+    centre (here, without resamples, the quoted fit's full-data k), the note names that k and not rung 2's
+    uniform-disc one, and T14 comes from the same fit, so the ephemeris duration and the shape row agree."""
     data = env_with_dossier.data
-    k = data["shape"]["fits"]["prior"]["k"]
+    fit = data["shape"]["fits"][data["shape"]["comparison"]["quoted"]]
+    k = fit["k"]
+    assert dossier_module.quoted_radius_ratio(data["shape"]) == pytest.approx(k)
+    assert pack_module.fit_radius_ratio(data) == pytest.approx(k)
     assert f"k {k:.4f} from the transit fit" in data["planet"]["rp_rearth"]["source"]
-    # the free fit is quoted here (delta chi2 above 2), but T14, like k, is the prior fit's, as the bootstrap and
-    # shape.csv take it, so the ephemeris duration and the shape row agree
-    assert data["shape"]["comparison"]["quoted"] == "free"
-    t14_h = data["shape"]["fits"]["prior"]["t14_days"] * 24.0
+    t14_h = fit["t14_days"] * 24.0
     assert data["ephemeris"]["duration_h"] == pytest.approx(t14_h)
-    assert {r["key"]: r for r in pack_rows.shape_rows(data)}["t14_h"]["value"] == pytest.approx(t14_h)
+    rows = {r["key"]: r for r in pack_rows.shape_rows(data)}
+    assert rows["t14_h"]["value"] == pytest.approx(t14_h) and rows["k"]["value"] == pytest.approx(k)
     flat = " ".join(render_note(data).split())
-    assert f"With the fitted radius ratio of {k:.4f} the planet radius is 2.48 $\\pm$ 0.08 $R_\\oplus$" in flat
+    rp = pack_text.value_text(data["planet"]["rp_rearth"], True)
+    assert f"With the fitted radius ratio of {k:.4f} the planet radius is {rp} $R_\\oplus$" in flat
     legacy = json.loads(json.dumps(data))
     del legacy["shape"]["fits"], legacy["shape"]["comparison"]
     rung2 = next(t["metrics"] for t in legacy["tests"] if t["rung"] == "rung2_shape")
@@ -988,9 +992,8 @@ SHAPE_OK = {"ok": True, "reason": None,
             "ingress_min": 12.3, "degenerate": True, "degeneracy_reason": DEGENERATE,
             "fits": {"free": _shape_fit("free", 0.0468, 0.42, 68.0, 1640.2, 0.0),
                      "prior": _shape_fit("prior", 0.0469, 0.33, 73.0, 1640.4, 0.3)},
-            "comparison": {"constrained": False, "quoted": "prior", "delta_chi2": 0.5, "density_tension_sigma": -1.3,
-                           "a_over_r_label": "from the stellar parameters",
-                           "reason": "unconstrained at this cadence, consistent with the host's density"},
+            "comparison": {"constrained": False, "quoted": "prior", "delta_chi2": 0.5, "density_tension_sigma": None,
+                           "a_over_r_label": "from the stellar parameters", "reason": UNCONSTRAINED},
             "limb_darkening": {"law": "quadratic", "u1": 0.4415, "u2": 0.2740, "teff": 3855.0, "logg": 4.5,
                                "source": "Claret and Bloemen 2011, Kepler band, quadratic law"},
             "exposure_min": 29.4}
@@ -1098,16 +1101,18 @@ def test_transit_times_and_shape_csvs(env_with_dossier):
     assert float(times[0]["t_bjd"]) == pytest.approx(stored[0]["t_bkjd"] + BKJD, abs=1e-6)
     assert float(times[0]["err_days"]) == stored[0]["err_days"] and times[0]["used"] == "True"
     assert _header(rep, "data/shape.csv") == ["parameter", "value", "minus", "plus", "unit", "point", "note"]
-    # no resample converged: the quoted fit's full-data values (the prior fit's k)
+    # no resample converged: the quoted fit's full-data values (all five from it since fix round 1, M-9)
     shape = {r["parameter"]: r for r in _rows(rep, "data/shape.csv")}
-    k = env.data["shape"]["fits"]["prior"]["k"]
+    k = env.data["shape"]["fits"][env.data["shape"]["comparison"]["quoted"]]["k"]
     assert float(shape["radius ratio k"]["value"]) == pytest.approx(k) and shape["radius ratio k"]["minus"] == ""
     assert float(shape["radius ratio k"]["point"]) == pytest.approx(k)
     assert shape["radius ratio k"]["note"] == f"no error; {NO_BOOT}"
     assert float(shape["box depth"]["minus"]) == pytest.approx(52.345237)
     _store_errors(env)
     shape = {r["parameter"]: r for r in _rows(_build(env), "data/shape.csv")}
-    assert list(shape) == ["radius ratio k", "impact parameter b", "a/R*", "T14", "model depth", "box depth"]
+    # fix round 1, I-1: the a/R* row names the fit it comes from (SHAPE_OK quotes the density-prior fit)
+    assert list(shape) == ["radius ratio k", "impact parameter b", "a/R* (density-prior fit)", "T14", "model depth",
+                           "box depth"]
     assert float(shape["radius ratio k"]["minus"]) == 0.0011 and float(shape["radius ratio k"]["plus"]) == 0.0012
     assert float(shape["radius ratio k"]["point"]) == 0.0469 and shape["radius ratio k"]["note"] == ""
     b = shape["impact parameter b"]
@@ -1165,7 +1170,7 @@ def test_exofop_parameter_files_follow_the_templates(env_with_dossier):
     assert float(planet["period_unc"]) == pytest.approx(eph["period_err_days"], abs=1e-5)
     assert planet["epoch"] == "2454969.3003" and planet["epoch_unc"] == "0.0019"
     assert planet["depth"] == "2167" and planet["depth_unc"] == "52" and planet["duration_unc"] == ""
-    assert planet["radius"] == "2.48" and planet["radius_unc"] == "0.08"
+    assert planet["radius"] == "2.47" and planet["radius_unc"] == "0.08"
     assert planet["temp"] == "269" and planet["temp_unc"] == "8" and planet["sma_unc"] == "0.0016"
     assert planet["r_planet"] == planet["imp"] == planet["ar_star"] == ""        # no bootstrap error yet
     assert planet["mass"] == planet["ecc"] == planet["inc"] == planet["group"] == "" and planet["prop_period"] == "0"
@@ -1292,7 +1297,7 @@ def test_every_text_quotes_the_period_and_epoch_with_errors(env_with_dossier):
     assert "40.289863 ± 0.000091 d" in meta["description"] and "2454969.3003 ± 0.0019" in meta["description"]
     _store(env, env.data)                                                 # the fixture's own: no shape error
     text = _unquoted((_build(env).out_dir / "README.md").read_text(encoding="utf-8"))
-    assert text.count(f"(no error; {NO_BOOT})") == 1 and "4.36 h (no error;" in text
+    assert text.count(f"(no error; {NO_BOOT})") == 1 and "4.41 h (no error;" in text
 
 
 def test_a_missing_ephemeris_error_is_named_once_and_never_paired_with_a_search_value(env_with_dossier):
@@ -1340,13 +1345,26 @@ def test_note_has_software_facilities_and_the_model_clause_within_the_limits(env
             "exposure") in tex
     # the quoted prior fit: b and the stellar a/R* with the words of spec 11.3, the degeneracy not repeated
     assert "0.0470$^{+0.0012}_{-0.0011}$" in tex and DEGENERATE not in tex
-    assert ("b and a/R* are unconstrained at this cadence, consistent with the host's density: b is 0.31 and a/R* "
-            in " ".join(tex.split()))
+    prior_flat = " ".join(tex.split())
+    assert ("b and a/R* are unconstrained at this cadence (the quoted values follow the host's density): b is 0.31 "
+            "and a/R* ") in prior_flat
+    assert "sigma from the host's density" not in prior_flat          # fix round 1, M-1: no tension when unconstrained
+    # fix round 1, M-2: a prior fit quoted because the free fit failed is not described as a comparison
+    failed = _with_errors(env_with_dossier.data)
+    failed["shape"]["comparison"] = {**failed["shape"]["comparison"], "constrained": None, "delta_chi2": None,
+                                     "reason": "no start converged"}
+    failed_flat = " ".join(render_note(failed).split())
+    assert "b and a/R* are from the density-prior fit (the free fit did not converge): b is 0.31" in failed_flat
+    assert "unconstrained at this cadence" not in failed_flat
+    # fix round 1, M-10: the clause prints the measured exposure
+    short = _with_errors(env_with_dossier.data)
+    short["shape"]["exposure_min"] = 1.966
+    assert "integrated over the 2.0-minute exposure" in " ".join(render_note(short).split())
     # a quoted free fit: the degenerate b says "no error" once, also for a reason stored before it stopped saying
     # "errors not quoted"
     free = _with_errors(env_with_dossier.data)
     free["shape"]["comparison"] = {**free["shape"]["comparison"], "quoted": "free", "constrained": True,
-                                   "a_over_r_label": "fitted", "reason": None}
+                                   "density_tension_sigma": -1.3, "a_over_r_label": "fitted", "reason": None}
     flat = " ".join(render_note(free).split())
     assert ("b is 0.31 and a/R* 74.0 fitted, 1.3 sigma from the host's density (no error; ingress shorter than the "
             "cadence: b and a/R* are degenerate with k)") in flat
@@ -1526,7 +1544,15 @@ def test_the_note_names_its_methods_and_cites_them(env_with_dossier):
     assert "(Holczer et al. 2016)" in errors and "bootstrap over transits (Schmitt et al. 2014)" in errors
     assert "16th to 84th percentile spread of the resamples about their median" in errors
     assert "use the linear-fit period and epoch." in errors
-    searched = {**data, "ephemeris": {**data["ephemeris"], "fold_ephemeris": "search"}}
+    # fix round 1, M-7: the SES cut is named once, with its threshold and citation
+    assert ("transits with a single-event S/N below 2.5 are not timed (Holczer et al. 2016)" in errors
+            and errors.count("2.5") == 1)
+    # fix round 1, I-1: a bootstrapped density-prior fit says how its prior entered the resamples
+    assert "drawn from its Gaussian" not in errors
+    drawn = {**data, "shape": {**data["shape"], "method": ephemeris.SHAPE_PRIOR_METHOD}}
+    assert ("bootstrap over transits (Schmitt et al. 2014), with the density prior's centre drawn from its Gaussian "
+            "on each resample") in pack_module.errors_methods_text(drawn)
+    searched ={**data, "ephemeris": {**data["ephemeris"], "fold_ephemeris": "search"}}
     assert "use the search period and epoch; the quoted ephemeris is the linear fit." in \
         pack_module.errors_methods_text(searched)
     for item in ("Deeg, H. J. 2015, arXiv:1503.05368", "Holczer, T., et al. 2016, ApJS, 225, 9",
@@ -2059,6 +2085,13 @@ def test_events_and_transit_times_list_the_same_epochs_and_the_readme_says_how_m
     assert [r["epoch"] for r in events] == [r["epoch"] for r in times]
     assert _header(rep, "data/events.csv") == ["epoch", "t_mid_bkjd", "quarter", "depth_ppm", "err_ppm",
                                                "coverage", "ses", "timed", "timing_reason"]
+    # fix round 1, M-4: the ses column is the statistic the timing cut read, so it never contradicts the reason
+    stored = {t["epoch"]: t for t in env_with_dossier.data["timing"]["times"]}
+    for r in events:
+        ses = stored[int(r["epoch"])]["ses"]
+        assert (r["ses"] == "") if ses is None else (float(r["ses"]) == pytest.approx(ses, rel=1e-6)), r
+        if r["ses"] != "":
+            assert (r["timing_reason"] == ephemeris.LOW_SES_REASON) == (float(r["ses"]) < ephemeris.SES_MIN), r
     readme = (rep.out_dir / "README.md").read_text(encoding="utf-8")
     used = sum(r["used"] == "True" for r in times)
     assert f"`data/events.csv`: the {len(events)} transits with data" in readme
@@ -2071,10 +2104,15 @@ def test_one_a_over_r_in_the_texts_and_both_in_the_ephemeris_csv(env_with_dossie
     assert {"a/R* from the stellar parameters (Kepler's third law)", "a/R* fitted (free fit)"} <= rows
     copy = next(p for p in (rep.out_dir / "exofop").iterdir() if p.name.endswith("ephemeris.csv"))
     assert copy.read_bytes() == (rep.out_dir / "data" / "ephemeris.csv").read_bytes()
-    texts = _texts(rep)
-    for name in ("README.md", "note/note.tex", "exofop/note.txt", "archive_email.txt"):
-        labels = sum(texts[name].count(w) for w in ("a/R* from the stellar parameters", "a/R* fitted"))
-        assert labels <= 1, name
+    # fix round 1, M-3: every a/R* with a value after it (the note writes the value between "a/R*" and its label), in
+    # a dossier whose bootstrap gives the shape sentence its geometry
+    _store_errors(env_with_dossier)
+    texts = _texts(_build(env_with_dossier))
+    valued = re.compile(r"a/R\*[^\n.;,]{0,60}?\d")
+    counts = {name: valued.findall(texts[name])
+              for name in ("README.md", "note/note.tex", "exofop/note.txt", "archive_email.txt")}
+    assert len(counts["README.md"]) == len(counts["note/note.tex"]) == 1, counts
+    assert max(len(found) for found in counts.values()) == 1, counts
 
 
 def test_the_note_names_the_limb_darkening_and_the_exposure_integration(env_with_dossier):

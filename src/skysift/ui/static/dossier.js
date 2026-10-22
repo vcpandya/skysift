@@ -46,7 +46,9 @@
   // the decimals that print an error to two significant figures, never more than it carries:
   // skysift.pack_text.pm_digits, the one precision rule of the page (its Jinja helper err_digits) and the pack
   // what the shape table's columns mean (the dashboard prints the same words)
-  const SHAPE_WORDS = "For the fitted rows (k, b, a/R*, T14 and the model depth) the value is the fit to the whole light curve and minus and plus are the spread of the resamples (16th to 50th and 50th to 84th percentile) about their own median. The box depth carries the per-event scaled error, and the box duration's value is the median of the resamples.";
+  // the shape block's a/R* names the fit it comes from (pack_rows.SHAPE_A_OVER_R_NAMES)
+  const AR_FIT = { prior: " (density-prior fit)", free: " (free fit)" };
+  const SHAPE_WORDS = "For the fitted rows (k, b, a/R*, T14 and the model depth) the value is the median of the resamples, minus and plus the 16th to 50th and 50th to 84th percentile spread about it, and the full-data fit stands beside it. The box depth carries the per-event scaled error, and the box duration's value is the median of the resamples.";
   // the decimals a stored number carries (0.1 has 1, 9.1e-05 has 6, 5 has none): Python's _places
   const places = (x) => {
     const [mant, exp] = String(x).toLowerCase().split("e");
@@ -567,7 +569,7 @@
       para(2, `${method}: ${fmt(SH.n_converged)} of ${fmt(SH.n_boot)} resamples converged. ${SHAPE_WORDS}${SH.ok ? "" : ` No bootstrap errors: ${SH.reason}.`}`, "only-expert");
       if (SH.degenerate) para(2, `The fit is degenerate (${SH.degeneracy_reason}).`, "only-expert dossier-caveat");
       const row = (name, x, d) => (x && isNum(x.median) ? [`${name}:`, `${fmt(x.median, d)}${pmErr(x, d)}${isNum(x.point) && isNum(x.minus) ? `, full-data fit ${fmt(x.point, d)}` : ""}`] : null);
-      const rows = [row("k, radius ratio", SH.k, 4), row("b, impact parameter", SH.b, 2), row("a / R★", SH.a_over_r, 1),
+      const rows = [row("k, radius ratio", SH.k, 4), row("b, impact parameter", SH.b, 2), row(`a / R★${AR_FIT[(SH.comparison || {}).quoted] || ""}`, SH.a_over_r, 1),
         row("T14, hours", SH.t14_h, 2), row("model depth, ppm", SH.model_depth_ppm, 0), row("box depth, ppm", SH.box_depth_ppm, 0),
         row("box duration, hours", SH.box_duration_h, 2), isNum(SH.ingress_min) ? ["ingress, minutes:", fmt(SH.ingress_min, 1)] : null];
       list(2, rows.filter(Boolean), "only-expert");

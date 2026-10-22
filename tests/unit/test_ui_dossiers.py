@@ -946,3 +946,24 @@ def test_a_star_not_assessed_shows_no_prediction_caveat_and_no_significance(seed
     export = client.get(f"/dossiers/{STAGE2_TARGET}/export.html").text
     assert 'const assessed = TS.verdict !== "not assessed";' in export
     assert "if (assessed) list(2," in export and "if (assessed) para(2, `TIC ${TS.tic}" in export
+
+
+def test_the_shape_table_says_its_value_is_the_resample_median_and_names_the_a_over_r_fit(seeded_dossier):
+    """Task 10 fix round 1, I-2 and M-8: since version 5 the value column is the resample median with the full-data
+    fit beside it, and the shape block's a/R* is labelled with the fit it comes from, on the page and in the
+    standalone export the pack ships."""
+    from pathlib import Path
+    client, app, _ids, data = seeded_dossier
+    client.cookies.set("skysift_mode", "expert")
+    path = Path(app.state.store.dossier(STAGE2_TARGET)["data_path"])
+    cmp = {"constrained": False, "quoted": "prior", "delta_chi2": 0.2, "density_tension_sigma": None,
+           "a_over_r_label": "from the stellar parameters", "reason": "unconstrained"}
+    path.write_text(json.dumps({**data, "shape": {**data["shape"], "comparison": cmp}}), encoding="utf-8")
+    words = ("the value is the median of the resamples, minus and plus the 16th to 50th and 50th to 84th percentile "
+             "spread about it, and the full-data fit stands beside it")
+    html = client.get(f"/dossiers/{STAGE2_TARGET}").text
+    checks = html.split('id="checks"')[1].split('id="pixels"')[0]
+    assert words in checks and "a / R★ (density-prior fit)" in checks
+    export = client.get(f"/dossiers/{STAGE2_TARGET}/export.html").text
+    assert words in export and "(density-prior fit)" in export
+    assert "the fit to the whole light curve" not in html + export

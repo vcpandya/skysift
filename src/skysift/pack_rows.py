@@ -175,28 +175,30 @@ SHAPE_ROWS = (("radius ratio k", "k", "", 4, "fit_k"), ("impact parameter b", "b
               ("box depth", "box_depth_ppm", "ppm", 0, None), ("box duration", "box_duration_h", "h", 2, None))
 
 
+# the shape block's a/R* names the fit it comes from (fix round 1 of Task 10, I-1 and M-8): under the density prior
+# it follows the host's density, so it is not a second, independent a/R*
+SHAPE_A_OVER_R_NAMES = {"prior": "a/R* (density-prior fit)", "free": "a/R* (free fit)"}
+
+
 def _quoted_values(shape: dict) -> dict:
-    """The quoted shape fit's full-data values by shape key (version 5: ``shape.fits`` and ``shape.comparison``; k,
-    T14 and the model depth from the prior fit when it is ok, as the bootstrap takes them), {} before version 5 or
-    without an ok fit."""
+    """The quoted shape fit's full-data values by shape key (version 5: ``shape.fits`` and ``shape.comparison``; all
+    five from the quoted fit, spec 11.3 as amended in fix round 1 of Task 10), {} before version 5 or without an ok
+    quoted fit."""
     fits, cmp = shape.get("fits") or {}, shape.get("comparison") or {}
-    prior, free = fits.get("prior"), fits.get("free")
-    prior = prior if isinstance(prior, dict) and prior.get("ok") is True else None
-    free = free if isinstance(free, dict) and free.get("ok") is True else None
-    geo = prior if cmp.get("quoted") == "prior" and prior else free
-    size = prior or free
-    if size is None or geo is None:
+    fit = fits.get(cmp.get("quoted") or "free")
+    if not (isinstance(fit, dict) and fit.get("ok") is True):
         return {}
-    t14 = _num(size.get("t14_days"))
-    return {"k": size.get("k"), "b": geo.get("b"), "a_over_r": geo.get("a_over_r"),
-            "t14_h": None if t14 is None else t14 * 24.0, "model_depth_ppm": size.get("depth_ppm")}
+    t14 = _num(fit.get("t14_days"))
+    return {"k": fit.get("k"), "b": fit.get("b"), "a_over_r": fit.get("a_over_r"),
+            "t14_h": None if t14 is None else t14 * 24.0, "model_depth_ppm": fit.get("depth_ppm")}
 
 
 def shape_rows(data: dict) -> list[dict]:
     """The shape block as rows {key, parameter, value, minus, plus, unit, point, note, nd}: k, b, a/R*, T14, the
     model depth, the box depth and the box duration, each the resample median with its bootstrap errors and the
     full-data value (``point``) beside it. A parameter the block has no value for takes the quoted fit's full-data
-    value (version 5), else rung 2's point value when the fit is ok; a row without errors says why in ``note`` ("no
+    value (version 5), else rung 2's point value when the fit is ok; in version 5 the a/R* row is named by its fit
+    (``SHAPE_A_OVER_R_NAMES``); a row without errors says why in ``note`` ("no
     error; <the degeneracy reason>" for b and a/R* of a degenerate fit, else the block's reason). [] without the
     block."""
     shape = data.get("shape")
@@ -205,8 +207,11 @@ def shape_rows(data: dict) -> list[dict]:
     sh = _metrics(data, "rung2_shape")
     fit = sh.get("fit_ok") is True
     quoted = _quoted_values(shape)
+    variant = (shape.get("comparison") or {}).get("quoted")
     rows = []
     for name, key, unit, nd, point in SHAPE_ROWS:
+        if key == "a_over_r" and variant in SHAPE_A_OVER_R_NAMES:
+            name = SHAPE_A_OVER_R_NAMES[variant]
         block = shape.get(key)
         if isinstance(block, dict) and _num(block.get("median")) is not None:
             value, lo, hi, boot = (_num(block.get(x)) for x in ("median", "minus", "plus", "point"))
@@ -230,24 +235,27 @@ def event_rows(data: dict) -> list[dict]:
     """One row per epoch of ``timing.times`` (of ``plots.events`` for a dossier without a timing block), {epoch,
     t_mid_bkjd, quarter, depth_ppm, err_ppm, coverage, ses, timed, timing_reason}: the predicted mid-time on the
     ephemeris the dossier folded on, the quarter, depth, error, coverage and single-event statistic from
-    ``plots.events`` by epoch (blank when that event has no depth), and whether the transit was timed (the timing
-    row's ``used``) with the reason it was not, so ``events.csv`` and ``transit_times.csv`` list the same epochs."""
+    ``plots.events`` by epoch (blank when that event has no depth; the single-event statistic is the timing row's
+    own ``ses`` when it carries one, the value the SES cut read on the search ephemeris, fix round 1 of Task 10,
+    M-4), and whether the transit was timed (the timing row's ``used``) with the reason it was not, so ``events.csv``
+    and ``transit_times.csv`` list the same epochs."""
     events = {int(e["epoch"]): e for e in (data.get("plots") or {}).get("events") or []
               if isinstance(e, dict) and e.get("epoch") is not None}
     timing = data.get("timing")
     eph = data.get("ephemeris") or {}
     period, t0 = _num(eph.get("period_days")), _num(eph.get("t0_bkjd"))
 
-    def row(epoch: int, timed, reason) -> dict:
+    def row(epoch: int, timed, reason, cut: dict | None = None) -> dict:
         ev = events.get(epoch) or {}
         t_mid = ev.get("t_mid")
         if t_mid is None and period is not None and t0 is not None:
             t_mid = round(t0 + epoch * period, 3)
+        ses = cut["ses"] if cut is not None and "ses" in cut else ev.get("ses")
         return {"epoch": epoch, "t_mid_bkjd": t_mid, "quarter": ev.get("quarter"), "depth_ppm": ev.get("depth_ppm"),
-                "err_ppm": ev.get("err_ppm"), "coverage": ev.get("coverage"), "ses": ev.get("ses"), "timed": timed,
+                "err_ppm": ev.get("err_ppm"), "coverage": ev.get("coverage"), "ses": ses, "timed": timed,
                 "timing_reason": reason}
     if isinstance(timing, dict) and isinstance(timing.get("times"), list):
-        return [row(int(t["epoch"]), t.get("used"), t.get("reason")) for t in timing["times"]
+        return [row(int(t["epoch"]), t.get("used"), t.get("reason"), t) for t in timing["times"]
                 if isinstance(t, dict) and t.get("epoch") is not None]
     return [row(e, None, None) for e in events]
 

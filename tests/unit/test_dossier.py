@@ -41,7 +41,7 @@ from skysift.dossier import (
     status_label,
     whitened,
 )
-from skysift.ephemeris import LOW_SES_REASON
+from skysift.ephemeris import LOW_SES_REASON, SES_MIN
 from skysift.fpp import FppInputs, compute
 from skysift.lc.transit_model import NO_DENSITY, _t14
 from skysift.models import Signal, TestResult, TestStatus
@@ -1005,7 +1005,10 @@ def test_generate_writes_the_timing_shape_parity_and_secondary_blocks(env):
     rp, k = d["planet"]["rp_rearth"], shape["k"]
     assert rp["plus"] >= stellar["plus"] and rp["minus"] >= stellar["minus"]
     assert rp["plus"] == pytest.approx(math.hypot(stellar["plus"], rp["median"] * k["plus"] / k["median"]), abs=0.006)
-    assert rp["source"] == stellar["source"] + "; radius-ratio error from the bootstrap"
+    # fix round 1, I-3: the radius is made from the quoted centre, the resample median the texts print (the run
+    # without resamples made its own from the quoted fit's full-data k)
+    assert stellar["source"].endswith(" from the transit fit x R*")
+    assert rp["source"] == f"k {k['median']:.4f} from the transit fit x R*; radius-ratio error from the bootstrap"
     keys = [c.get("key") for c in d["caveats"]]
     assert "no_ephemeris_error" not in keys and "no_shape_error" not in keys
     assert "shape_offset" not in keys           # version 5: the point is the limb-darkened fit of this curve
@@ -1412,8 +1415,15 @@ def test_version_5_folds_on_the_linear_ephemeris_and_stores_both_fits(env):
     assert set(shape["fits"]) == {"free", "prior"} and shape["fits"]["prior"]["variant"] == "prior"
     assert shape["limb_darkening"]["law"] == "quadratic" and shape["exposure_min"] == pytest.approx(29.4, abs=0.1)
     assert shape["comparison"]["quoted"] in ("free", "prior")
-    assert f"k {shape['fits']['prior']['k']:.4f} from the transit fit" in d["planet"]["rp_rearth"]["source"]
+    # fix round 1, I-3: one radius ratio per text; without resamples (this env) the quoted fit's full-data k
+    quoted = shape["fits"][shape["comparison"]["quoted"]]
+    assert shape["ok"] is False and f"k {quoted['k']:.4f} from the transit fit" in d["planet"]["rp_rearth"]["source"]
     assert d["plots"]["model_kind"] == "fit"
+    # fix round 1, M-4: each timing row keeps the single-event statistic it was cut on (the search ephemeris)
+    assert all("ses" in t for t in timing["times"])
+    for t in timing["times"]:
+        if t["ses"] is not None:
+            assert (t["reason"] == LOW_SES_REASON) == (t["ses"] < SES_MIN), t
 
 
 def test_without_enough_ses_the_fold_stays_on_the_search_ephemeris(env, monkeypatch):
