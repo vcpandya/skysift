@@ -78,7 +78,8 @@ def fake_result(sha: str, fpp: float = 0.012, nfpp: float = 1e-4, n: int = cc.N_
             "inputs_sha256": sha,
             "caveats": [("The light is shared in the Kepler band with Gaia G as the proxy; the limb darkening comes "
                          "from the package's Kepler table.")],
-            "settings": {"N": 1_000_000, "exptime_days": 0.0204}}
+            "settings": {"N": 1_000_000, "exptime_days": 0.0204,
+                         "field_stars": {"file": "r.population.csv", "n_rows": 8883, "sha256": "c" * 64}}}
 
 
 def _write(path: Path, obj) -> Path:
@@ -616,7 +617,8 @@ def test_tool_runs_are_recorded_summarised_and_pass_the_import_checks():
     assert r["best_scenario"] == {"id": "169822650", "scenario": "TP", "prob": 0.735}
     assert tc.run_record(1, -1e-17, 0.0, False, [])["fpp"] == 0.0            # rounding below 0 is clipped
     runs = [tc.run_record(7 + k, f, f / 10, k == 4, scen) for k, f in enumerate(np.linspace(0.01, 0.2, 20))]
-    settings = {"N": 1_000_000, "notes": ["a note"], "parallel": True, "allow_old_export": False}
+    settings = {"N": 1_000_000, "notes": ["a note"], "parallel": True, "allow_old_export": False,
+                "field_stars": {"n_rows": 10, "sha256": "c" * 64}}
     result = tc.assemble_result(runs, [{"id": "1", "tmag": 15.2}], settings, {"fingerprint": "b" * 64}, "1.1.0")
     assert tuple(result) == cc.RESULT_KEYS and result["tool"] == cc.TOOL and result["n_degenerate"] == 1
     good = [x for x in runs if not x["degenerate"]]
@@ -806,7 +808,8 @@ def test_tool_refuses_an_export_from_before_the_revision(tmp_path, monkeypatch, 
     args = ["--inputs", str(tmp_path), "--out", str(tmp_path / "r.json")]
     assert tc.main(args) == 2
     err = capsys.readouterr().err
-    for words in ("no crowdsap key", "no psffrac key", "neighbour 1 carry no parameter sources", "no clip count",
+    for words in ("no crowdsap key", "no psffrac key", "neighbour 1 carry no parameter sources",
+                  "neighbour 1 carry no mass_radius (the radius each mass belongs to)", "no clip count",
                   "re-export it with skysift crosscheck --export", "--allow-old-export"):
         assert words in err
     assert not (tmp_path / "r.json").exists()
@@ -819,7 +822,8 @@ def test_tool_refuses_an_export_from_before_the_revision(tmp_path, monkeypatch, 
     monkeypatch.setattr(tc, "tr", SimpleNamespace(target=target))
     with pytest.raises(Reached):                             # past the refusal, at the package's constructor
         tc.main([*args, "--allow-old-export"])
-    assert tc.export_problems({"target": {"crowdsap": 1.2, "psffrac": None}, "neighbours": [{"params_source": {}}],
+    assert tc.export_problems({"target": {"crowdsap": 1.2, "psffrac": None},
+                               "neighbours": [{"params_source": {}, "mass_radius": None}],
                                "lightcurve": {"clipped": 0}}) == ["the target's CROWDSAP 1.2 is not in (0, 1]"]
     assert tc.main([*args, "--draws", "0"]) == 2
 
@@ -970,3 +974,61 @@ def test_tool_check_record_is_clamped_and_star_rows_carry_the_box_factor():
     shares = tc.leakage_shares(stars, 0.8, [None] * 3, 0.002, box_factors=[None, None, f])
     rows = tc.star_rows(stars, [], {"added": 17.0}, shares, [None] * 3, {})
     assert [r["box_factor"] for r in rows] == [1.0, 1.0, f]
+
+
+def test_the_import_requires_a_field_star_population():
+    """Round 3: a result that does not show the package's field-star population was used is refused."""
+    good = fake_result("a" * 64)
+    for stars in (None, {}, {"n_rows": 0}, {"n_rows": True}, {"n_rows": "8883"}, []):
+        settings = {k: v for k, v in good["settings"].items() if k != "field_stars"}
+        if stars is not None:
+            settings["field_stars"] = stars
+        with pytest.raises(cc.BadResult, match="settings.field_stars records"):
+            cc.validate_result({**good, "settings": settings})
+    cc.validate_result(good)
+
+
+def test_neighbour_params_at_the_edges_of_the_dwarf_table():
+    """Round 3 minor 5: without a Teff the radius-only rule leaves an evolved star's mass to the package, and a value
+    read outside the table says it is held at the table's edge."""
+    tab = mamajek_table()
+    big = cc.neighbour_params({"radius_gspphot": "5.0"}, None)
+    assert big["teff"] is None and big["mass"] is None
+    assert big["source"]["mass"] == ("Gaia DR3 GSP-Phot radius 5.000 above the dwarf table's largest 2.49, with no "
+                                     "Teff to compare it at: evolved; mass left to the package")
+    by_teff = np.argsort(tab[:, 1])
+    hot = float(tab[by_teff, 1][-1]) - 100.0
+    assert 2.55 <= 1.2 * float(np.interp(hot, tab[by_teff, 1], tab[by_teff, 2]))    # a dwarf by the Teff rule
+    edge = cc.neighbour_params({"teff_gspphot": str(hot), "radius_gspphot": "2.55"}, None)
+    assert edge["mass"] is not None and edge["source"]["mass"].endswith(", held at the table's edge")
+    cool = cc.neighbour_params({"teff_gspphot": "2000", "radius_gspphot": "1.0"}, None)
+    assert cool["mass"] is None and "K (Teff held at the table's edge): evolved" in cool["source"]["mass"]
+    red = cc.neighbour_params(None, 5.5)
+    assert all(s.endswith(", held at the table's edge") for s in red["source"].values())
+    assert not cc.neighbour_params(None, 1.1)["source"]["teff"].endswith("edge")
+
+
+def test_tool_writes_a_sorted_population_copy_per_result(tmp_path):
+    """Round 3 minor 1: the result's own copy, rows sorted, header first, its hash the source's."""
+    from tools import triceratops_check as tc
+    src = tmp_path / "6146676_gaia_background.csv"
+    src.write_text("Mact,logg\n0.8,4.5\n0.5,4.6\n0.6,4.55\n", encoding="utf-8")
+    dest = tc.population_path(tmp_path / "smoke.json")
+    assert dest.name == "smoke.population.csv"
+    out = tc.sorted_population(str(src), dest)
+    assert dest.read_text(encoding="utf-8") == "Mact,logg\n0.5,4.6\n0.6,4.55\n0.8,4.5\n"
+    assert out["file"] == str(dest.resolve()) and out["source_file"] == src.name and out["n_rows"] == 3
+    assert out["sha256"] == tc.field_star_summary(str(src))["sha256"] and not list(tmp_path.glob("*.tmp"))
+    with pytest.raises(ValueError, match="no field-star population"):
+        tc.sorted_population(None, dest)
+
+
+def test_tool_leaves_a_finished_result_alone(tmp_path, monkeypatch, capsys):
+    """Round 3 minor 4: an existing result stops the tool with exit 0 before anything is read or written."""
+    from tools import triceratops_check as tc
+    monkeypatch.setattr(tc, "tr", None)
+    out = tmp_path / "r.json"
+    out.write_text("{}", encoding="utf-8")
+    assert tc.main(["--inputs", str(tmp_path / "missing"), "--out", str(out), "--resume"]) == 0
+    assert "result exists; remove it to rerun" in capsys.readouterr().err
+    assert out.read_text(encoding="utf-8") == "{}" and sorted(p.name for p in tmp_path.iterdir()) == ["r.json"]

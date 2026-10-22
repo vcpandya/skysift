@@ -62,8 +62,11 @@ whether it was degenerate; the medians and the 16th and 84th percentiles are ove
 
 Field stars. The constructor's Gaia DR3 query for the field-star population returns None when it fails, and the
 package then skips the DTP, DEB, DEBx2P, BTP, BEB and BEBx2P scenarios without a word, so the tool refuses to start
-(exit 2) without a readable, non-empty population file and records its row count and a hash of its sorted rows in
-``settings.field_stars`` (``field_star_summary``).
+(exit 2) without a readable, non-empty population file. It writes the rows sorted to the result's own copy,
+``<out stem>.population.csv``, and points the package at it (``sorted_population``), so the same seed draws the same
+field stars across starts and two runs in one folder never share a file; ``settings.field_stars`` records the copy's
+path, row count and hash. A result file that already exists stops the tool at once with exit 0 ("result exists"), so
+a launcher rerun never redoes or overwrites it.
 
 Checkpoint. After the check and after every run the tool writes ``<out stem>.partial.json`` (``partial_path``): the
 runs so far, the check, the parallel state and what defines a run (``checkpoint_key``): the settings, the field-star
@@ -393,7 +396,8 @@ def clip_caveat(lightcurve: dict) -> str | None:
 
 def export_problems(inputs: dict) -> list[str]:
     """What an export lacks of the cross-check revision of 22 October 2026: the target's CROWDSAP (in (0, 1]) and its
-    PSFFRAC key, each neighbour's ``params_source`` and the light curve's clip count. [] for a current export."""
+    PSFFRAC key, each neighbour's ``params_source`` and ``mass_radius`` (an export before 9b2a0e4 set masses by the
+    older evolved rule) and the light curve's clip count. [] for a current export."""
     out = []
     tgt = inputs.get("target") or {}
     c = _finite(tgt.get("crowdsap"))
@@ -403,9 +407,11 @@ def export_problems(inputs: dict) -> list[str]:
         out.append(f"the target's CROWDSAP {tgt.get('crowdsap')!r} is not in (0, 1]")
     if "psffrac" not in tgt:
         out.append("the target has no psffrac key")
-    lacking = [str(n.get("source_id")) for n in inputs.get("neighbours") or [] if "params_source" not in n]
-    if lacking:
-        out.append(f"neighbour{'s' if len(lacking) != 1 else ''} {', '.join(lacking)} carry no parameter sources")
+    for key, words in (("params_source", "parameter sources"),
+                       ("mass_radius", "mass_radius (the radius each mass belongs to)")):
+        lacking = [str(n.get("source_id")) for n in inputs.get("neighbours") or [] if key not in n]
+        if lacking:
+            out.append(f"neighbour{'s' if len(lacking) != 1 else ''} {', '.join(lacking)} carry no {words}")
     if not isinstance((inputs.get("lightcurve") or {}).get("clipped"), int):
         out.append("the light curve has no clip count")
     return out
@@ -618,6 +624,29 @@ def field_star_summary(fname) -> dict:
     return {"file": Path(fname).name, "n_rows": len(rows), "sha256": digest}
 
 
+def population_path(out: Path) -> Path:
+    """The result's own copy of the field-star population: ``<out stem>.population.csv``."""
+    out = Path(out)
+    return out.with_name(out.stem + ".population.csv")
+
+
+def sorted_population(src, dest: Path) -> dict:
+    """Write the package's field-star population ``src`` to ``dest`` with its rows sorted and the header first,
+    through a temporary file and a rename, and return ``field_star_summary`` of the copy with "file" its absolute path
+    and "source_file" the package's file name. The package draws field stars by row index with the seeded generator,
+    and the Gaia query returns its rows in no fixed order, so a sorted copy makes the same seed draw the same stars
+    across starts; a copy per result means two runs in one folder (two signals of one KIC) never share the file the
+    package re-reads on every run. Raises ValueError as ``field_star_summary``."""
+    field_star_summary(src)
+    lines = Path(src).read_text(encoding="utf-8").splitlines()
+    rows = sorted(line for line in lines[1:] if line.strip())
+    dest = Path(dest).resolve()
+    tmp = dest.with_name(dest.name + ".tmp")
+    tmp.write_text("\n".join([lines[0], *rows]) + "\n", encoding="utf-8")
+    os.replace(tmp, dest)
+    return {**field_star_summary(str(dest)), "file": str(dest), "source_file": Path(src).name}
+
+
 def stars_digest(rows) -> str:
     """A SHA-256 of the ``stars`` table the runs use (``STARS_COLUMNS``, each number at 8 significant figures), taken
     after the parameter and share steps."""
@@ -738,13 +767,16 @@ def main(argv=None) -> int:
         return 2
     if a.draws < N_DRAWS:
         print(f"--draws {a.draws:,} is below {N_DRAWS:,}: smoke only, the import will refuse it", file=sys.stderr)
+    inputs_dir, out = Path(a.inputs).resolve(), Path(a.out).resolve()
+    if out.exists():                    # a launcher rerun never redoes, or overwrites, a finished result
+        print(f"result exists; remove it to rerun ({out})", file=sys.stderr)
+        return 0
     if tr is None:
         print("TRICERATOPS is not installed in this interpreter; run this tool with "
               ".venv-triceratops/Scripts/python.exe (see its docstring)", file=sys.stderr)
         return 2
     from importlib.metadata import version
 
-    inputs_dir, out = Path(a.inputs).resolve(), Path(a.out).resolve()
     partial = partial_path(out)
     if partial.exists() and not a.resume:
         print(f"checkpoint exists; pass --resume or remove it ({partial})", file=sys.stderr)
@@ -784,7 +816,8 @@ def main(argv=None) -> int:
     t = tr.target(ID=int(tgt.get("kic") or inputs["neighbour_kic"]), sectors=[], search_radius=SEARCH_RADIUS,
                   mission="Kepler", ra=tgt["ra"], dec=tgt["dec"])
     try:
-        field_stars = field_star_summary(getattr(t, "trilegal_fname", None))
+        field_stars = sorted_population(getattr(t, "trilegal_fname", None), population_path(out))
+        t.trilegal_fname = field_stars["file"]          # calc_probs reads it on every run: the sorted, own copy
     except ValueError as e:
         print(f"{e}: the package's Gaia DR3 query for the field-star population is the likely cause (an outage or a "
               "refusal), and without the population it would skip the DTP, DEB, DEBx2P, BTP, BEB and BEBx2P "

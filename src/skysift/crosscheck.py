@@ -173,23 +173,35 @@ def _table_value(x: float, xcol: int, ycol: int) -> float:
     return float(np.interp(x, tab[order, xcol], tab[order, ycol]))
 
 
+def _off_table(x: float, col: int) -> bool:
+    """Whether ``x`` lies outside the Mamajek dwarf table's range in column ``col``, so a value read at it is held at
+    the table's edge."""
+    from skysift.stars import mamajek_table
+    tab = mamajek_table()[:, col]
+    return not float(np.min(tab)) <= x <= float(np.max(tab))
+
+
 def neighbour_params(row: dict | None, bp_rp) -> dict:
     """The Teff (K), radius and mass (solar) the tool sets on a TIC row that lacks them (ruling q), each with its
     source: Gaia DR3's GSP-Phot Teff and radius and its FLAME mass from ``row`` (the neighbour's row of the Gaia query,
     None when Gaia had none or was not reached); a mass missing beside a GSP-Phot radius from the Mamajek dwarf table's
     mass-radius relation at that radius; anything else missing from the table at the BP-RP colour (Pecaut and Mamajek
     2013), the row's own colour first. A GSP-Phot radius more than ``RADIUS_MISMATCH`` above the dwarf table's radius
-    at the star's Teff (an evolved star) without a FLAME mass leaves the mass None, its source saying why and "evolved;
-    mass left to the package", since the dwarf relation would give a dwarf's mass. A parameter neither Gaia nor a
+    at the star's Teff (an evolved star), or without a Teff above the table's largest radius, leaves the mass None
+    when there is no FLAME mass, its source saying why and "evolved; mass left to the package", since the dwarf
+    relation would give a dwarf's mass. A value read outside the table's range says it is held at the table's edge. A parameter neither Gaia nor a
     colour gives is None, so the package's own estimate stays. Returns {"teff", "radius", "mass", "mass_radius" (the
     radius the mass belongs to, so the tool can leave the mass to the package when the radius the package uses is
     another; None without a mass), "source": {"teff", "radius", "mass"}}."""
     from skysift.priors import CITATIONS
+    from skysift.stars import mamajek_table
     row = row or {}
     colour = _finite(row.get("bp_rp"))
     colour = _finite(bp_rp) if colour is None else colour
     ref = CITATIONS["DWARF_SEQUENCE"]
-    table = f"Mamajek dwarf table at BP-RP {colour:.3f} ({ref})" if colour is not None else None
+    table = (f"Mamajek dwarf table at BP-RP {colour:.3f} ({ref})"
+             + (", held at the table's edge" if _off_table(colour, 0) else "")) if colour is not None else None
+    largest = float(np.max(mamajek_table()[:, 2]))
     out: dict = {"source": {}}
     for key, col, gaia_key, gaia_words in (("teff", 1, "teff_gspphot", "Gaia DR3 GSP-Phot"),
                                            ("radius", 2, "radius_gspphot", "Gaia DR3 GSP-Phot"),
@@ -199,14 +211,21 @@ def neighbour_params(row: dict | None, bp_rp) -> dict:
             out[key], out["source"][key] = value, gaia_words
         elif key == "mass" and out["source"].get("radius") == "Gaia DR3 GSP-Phot" and out.get("teff") and \
                 out["radius"] > (1 + RADIUS_MISMATCH) * (dwarf := _table_value(out["teff"], 1, 2)):
+            held = " (Teff held at the table's edge)" if _off_table(out["teff"], 1) else ""
             out[key] = None
             out["source"][key] = (f"Gaia DR3 GSP-Phot radius {out['radius']:.3f} is more than "
                                   f"{RADIUS_MISMATCH:.0%} above the dwarf table's {dwarf:.3f} at Teff "
-                                  f"{out['teff']:.0f} K: evolved; mass left to the package")
+                                  f"{out['teff']:.0f} K{held}: evolved; mass left to the package")
+        elif key == "mass" and out["source"].get("radius") == "Gaia DR3 GSP-Phot" and not out.get("teff") and \
+                out["radius"] > largest:
+            out[key] = None
+            out["source"][key] = (f"Gaia DR3 GSP-Phot radius {out['radius']:.3f} above the dwarf table's largest "
+                                  f"{largest:.2f}, with no Teff to compare it at: evolved; mass left to the package")
         elif key == "mass" and out["source"].get("radius") == "Gaia DR3 GSP-Phot":
             out[key] = round(_table_value(out["radius"], 2, 3), 3)
             out["source"][key] = (f"Mamajek dwarf table mass-radius relation at the GSP-Phot radius "
-                                  f"{out['radius']:.3f} ({ref})")
+                                  f"{out['radius']:.3f} ({ref})"
+                                  + (", held at the table's edge" if _off_table(out["radius"], 2) else ""))
         elif table is not None:
             out[key] = round(_table_value(colour, 0, col), 0 if key == "teff" else 3)
             out["source"][key] = table
@@ -440,8 +459,9 @@ def validate_result(result) -> None:
     ``N_RUNS`` runs or a run list of another length, a run without its probabilities (each between 0 and 1) or with
     an FPP without STP that is not (FPP - P_STP) / (1 - P_STP), a degenerate count that is not the runs', every run
     degenerate, a median or percentile that is not the non-degenerate runs' (``summarise``), an inputs hash that is
-    not a SHA-256, fewer than ``MIN_DRAWS`` draws per run (``settings.N``: a smoke result), or a run made with
-    ``--allow-old-export`` (``settings.allow_old_export`` true)."""
+    not a SHA-256, fewer than ``MIN_DRAWS`` draws per run (``settings.N``: a smoke result), no field-star population
+    (``settings.field_stars`` without a row count above 0), or a run made with ``--allow-old-export``
+    (``settings.allow_old_export`` true)."""
     if not isinstance(result, dict):
         raise BadResult("the result file does not hold a JSON object")
     lacking = [k for k in RESULT_KEYS if k not in result]
@@ -478,6 +498,12 @@ def validate_result(result) -> None:
     if not isinstance(draws, int) or isinstance(draws, bool) or draws < MIN_DRAWS:
         raise BadResult(f"settings.N is {draws!r} draws per run, below the {MIN_DRAWS:,} the cross-check needs; a "
                         "result at fewer draws is a smoke test, so run the tool at its default draws")
+    stars = result["settings"].get("field_stars")
+    n_field = stars.get("n_rows") if isinstance(stars, dict) else None
+    if not isinstance(n_field, int) or isinstance(n_field, bool) or n_field <= 0:
+        raise BadResult(f"settings.field_stars records {n_field!r} field stars: the result does not show that the "
+                        "package's field-star population was used, so its DTP, DEB, BTP and BEB scenarios may have "
+                        "been skipped; run the tool again")
     if result["settings"].get("allow_old_export", False) is not False:          # absent: a tool before the flag
         raise BadResult(f"settings.allow_old_export is {result['settings']['allow_old_export']!r}: the result was "
                         "made from an export before the revision of 22 October 2026, on the package's own shares; "
