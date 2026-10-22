@@ -932,6 +932,21 @@ def test_generate_writes_the_timing_shape_parity_and_secondary_blocks(env):
     json.dumps(d, allow_nan=False)
 
 
+def test_full_bjd_values_keep_their_decimals_in_the_stored_json(env):
+    """Eight significant figures of a full BJD leave a tenth of a day: a key ending in _bjd keeps six decimals."""
+    rep = generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch)
+    d = json.loads(rep.data_path.read_text(encoding="utf-8"))
+    e, first = d["ephemeris"], d["timing"]["times"][0]
+    assert d["timing"]["ok"]
+    assert abs(e["t0_bjd"] - (e["t0_bkjd"] + BKJD_OFFSET)) < 1e-5
+    assert abs(e["t_ref_bjd"] - (e["t_ref_bkjd"] + BKJD_OFFSET)) < 1e-5
+    assert abs(d["timing"]["t0_bjd"] - (d["timing"]["t0"] + BKJD_OFFSET)) < 1e-5
+    assert abs(first["t_bjd"] - (first["t_bkjd"] + BKJD_OFFSET)) < 1e-5
+    assert e["t0_bjd_err"] == e["t0_bkjd_err"]                       # an error keeps its significant figures
+    assert dossier_module._tidy({"t0_bjd": 2454969.3003312, "period": 40.28986312}) == {
+        "t0_bjd": 2454969.300331, "period": 40.289863}
+
+
 def test_generate_without_enough_transits_says_so(env, monkeypatch):
     two = keep_quarters(env.lc, [2])               # quarter 2 holds the transits at BKJD 257.2 and 297.5
     monkeypatch.setitem(PARSERS, "kbonus_bkg", lambda _data: two)

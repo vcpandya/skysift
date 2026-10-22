@@ -88,6 +88,7 @@ MODEL_POINTS = 400
 ALIAS_FACTORS = (0.5, 2.0, 3.0)
 STARS_SEED = 20261021           # the seed of stars.lookup, so a dossier reproduces the lookup's draws
 SIG_FIGS = 8                    # every float in the JSON outside the plot arrays (which carry their own rounding)
+BJD_DECIMALS = 6                # a float under a key ending in "_bjd" (a full BJD_TDB, about 2.45e6 d): 0.09 s
 BKJD_OFFSET = 2454833.0
 SUN_ANGULAR_DEG = 0.533         # the Sun's angular diameter seen from Earth
 RSUN_AU = 0.00465047
@@ -159,15 +160,17 @@ def _sig(x: float) -> float:
     return round(x, SIG_FIGS - 1 - math.floor(math.log10(abs(x))))
 
 
-def _tidy(obj):
-    """Strict-JSON-ready copy with every float at ``SIG_FIGS`` significant figures (no float noise in the file)."""
+def _tidy(obj, key: str | None = None):
+    """Strict-JSON-ready copy with every float at ``SIG_FIGS`` significant figures (no float noise in the file),
+    except a float under a key ending in ``_bjd``, a full BJD_TDB, which keeps ``BJD_DECIMALS`` decimals: eight
+    significant figures of 2,454,969.30033 would leave a tenth of a day."""
     obj = jsonutil.sanitize(obj)
     if isinstance(obj, dict):
-        return {k: _tidy(v) for k, v in obj.items()}
+        return {k: _tidy(v, k) for k, v in obj.items()}
     if isinstance(obj, list):
-        return [_tidy(v) for v in obj]
+        return [_tidy(v, key) for v in obj]
     if isinstance(obj, float):
-        return _sig(obj)
+        return round(obj, BJD_DECIMALS) if key is not None and key.endswith("_bjd") else _sig(obj)
     return obj
 
 
@@ -194,7 +197,7 @@ def _metrics(tests: list[dict], rung: str) -> dict:
     return (_rung(tests, rung) or {}).get("metrics") or {}
 
 
-def _git_commit() -> str:
+def git_commit() -> str:
     """The short commit of the code that built the dossier, with "-dirty" when the tree has uncommitted changes to
     tracked files (``git describe --always --dirty``); "unknown" outside a checkout."""
     try:
@@ -996,7 +999,7 @@ def _provenance(store: Store, signal: dict, target: dict, calibration: Path, dat
                 f"skysift calibrate --source {source}",
                 f"skysift dossier --target {tid} --signal {signal['id']} --force"]
     return {"search_version": signal.get("detector_version"), "ladder_version": ladder,
-            "ladder_versions": per_rung, "git_commit": _git_commit(), "queries": queries, "files": files,
+            "ladder_versions": per_rung, "git_commit": git_commit(), "queries": queries, "files": files,
             "calibration_file": _relative(calibration, data_dir) if calibration.is_file() else None,
             "commands": commands}
 

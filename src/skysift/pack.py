@@ -30,7 +30,6 @@ error is printed beside its own error (``quantities``, ``pm_text``), and a missi
 from __future__ import annotations
 
 import csv
-import functools
 import hashlib
 import io
 import json
@@ -38,7 +37,6 @@ import math
 import platform
 import re
 import shutil
-import subprocess
 import sys
 import zipfile
 from collections.abc import Callable
@@ -88,11 +86,24 @@ MODEL_CLAUSE = ("a uniform-disc model without limb darkening on a circular orbit
 # ExoFOP's bulk templates (ExoFOP help, read 22 October 2026), pipe-delimited, one row per target
 EXOFOP_PLANET_TEMPLATE = "params_planet_{date}_001.txt"
 EXOFOP_STELLAR_TEMPLATE = "params_stellar_{date}_001.txt"
-EXOFOP_PLANET_COLUMNS = ("target", "flag", "disp", "period", "period_unc", "epoch", "epoch_unc", "depth", "depth_unc",
-                         "duration", "duration_unc", "inc", "imp", "r_planet", "ar_star", "radius", "mass", "temp",
-                         "insol", "dens", "sma", "ecc", "tag", "group", "prop_period", "paper", "notes")
-EXOFOP_STELLAR_COLUMNS = ("target", "tel", "telsize", "inst", "sp_type", "teff", "logg", "radius", "mass", "dens",
-                          "lum", "dist", "age", "tag", "group", "prop_period", "notes")
+# (the referee checklist, section 4: the column lists of the live template files, 22 October 2026)
+EXOFOP_PLANET_COLUMNS = ("target", "flag", "disp", "discovery", "candname", "period", "period_unc", "epoch",
+                         "epoch_unc", "depth", "depth_unc", "duration", "duration_unc", "inc", "inc_unc", "imp",
+                         "imp_unc", "r_planet", "r_planet_err", "ar_star", "ar_star_err", "radius", "radius_unc",
+                         "mass", "mass_unc", "temp", "temp_unc", "insol", "insol_unc", "dens", "dens_unc", "sma",
+                         "sma_unc", "ecc", "ecc_unc", "arg_peri", "arg_peri_err", "time_peri", "time_peri_unc", "vsa",
+                         "vsa_unc", "tag", "group", "prop_period", "paper", "notes")
+EXOFOP_STELLAR_COLUMNS = ("target", "tel", "telsize", "inst", "sp_type", "teff", "teff_unc", "logg", "logg_unc",
+                          "radius", "radius_unc", "logrhk", "logrhk_unc", "sindex", "sindex_unc", "halpha",
+                          "halpha_unc", "vsini", "vsini_unc", "rotper", "rotper_unc", "met", "met_unc", "mass",
+                          "mass_unc", "dens", "dens_unc", "lum", "lum_unc", "obs_time", "rv", "rv_unc", "dist",
+                          "dist_unc", "age", "age_unc", "snr", "fit", "tag", "group", "prop_period", "notes")
+EXOFOP_DISCOVERY = "SkySift (Kepler)"      # a blank discovery means TESS, so a Kepler candidate names its project
+EXOFOP_NOTES_MAX = 120
+# the KBonus header keywords of the dilution rows, defined once for the README and the CSV
+CROWDSAP_DEFINITION = ("the fraction of the light in the aperture that belongs to the target (Kepler's CROWDSAP "
+                       "keyword, 1 means no contamination)")
+PSFFRAC_DEFINITION = "the fraction of the target's PSF flux inside the KBonus aperture (its PSFFRAC keyword)"
 TIC_PLACEHOLDER = "<TIC-TO-FILL>"
 SOLAR_LOGG = 4.438          # log10 of the nominal solar surface gravity in cgs (IAU 2015 B3)
 SANDBOX_DOI_PREFIX = "10.5072/"             # Zenodo sandbox DOIs never resolve
@@ -350,11 +361,17 @@ def _fpp_class(data: dict) -> str | None:
     return None
 
 
+def star_characterized(data: dict) -> bool:
+    """Whether the star block has parameters to quote: a route other than "none" and a radius."""
+    star = data.get("star") or {}
+    return star.get("route") not in (None, "none") and value_text(star.get("radius")) is not None
+
+
 def references(data: dict) -> dict[str, bool]:
     """Which works the dossier's numbers rest on, so the note cites exactly those."""
     star, planet = data.get("star") or {}, data.get("planet") or {}
     route = star.get("route") or "none"
-    star_ok = route != "none" and value_text(star.get("radius")) is not None      # as numbers()["star_ok"]
+    star_ok = star_characterized(data)
     cls = _fpp_class(data)
     notes = json.dumps((data.get("fpp") or {}).get("scenarios") or [])
     return {"kbonus": True, "kbonushlsp": True, "morton2012": True,
@@ -690,6 +707,15 @@ def missing_error_reasons(data: dict) -> dict[str, str]:
     return {"timing": timing_reason, "duration": duration, "depth": depth}
 
 
+def _errors(eph: dict) -> dict:
+    """The version 3 errors of an ephemeris block as numbers: period, t0, t_ref, depth (one value each, None without
+    one) and the duration's minus and plus."""
+    dur = eph.get("duration_h_err") or {}
+    return {"period": _num(eph.get("period_err_days")), "t0": _num(eph.get("t0_bjd_err")),
+            "t_ref": _num(eph.get("t_ref_err_days")), "depth": _num(eph.get("depth_ppm_err")),
+            "duration_minus": _num(dur.get("minus")), "duration_plus": _num(dur.get("plus"))}
+
+
 def quantities(data: dict, tex: bool = False) -> dict:
     """The ephemeris as the texts print it, each value beside its own error (never a search value beside a fitted
     error): ``<name>`` the value at its error's decimals, ``<name>_err`` the error (None without one), ``<name>_pm``
@@ -707,15 +733,13 @@ def quantities(data: dict, tex: bool = False) -> dict:
         out[f"{name}_pm"] = pm_text(value, minus, plus, nd=nd, comma=comma, tex=tex)
         if note is not None:
             out[f"{name}_note"] = "" if parts is None or out[f"{name}_err"] else f" (no error; {note})"
-    pe, t0e, tre, de = (_num(eph.get(k)) for k in ("period_err_days", "t0_bjd_err", "t_ref_err_days",
-                                                    "depth_ppm_err"))
-    dur = eph.get("duration_h_err") or {}
-    put("period", eph.get("period_days"), pe, pe, 5, note=why["timing"])
-    put("t0_bjd", _bjd(eph, "t0"), t0e, t0e, 4)
-    put("t0_bkjd", eph.get("t0_bkjd"), t0e, t0e, 4)
-    put("t_ref_bjd", _bjd(eph, "t_ref"), tre, tre, 4)
-    put("duration", eph.get("duration_h"), dur.get("minus"), dur.get("plus"), 2, note=why["duration"])
-    put("depth", eph.get("depth_ppm"), de, de, 0, comma=True, note=why["depth"])
+    e = _errors(eph)
+    put("period", eph.get("period_days"), e["period"], e["period"], 5, note=why["timing"])
+    put("t0_bjd", _bjd(eph, "t0"), e["t0"], e["t0"], 4)
+    put("t0_bkjd", eph.get("t0_bkjd"), e["t0"], e["t0"], 4)
+    put("t_ref_bjd", _bjd(eph, "t_ref"), e["t_ref"], e["t_ref"], 4)
+    put("duration", eph.get("duration_h"), e["duration_minus"], e["duration_plus"], 2, note=why["duration"])
+    put("depth", eph.get("depth_ppm"), e["depth"], e["depth"], 0, comma=True, note=why["depth"])
     return out
 
 
@@ -734,9 +758,8 @@ def ephemeris_rows(data: dict) -> list[dict]:
     """The ephemeris as rows {parameter, value, minus, plus, unit, source, text}: each value with its own error from
     the dossier's version 3 keys (none for a search value), the source naming the method."""
     eph = data.get("ephemeris") or {}
-    pe, t0e, tre, de = (_num(eph.get(k)) for k in ("period_err_days", "t0_bjd_err", "t_ref_err_days",
-                                                    "depth_ppm_err"))
-    dur = eph.get("duration_h_err") or {}
+    e = _errors(eph)
+    pe, t0e, tre, de = e["period"], e["t0"], e["t_ref"], e["depth"]
     timing = ("; ".join(x for x in (eph.get("period_source"), eph.get("ephemeris_method")) if x) if pe is not None
               else "box search (no formal error)")
     ref = f"{timing}; epoch {eph.get('epoch_ref')}, the centre of the series"
@@ -746,7 +769,7 @@ def ephemeris_rows(data: dict) -> list[dict]:
             ("mid-transit time", _bjd(eph, "t0"), t0e, t0e, "BJD_TDB", f"{timing}; epoch 0", 4),
             ("reference mid-transit time", eph.get("t_ref_bkjd"), tre, tre, bkjd, ref, 4),
             ("reference mid-transit time", _bjd(eph, "t_ref"), tre, tre, "BJD_TDB", ref, 4),
-            ("duration", eph.get("duration_h"), dur.get("minus"), dur.get("plus"), "h",
+            ("duration", eph.get("duration_h"), e["duration_minus"], e["duration_plus"], "h",
              eph.get("duration_source") or "box search", 2),
             ("depth", eph.get("depth_ppm"), de, de, "ppm", eph.get("depth_source") or "box search", 0),
             ("signal detection efficiency", eph.get("sde"), None, None, "", "box search", 1),
@@ -825,8 +848,9 @@ def _split_source(source: str | None) -> tuple[str, str, str]:
 
 def logg_value(star: dict) -> dict | None:
     """log g (cgs) from the star block's mass and radius, {"median", "minus", "plus"}: ``SOLAR_LOGG`` + log10 M -
-    2 log10 R, each side's error the quadrature of the mass and radius errors (their correlation in the draws, which
-    the block does not keep, is ignored, so the error is an upper bound). None without both."""
+    2 log10 R. log g is low when the mass is low and the radius high, so the lower side is the quadrature of the
+    mass's minus and twice the radius's plus (relative), the upper side the reverse. The correlation of mass and
+    radius in the stellar draws is not stored, so it is ignored. None without both."""
     m, r = star.get("mass"), star.get("radius")
     if not (isinstance(m, dict) and isinstance(r, dict)):
         return None
@@ -834,11 +858,11 @@ def logg_value(star: dict) -> dict | None:
     if not mv or not rv or mv <= 0 or rv <= 0:
         return None
 
-    def side(k: str) -> float | None:
-        em, er = _num(m.get(k)), _num(r.get(k))
+    def side(mass_side: str, radius_side: str) -> float | None:
+        em, er = _num(m.get(mass_side)), _num(r.get(radius_side))
         return None if em is None or er is None else round(math.hypot(em / mv, 2 * er / rv) / math.log(10), 3)
-    return {"median": round(SOLAR_LOGG + math.log10(mv) - 2 * math.log10(rv), 3), "minus": side("minus"),
-            "plus": side("plus")}
+    return {"median": round(SOLAR_LOGG + math.log10(mv) - 2 * math.log10(rv), 3), "minus": side("minus", "plus"),
+            "plus": side("plus", "minus")}
 
 
 def provenance_rows(data: dict) -> list[dict]:
@@ -873,16 +897,18 @@ def provenance_rows(data: dict) -> list[dict]:
 
 
 def dilution_rows(data: dict) -> list[dict]:
-    """The dilution numbers as rows {key, parameter, value, minus, plus, unit, source, text}: the KBonus catalogue's
-    CROWDSAP and PSFFRAC for this star (the target meta) and rung 5's leak test, the depth with its error at the
-    ephemeris in the neighbour's own aperture flux. Each is left out when it was not stored."""
+    """The dilution numbers as rows {key, parameter, value, minus, plus, unit, source, text}: the KBonus header
+    keywords CROWDSAP and PSFFRAC for this star (the target meta; the source column defines each) and rung 5's leak
+    test, the depth with its error at the ephemeris in the neighbour's own aperture flux. Each is left out when it
+    was not stored."""
     meta = (data.get("target") or {}).get("meta") or {}
     rows = []
-    for key, name in (("crowdsap", "crowding (CROWDSAP)"), ("psffrac", "flux fraction (PSFFRAC)")):
+    for key, name, what in (("crowdsap", "target light fraction (CROWDSAP)", CROWDSAP_DEFINITION),
+                            ("psffrac", "PSF flux fraction (PSFFRAC)", PSFFRAC_DEFINITION)):
         v = _num(meta.get(key))
         if v is not None:
             rows.append({"key": key, "parameter": name, "value": v, "minus": None, "plus": None, "unit": "",
-                         "source": f"KBonus catalogue {key.upper()} (the target's catalogue row)", "text": f"{v:.2f}"})
+                         "source": f"KBonus header keyword {key.upper()}: {what}", "text": f"{v:.2f}"})
     px = _metrics(data, "rung5_pixels")
     leak = px.get("leak_depth_ppm")
     if isinstance(leak, list) and leak and _num(leak[0]) is not None:
@@ -900,8 +926,10 @@ def dilution_rows(data: dict) -> list[dict]:
 def dilution_sentence(data: dict, tex: bool = False) -> str | None:
     """The note's dilution sentence: CROWDSAP and PSFFRAC and the leak depth with its error; None without any."""
     rows = {r["key"]: r for r in dilution_rows(data)}
-    named = [f"a {k.upper()} of {rows[k]['text']}" for k in ("crowdsap", "psffrac") if k in rows]
-    parts = [f"The KBonus catalogue gives this star {' and '.join(named)}"] if named else []
+    words = {"crowdsap": "a target light fraction in the aperture (CROWDSAP)",
+             "psffrac": "a PSF flux fraction inside the aperture (PSFFRAC)"}
+    named = [f"{words[k]} of {rows[k]['text']}" for k in ("crowdsap", "psffrac") if k in rows]
+    parts = [f"The KBonus light curve gives this star {' and '.join(named)}"] if named else []
     leak = rows.get("leak")
     if leak:
         whose = f" (KIC {leak['kic']})" if leak["kic"] else ""
@@ -966,23 +994,14 @@ def skysift_version() -> str:
         return "unknown"
 
 
-@functools.lru_cache(maxsize=1)
-def head_commit() -> str:
-    """The repository HEAD at build time (``git rev-parse --short HEAD``), "unknown" without git or a checkout."""
-    try:
-        out = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, timeout=10,
-                             cwd=Path(__file__).resolve().parents[2], check=False).stdout.strip()
-    except (OSError, subprocess.SubprocessError):
-        return "unknown"
-    return out or "unknown"
-
-
 def software_commit(data: dict) -> str:
-    """The commit the dossier was generated at, else the repository HEAD now."""
-    return (data.get("provenance") or {}).get("git_commit") or head_commit()
+    """The commit the dossier was generated at, else the checkout's own now, in the dossier's format
+    (``dossier.git_commit``, "unknown" without git)."""
+    return (data.get("provenance") or {}).get("git_commit") or ds.git_commit()
 
 
 def search_version(data: dict) -> str | None:
+    """The search version the dossier's signal was found with (its stored detector version)."""
     return (data.get("signal") or {}).get("detector_version") or (data.get("provenance") or {}).get("search_version")
 
 
@@ -1012,7 +1031,7 @@ def numbers(data: dict, tex: bool = False, after_bjd: float | None = None) -> di
         f"Teff {value_text(star.get('teff'))} K" if value_text(star.get("teff")) else None,
         f"R {value_text(star.get('radius'))} Rsun" if value_text(star.get("radius")) else None,
         f"{value_text(star.get('distance_pc'))} pc" if value_text(star.get("distance_pc")) else None) if x)
-    star_ok = star.get("route") not in (None, "none") and value_text(star.get("radius")) is not None
+    star_ok = star_characterized(data)
     q = quantities(data, tex)
     pair = _odd_even(data, tex)
     sec = data.get("secondary") if isinstance(data.get("secondary"), dict) else {}
@@ -1024,7 +1043,7 @@ def numbers(data: dict, tex: bool = False, after_bjd: float | None = None) -> di
         "dec": _f(target.get("dec"), 5), "gmag": _f(target.get("gmag"), 1),
         "summary": data.get("summary") or "", "signal_id": sig.get("id"),
         "generated_words": date_words(data.get("generated") or ""),
-        "search_version": prov.get("search_version") or sig.get("detector_version"),
+        "search_version": search_version(data),
         "ladder_version": prov.get("ladder_version") or sig.get("ladder_version"),
         **q, "period_title": _f(eph.get("period_days"), 3), "t0_err": q["t0_bjd_err"], "t_ref_err": q["t_ref_bjd_err"],
         "ephemeris_text": ephemeris_sentence(data),
@@ -1184,8 +1203,8 @@ FILE_NOTES = {
     "note/figure1_data.csv": "the data behind the note's figure: phase in hours, binned flux, error and count, and "
                              "the model, in ppm",
     f"exofop/{EXOFOP_STELLAR_TEMPLATE}": "the stellar parameters in ExoFOP's bulk template (upload now)",
-    f"exofop/{EXOFOP_PLANET_TEMPLATE}": "the planet parameters in ExoFOP's bulk template (upload only once a "
-                                        "community TOI is allowed, which needs a peer-reviewed paper)",
+    f"exofop/{EXOFOP_PLANET_TEMPLATE}": "the planet parameters in ExoFOP's bulk template, for the community TOI "
+                                        "route once a peer-reviewed paper exists",
     "data/events.csv": "every transit: epoch, mid-time, quarter, depth, error, coverage, single-event statistic",
     "data/periodogram.json": "the periodogram envelope, its peaks and the alias and systematic periods",
     "data/rung_metrics.json": "every vetting rung's status, reason and metrics",
@@ -1271,49 +1290,85 @@ def _plain(value, minus=None, plus=None, nd: int = 2) -> tuple[str | None, str |
     return (parts[0], parts[2]) if parts else (None, None)
 
 
-def _median(block, nd: int, errors: bool = False) -> str | None:
-    """A stored value dict's median as bulk-file text; with ``errors`` only when it carries an error."""
-    if not isinstance(block, dict) or (errors and (_num(block.get("minus")) is None or _num(block.get("plus")) is None)):
-        return None
-    return _plain(block.get("median"), block.get("minus"), block.get("plus"), nd)[0]
+def _pair(values: dict, name: str, unc: str, block, nd: int, errors_only: bool = False) -> None:
+    """A stored value dict into ``values[name]`` and its larger half-width into ``values[unc]``; with
+    ``errors_only`` neither unless the block carries both errors. An error never stands without its value."""
+    if not isinstance(block, dict):
+        return
+    lo, hi = _num(block.get("minus")), _num(block.get("plus"))
+    if errors_only and (lo is None or hi is None):
+        return
+    values[name], values[unc] = _plain(block.get("median"), lo, hi, nd)
+
+
+def _candname(data: dict) -> str:
+    """The SkySift name of the signal: ``SkySift-<target id>-s<signal id>``."""
+    target, sig = data.get("target") or {}, data.get("signal") or {}
+    return f"SkySift-{target.get('target_id') or 'target'}-s{sig.get('id')}"
 
 
 def render_exofop_planet(data: dict, date: str, tic: str | None, tag: str) -> str:
     """``exofop/params_planet_<date>_001.txt``, ExoFOP's planet template (``EXOFOP_PLANET_COLUMNS``): the target
-    ``TIC<tic>.01`` (``TIC<TIC-TO-FILL>.01`` without a TIC id), flag ``newctoi``, disposition ``PC``, the ephemeris
-    with its errors (epoch in full BJD_TDB, the larger side of an asymmetric duration error), the radius ratio, b and
-    a/R* only when the bootstrap gives them an error, the planet's radius, temperature, insolation and orbit, and the
-    paper URL and notes as placeholders. Empty fields are what SkySift does not have."""
+    ``TIC<tic>.01`` (``TIC<TIC-TO-FILL>.01`` without a TIC id), flag ``newctoi`` with its discovery and candidate
+    name, disposition ``PC``, the ephemeris with its errors (epoch in full BJD_TDB), Rp/R*, a/R* and b only when the
+    bootstrap gives them errors, the planet's radius, temperature, insolation and orbit with theirs, ``prop_period``
+    0 and the paper URL and notes as placeholders. Every uncertainty is the larger half-width; empty fields are what
+    SkySift does not have."""
     eph, planet, shape = data.get("ephemeris") or {}, data.get("planet") or {}, data.get("shape") or {}
-    dur = eph.get("duration_h_err") or {}
-    period = _plain(eph.get("period_days"), eph.get("period_err_days"), eph.get("period_err_days"), 5)
-    epoch = _plain(_bjd(eph, "t0"), eph.get("t0_bjd_err"), eph.get("t0_bjd_err"), 4)
-    depth = _plain(eph.get("depth_ppm"), eph.get("depth_ppm_err"), eph.get("depth_ppm_err"), 0)
-    duration = _plain(eph.get("duration_h"), dur.get("minus"), dur.get("plus"), 2)
-    ok = shape.get("ok") is True
+    e = _errors(eph)
+    period = _plain(eph.get("period_days"), e["period"], e["period"], 5)
+    epoch = _plain(_bjd(eph, "t0"), e["t0"], e["t0"], 4)
+    depth = _plain(eph.get("depth_ppm"), e["depth"], e["depth"], 0)
+    duration = _plain(eph.get("duration_h"), e["duration_minus"], e["duration_plus"], 2)
     values = {"target": f"TIC{tic or TIC_PLACEHOLDER}.01", "flag": "newctoi", "disp": "PC",
+              "discovery": EXOFOP_DISCOVERY, "candname": _candname(data),
               "period": period[0], "period_unc": period[1], "epoch": epoch[0], "epoch_unc": epoch[1],
               "depth": depth[0], "depth_unc": depth[1], "duration": duration[0], "duration_unc": duration[1],
-              "imp": _median(shape.get("b"), 2, True) if ok else None,
-              "r_planet": _median(shape.get("k"), 4, True) if ok else None,
-              "ar_star": _median(shape.get("a_over_r"), 1, True) if ok else None,
-              "radius": _median(planet.get("rp_rearth"), 2), "temp": _median(planet.get("teq_k"), 0),
-              "insol": _median(planet.get("insolation_earth"), 2), "sma": _median(planet.get("a_au"), 4),
-              "tag": tag, "paper": "<PAPER-URL-TO-FILL>", "notes": "<NOTES-TO-FILL>"}
+              "tag": tag, "prop_period": 0, "paper": "<PAPER-URL-TO-FILL>", "notes": "<NOTES-TO-FILL>"}
+    if shape.get("ok") is True:
+        for name, unc, key, nd in (("imp", "imp_unc", "b", 2), ("r_planet", "r_planet_err", "k", 4),
+                                   ("ar_star", "ar_star_err", "a_over_r", 1)):
+            _pair(values, name, unc, shape.get(key), nd, errors_only=True)
+    for name, unc, key, nd in (("radius", "radius_unc", "rp_rearth", 2), ("temp", "temp_unc", "teq_k", 0),
+                               ("insol", "insol_unc", "insolation_earth", 2), ("sma", "sma_unc", "a_au", 4)):
+        _pair(values, name, unc, planet.get(key), nd)
     return _pipe_file(EXOFOP_PLANET_COLUMNS, values)
 
 
-def render_exofop_stellar(data: dict, date: str, tic: str | None, tag: str) -> str:
+def stellar_note(data: dict) -> str:
+    """The stellar file's note, at most ``EXOFOP_NOTES_MAX`` characters: each parameter's method from
+    ``provenance_rows`` (cut before its numbers), parameters with one method named together, in the order Teff,
+    radius, mass, distance, density; a method that would pass the limit is left out."""
+    short = {"effective temperature": "Teff", "radius": "R", "mass": "M", "distance": "dist", "density": "density"}
+    methods = {r["parameter"]: r["method"].split(" at ")[0].split(",")[0].strip() for r in provenance_rows(data)
+               if r["parameter"] in short and r["method"]}
+    groups: dict[str, list[str]] = {}
+    for parameter, name in short.items():
+        if parameter in methods:
+            groups.setdefault(methods[parameter], []).append(name)
+    note = ""
+    for method, names in groups.items():
+        part = f"{', '.join(names)}: {method}"
+        if len(f"{note}; {part}" if note else part) <= EXOFOP_NOTES_MAX:
+            note = f"{note}; {part}" if note else part
+    return note
+
+
+def render_exofop_stellar(data: dict, date: str, tic: str | None, tag: str) -> str | None:
     """``exofop/params_stellar_<date>_001.txt``, ExoFOP's stellar template (``EXOFOP_STELLAR_COLUMNS``): the target
-    ``TIC<tic>`` (``TIC<TIC-TO-FILL>`` without one), the spectral type, Teff, log g, radius, mass, density and
-    distance of the star block, and a note naming the route; the errors are in ``data/stellar_provenance.csv``."""
-    star = data.get("star") or {}
-    values = {"target": f"TIC{tic or TIC_PLACEHOLDER}", "sp_type": star.get("spectral_type"),
-              "teff": _median(star.get("teff"), 0), "logg": _median(logg_value(star), 3),
-              "radius": _median(star.get("radius"), 3), "mass": _median(star.get("mass"), 3),
-              "dens": _median(star.get("density_gcc"), 2), "dist": _median(star.get("distance_pc"), 0), "tag": tag,
-              "notes": "SkySift: Teff from Gaia BP-RP, radius and mass from 2MASS Ks and the Gaia parallax; errors, "
-                       "methods and references in data/stellar_provenance.csv of the Zenodo record"}
+    ``KIC<kic>`` (an accepted prefix, so no TIC is needed; ``TIC<tic>`` or the placeholder without a KIC), the
+    spectral type, Teff, log g, radius, mass, density and distance with their uncertainties (the larger half-width),
+    ``prop_period`` 0 and a note naming each parameter's method (``stellar_note``). None when the star has no
+    parameters (``star_characterized``), so no file is written."""
+    if not star_characterized(data):
+        return None
+    star, kic = data.get("star") or {}, (data.get("target") or {}).get("kic")
+    values = {"target": f"KIC{int(kic)}" if kic else f"TIC{tic or TIC_PLACEHOLDER}",
+              "sp_type": star.get("spectral_type"), "tag": tag, "prop_period": 0, "notes": stellar_note(data)}
+    for name, block, nd in (("teff", star.get("teff"), 0), ("logg", logg_value(star), 3),
+                            ("radius", star.get("radius"), 3), ("mass", star.get("mass"), 3),
+                            ("dens", star.get("density_gcc"), 2), ("dist", star.get("distance_pc"), 0)):
+        _pair(values, name, f"{name}_unc", block, nd)
     return _pipe_file(EXOFOP_STELLAR_COLUMNS, values)
 
 
@@ -1355,7 +1410,7 @@ def other_signal_periods(store, target_id: str, signal_id: int) -> list[float]:
             return [float(p) for p in s.scalars(select(SignalRow.period).where(
                 SignalRow.target_id == target_id, SignalRow.id != signal_id,
                 SignalRow.final_status == "candidate_stage2"))]
-    except (AttributeError, SQLAlchemyError):
+    except SQLAlchemyError:
         return []
 
 
@@ -1404,11 +1459,12 @@ def _fields(data: dict, f: dict) -> dict:
     f.setdefault("after_bjd", julian_date(day))
     f.setdefault("after_words", date_words(day))
     f.setdefault("other_signals", "")
-    params = [(template.format(date=f["date"]), FILE_NOTES[f"exofop/{template}"])
-              for template in (EXOFOP_STELLAR_TEMPLATE, EXOFOP_PLANET_TEMPLATE)]
-    f.setdefault("exofop_params", [name for name, _what in params])
+    stellar = EXOFOP_STELLAR_TEMPLATE.format(date=f["date"]) if star_characterized(data) else None
+    f.setdefault("exofop_stellar", stellar)
+    f.setdefault("exofop_planet", EXOFOP_PLANET_TEMPLATE.format(date=f["date"]))
     f.setdefault("exofop", [(name, what) for name, _src, what in
-                            _exofop_list(target_id, f["date"], f["png"], f["pixels_figure"])] + params)
+                            _exofop_list(target_id, f["date"], f["png"], f["pixels_figure"])]
+                 + ([(stellar, FILE_NOTES[f"exofop/{EXOFOP_STELLAR_TEMPLATE}"])] if stellar else []))
     f.setdefault("file_notes", [(name, FILE_NOTES.get(name) or _figure_note(name)) for name in sorted(f["files"])
                                 if not name.startswith("exofop/") or name == "exofop/note.txt"])
     f.setdefault("exofop_url", EXOFOP_URL)
@@ -1433,6 +1489,7 @@ def render_readme(data: dict, report_fields: dict) -> str:
     f = _fields(data, report_fields)
     return _env(tex=False).get_template("README.md.j2").render(
         n=numbers(data, after_bjd=f["after_bjd"]), f=f, titles=dict(STEPS), sandbox_note=SANDBOX_DOI_NOTE,
+        crowdsap_definition=CROWDSAP_DEFINITION, psffrac_definition=PSFFRAC_DEFINITION,
         archive_paragraph=archive_paragraph(data, f["doi_shown"], f["tic"]))
 
 
@@ -1993,7 +2050,8 @@ def build_pack(store, blob, settings, target_id: str, *, out_dir: Path | None = 
     Records the folder on the dossiers row and the candidate row.
 
     Raises NoDossier, ``dossier.LightCurveReleased`` (nothing is downloaded), PackError (bad TIC id, tag or folder; a
-    live draft before approval) before anything is written, and ``zenodo.ZenodoError`` naming the built pack and any
+    live draft before approval, before the FPP sign-off, for a stale dossier, or for one ``gate_problems`` refuses,
+    naming every problem) before anything is written, and ``zenodo.ZenodoError`` naming the built pack and any
     unfinished draft when Zenodo fails."""
     say = log or (lambda _text: None)
     tic, observer_tag = check_tic(tic), check_tag(observer_tag)
@@ -2094,7 +2152,9 @@ def _write_pack(out_dir: Path, data: dict, raw: dict, row: dict, lc, fnorm, targ
                                         "reference"], provenance_rows(data))):
         _csv(d / name, header, [[r[c] for c in header] for r in table])
     _csv(note / "figure1_data.csv", ["phase_h", "flux_ppm", "err_ppm", "n", "model_ppm"], figure_data_rows(data))
-    _write(d / "ephemeris.json", jsonutil.dumps({"ephemeris": data.get("ephemeris"), "star": data.get("star"),
+    eph = data.get("ephemeris") or {}
+    eph = {**eph, **{f"{k}_bjd": _bjd(eph, k) for k in ("t0", "t_ref") if f"{k}_bjd" in eph}}
+    _write(d / "ephemeris.json", jsonutil.dumps({"ephemeris": eph, "star": data.get("star"),
                                                  "planet": data.get("planet"),
                                                  "rows": [{c: r[c] for c in cols} for r in eph_rows]}, indent=1))
     ev_cols = ["epoch", "t_mid", "quarter", "depth_ppm", "err_ppm", "coverage", "ses"]
@@ -2135,8 +2195,9 @@ def _write_pack(out_dir: Path, data: dict, raw: dict, row: dict, lc, fnorm, targ
     tag = data_tag(date, review["tag"], target_id)
     _write(out_dir / "exofop" / EXOFOP_PLANET_TEMPLATE.format(date=date),
            render_exofop_planet(data, date, review["tic"], tag))
-    _write(out_dir / "exofop" / EXOFOP_STELLAR_TEMPLATE.format(date=date),
-           render_exofop_stellar(data, date, review["tic"], tag))
+    stellar = render_exofop_stellar(data, date, review["tic"], tag)
+    if stellar is not None:
+        _write(out_dir / "exofop" / EXOFOP_STELLAR_TEMPLATE.format(date=date), stellar)
     fields = {**review, "date": date, "png": png, "zenodo": None, "pixels_figure": pixels_figure,
               "after_bjd": julian_date(now), "after_words": date_words(now),
               "zip_name": zip_path.name, "built_words": date_words(now), "doi": DOI_PLACEHOLDER,
@@ -2155,7 +2216,7 @@ def _versions(data: dict, row: dict, now: datetime, Figure, zip_file: str, creat
     return {"pack_version": PACK_VERSION, "dossier_version": data.get("dossier_version"),
             "target_id": (data.get("target") or {}).get("target_id"), "signal_id": sig.get("id"),
             "search_version": sig.get("detector_version"), "ladder_version": prov.get("ladder_version"),
-            "git_commit": prov.get("git_commit"), "pack_git_commit": ds._git_commit(), "skysift_version": version,
+            "git_commit": prov.get("git_commit"), "pack_git_commit": ds.git_commit(), "skysift_version": version,
             "python": platform.python_version(), "numpy": np.__version__, "matplotlib": mpl,
             "platform": sys.platform, "built_utc": now.isoformat(), "dossier_generated": data.get("generated"),
             "dossier_row_generated": ds._iso(row.get("generated")), "kbonus_doi": KBONUS_DOI,

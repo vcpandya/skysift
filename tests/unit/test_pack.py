@@ -893,11 +893,17 @@ def test_a_live_draft_refuses_a_dossier_stored_before_the_sign_off(env_with_doss
 # ---------------------------------------------------------------------------------------------------- the referee pack
 
 BKJD = 2454833.0
-PLANET_COLUMNS = ["target", "flag", "disp", "period", "period_unc", "epoch", "epoch_unc", "depth", "depth_unc",
-                  "duration", "duration_unc", "inc", "imp", "r_planet", "ar_star", "radius", "mass", "temp", "insol",
-                  "dens", "sma", "ecc", "tag", "group", "prop_period", "paper", "notes"]
-STELLAR_COLUMNS = ["target", "tel", "telsize", "inst", "sp_type", "teff", "logg", "radius", "mass", "dens", "lum",
-                   "dist", "age", "tag", "group", "prop_period", "notes"]
+PLANET_COLUMNS = ["target", "flag", "disp", "discovery", "candname", "period", "period_unc", "epoch", "epoch_unc",
+                  "depth", "depth_unc", "duration", "duration_unc", "inc", "inc_unc", "imp", "imp_unc", "r_planet",
+                  "r_planet_err", "ar_star", "ar_star_err", "radius", "radius_unc", "mass", "mass_unc", "temp",
+                  "temp_unc", "insol", "insol_unc", "dens", "dens_unc", "sma", "sma_unc", "ecc", "ecc_unc",
+                  "arg_peri", "arg_peri_err", "time_peri", "time_peri_unc", "vsa", "vsa_unc", "tag", "group",
+                  "prop_period", "paper", "notes"]
+STELLAR_COLUMNS = ["target", "tel", "telsize", "inst", "sp_type", "teff", "teff_unc", "logg", "logg_unc", "radius",
+                   "radius_unc", "logrhk", "logrhk_unc", "sindex", "sindex_unc", "halpha", "halpha_unc", "vsini",
+                   "vsini_unc", "rotper", "rotper_unc", "met", "met_unc", "mass", "mass_unc", "dens", "dens_unc",
+                   "lum", "lum_unc", "obs_time", "rv", "rv_unc", "dist", "dist_unc", "age", "age_unc", "snr", "fit",
+                   "tag", "group", "prop_period", "notes"]
 DEGENERATE = "ingress shorter than the cadence: b and a/R* are degenerate with k, errors not quoted"
 SHAPE_OK = {"ok": True, "reason": None, "method": "bootstrap over transits of the uniform-disc fit (Schmitt et al. 2014)",
             "n_boot": 200, "n_converged": 196, "seed": 20261022,
@@ -970,13 +976,22 @@ def test_ephemeris_csv_carries_the_errors_and_the_dilution_rows(env_with_dossier
     assert depth["source"] == "per-event weighted mean of the box depth"
     duration = by[("duration", "h")]
     assert duration["minus"] == duration["plus"] == "" and "fitted T14" in duration["source"]
-    assert float(by[("crowding (CROWDSAP)", "")]["value"]) == 0.9
-    assert float(by[("flux fraction (PSFFRAC)", "")]["value"]) == 0.9
+    crowdsap, psffrac = by[("target light fraction (CROWDSAP)", "")], by[("PSF flux fraction (PSFFRAC)", "")]
+    assert float(crowdsap["value"]) == 0.9 and float(psffrac["value"]) == 0.9
+    assert crowdsap["source"] == f"KBonus header keyword CROWDSAP: {pack_module.CROWDSAP_DEFINITION}"
+    assert "1 means no contamination" in crowdsap["source"] and "inside the KBonus aperture" in psffrac["source"]
     leak = by[("dip in the neighbour's aperture (leak test)", "ppm")]
     assert float(leak["value"]) == 14.0 and float(leak["minus"]) == float(leak["plus"]) == 31.0
     assert "rung 5" in leak["source"]
     rows = json.loads((rep.out_dir / "data" / "ephemeris.json").read_text(encoding="utf-8"))["rows"]
     assert [r["parameter"] for r in rows] == [r["parameter"] for r in _rows(rep, "data/ephemeris.csv")]
+    # a dossier stored before the BJD decimals were kept: the pack's JSON copy takes BJD from BKJD
+    old = _stored(env)
+    old["ephemeris"].update(t0_bjd=2454969.3, t_ref_bjd=2455694.5)
+    _store(env, old)
+    copy = json.loads((_build(env).out_dir / "data" / "ephemeris.json").read_text(encoding="utf-8"))["ephemeris"]
+    assert abs(copy["t0_bjd"] - (eph["t0_bkjd"] + BKJD)) < 1e-5 and copy["t0_bjd_err"] == eph["t0_bjd_err"]
+    assert abs(copy["t_ref_bjd"] - (eph["t_ref_bkjd"] + BKJD)) < 1e-5
 
 
 def test_transit_times_and_shape_csvs(env_with_dossier):
@@ -1015,45 +1030,119 @@ def test_stellar_provenance_csv_names_the_method_and_the_reference(env_with_doss
     assert "Lindegren" in rows["distance"]["reference"] and rows["spectral type"]["value"] == "M1V"
     logg = rows["surface gravity log g"]
     assert float(logg["value"]) == pytest.approx(4.438 + np.log10(0.507) - 2 * np.log10(0.509), abs=1e-3)
-    assert float(logg["minus"]) > 0 and "mass and radius" in logg["method"] and logg["unit"] == "cgs"
+    assert float(logg["minus"]) == pytest.approx(np.hypot(0.013 / 0.507, 2 * 0.017 / 0.509) / np.log(10), abs=1e-3)
+    assert float(logg["plus"]) == pytest.approx(np.hypot(0.013 / 0.507, 2 * 0.016 / 0.509) / np.log(10), abs=1e-3)
+    assert "mass and radius" in logg["method"] and logg["unit"] == "cgs"
+
+
+def _parse_pipe(text: str, columns: list[str]) -> dict:
+    """An ExoFOP bulk file: the comment header names exactly the columns, one row of as many fields, and no
+    uncertainty without its value."""
+    lines = text.splitlines()
+    assert len(lines) == 2 and lines[0].startswith("# ")
+    assert lines[0][2:].split("|") == columns
+    values = lines[1].split("|")
+    assert len(values) == len(columns)
+    row = dict(zip(columns, values, strict=True))
+    for name, cell in row.items():
+        if cell and name.endswith(("_unc", "_err")):
+            value = name.rsplit("_", 1)[0]
+            assert row[value], f"{name} has no {value}"
+    return row
 
 
 def test_exofop_parameter_files_follow_the_templates(env_with_dossier):
     env = env_with_dossier
     rep = _build(env)
     date = _today()
-
-    def parse(text: str, columns: list[str]) -> dict:
-        lines = text.splitlines()
-        assert len(lines) == 2 and lines[0].startswith("#")
-        assert lines[0].lstrip("#").strip().split("|") == columns
-        values = lines[1].split("|")
-        assert len(values) == len(columns)
-        return dict(zip(columns, values, strict=True))
-    planet = parse((rep.out_dir / "exofop" / f"params_planet_{date}_001.txt").read_text(encoding="utf-8"),
-                   PLANET_COLUMNS)
+    planet = _parse_pipe((rep.out_dir / "exofop" / f"params_planet_{date}_001.txt").read_text(encoding="utf-8"),
+                         PLANET_COLUMNS)
     assert planet["target"] == "TIC<TIC-TO-FILL>.01" and planet["flag"] == "newctoi" and planet["disp"] == "PC"
+    assert planet["discovery"] == "SkySift (Kepler)" and planet["candname"] == f"SkySift-{STAGE2_TARGET}-s5"
     eph = env.data["ephemeris"]
     assert float(planet["period"]) == pytest.approx(eph["period_days"], abs=1e-5)
     assert float(planet["period_unc"]) == pytest.approx(eph["period_err_days"], abs=1e-5)
-    assert planet["period_unc"] and planet["epoch"] == "2454969.3003" and planet["epoch_unc"] == "0.0019"
+    assert planet["epoch"] == "2454969.3003" and planet["epoch_unc"] == "0.0019"
     assert planet["depth"] == "2180" and planet["depth_unc"] == "60" and planet["duration_unc"] == ""
-    assert planet["mass"] == "" and planet["ecc"] == "" and planet["radius"] == "2.61"
+    assert planet["radius"] == "2.61" and planet["radius_unc"] == "0.09"          # the larger half-width
+    assert planet["temp"] == "269" and planet["temp_unc"] == "8" and planet["sma_unc"] == "0.0016"
+    assert planet["r_planet"] == planet["imp"] == planet["ar_star"] == ""        # no bootstrap error yet
+    assert planet["mass"] == planet["ecc"] == planet["inc"] == planet["group"] == "" and planet["prop_period"] == "0"
     assert planet["tag"] == f"{date}_<username>_skysift-{STAGE2_TARGET}"
     assert planet["paper"] == "<PAPER-URL-TO-FILL>" and planet["notes"] == "<NOTES-TO-FILL>"
-    stellar = parse((rep.out_dir / "exofop" / f"params_stellar_{date}_001.txt").read_text(encoding="utf-8"),
-                    STELLAR_COLUMNS)
-    assert stellar["target"] == "TIC<TIC-TO-FILL>" and stellar["sp_type"] == "M1V" and stellar["teff"] == "3653"
-    assert stellar["radius"] == "0.509" and stellar["dist"] == "303" and stellar["age"] == "" and stellar["logg"]
-    with_tic = parse(pack_module.render_exofop_planet(env.data, "20261022", "123", "tag"), PLANET_COLUMNS)
+    stellar = _parse_pipe((rep.out_dir / "exofop" / f"params_stellar_{date}_001.txt").read_text(encoding="utf-8"),
+                          STELLAR_COLUMNS)
+    assert stellar["target"] == "KIC6146676" and stellar["sp_type"] == "M1V" and stellar["prop_period"] == "0"
+    assert (stellar["teff"], stellar["teff_unc"]) == ("3653", "90") and stellar["group"] == stellar["age"] == ""
+    assert (stellar["radius"], stellar["radius_unc"]) == ("0.509", "0.017") and stellar["logg_unc"]
+    assert (stellar["dist"], stellar["dist_unc"]) == ("303", "4") and stellar["mass_unc"] == "0.013"
+    assert stellar["notes"] == ("Teff: Mamajek dwarf table; R: Mann et al. 2015 R(M_Ks); M: Mann et al. 2019 M(M_Ks); "
+                                "dist: 1000 / Gaia DR3 parallax")
+    assert len(stellar["notes"]) <= 120
+    with_tic = _parse_pipe(pack_module.render_exofop_planet(env.data, "20261022", "123", "tag"), PLANET_COLUMNS)
     assert with_tic["target"] == "TIC123.01" and with_tic["tag"] == "tag"
-    assert parse(pack_module.render_exofop_stellar(env.data, "20261022", "123", "tag"),
-                 STELLAR_COLUMNS)["target"] == "TIC123"
-    degenerate = parse(pack_module.render_exofop_planet(_with_errors(env.data), "20261022", None, "t"), PLANET_COLUMNS)
-    assert degenerate["imp"] == "" and degenerate["ar_star"] == "" and degenerate["r_planet"] == "0.0470"
-    assert degenerate["duration"] == "4.16" and degenerate["duration_unc"] == "0.06"
+    no_kic = {**env.data, "target": {**env.data["target"], "kic": None}}
+    assert _parse_pipe(pack_module.render_exofop_stellar(no_kic, "20261022", "123", "t"),
+                       STELLAR_COLUMNS)["target"] == "TIC123"
+    fitted = _parse_pipe(pack_module.render_exofop_planet(_with_errors(env.data), "20261022", None, "t"), PLANET_COLUMNS)
+    assert fitted["imp"] == fitted["imp_unc"] == fitted["ar_star"] == ""      # degenerate: b and a/R* without errors
+    assert (fitted["r_planet"], fitted["r_planet_err"]) == ("0.0470", "0.0012")
+    assert (fitted["duration"], fitted["duration_unc"]) == ("4.16", "0.06")
     readme = (rep.out_dir / "README.md").read_text(encoding="utf-8")
-    assert f"exofop/params_stellar_{date}_001.txt" in readme and f"exofop/params_planet_{date}_001.txt" in readme
+    step2 = readme.split("## Step 2.")[1].split("## Step 3.")[0]
+    attach = step2.split("Attach these:")[1].split("What ExoFOP takes now")[0]
+    assert f"exofop/params_stellar_{date}_001.txt" in attach and "params_planet" not in attach
+    assert f"`exofop/params_planet_{date}_001.txt`" in step2 and "do not upload it now" in step2
+
+
+def test_the_stellar_file_names_the_route_it_came_from(env_with_dossier):
+    """The mamajek route (no 2MASS Ks): radius and mass come from the colour table, and the note says so."""
+    data = json.loads(json.dumps(env_with_dossier.data))
+    table = "Mamajek dwarf table at BP-RP 2.097 +- 0.20 (Pecaut, M. J. and Mamajek, E. E. 2013, ApJS 208, 9)"
+    data["star"].update(route="mamajek", radius={**data["star"]["radius"], "source": table},
+                        mass={**data["star"]["mass"], "source": table})
+    stellar = _parse_pipe(pack_module.render_exofop_stellar(data, "20261022", None, "t"), STELLAR_COLUMNS)
+    assert stellar["notes"] == ("Teff, R, M: Mamajek dwarf table; dist: 1000 / Gaia DR3 parallax; density: M* / "
+                                "(4/3 pi R*^3) from the same draws")
+    assert "Mann" not in stellar["notes"] and "2MASS" not in stellar["notes"] and len(stellar["notes"]) <= 120
+    rows = {r["parameter"]: r for r in pack_module.provenance_rows(data)}
+    assert rows["radius"]["method"].startswith("Mamajek dwarf table") and "Pecaut" in rows["radius"]["reference"]
+
+
+def test_a_star_without_parameters_gets_no_stellar_file(env_with_dossier):
+    env = env_with_dossier
+    data = _stored(env)
+    data["star"] = {**data["star"], "route": "none", "teff": None, "radius": None, "mass": None, "density_gcc": None,
+                    "distance_pc": None, "spectral_type": None}
+    _store(env, data)
+    rep = _build(env)
+    date = _today()
+    assert pack_module.render_exofop_stellar(data, date, None, "t") is None
+    assert not (rep.out_dir / "exofop" / f"params_stellar_{date}_001.txt").exists()
+    assert (rep.out_dir / "exofop" / f"params_planet_{date}_001.txt").exists()
+    step2 = (rep.out_dir / "README.md").read_text(encoding="utf-8").split("## Step 2.")[1].split("## Step 3.")[0]
+    assert "params_stellar" not in step2 and "There is no stellar parameter file" in step2
+    assert "upload now" not in step2
+
+
+def test_readme_defines_crowdsap_and_psffrac(env_with_dossier):
+    text = render_readme(env_with_dossier.data, {})
+    assert "| target light fraction (CROWDSAP) | 0.90 |" in text and "| PSF flux fraction (PSFFRAC) | 0.90 |" in text
+    assert text.count("CROWDSAP is the fraction of the light in the aperture that belongs to the target") == 1
+    assert "PSFFRAC is the fraction of the target's PSF flux inside the KBonus aperture" in text
+    assert "KBonus header keywords" in text and "crowding" not in text
+
+
+def test_readme_without_a_parity_difference_or_a_timing_fit(env_with_dossier):
+    data = _with_errors(env_with_dossier.data)
+    data["parity"]["difference_sigma"] = None
+    data["timing"] = {**data["timing"], "ok": False, "reason": "fewer than 3 transits timed"}
+    data["ephemeris"].update(period_err_days=None, t0_bkjd_err=None, t0_bjd_err=None, t_ref_bkjd=None,
+                             t_ref_bjd=None, t_ref_err_days=None, epoch_ref=None)
+    text = render_readme(data, {})
+    assert "| odd and even depths | 2,211 ± 76 ppm and 2,126 ± 83 ppm |" in text and "( sigma" not in text
+    step5 = text.split("## Step 5.")[1].split("## What is not yet known")[0]
+    assert "the transit lasts 4.16 +0.06/-0.05 h" in step5 and "no formal error" in step5
 
 
 def test_readme_step_five_lists_the_next_transits_with_windows(env_with_dossier):

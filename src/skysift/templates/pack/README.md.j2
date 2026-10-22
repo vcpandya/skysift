@@ -31,7 +31,7 @@ This pack was built on {{ f.built_words }} by SkySift (pack format {{ f.pack_ver
 | signal detection efficiency (SDE) | {{ n.sde }} |
 | signal-to-noise ratio | {{ n.snr }} |
 {% if n.odd_text %}
-| odd and even depths | {{ n.odd_text }} and {{ n.even_text }} ({{ n.parity_sigma_text }} sigma apart) |
+| odd and even depths | {{ n.odd_text }} and {{ n.even_text }}{% if n.parity_sigma_text %} ({{ n.parity_sigma_text }} sigma apart){% endif %} |
 {% endif %}
 {% if n.secondary_pm %}
 | secondary eclipse (phase 0.5) | {{ n.secondary_pm }} ppm{% if n.secondary_limit %}, 3-sigma upper limit {{ n.secondary_limit }} ppm{% endif %} |
@@ -42,6 +42,10 @@ This pack was built on {{ f.built_words }} by SkySift (pack format {{ f.pack_ver
 {% for row in n.dilution_rows %}
 | {{ row.parameter }} | {{ row.text }} |
 {% endfor %}
+{% if n.crowdsap or n.psffrac %}
+
+CROWDSAP and PSFFRAC are KBonus header keywords. CROWDSAP is {{ crowdsap_definition }}; PSFFRAC is {{ psffrac_definition }}.
+{% endif %}
 
 {{ n.fap_text }}
 
@@ -87,7 +91,7 @@ Files: ExoFOP enforces no file name. The pack names its copies `<target>_<UTC da
 - `exofop/{{ name }}`: {{ what }}
 {% endfor %}
 
-What ExoFOP takes now: any registered user can attach files, notes and stellar parameters to a KIC or TIC page, so the files above, the upload note and `exofop/{{ f.exofop_params[0] }}` go up now. Planet parameters attach only to a TOI, a community TOI or a confirmed planet, and a community TOI needs a paper in a peer-reviewed journal (a Research Note qualifies only when the method it rests on was published before), so `exofop/{{ f.exofop_params[1] }}` waits until such a paper is accepted. Its target reads `TIC{{ f.tic or "<TIC-TO-FILL>" }}.01`{% if not f.tic %} until the pack is built with `--tic`{% endif %}, and its paper URL and notes are placeholders to fill in then.{% if f.other_signals %} {{ f.other_signals }}{% endif %}{{ "" }}
+What ExoFOP takes now: any registered user can attach files, notes and stellar parameters to a KIC or TIC page, so the files above and the upload note go up now.{% if not f.exofop_stellar %} There is no stellar parameter file: the star could not be characterized from Gaia photometry, so there are no stellar parameters to upload.{% endif %} Planet parameters attach only to a TOI, a community TOI or a confirmed planet, and a community TOI needs a paper in a peer-reviewed journal (a Research Note qualifies only when the method it rests on was published before), so `exofop/{{ f.exofop_planet }}`, the planet parameters in ExoFOP's bulk template, waits until such a paper is accepted; do not upload it now. Its target reads `TIC{{ f.tic or "<TIC-TO-FILL>" }}.01`{% if not f.tic %} until the pack is built with `--tic`{% endif %}, and its paper URL and notes are placeholders to fill in then.{% if f.other_signals %} {{ f.other_signals }}{% endif %}{{ "" }}
 
 What to write: paste `exofop/note.txt` into the upload's description. It gives the ephemeris with its errors, both probabilities, the pixel result and the Zenodo DOI.
 
@@ -130,7 +134,7 @@ Observers who plan a transit ask for the ephemeris first. Send `data/ephemeris.c
 {% endfor %}
 
 Send{% else %}
-Observers who plan a transit ask for the ephemeris first. Send `data/ephemeris.csv` and say: mid-transit times are T = {{ n.t0_bjd }} + E x {{ n.period }} (BJD_TDB, E a whole number of orbits) and the transit lasts {{ n.duration }} h. The dossier carries no formal error on the period or the first mid-transit (the transits could not be timed one by one), so a window of at least one transit duration either side of each predicted time is needed, more for times years after 2013. Send{% endif %} `data/lightcurve.csv` and `data/events.csv` to anyone checking the depth, and `dossier.html` to anyone who wants the full vetting. Point every request at the Zenodo DOI, so everyone works from the same frozen files.
+Observers who plan a transit ask for the ephemeris first. Send `data/ephemeris.csv` and say: mid-transit times are T = {{ n.t0_bjd }} + E x {{ n.period }} (BJD_TDB, E a whole number of orbits) and the transit lasts {{ n.duration_pm }} h. The dossier carries no formal error on the period or the first mid-transit (the transits could not be timed one by one), so a window of at least one transit duration either side of each predicted time is needed, more for times years after 2013. Send{% endif %} `data/lightcurve.csv` and `data/events.csv` to anyone checking the depth, and `dossier.html` to anyone who wants the full vetting. Point every request at the Zenodo DOI, so everyone works from the same frozen files.
 
 ## What is not yet known
 
