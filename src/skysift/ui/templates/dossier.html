@@ -246,6 +246,7 @@
     {%- if ts.methods %}
     <p class="dossier-small">{{ ts.methods }}</p>
     {%- endif %}
+    {%- if ts.verdict != "not assessed" %}
     <div class="only-expert dossier-expert">
       <div class="table-wrap"><table class="dossier-table">
         <caption>TESS sectors on the Kepler ephemeris</caption>
@@ -254,6 +255,7 @@
       </table></div>
       <p class="mono dossier-small">TIC {{ ts.tic }} · Tmag {{ ts.tmag | fmt(2) }} ({{ ts.tmag_source or "source not stored" }}) · contamination c = {{ dil.c | fmt(2) }} over {{ dil.aperture_pixels }} pixels, {{ dil.c_hard42 | fmt(2) }} as the two-pixel-radius sum, for comparison · blended T = {{ dil.t_total | fmt(2) }} · diluted depth {{ dil.depth_tess_ppm | fmt(0) }} ppm, {{ dil.depth_tess_hard42_ppm | fmt(0) }} ppm with that sum · noise over the transit {{ noise.nominal_t14_ppm | fmt(0) }} to {{ noise.conservative_t14_ppm | fmt(0) }} ppm · per-transit S/N {{ sig.per_transit_conservative | fmt(2) }} to {{ sig.per_transit_nominal | fmt(2) }} · about {{ ts.n_expected | fmt(1) }} transits expected from phase coverage · inputs queried {{ ts.queried or "on an unknown date" }}</p>
     </div>
+    {%- endif %}
     {%- if ts.caveats %}
     <ul class="dossier-small">{% for c in ts.caveats %}<li>{{ c }}</li>{% endfor %}</ul>
     {%- endif %}

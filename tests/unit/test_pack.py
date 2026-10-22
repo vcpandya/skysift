@@ -714,15 +714,23 @@ def test_build_pack_on_the_real_kic_6146676_dossier(env_with_dossier):
     assert ("In seasons 0 and 3 this star's 3 x 3 box is cut by the stamp edge; the centroid there is measured on "
             "the pixels present and the shift the cut would give a point source (0.08 px at most) is added to its "
             "error.") in note
-    # the offset of ruling e (the golden of 22 October 2026 holds no direct-image centroid: the fit's own position,
-    # named as such and not judged by Bryson's rule, round 1 item 3; the golden holds no block, so it is computed
-    # from the stored seasons, its error now the seasons' scatter, round 1 item 10)
-    assert ("Against the catalogue position plus the two-source fit's common shift (the star's direct-image centroid "
-            "is not stored for every season) the difference-image centroid is offset by 0.39 ± 0.20 arcsec (2.0 "
-            "sigma), not assessed from the star's own image; the distance from the Gaia position (0.25 ± 0.28 "
-            "arcsec) carries the WCS zero point and the registration.") in note
-    assert "Bryson" not in note
+    # the offset of ruling e: the version 4 golden (a56d8c8) stores the block with the star's own direct-image
+    # centroid, so the offset is judged by Bryson's rule and cited (the fallback form, against the fit's position,
+    # is tested on a synthetic block in test_the_offset_sentence_names_its_reference); the ExoFOP note keeps the long
+    # form, the Research Note the short one (fix round 4)
+    assert ("Against the star's own out-of-transit image the difference-image centroid is offset by 1.8 ± 1.0 arcsec "
+            "(1.8 sigma), not an offset by the rule of Bryson et al. (2013), which asks for more than 3 sigma and more "
+            "than 0.2 arcsec; the distance from the Gaia position (0.25 ± 0.28 arcsec) carries the WCS zero point and "
+            "the registration. Both errors are the larger of the seasons' combined error and their scatter.") in note
+    assert "not stored for every season" not in note
     tex = (rep.out_dir / "note" / "note.tex").read_text(encoding="utf-8")
+    assert (r"Against the star's own out-of-transit image the difference-image centroid is offset by 1.8 $\pm$ 1.0 "
+            r"arcsec (1.8 sigma), not an offset by the rule of \citet{bryson2013} (over 3 sigma and 0.2 arcsec); "
+            r"against the Gaia position, which carries the WCS zero point and registration, by 0.25 $\pm$ 0.28 arcsec. "
+            "Each error is the larger of the seasons' combined error and scatter.") in " ".join(tex.split())
+    assert r"]{bryson2013} Bryson" in tex
+    assert ("The centroid agrees with the hand-built localisation within 0.03 px over 4 seasons "
+            "(docs/candidates/kic-006146676/localisation/results.json).") in note
     assert note_problems(rep.note_words, tex) == [] and rep.zip_path.is_file()
     import xml.etree.ElementTree as ET
     ET.fromstring((rep.out_dir / "figures" / "periodogram.svg").read_text(encoding="utf-8"))  # no plots block
@@ -1268,10 +1276,13 @@ def test_note_has_software_facilities_and_the_model_clause_within_the_limits(env
     for data in (env_with_dossier.data, golden):
         tex = render_note(data)
         version = data["signal"]["detector_version"]
-        # triceratops is named only with a stored cross-check (M10), and neither of these has one
+        # the commit the dossier was generated at (the golden's 8fb90ec, not the checkout's HEAD), and triceratops
+        # only with a stored cross-check (M10), which the version 4 golden has (fix round 4)
+        commit = data["provenance"]["git_commit"]
+        tools = "numpy, scipy, astropy, matplotlib" + (", triceratops" if data.get("cross_check") else "")
         assert (rf"\software{{SkySift {md.version('skysift')} (search version {tex_safe(version)}, commit "
-                rf"{tex_safe(data['provenance']['git_commit'])}), numpy, scipy, astropy, matplotlib}}"
-                ) in tex
+                rf"{tex_safe(commit)}), {tools}}}") in tex
+        assert (data is golden) == bool(data.get("cross_check")) and (data is not golden or commit == "8fb90ec")
         crossed = render_note({**data, "cross_check": {"fpp": 0.01, "nfpp": 0.001, "current": False}})
         assert "matplotlib, triceratops}" in crossed
         assert r"\facilities{Kepler, Gaia, MAST, Exoplanet Archive}" in tex
@@ -1286,8 +1297,11 @@ def test_note_has_software_facilities_and_the_model_clause_within_the_limits(env
     # the degenerate b says "no error" once, also for a reason stored before it stopped saying "errors not quoted"
     assert "0.0470$^{+0.0012}_{-0.0011}$" in tex and DEGENERATE not in tex
     assert "(no error; ingress shorter than the cadence: b and a/R* are degenerate with k)" in tex
-    assert r"2,211 $\pm$ 76 ppm" in tex and r"2,126 $\pm$ 83 ppm" in tex and "0.8 sigma apart" in tex
-    assert "3-sigma upper limit of 210 ppm" in tex and "14 $\\pm$ 31 ppm" in tex
+    # fix round 4: the parity and secondary sentences keep every number and error in fewer words
+    assert (r"The odd and even depths are 2,211 $\pm$ 76 and 2,126 $\pm$ 83 ppm (0.8 sigma apart)." in tex)
+    assert (r"The phase 0.5 depth is 15 $\pm$ 65 ppm (3-sigma upper limit 210 ppm), no constraint on the geometric "
+            "albedo; the strongest dip elsewhere is 40 ppm at phase 0.62 (1.4 sigma).") in tex
+    assert "14 $\\pm$ 31 ppm" in tex
     assert note_problems(note_words(tex), tex) == []
 
 
@@ -1445,9 +1459,10 @@ def test_the_note_names_its_methods_and_cites_them(env_with_dossier):
                                           "text": "quote the bootstrap median beside it."}]
     tex = render_note(data)
     signal = tex.split(r"\section{The signal}")[1].split(r"\section{")[0]
-    # Task 8 fix round 3: the note keeps a pointer without citations, the sentence and its works are in the README
+    # Task 8 fix round 3: the note keeps a pointer without citations, the sentence and its works are in the README;
+    # fix round 4, M-3: the note's first pointer says which README
     assert ("The ephemeris and transit-parameter errors come from per-transit fits, a weighted linear fit and a "
-            "bootstrap over transits (methods in the README).") in " ".join(signal.split())
+            "bootstrap over transits (methods in the Zenodo pack's README).") in " ".join(signal.split())
     assert len(pack_module.errors_pointer(data).split()) <= 25
     assert "deeg2015" not in tex and "holczer2016" not in tex and "schmitt2014" not in tex
     assert "It remains a candidate until independent follow-up confirms it." not in signal   # the abstract says it
@@ -1470,10 +1485,11 @@ def test_the_note_names_its_methods_and_cites_them(env_with_dossier):
     assert "bootstrap median" not in render_note(_with_errors(_stored(env_with_dossier)))
     bare = {**data, "timing": {"ok": False, "reason": "x"}, "shape": {"ok": False, "reason": "y"}}
     assert pack_module.methods_sentence(bare) is None and pack_module.errors_pointer(bare) is None
-    assert "(methods in the README)" not in render_note(bare) and "transit-parameter errors (the" not in \
+    assert "(methods in the README" not in render_note(bare) and "transit-parameter errors (the" not in \
         render_readme(bare, {})
     timed_only = {**data, "shape": {"ok": False, "reason": "y"}}
-    assert pack_module.errors_pointer(timed_only).endswith("a weighted linear fit (method in the README).")
+    assert pack_module.errors_pointer(timed_only).endswith("a weighted linear fit (method in the Zenodo pack's "
+                                                           "README).")
     assert "Schmitt" not in pack_module.errors_methods_text(timed_only)
 
 
@@ -1660,11 +1676,13 @@ def test_the_hand_built_sentence_says_differs_beyond_the_combined_error():
     """Round 1, item 8."""
     block = {"max_diff_pix": 0.12, "n_seasons": 4, "agrees": False, "combined_err_pix": 0.05, "source": "x.json"}
     words = pack_module.hand_built_sentence({"hand_built_localisation": block})
-    assert "differs from the hand-built localisation of the same pixels by up to 0.12 px" in words
+    # fix round 4: one clause, every number and the source kept
+    assert words == ("The centroid differs from the hand-built localisation by up to 0.12 px over 4 seasons, more "
+                     "than the seasons' combined error (x.json).")
     assert "agrees" not in words
     words = pack_module.hand_built_sentence({"hand_built_localisation": {**block, "max_diff_pix": 0.03,
                                                                           "agrees": True}})
-    assert "agrees with the hand-built localisation of the same pixels within 0.03 px over 4 seasons" in words
+    assert words == "The centroid agrees with the hand-built localisation within 0.03 px over 4 seasons (x.json)."
 
 
 OFFSET_FIT = {"self_referenced_arcsec": 0.39, "self_referenced_err_arcsec": 0.15, "sigma": 2.6, "counts": None,
@@ -1766,7 +1784,7 @@ def tess_text_plain(block: dict) -> str:
 
 
 def test_the_golden_note_with_a_tess_statement_stays_inside_the_word_limit():
-    """The live KIC 6146676 dossier (the version 3 golden) with the statement its own inputs give: the note with the
+    """The live KIC 6146676 dossier (the version 4 golden) with the statement its own inputs give: the note with the
     sentence and its one reference stays inside the RNAAS 1,500 words and costs it under 100 (round 2, N1)."""
     golden = json.loads((Path(__file__).resolve().parents[1] / "golden" / "kic-006146676-generated.json")
                         .read_text(encoding="utf-8"))
@@ -1775,23 +1793,27 @@ def test_the_golden_note_with_a_tess_statement_stays_inside_the_word_limit():
     assert words["total"] <= NOTE_LIMITS["total"] and words["total"] - before < 100
 
 
-# the live shape's margin under the RNAAS 1,500 (fix round 2, N1): room for a caveat title or a degenerate run
+# the live shape's margin under the RNAAS 1,500 (fix round 2, N1): room for a caveat title, and for the 6 to 8 words
+# a word processor counts over ``_count`` on the citations (fix round 3 review, M-5)
 LIVE_SHAPE_LIMIT = 1480
 
 
-def _live_shape(timing: dict, cross: str, prior: bool = True) -> dict:
-    """The golden as a live draft has it (fix round 2, N1): ok ``timing`` (the fixture dossier's) and ``shape``
-    blocks, which the gate requires; a prior claim unless ``prior`` is False; a TESS block with a skipped sector and
-    an uncertain count (a period error that blurs the TESS epochs), still with transits in the windows, so the
-    sentence carries its uncertain clause, the skipped clause and its citation; and a current cross-check in one of
-    the two longest forms: ``cross="validated"`` (the validation-lines phrase, 23 words over the candidate phrase)
-    or ``cross="dominant"`` (a full FPP at 0.6 and the dominant-scenario sentence), each with the factor sentence."""
+def _live_shape(cross: str, prior: bool = True) -> dict:
+    """The version 4 golden as a live draft has it (fix round 4, I-1): its own ``timing``, ``shape``, ``parity``,
+    ``secondary``, ``centroid_offset`` (the star's own direct-image centroid, so the Bryson sentence and bibitem) and
+    ``hand_built_localisation`` blocks; a prior claim unless ``prior`` is False; the worst TESS block, a skipped
+    sector and an uncertain count (a period error that blurs the TESS epochs) with transits still in the windows, so
+    the sentence carries its uncertain clause, the skipped clause and its citation; and a current cross-check in one
+    of the two longest forms: ``cross="validated"`` (the validation-lines phrase, 23 words over the candidate phrase)
+    or ``cross="dominant"`` (a full FPP at 0.6, the dominant-scenario sentence and two degenerate runs left out),
+    each with the factor sentence."""
     from skysift import tess
     from tests.unit.test_crosscheck import fake_result
     from tests.unit.test_dossier import PRIOR_CLAIM
     from tests.unit.ui_seed import SEED_TESS
     data = json.loads(GOLDEN.read_text(encoding="utf-8"))
-    data["timing"], data["shape"] = json.loads(json.dumps(timing)), json.loads(json.dumps(SHAPE_OK))
+    assert data["dossier_version"] == "4" and data["timing"]["ok"] is True and data["shape"]["ok"] is True
+    assert pack_module.self_referenced(data["centroid_offset"]) and data["hand_built_localisation"]["agrees"]
     if prior:
         data["prior_claims"] = [{k: PRIOR_CLAIM[k] for k in ("doi", "date", "author", "title")}]
     meta = {**SEED_TESS, "sectors": [*SEED_TESS["sectors"], 109]}
@@ -1802,24 +1824,35 @@ def _live_shape(timing: dict, cross: str, prior: bool = True) -> dict:
         block = fake_result(cross_check.inputs_fingerprint(data), fpp=0.6, nfpp=0.002,
                             scenarios=[{"ID": "169822655", "scenario": "NEB", "prob": 0.55},
                                        {"ID": "169822650", "scenario": "TP", "prob": 0.4}])
+        for run in block["runs"][:2]:                     # identical runs, so the medians do not move
+            run["degenerate"] = True
+        block["n_degenerate"] = 2
     data["cross_check"] = cross_check.with_current({**block, "current": True}, data)
     return data
 
 
-def _check_live_shape(timing: dict, cross: str, prior: bool) -> dict:
+def _check_live_shape(cross: str, prior: bool) -> dict:
     """Render ``_live_shape`` and check it carries every long form it should; its ``note_words``."""
     from skysift import tess
-    data = _live_shape(timing, cross, prior)
+    data = _live_shape(cross, prior)
     block = data["tess"]
     assert block["sectors_skipped"] == [109] and block["uncertain"] and block["n_transits"] > 0
     tex = render_note(data)
     flat = " ".join(tex.split())
     assert str(pack_module.cross_check_sentence(data, True)) in flat and "a factor of" in flat
     assert ("Its full false-positive probability is at or above 0.5" in flat) == (cross == "dominant")
+    assert ("2 degenerate runs left out" in flat) == (cross == "dominant")
     assert ("validation lines" in flat) == (cross == "validated")
     sentence = str(tess.note_sentence(block, True))
     assert sentence in flat and "Sector 109, not assessed" in sentence and "(count uncertain, about" in sentence
     assert sentence.endswith(r"\citep[noise model and thresholds in the README;][]{christ2019}.")
+    assert flat.count("the Zenodo pack's README") == 1                            # M-3: said once
+    # the version 4 sentences the round 3 test did not see (I-1)
+    assert r"by the rule of \citet{bryson2013}" in flat and r"]{bryson2013} Bryson" in flat
+    assert "The centroid agrees with the hand-built localisation within 0.03 px over 4 seasons" in flat
+    assert r"The odd and even depths are 2,222 $\pm$ 162 and 2,153 $\pm$ 149 ppm (0.3 sigma apart)." in flat
+    assert r"The phase 0.5 depth is 95 $\pm$ 128 ppm (3-sigma upper limit 480 ppm)" in flat
+    assert "the strongest dip elsewhere is 342 ppm at phase 0.38 (3.8 sigma)" in flat
     assert (PRIOR_DOI in flat) == prior
     words = note_words(tex)
     assert note_problems(words, tex) == [] or words["total"] > NOTE_LIMITS["total"]
@@ -1828,16 +1861,91 @@ def _check_live_shape(timing: dict, cross: str, prior: bool) -> dict:
 
 @pytest.mark.parametrize("prior", [False, True], ids=["no-prior-claim", "prior-claim"])
 @pytest.mark.parametrize("cross", ["validated", "dominant"])
-def test_the_live_shape_stays_inside_the_word_limit_with_margin(env_with_dossier, cross, prior):
-    """Fix rounds 2 and 3, N1: the note as a live draft renders it (timing and shape blocks, the longest
-    cross-check forms, a TESS sentence with a skipped sector and an uncertain count, with and without a prior claim)
-    stays at or under 1,480 words, 20 under the RNAAS limit, and the gate does not refuse it for its length.
-    Measured in round 3: 1,364 and 1,367 without a prior claim, 1,431 and 1,434 with one (validated, dominant)."""
-    timing = env_with_dossier.data["timing"]
-    assert timing["ok"] is True
-    words = _check_live_shape(timing, cross, prior)
+def test_the_live_shape_stays_inside_the_word_limit_with_margin(cross, prior):
+    """Fix rounds 2 to 4, N1 and I-1: the note as a live draft of the version 4 golden renders it (its own timing,
+    shape, parity, secondary, pixel-offset and hand-built blocks, the longest cross-check forms, a TESS sentence with
+    a skipped sector and an uncertain count, with and without a prior claim) stays at or under 1,480 words, 20 under
+    the RNAAS limit, and the gate does not refuse it for its length. Measured in round 4: 1,376 and 1,384 without a
+    prior claim, 1,439 and 1,447 with one (validated, dominant with two degenerate runs)."""
+    words = _check_live_shape(cross, prior)
     assert words["total"] <= LIVE_SHAPE_LIMIT, words
-    assert not [p for p in pack_module.gate_problems(_live_shape(timing, cross, prior)) if "words" in p]
+    assert not [p for p in pack_module.gate_problems(_live_shape(cross, prior)) if "words" in p]
+
+
+def test_the_body_does_not_repeat_the_abstract_and_keeps_every_number():
+    """Fix round 4, I-1: the signal section opens on the light curve, the star's Gaia DR3 id and G magnitude and the
+    dip, not on the abstract's sentence again; nothing the old opening carried is lost."""
+    golden = json.loads(GOLDEN.read_text(encoding="utf-8"))
+    tex = render_note(golden)
+    signal = " ".join(tex.split(r"\section{The signal}")[1].split(r"\section{")[0].split())
+    assert signal.startswith(r"In the KBonus Kepler Background light curve \citep{kbonus} of KIC 6146676 (Gaia DR3 "
+                             f"{golden['target']['gaia_id']}, $G = 16.2$), a dip of ")
+    assert "This note reports" not in signal and "recorded only in the background" not in signal
+    abstract = tex.split(r"\begin{abstract}")[1].split(r"\end{abstract}")[0]
+    assert abstract.startswith("\nThis note reports a transit candidate on KIC 6146676, a star that Kepler recorded "
+                               "only in the background of other targets' pixels.")
+    q = pack_text.quantities(golden, tex=True)
+    for value in (q["depth_pm"], q["duration_pm"], q["period_pm"], q["t_ref_bjd_pm"]):
+        assert str(value) in signal
+
+
+def test_the_short_offset_sentence_keeps_both_offsets_and_the_verdict():
+    """Fix round 4, I-1: the note's offset sentence (``short``) keeps the two offsets with their errors, the sigma,
+    the reference, Bryson's rule and the verdict; the fallback against the fit's position keeps its own reference
+    and is not judged by the rule. The long form stays the README's, the ExoFOP note's and the page's."""
+    own = {**OFFSET_FIT, "reference": "the star's own direct-image centroid", "counts": False}
+    short = pack_module.offset_sentence({"centroid_offset": own}, short=True)
+    assert short == ("Against the star's own out-of-transit image the difference-image centroid is offset by 0.39 ± "
+                     "0.15 arcsec (2.6 sigma), not an offset by the rule of Bryson et al. (2013) (over 3 sigma and "
+                     "0.2 arcsec); against the Gaia position, which carries the WCS zero point and registration, by "
+                     "0.25 ± 0.28 arcsec. Each error is the larger of the seasons' combined error and scatter.")
+    counted = pack_module.offset_sentence({"centroid_offset": {**own, "counts": True}}, tex=True, short=True)
+    assert r"(2.6 sigma), an offset by the rule of \citet{bryson2013} (over 3 sigma and 0.2 arcsec);" in str(counted)
+    fit = pack_module.offset_sentence({"centroid_offset": OFFSET_FIT}, short=True)
+    assert fit == ("Against the catalogue position plus the two-source fit's common shift (the star's direct-image "
+                   "centroid is not stored for every season) the difference-image centroid is offset by 0.39 ± 0.15 "
+                   "arcsec (2.6 sigma), not assessed from the star's own image; against the Gaia position, which "
+                   "carries the WCS zero point and registration, by 0.25 ± 0.28 arcsec. Each error is the larger of "
+                   "the seasons' combined error and scatter.")
+    assert len(short.split()) < len(pack_module.offset_sentence({"centroid_offset": own}).split()) - 5
+    assert pack_module.offset_sentence({"centroid_offset": own}).endswith(pack_module.SAME_ERROR_RULE)
+
+
+def test_the_note_says_once_which_readme_it_points_to(env_with_dossier):
+    """Fix round 4, M-3: the first pointer of the note names the Zenodo pack's README, the errors pointer when
+    the note has one, else the TESS sentence's; a later pointer says "the README"."""
+    from skysift import tess
+    data = _with_tess(_with_errors(env_with_dossier.data))
+    assert pack_module.errors_pointer(data) and tess.note_cites(data["tess"])
+    flat = " ".join(render_note(data).split())
+    assert flat.count("the Zenodo pack's README") == 1
+    assert flat.index("(methods in the Zenodo pack's README)") < flat.index(
+        r"\citep[noise model and thresholds in the README;][]{christ2019}")
+    bare = {**data, "timing": {"ok": False, "reason": "x"}, "shape": {"ok": False, "reason": "y"}}
+    flat = " ".join(render_note(bare).split())
+    assert flat.count("the Zenodo pack's README") == 1
+    assert r"\citep[noise model and thresholds in the Zenodo pack's README;][]{christ2019}" in flat
+
+
+def test_the_readme_labels_the_tess_paragraph_by_what_the_note_says(env_with_dossier):
+    """Fix round 4, M-2: "TESS prediction (the note's TESS sentence points here)" only when the note's sentence
+    carries the pointer; with counted sectors but no transit in a window the paragraph says how the windows were
+    counted, and the note points nowhere."""
+    from skysift import tess
+    data = env_with_dossier.data
+    predicted = _with_tess(data)
+    assert tess.note_cites(predicted["tess"])
+    readme = render_readme(predicted, {})
+    assert "TESS prediction (the note's TESS sentence points here): " in readme
+    assert "TESS coverage (how the windows were counted)" not in readme
+    eph = {**data["ephemeris"], "period_days": 400.0, "t0_bjd": 2457000.0 + 1650.0}
+    from tests.unit.ui_seed import SEED_TESS
+    zero = {**data, "tess": tess.statement({**SEED_TESS, "sectors": [14, 15]}, eph)}
+    assert zero["tess"]["n_transits"] == 0 and not tess.note_cites(zero["tess"]) and zero["tess"]["methods"]
+    readme = render_readme(zero, {})
+    assert "TESS prediction" not in readme and "the note's TESS sentence points here" not in readme
+    assert f"TESS coverage (how the windows were counted): {tess.methods_text(zero['tess'])}" in readme
+    assert "README" not in str(tess.note_sentence(zero["tess"], tex=True))
 
 
 def test_the_live_gate_refuses_a_note_over_the_word_limit(env_with_dossier):

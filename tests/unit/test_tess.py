@@ -494,3 +494,41 @@ def test_the_tool_reports_a_star_the_tic_does_not_know(tool, tmp_path, monkeypat
     monkeypatch.setattr(net, "fetch", lambda *a, **k: empty)
     assert tool.main(["--target", "kic-006146676", "--db", url]) == 1
     assert "no TIC row for KIC 6146676" in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------------------------------- fix round 4
+
+def test_the_thresholds_name_christ_et_al_once_as_the_source_of_both():
+    """Fix round 4, M-1: the thresholds sentence credits 7.1 and 3 to Christ et al. by name, once, where "that work"
+    and "it" read as Battley et al. 2021 and Sullivan et al. 2015, the works named just before them; the paragraph
+    keeps one "Christ et al. 2019" (round 3)."""
+    text = tess.thresholds_sentence()
+    assert text.count("Christ et al.") == 1 and "Christ et al. 2019" not in text
+    assert "that work" not in text and "it reports" not in text
+    assert ("Christ et al. centre their TESS recovery on the Kepler threshold of 7.1 (Sullivan et al. 2015 use 7.3) "
+            "and report 3 as the floor adequate for characterising known planets.") in text
+    assert "7.1 or more" in text and "below a nominal 3" in text and "\"marginal\" between" in text
+    full = tess.methods_text(tess.statement(META, EPHEMERIS))
+    assert full.count("Christ et al. 2019") == 1 and full.count("Christ et al.") == 2
+
+
+def test_a_star_not_assessed_carries_no_prediction_caveat():
+    """Fix round 4, M-4: no coverage was counted, so no prediction was made and the block says nothing of one; a
+    counted star keeps the caveat first."""
+    only = tess.statement({**META, "sectors": [109]}, EPHEMERIS)
+    assert only["verdict"] == "not assessed" and tess.PREDICTION_CAVEAT not in only["caveats"]
+    assert any("TESScut lists Sector 109" in c for c in only["caveats"])
+    assert tess.statement(META, EPHEMERIS)["caveats"][0] == tess.PREDICTION_CAVEAT
+
+
+def test_the_first_pointer_names_the_readme_of_the_zenodo_pack():
+    """Fix round 4, M-3: the note says once which README it means; the TESS sentence says it only when it is the
+    note's first pointer (``first``), and the page's copy carries no pointer at all."""
+    b = tess.statement(META, EPHEMERIS)
+    assert tess.note_cites(b) == ("christ2019",)
+    assert tess.note_sentence(b).endswith("(noise model and thresholds in the README; Christ et al. 2019).")
+    assert tess.note_sentence(b, first=True).endswith("(noise model and thresholds in the Zenodo pack's README; "
+                                                      "Christ et al. 2019).")
+    assert str(tess.note_sentence(b, tex=True, first=True)).endswith(
+        r"\citep[noise model and thresholds in the Zenodo pack's README;][]{christ2019}.")
+    assert "README" not in tess.note_sentence(b, readme=False, first=True)

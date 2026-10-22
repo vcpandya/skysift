@@ -921,3 +921,28 @@ def test_section_03_carries_the_tess_statement(seeded_dossier):
     assert json.loads(blob)["tess"] == block
     assert 'if (TS.methods) para(2, TS.methods, "dossier-small");' in export
     assert 'h("h3", null, "TESS")' in export and "TESS coverage was not assessed${why}." in export
+
+
+def test_a_star_not_assessed_shows_no_prediction_caveat_and_no_significance(seeded_dossier):
+    """Task 8 fix round 4, M-4: a star TESS saw only in sectors outside the table has no counted window, so the page
+    shows the sentence and the skipped-sector caveat, but neither the prediction caveat nor the sector table and the
+    S/N line; the standalone script skips the same two."""
+    import html
+    from pathlib import Path
+
+    from skysift import tess
+    from tests.unit.ui_seed import SEED_TESS
+    client, app, _ids, data = seeded_dossier
+    only = tess.statement({**SEED_TESS, "sectors": [109]}, data["ephemeris"])
+    assert only["verdict"] == "not assessed"
+    path = Path(app.state.store.dossier(STAGE2_TARGET)["data_path"])
+    path.write_text(json.dumps({**data, "tess": only}), encoding="utf-8")
+    client.cookies.set("skysift_mode", "expert")
+    checks = html.unescape(client.get(f"/dossiers/{STAGE2_TARGET}").text.split('id="checks"')[1]
+                           .split('id="pixels"')[0])
+    assert only["sentence"] in checks and "TESScut lists Sector 109" in checks
+    assert "This is a prediction of detectability" not in checks and "per-transit S/N" not in checks
+    assert "TESS sectors on the Kepler ephemeris" not in checks
+    export = client.get(f"/dossiers/{STAGE2_TARGET}/export.html").text
+    assert 'const assessed = TS.verdict !== "not assessed";' in export
+    assert "if (assessed) list(2," in export and "if (assessed) para(2, `TIC ${TS.tic}" in export

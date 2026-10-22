@@ -53,7 +53,7 @@ Ephemeris and transit-parameter errors (the note's signal section points here): 
 {% endif %}
 {% if n.tess_methods %}
 
-TESS prediction (the note's TESS sentence points here): {{ n.tess_methods }}
+{% if n.tess_pointer %}TESS prediction (the note's TESS sentence points here){% else %}TESS coverage (how the windows were counted){% endif %}: {{ n.tess_methods }}
 {% endif %}
 {% if n.crowdsap or n.psffrac %}
 

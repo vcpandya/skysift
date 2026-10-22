@@ -659,10 +659,10 @@ GENERATED = REPO / "tests" / "golden" / "kic-006146676-generated.json"     # too
 
 
 def test_hand_built_values_agree_within_errors():
-    """The live run of 22 October 2026 at dossier version 3 (first compared in
+    """The live run of 22 October 2026, at dossier version 4 since a56d8c8 (first compared in
     docs/superpowers/notes/2026-10-21-dossier-comparison.md) against the hand-built KIC 6146676 study: Rp, a and Teq
     within the study's quoted errors, the fitted T14 within the study's, the per-season centroid within 0.1 pixel of
-    the study's, the rung 5 rows at rule version 3 (a measured floor and a registration shift in every season, all four
+    the study's, the rung 5 rows at rule version 4 (a measured floor and a registration shift in every season, all four
     seasons voting), the habitable-zone flags, and the stored FPP reproduced from its stored inputs."""
     ref = json.loads(HAND_BUILT.read_text(encoding="utf-8"))
     gen = json.loads(GENERATED.read_text(encoding="utf-8"))
@@ -672,8 +672,8 @@ def test_hand_built_values_agree_within_errors():
     assert abs(planet["a_au"]["median"] - pb["a_AU"]["median"]) <= pb["a_AU"]["plus"]
     assert abs(planet["teq_k"]["median"] - teq["median"]) <= teq["plus"]
     assert planet["in_habitable_zone"] is False and planet["in_optimistic_habitable_zone"] is True
-    # the golden is the version 3 run; version 4 (the TESS block) re-writes it at the end of the branch (spec 10.8)
-    assert gen["dossier_version"] == "3" and dossier_module.DOSSIER_VERSION == "4"
+    # the golden is the version 4 run (a56d8c8: the cross-check, the TESS statement and pixel rule 4; spec 10.8)
+    assert gen["dossier_version"] == "4" and dossier_module.DOSSIER_VERSION == "4"
     eph = gen["ephemeris"]
     assert eph["duration_source"] == "fitted T14" and eph["period_source"] == "linear fit of 32 transit times"
     assert eph["period_err_days"] > 0 and eph["t_ref_err_days"] > 0 and eph["epoch_ref"] == 19
@@ -684,7 +684,7 @@ def test_hand_built_values_agree_within_errors():
     rung5 = next(t for t in gen["tests"] if t["rung"] == "rung5_pixels")
     assert rung5["status"] == "pass" and rung5["metrics"]["tpf_missing"] == []
     m5 = rung5["metrics"]
-    assert m5["rule_version"] == 3 and m5["n_seasons"] == m5["n_seasons_voting"] == 4
+    assert m5["rule_version"] == 4 and m5["n_seasons"] == m5["n_seasons_voting"] == 4      # pixel rule 4 (a56d8c8)
     assert m5["seasons_silenced"] == {} and m5["n_seasons_partial_box"] == 2
     assert [s["season"] for s in m5["seasons"]] == [0, 1, 2, 3] and all(s["voting"] for s in m5["seasons"])
     for s in m5["seasons"]:

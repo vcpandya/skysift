@@ -221,7 +221,10 @@ def _cite_words(m: re.Match) -> str:
 
 def _count(tex: str) -> int:
     """Words as the reader sees them: a citation as three (author, et al., year), a command's name dropped and its
-    argument kept (section titles and the caption count), tokens without a letter or digit not counted."""
+    argument kept (section titles and the caption count), tokens without a letter or digit not counted. A word
+    processor counts "Giacalone et al. 2021" as 4 and "Mehta 2026" as 2, so on the live notes (10 to 12 citations)
+    this count runs 6 to 8 words under a word processor's (fix round 3 review, M-5); the 1,480-word margin of the
+    limit test covers that."""
     tex = _CITE.sub(_cite_words, tex)
     tex = _DATASET.sub(lambda m: f" {m.group(1)} ", tex)
     tex = _BIBITEM.sub(" ", _ENV.sub(" ", tex))
@@ -409,8 +412,9 @@ def priority_sentence(data: dict) -> str | None:
 def hand_built_sentence(data: dict) -> str | None:
     """The pixel section's one sentence on the hand-built study of the same pixels
     (``dossier.hand_built_localisation``): the largest season-by-season difference in the centroid's distance from
-    this star, and where the study is. It says "agrees" only when every season's difference is below its combined
-    error, else "differs ... by up to"."""
+    this star, over how many seasons, and where the study is. It says "agrees" only when every season's difference
+    is below its combined error, else "differs ... by up to". One clause since Task 8 fix round 4 (the note's word
+    limit): "The centroid agrees with the hand-built localisation within X px over N seasons (<source>)."."""
     block = data.get("hand_built_localisation")
     diff = _num(block.get("max_diff_pix")) if isinstance(block, dict) else None
     if diff is None:
@@ -418,15 +422,14 @@ def hand_built_sentence(data: dict) -> str | None:
     n = block.get("n_seasons")
     seasons = f"{n} season{'s' if n != 1 else ''}" if isinstance(n, int) else "the seasons that voted"
     if block.get("agrees") is True:
-        return (f"Season by season the centroid's distance from this star agrees with the hand-built localisation of "
-                f"the same pixels within {max(diff, 0.01):.2f} px over {seasons} ({block.get('source')}).")
+        return (f"The centroid agrees with the hand-built localisation within {max(diff, 0.01):.2f} px over {seasons} "
+                f"({block.get('source')}).")
     err = _num(block.get("combined_err_pix"))
     if block.get("agrees") is False and err is not None and err > 0:
-        return (f"Season by season the centroid's distance from this star differs from the hand-built localisation "
-                f"of the same pixels by up to {diff:.2f} px over {seasons}, more than the seasons' combined error "
-                f"({block.get('source')}).")
-    return (f"Season by season the centroid's distance from this star differs from the hand-built localisation of the "
-            f"same pixels by up to {diff:.2f} px over {seasons} (the error is not available; {block.get('source')}).")
+        return (f"The centroid differs from the hand-built localisation by up to {diff:.2f} px over {seasons}, more "
+                f"than the seasons' combined error ({block.get('source')}).")
+    return (f"The centroid differs from the hand-built localisation by up to {diff:.2f} px over {seasons} (the error "
+            f"is not available; {block.get('source')}).")
 
 
 def _timed(data: dict) -> bool:
@@ -468,21 +471,25 @@ def methods_sentence(data: dict, tex: bool = False) -> str | None:
     return _joined(tex, *parts)
 
 
+# the note says once which README its pointers mean, in the first of them (Task 8 fix round 4, M-3)
+PACK_README = tess_module.PACK_README
 # the works ``methods_sentence`` cites, in its order
 ERRORS_CITES = (("deeg2015", "timed"), ("holczer2016", "timed"), ("schmitt2014", "boot"))
 
 
 def errors_pointer(data: dict) -> str | None:
     """The note's stand-in for ``methods_sentence`` (Task 8 fix round 3, under 25 words, no citation): where the
-    ephemeris and shape errors come from, and that the method is in the README. None when neither block is ok."""
+    ephemeris and shape errors come from, and that the method is in the README. It is the note's first pointer, so
+    it names the README as the Zenodo pack's (fix round 4, M-3; ``PACK_README``) and the TESS sentence's later
+    pointer says "the README" alone. None when neither block is ok."""
     timed, boot = _timed(data), _bootstrapped(data)
     if timed and boot:
         return ("The ephemeris and transit-parameter errors come from per-transit fits, a weighted linear fit and a "
-                "bootstrap over transits (methods in the README).")
+                f"bootstrap over transits (methods in {PACK_README}).")
     if timed:
-        return "The ephemeris errors come from per-transit fits and a weighted linear fit (method in the README)."
+        return f"The ephemeris errors come from per-transit fits and a weighted linear fit (method in {PACK_README})."
     if boot:
-        return "The transit-parameter errors come from a bootstrap over transits (method in the README)."
+        return f"The transit-parameter errors come from a bootstrap over transits (method in {PACK_README})."
     return None
 
 
@@ -507,8 +514,9 @@ def tess_text(data: dict, tex: bool = False) -> str:
     """The TESS statement for the note, after the cross-check sentence (spec 10.8): ``tess.note_sentence`` alone,
     pointing to the README for the noise model and thresholds and citing Christ et al. 2019 only (fix round 2,
     N1: the methods sentence and its references cost the note about 180 words); "TESS coverage was not assessed."
-    without the inputs."""
-    return tess_module.note_sentence(data.get("tess"), tex)
+    without the inputs. Its pointer names the README as the Zenodo pack's when the note has no errors pointer
+    before it (fix round 4, M-3)."""
+    return tess_module.note_sentence(data.get("tess"), tex, first=errors_pointer(data) is None)
 
 
 def plain_reference(key: str) -> str:
@@ -582,7 +590,8 @@ def _odd_even(data: dict, tex: bool) -> tuple[str, str] | None:
 
 def parity_sentence(data: dict, tex: bool = False) -> str | None:
     """The odd and even depths with their errors and the difference in sigma (the parity block), with rung 2's own
-    comparison when the two differ by more than 0.5 sigma; rung 2's depths without errors for an older dossier."""
+    comparison when the two differ by more than 0.5 sigma; rung 2's depths without errors for an older dossier.
+    "The odd and even depths are X ± e and Y ± e ppm (Z sigma apart)." since Task 8 fix round 4 (the word limit)."""
     sh = _metrics(data, "rung2_shape")
     pair = _odd_even(data, tex)
     rung = _num(sh.get("parity_sigma"))
@@ -590,10 +599,12 @@ def parity_sentence(data: dict, tex: bool = False) -> str | None:
         odd, even, par = _f(sh.get("odd_ppm"), 0, True), _f(sh.get("even_ppm"), 0, True), _f(rung, 1)
         if not (odd and even):
             return None
-        return f"The odd and even transits have depths of {odd} and {even} ppm" + (f" ({par} sigma apart)." if par
-                                                                                    else ".")
-    diff = _num((data.get("parity") or {}).get("difference_sigma"))
-    parts = ["The odd and even transits have depths of ", pair[0], " and ", pair[1]]
+        return f"The odd and even depths are {odd} and {even} ppm" + (f" ({par} sigma apart)." if par else ".")
+    parity = data["parity"]
+    diff = _num(parity.get("difference_sigma"))
+    odd = pm_text(parity["odd"]["depth_ppm"], parity["odd"]["err_ppm"], parity["odd"]["err_ppm"], nd=0, comma=True,
+                  tex=tex)                                  # the unit once, after the even depth
+    parts = ["The odd and even depths are ", odd, " and ", pair[1]]
     if diff is not None:
         parts.append(f" ({diff:.1f} sigma apart")
         if rung is not None and abs(rung - diff) > 0.5:
@@ -620,22 +631,23 @@ def albedo_text(data: dict) -> str:
 def secondary_sentence(data: dict, tex: bool = False) -> str | None:
     """The phase 0.5 depth with its error, its 3-sigma upper limit, the albedo clause and the strongest dip at any
     other phase (the secondary block); rung 2's depth against the scatter for an older dossier; None without
-    either."""
+    either. "The phase 0.5 depth is X ± e ppm (3-sigma upper limit L ppm), <albedo>; the strongest dip elsewhere is
+    D ppm at phase F (S sigma)." since Task 8 fix round 4 (the word limit)."""
     sec = data.get("secondary")
     if not isinstance(sec, dict) or _num(sec.get("depth_ppm")) is None:
         sh = _metrics(data, "rung2_shape")
         d, rms = _f(sh.get("secondary_ppm"), 0, True), _f(sh.get("control_rms_ppm"), 0, True)
         return (f"No secondary eclipse shows at phase 0.5 ({d} ppm against a scatter of {rms} ppm)." if d and rms
                 else None)
-    parts = ["At phase 0.5 the depth is ",
+    parts = ["The phase 0.5 depth is ",
              pm_text(sec["depth_ppm"], sec.get("err_ppm"), sec.get("err_ppm"), nd=0, comma=True, tex=tex), " ppm"]
     limit = _f(sec.get("limit_3sigma_ppm"), 0, True)
     if limit:
-        parts.append(f", a 3-sigma upper limit of {limit} ppm{albedo_text(data)}")
+        parts.append(f" (3-sigma upper limit {limit} ppm){albedo_text(data)}")
     top, phase, sigma = (_f(sec.get("strongest_ppm"), 0, True), _f(sec.get("strongest_phase"), 2),
                          _f(sec.get("strongest_sigma"), 1))
     if top and phase and sigma:
-        parts.append(f", and the strongest dip at any other phase is {top} ppm at phase {phase} ({sigma} sigma)")
+        parts.append(f"; the strongest dip elsewhere is {top} ppm at phase {phase} ({sigma} sigma)")
     return _joined(tex, *parts, ".")
 
 
@@ -728,19 +740,29 @@ def self_referenced(block: dict | None) -> bool:
 
 
 SAME_ERROR_RULE = "Both errors are the larger of the seasons' combined error and their scatter."
+SAME_ERROR_SHORT = "Each error is the larger of the seasons' combined error and scatter."
 
 
-def offset_sentence(data: dict, tex: bool = False) -> str | None:
+def offset_sentence(data: dict, tex: bool = False, short: bool = False) -> str | None:
     """The pixel offset as Bryson et al. 2013 quote it (ruling e): the difference-image centroid against the star's own
     out-of-transit image, with its error and sigma, judged by their rule (above 3 sigma and above 0.2 arcsec), and the
     distance from the Gaia position with the one clause that it carries the WCS zero point and the registration. None
-    without the block; with ``tex`` a ``Raw`` citing ``bryson2013``."""
+    without the block; with ``tex`` a ``Raw`` citing ``bryson2013``. ``short`` is the note's form (Task 8 fix round
+    4, the word limit): the same two offsets, errors, sigma, reference, rule and verdict with fewer connectives
+    ("... not an offset by the rule of Bryson et al. (2013) (over 3 sigma and 0.2 arcsec); against the Gaia position,
+    which carries the WCS zero point and registration, by X arcsec. Each error is ..."); the README, the ExoFOP note
+    and the page keep the long one."""
     block = offset_block(data)
     if not block:
         return None
     cat, cat_err = block.get("catalogue_referenced_arcsec"), block.get("catalogue_referenced_err_arcsec")
-    gaia = ["the distance from the Gaia position (", pm_text(cat, cat_err, cat_err, tex=tex),
-            " arcsec) carries the WCS zero point and the registration."]
+    if short:
+        gaia = ["against the Gaia position, which carries the WCS zero point and registration, by ",
+                pm_text(cat, cat_err, cat_err, tex=tex), " arcsec."]
+    else:
+        gaia = ["the distance from the Gaia position (", pm_text(cat, cat_err, cat_err, tex=tex),
+                " arcsec) carries the WCS zero point and the registration."]
+    same = SAME_ERROR_SHORT if short else SAME_ERROR_RULE
     off, err, sigma = (_num(block.get(k)) for k in ("self_referenced_arcsec", "self_referenced_err_arcsec", "sigma"))
     if off is None or err is None or sigma is None:
         return _joined(tex, "Averaged over the seasons that voted, the centroid sits ",
@@ -750,14 +772,15 @@ def offset_sentence(data: dict, tex: bool = False) -> str | None:
         return _joined(tex, f"Against {block.get('reference') or 'the fitted position of the star'} (the star's "
                        "direct-image centroid is not stored for every season) the difference-image centroid is "
                        "offset by ", pm_text(off, err, err, tex=tex), f" arcsec ({sigma:.1f} sigma), not assessed "
-                       "from the star's own image; ", *gaia, " ", SAME_ERROR_RULE)
+                       "from the star's own image; ", *gaia, " ", same)
     cite = Raw(r"\citet{bryson2013}") if tex else "Bryson et al. (2013)"
     level, k = _num(block.get("level_arcsec")) or 0.2, _num(block.get("sigma_level")) or 3.0
     verdict = "an offset" if block.get("counts") else "not an offset"
+    rule = (f" (over {k:g} sigma and {level:g} arcsec); " if short
+            else f", which asks for more than {k:g} sigma and more than {level:g} arcsec; ")
     return _joined(tex, "Against the star's own out-of-transit image the difference-image centroid is offset by ",
                    pm_text(off, err, err, tex=tex), f" arcsec ({sigma:.1f} sigma), {verdict} by the rule of ", cite,
-                   f", which asks for more than {k:g} sigma and more than {level:g} arcsec; ", *gaia, " ",
-                   SAME_ERROR_RULE)
+                   rule, *gaia, " ", same)
 
 
 def pixel_sentence(data: dict, tex: bool = False) -> str:
@@ -787,7 +810,7 @@ def pixel_sentence(data: dict, tex: bool = False) -> str:
     cut = ds.partial_box_sentence(seasons)
     if cut:
         text += f" {cut}"
-    offset = offset_sentence(data, tex)
+    offset = offset_sentence(data, tex, short=tex)          # the note (tex) takes the short form
     parts: list = [text, " ", offset] if offset else [text]
     text = ""
     pairs = [(t, n) for s in seasons
@@ -933,6 +956,7 @@ def numbers(data: dict, tex: bool = False, after_bjd: float | None = None) -> di
         "cross_check_flag": cc.owner_flag(data),
         "tess_text": tess_text(data, tex), "tess_row": tess_module.readme_row(data.get("tess")),
         "tess_exofop": tess_module.exofop_line(data.get("tess")), "tess_methods": tess_methods_text(data),
+        "tess_pointer": bool(tess_module.note_cites(data.get("tess"))),   # the README labels its paragraph by it (M-2)
         "abstract": abstract_text(data),
         "prior_text": prior_claim_sentence(data, tex), "prior_plain": prior_claim_sentence(data),
         "priority_text": priority_sentence(data),

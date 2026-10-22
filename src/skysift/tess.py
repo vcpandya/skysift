@@ -103,6 +103,10 @@ VERDICT_PHRASES = {
 }
 # the note's sentence ends with this pointer and its one citation when a prediction was made (fix round 2, N1)
 README_POINTER = "noise model and thresholds in the README;"
+# the note says once which README it means, in its first pointer (Task 8 fix round 4, M-3): the errors pointer of the
+# signal section when there is one, else this sentence's
+PACK_README = "the Zenodo pack's README"
+README_POINTER_FIRST = f"noise model and thresholds in {PACK_README};"
 NOT_FETCHED = "TESS inputs not fetched"
 NOT_ASSESSED = "TESS coverage was not assessed."
 PREDICTION_CAVEAT = ("This is a prediction of detectability: no TESS light curve was examined. A fold of the TESScut "
@@ -300,7 +304,6 @@ def statement(meta: dict | None, ephemeris: dict | None) -> dict:
     period, t0_bjd, t14, depth = values.values()
     t0 = t0_bjd - BTJD_OFFSET
     sig_t0, sig_p = eph.get("t0_bjd_err"), eph.get("period_err_days")
-    caveats = [PREDICTION_CAVEAT]
     rows, skipped, segments = [], [], []
     for n in sorted({int(s) for s in meta.get("sectors") or []}):
         if n not in SECTORS:
@@ -325,6 +328,7 @@ def statement(meta: dict | None, ephemeris: dict | None) -> dict:
     s1_nom, s_nom = significance(depth_tess, nom_t, n_transits)
     s1_con, s_con = significance(depth_tess, con_t, n_transits)
     word = "not assessed" if not rows and skipped else verdict(n_transits, s_nom, s_con)
+    caveats = [] if word == "not assessed" else [PREDICTION_CAVEAT]     # no prediction, no caveat on it (M-4)
     if meta.get("tmag_source") and meta.get("tmag_source") != TMAG_TIC:
         caveats.append(f"The star's TESS magnitude comes from {meta['tmag_source']}: the TIC gives none.")
     if dil["n_without_tmag"]:
@@ -438,20 +442,21 @@ def note_cites(block: dict | None) -> tuple[str, ...]:
     return ()
 
 
-def note_sentence(block: dict | None, tex: bool = False, readme: bool = True) -> str:
+def note_sentence(block: dict | None, tex: bool = False, readme: bool = True, first: bool = False) -> str:
     """The note's sentence (spec 10.8), one short sentence per candidate: the sectors as a span with the cadences,
     any sector TESScut lists that is not assessed, the transits in the windows, the diluted depth, the nominal and
     conservative 1-hour noise at the (blended) magnitude, the folded significance under both and the verdict
     phrase, ending "(noise model and thresholds in the README; Christ et al. 2019)" when a prediction was made;
     "TESS coverage was not assessed." without the inputs. ``readme=False`` leaves the pointer out (the dossier
-    page prints the method under it). With ``tex`` a LaTeX ``Raw``."""
+    page prints the method under it); ``first`` makes it the note's first pointer, "in the Zenodo pack's
+    README" (``README_POINTER_FIRST``). With ``tex`` a LaTeX ``Raw``."""
     text = _plain_sentence(block)
     if not (readme and note_cites(block)):
         return Raw(tex_escape(text)) if tex else text
-    body = text[:-1]
+    body, pointer = text[:-1], README_POINTER_FIRST if first else README_POINTER
     if tex:
-        return Raw(tex_escape(body) + rf" \citep[{tex_escape(README_POINTER)}][]{{christ2019}}.")
-    return f"{body} ({README_POINTER} Christ et al. 2019)."
+        return Raw(tex_escape(body) + rf" \citep[{tex_escape(pointer)}][]{{christ2019}}.")
+    return f"{body} ({pointer} Christ et al. 2019)."
 
 
 def _plain_sentence(b: dict | None) -> str:
@@ -514,12 +519,15 @@ def methods_sentence(block: dict | None, tex: bool = False) -> str | None:
 
 def thresholds_sentence() -> str:
     """The verdict's thresholds and the two noise models in words, for the README and the page after
-    ``methods_sentence``, whose first words name Christ et al. 2019 ("that work"; fix round 3: named once)."""
-    return (f"The verdict is \"should have detected\" at a conservative folded S/N of {SHOULD_DETECT_S} or more, the "
-            "Kepler threshold on which that work centres its TESS recovery (Sullivan et al. 2015 use 7.3), "
-            f"\"not expected\" below a nominal {NOT_EXPECTED_S:.0f}, the floor it reports as adequate for "
-            "characterising known planets, and \"marginal\" between. The nominal 1-hour noise is the TIC "
-            "polynomial at the blended magnitude, scaled to the transit duration as white noise; the conservative one "
+    ``methods_sentence``, whose first words name Christ et al. 2019; the thresholds name Christ et al. once more,
+    without the year, as the source of both numbers (fix round 4, M-1: "that work" and "it" read as the works named
+    just before them), so the paragraph keeps one "Christ et al. 2019"."""
+    return (f"The verdict is \"should have detected\" at a conservative folded S/N of {SHOULD_DETECT_S} or more, "
+            f"\"not expected\" below a nominal {NOT_EXPECTED_S:.0f} and \"marginal\" between: Christ et al. centre "
+            f"their TESS recovery on the Kepler threshold of {SHOULD_DETECT_S} (Sullivan et al. 2015 use 7.3) and "
+            f"report {NOT_EXPECTED_S:.0f} as the floor adequate for characterising known planets. The nominal 1-hour "
+            "noise is the TIC polynomial at the blended magnitude, scaled to the transit duration as white noise; the "
+            "conservative one "
             "is the SPOC CDPP median at that magnitude (beyond the table's 12 to 16, the polynomial times the "
             "table's excess at its nearer end), scaled by the SPOC's measured duration ratios and never below the "
             "nominal.")
