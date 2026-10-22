@@ -17,7 +17,7 @@ from skysift.dossier import generate
 from skysift.lc.tpf import tpf_listing_url
 from skysift.stars import mamajek_table
 from skysift.store.db import TargetRow
-from tests.unit.synthetic_tpf import CCD_ORIGIN, NEIGHBOUR_KIC, tpf_fits, tpf_name, tpf_quarters
+from tests.unit.synthetic_tpf import CCD_ORIGIN, NEIGHBOUR_KIC, listing_html, tpf_fits, tpf_name, tpf_quarters
 from tests.unit.test_dossier import RESPONSES, _make_env, fake_fetch
 from tests.unit.ui_seed import STAGE2_TARGET
 
@@ -30,6 +30,32 @@ DATA = {"ephemeris": {"period_days": 40.29, "t0_bkjd": 136.3, "depth_ppm": 2180.
 NEIGHBOUR_PARAMS_CSV = (b"source_id,teff_gspphot,bp_rp,radius_gspphot,mass_flame\n"
                         b"2101234567890120001,3500.0,1.814,0.45,\n")
 EXPORT_RESPONSES = {**RESPONSES, "n.source_id IN": NEIGHBOUR_PARAMS_CSV}
+
+
+def export_fetch(tpfs, listing_up: bool = True):
+    """The export's requests: the Gaia queries of ``fake_fetch`` and MAST's listing and pixel files of
+    ``NEIGHBOUR_KIC`` (``tpfs``), each logged like ``net.fetch``; ``calls`` keeps the MAST URLs asked for. Without
+    ``listing_up`` the listing is an outage; any other MAST URL is a 404."""
+    from skysift.net import ServiceUnavailable
+    gaia, base = fake_fetch(EXPORT_RESPONSES), tpf_listing_url(NEIGHBOUR_KIC)
+    files = {base + tpf_name(NEIGHBOUR_KIC, b.quarter): bytes(b) for b in tpfs}
+
+    def fetch(url, *, params=None, service, store=None, target_id=None, **_kw):
+        if service == "gaia":
+            return gaia(url, params=params, service=service, store=store, target_id=target_id)
+        assert service == "mast", service
+        fetch.calls.append(url)
+        if url == base and listing_up:
+            data = listing_html(NEIGHBOUR_KIC, [tpf_name(NEIGHBOUR_KIC, b.quarter) for b in tpfs])
+        elif url in files:
+            data = files[url]
+        else:
+            raise ServiceUnavailable(f"mast {url} -> HTTP {503 if url == base else 404}")
+        if store:
+            store.log_query(service, url, params or {}, 200, len(data), target_id=target_id)
+        return data
+    fetch.calls = []
+    return fetch
 
 
 def fake_runs(fpp: float = 0.012, nfpp: float = 1e-4, n: int = cc.N_RUNS, p_stp: float = 0.0,
@@ -80,8 +106,12 @@ def env(settings, monkeypatch):
     env = _make_env(settings, monkeypatch)
     store_pixel_files(env)
     env.report = generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch)
-    env.xfetch = fake_fetch(EXPORT_RESPONSES)
+    env.xfetch = export_fetch(env.tpfs)
     return env
+
+
+def _art(env, quarter: int) -> dict:
+    return env.store.live_artifact(tpf_listing_url(NEIGHBOUR_KIC) + tpf_name(NEIGHBOUR_KIC, quarter))
 
 
 def _stored(env) -> dict:
@@ -138,6 +168,10 @@ def test_export_writes_inputs_lightcurve_and_the_pixel_files(env, tmp_path):
     assert inputs["leak"] == {"depth_ppm": 14.0, "err_ppm": 31.0, "kic": NEIGHBOUR_KIC}      # a consistency check
     assert inputs["quarters"] == [1, 2, 3, 4, 5]
     assert inputs["tpf_files"] == [f"tpf/q{q:02d}.fits.gz" for q in (1, 2, 3, 4, 5)]
+    # every file was kept: the listing is asked (the seed's manifest names other files), nothing is fetched, and the
+    # files the cross-check is made from are pinned against budget retention
+    assert inputs["tpf_kept"] == [1, 2, 3, 4, 5] and inputs["tpf_fetched"] == [] and inputs["tpf_missing"] == []
+    assert env.xfetch.calls == [tpf_listing_url(NEIGHBOUR_KIC)] and all(_art(env, q)["pinned"] for q in range(1, 6))
     for b in env.tpfs:
         assert (out / "tpf" / f"q{b.quarter:02d}.fits.gz").read_bytes() == bytes(b)
     with (out / "lightcurve.csv").open(encoding="utf-8", newline="") as fh:
@@ -160,6 +194,47 @@ def test_export_writes_inputs_lightcurve_and_the_pixel_files(env, tmp_path):
     from skysift.store.db import QueryRow
     with env.store.session() as s:
         assert any("n.source_id IN" in (q.params or "") for q in s.scalars(select(QueryRow)))
+
+
+def test_export_refetches_and_pins_a_pixel_file_retention_dropped(env, tmp_path):
+    """A quarter whose artifact row retention marked deleted is fetched again through the engine's pixel-file path,
+    stored, logged under the target and pinned; inputs.json names it as fetched fresh."""
+    env.store.mark_artifact_deleted(_art(env, 3)["sha256"])
+    assert _art(env, 3) is None                   # a resurrected row comes back unpinned, so its pin is the export's
+    out = cc.export_inputs(env.store, env.blob, env.settings, STAGE2_TARGET, tmp_path / "cc", fetch=env.xfetch)
+    inputs = json.loads((out / "inputs.json").read_text(encoding="utf-8"))
+    name3 = tpf_listing_url(NEIGHBOUR_KIC) + tpf_name(NEIGHBOUR_KIC, 3)
+    assert inputs["quarters"] == [1, 2, 3, 4, 5] and inputs["tpf_fetched"] == [3]
+    assert inputs["tpf_kept"] == [1, 2, 4, 5] and inputs["tpf_missing"] == []
+    assert env.xfetch.calls == [tpf_listing_url(NEIGHBOUR_KIC), name3]
+    assert all(_art(env, q)["pinned"] for q in range(1, 6))
+    assert (out / "tpf" / "q03.fits.gz").read_bytes() == bytes(env.tpfs[2])
+    from sqlalchemy import select
+
+    from skysift.store.db import QueryRow
+    with env.store.session() as s:
+        assert any(q.url == name3 and q.target_id == STAGE2_TARGET for q in s.scalars(select(QueryRow)))
+
+
+def test_export_refetches_a_kept_pixel_file_whose_file_is_gone(env, tmp_path):
+    """A kept row (not deleted) whose file is no longer on disk takes the same path as a deleted one: the state of
+    the trial database copy, its rows kept and its files removed."""
+    env.blob.delete(_art(env, 4)["local_path"])
+    out = cc.export_inputs(env.store, env.blob, env.settings, STAGE2_TARGET, tmp_path / "cc", fetch=env.xfetch)
+    inputs = json.loads((out / "inputs.json").read_text(encoding="utf-8"))
+    assert inputs["quarters"] == [1, 2, 3, 4, 5] and inputs["tpf_fetched"] == [4] and inputs["tpf_missing"] == []
+    assert env.blob.exists(_art(env, 4)["local_path"]) and _art(env, 4)["pinned"]
+    assert (out / "tpf" / "q04.fits.gz").read_bytes() == bytes(env.tpfs[3])
+
+
+def test_a_listing_outage_leaves_the_kept_files_and_names_what_is_missing(env, tmp_path):
+    env.blob.delete(_art(env, 4)["local_path"])
+    down = export_fetch(env.tpfs, listing_up=False)
+    out = cc.export_inputs(env.store, env.blob, env.settings, STAGE2_TARGET, tmp_path / "cc", fetch=down)
+    inputs = json.loads((out / "inputs.json").read_text(encoding="utf-8"))
+    assert inputs["quarters"] == [1, 2, 3, 5] and inputs["tpf_fetched"] == []
+    causes = " ".join(m["cause"] for m in inputs["tpf_missing"])
+    assert "FileNotFoundError" in causes and "MAST did not supply the pixel files" in causes and "503" in causes
 
 
 def test_export_without_gaia_takes_the_neighbours_parameters_from_the_colour(env, tmp_path):
@@ -617,8 +692,24 @@ def test_tool_reports_an_unreadable_export_without_a_traceback(tmp_path, monkeyp
 
 
 def test_an_export_without_pixel_files_is_refused(settings, monkeypatch, tmp_path):
+    """No file kept and the MAST listing down: tpf_missing names the outage, nothing is written but the light curve,
+    and the CLI exits 2."""
     env = _make_env(settings, monkeypatch)                  # the seed keeps no pixel file for this star
+    store_pixel_files(env)
+    for q in range(1, 6):
+        env.store.mark_artifact_deleted(_art(env, q)["sha256"])
     generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch)
-    with pytest.raises(cc.NoPixelFiles, match="tpf_missing: none is kept.*the folder the command runs in"):
-        cc.export_inputs(env.store, env.blob, env.settings, STAGE2_TARGET, tmp_path / "cc", fetch=env.fetch)
+    down = export_fetch(tpf_quarters(), listing_up=False)
+    with pytest.raises(cc.NoPixelFiles, match="tpf_missing: .*MAST did not supply the pixel files.*HTTP 503"):
+        cc.export_inputs(env.store, env.blob, env.settings, STAGE2_TARGET, tmp_path / "cc", fetch=down)
     assert not (tmp_path / "cc" / "inputs.json").exists()
+    from typer.testing import CliRunner
+
+    from skysift import net
+    from skysift.cli import app
+    monkeypatch.setattr(net, "fetch", down)
+    r = CliRunner().invoke(app, ["crosscheck", "--target", STAGE2_TARGET, "--export", str(tmp_path / "cli")])
+    assert r.exit_code == 2 and "MAST did not supply" in r.output and "Traceback" not in r.output
+    gone = export_fetch([])                                  # MAST lists none either
+    with pytest.raises(cc.NoPixelFiles, match="none is kept and MAST lists none"):
+        cc.export_inputs(env.store, env.blob, env.settings, STAGE2_TARGET, tmp_path / "cc2", fetch=gone)

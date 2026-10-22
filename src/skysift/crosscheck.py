@@ -26,7 +26,7 @@ from types import SimpleNamespace
 import numpy as np
 
 from skysift import jsonutil
-from skysift.lc.tpf import parse_tpf, tpf_listing_url
+from skysift.lc.tpf import fetch_tpfs, parse_tpf, tpf_listing_url
 from skysift.pack_text import Raw, tex_escape
 
 TOOL = "triceratops"
@@ -231,10 +231,12 @@ def _leak(data: dict) -> dict | None:
     return {"depth_ppm": _finite(leak[0]), "err_ppm": _finite(leak[1]) if len(leak) > 1 else None, "kic": kic}
 
 
-def _copy_pixel_files(store, blob, kic: int | None, tpf_dir: Path) -> tuple[list[int], list[str], list[dict]]:
+def _copy_pixel_files(store, blob, kic: int | None,
+                      tpf_dir: Path) -> tuple[list[int], list[str], list[str], list[dict]]:
     """Copy each kept pixel file of ``kic`` to ``tpf_dir/q<quarter>.fits.gz`` (``.fits`` when it is not gzipped).
-    Returns (quarters, the copies' paths relative to the export, the files that could not be read)."""
-    quarters, files, missing = [], [], []
+    Returns (quarters, the copies' paths relative to the export, their archive names, the files that could not be
+    read), the first three in quarter order."""
+    quarters, files, names, missing = [], [], [], []
     kept = store.kept_artifacts("tpf", tpf_listing_url(kic)) if kic else {}
     for url, local_path in sorted(kept.items()):
         name = url.rsplit("/", 1)[-1]
@@ -252,16 +254,56 @@ def _copy_pixel_files(store, blob, kic: int | None, tpf_dir: Path) -> tuple[list
         (tpf_dir.parent / rel).write_bytes(raw)
         quarters.append(quarter)
         files.append(rel)
+        names.append(name)
     order = sorted(range(len(quarters)), key=quarters.__getitem__)
-    return [quarters[i] for i in order], [files[i] for i in order], missing
+    return [quarters[i] for i in order], [files[i] for i in order], [names[i] for i in order], missing
+
+
+def _manifest(data: dict) -> list[str]:
+    """The pixel files rung 5 used (its ``tpf_manifest``), [] when it stored none."""
+    px = next((t.get("metrics") or {} for t in data.get("tests") or [] if t.get("rung") == "rung5_pixels"), {})
+    return [str(n) for n in px.get("tpf_manifest") or []]
+
+
+def _pixel_files(store, blob, kic: int | None, manifest: list[str], tpf_dir: Path, *, fetch,
+                 target_id: str) -> tuple[list[int], list[str], list[int], list[dict]]:
+    """Copy the pixel files of ``kic`` for the tool and pin them, so budget retention keeps the files the
+    cross-check was made from. The kept files that read back are copied first; when one of them does not, or rung 5's
+    manifest names a file that is not kept (retention dropped it: its row deleted, or its file gone from disk), the
+    engine's own pixel-file path (``lc.tpf.fetch_tpfs``: the MAST listing and one request per file the cache cannot
+    give, service "mast", stored through the blob and logged under ``target_id``) fetches what is missing and the
+    copy runs again. Every copied file is then pinned (``Store.add_artifact`` with ``pinned=True`` on its live row).
+    Returns (quarters, the copies' paths, the quarters fetched fresh, the files neither kept nor supplied by MAST)."""
+    quarters, files, names, missing = _copy_pixel_files(store, blob, kic, tpf_dir)
+    fetched: list[int] = []
+    if kic and (missing or not manifest or not set(manifest) <= set(names)):
+        kept, unsupplied = set(names), []
+        try:
+            unsupplied = list(fetch_tpfs(kic, fetch=fetch, blob=blob, store=store, target_id=target_id).missing)
+        except Exception as e:          # noqa: BLE001  (an outage or any other failure: the kept files still go out,
+            # and the cause is named in tpf_missing)
+            unsupplied = [{"name": tpf_listing_url(kic),
+                           "cause": f"MAST did not supply the pixel files: {type(e).__name__}: {e}"}]
+        quarters, files, names, missing = _copy_pixel_files(store, blob, kic, tpf_dir)
+        missing += [m for m in unsupplied if m.get("name") not in names]
+        fetched = [q for q, n in zip(quarters, names, strict=True) if n not in kept]
+    base = tpf_listing_url(kic) if kic else ""
+    for name in names:
+        art = store.live_artifact(base + name)
+        if art is not None and not art["pinned"]:
+            store.add_artifact(art["sha256"], art["nbytes"], base + name, art["local_path"], pinned=True,
+                               kind="tpf")
+    return quarters, files, fetched, missing
 
 
 def export_inputs(store, blob, settings, target_id: str, out_dir: Path, *, fetch=None) -> Path:
     """Write ``inputs.json``, ``lightcurve.csv`` and ``tpf/`` for the tool into ``out_dir`` from the stored dossier
     and the loader's light curve, loaded with ``pin=True`` as the pack loads it (so the raw file stays out of budget
-    retention; the light curve is never downloaded: a released one raises ``dossier.LightCurveReleased``). The one
-    request is the Gaia query for the neighbours' Teff, radius and mass, through ``fetch`` (``net.fetch`` when None)
-    and logged; when Gaia does not answer they come from the colour and ``neighbour_params_note`` says so. Returns
+    retention; the light curve is never downloaded: a released one raises ``dossier.LightCurveReleased``). Through
+    ``fetch`` (``net.fetch`` when None), each request logged: the Gaia query for the neighbours' Teff, radius and
+    mass (when Gaia does not answer they come from the colour and ``neighbour_params_note`` says so), and, when
+    retention has dropped pixel files rung 5 used, MAST for those (``_pixel_files``; every copied file is pinned, and
+    ``tpf_kept`` and ``tpf_fetched`` name the quarters that were kept and fetched fresh). Returns
     ``out_dir``, the tool's ``--inputs``. Raises NoDossier, OldDossier for a dossier below the current version (before
     anything is written), and NoPixelFiles (naming the files it could not read) when no pixel file was copied; the
     light curve is then written, ``inputs.json`` is not."""
@@ -290,9 +332,11 @@ def export_inputs(store, blob, settings, target_id: str, out_dir: Path, *, fetch
     meta = t.get("meta") or {}
     kic = meta.get("tpf_org") or t.get("kic")
     kic = int(kic) if kic else None
-    quarters, files, missing = _copy_pixel_files(store, blob, kic, out_dir / "tpf")
+    quarters, files, fetched, missing = _pixel_files(store, blob, kic, _manifest(data), out_dir / "tpf",
+                                                     fetch=fetch, target_id=target_id)
     if not quarters:
-        unread = "; ".join(f"{m['name']}: {m['cause']}" for m in missing) or "none is kept"
+        unread = ("; ".join(f"{m['name']}: {m['cause']}" for m in missing)
+                  or "none is kept and MAST lists none")
         raise NoPixelFiles(f"no pixel file of KIC {kic} could be copied for {target_id} (tpf_missing: {unread}); a "
                            "kept file is read from its stored path, and a relative path is read from the folder the "
                            "command runs in, so run it from the folder the engine's data paths start at")
@@ -311,7 +355,7 @@ def export_inputs(store, blob, settings, target_id: str, out_dir: Path, *, fetch
               "signal_id": sid, "dossier_generated": data.get("generated"), "ephemeris": data.get("ephemeris"),
               "star": data.get("star"), "neighbours": neighbours, "neighbour_params_note": params_note,
               "leak": _leak(data), "neighbour_kic": kic, "quarters": quarters, "tpf_files": files,
-              "tpf_missing": missing,
+              "tpf_kept": [q for q in quarters if q not in fetched], "tpf_fetched": fetched, "tpf_missing": missing,
               "lightcurve": {"file": "lightcurve.csv", "window_durations": int(WINDOW_DURATIONS), "n": len(rows),
                              "columns": ["time_bkjd", "flux_rel", "err_rel", "quarter"], "clipped": clipped,
                              "clip_mad": CLIP_MAD, "clip_half_width": half_width},
