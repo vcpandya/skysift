@@ -85,6 +85,9 @@ MIN_VOTING_SEASONS = 2          # rung 5 passes on two voting seasons at least; 
 CLOSE_CALL_TEXT = ("The centroid error comes from 200 Monte Carlo draws{floor}, so a season this close to the 3 sigma "
                    "threshold can move by about 5 percent with the seed.")
 CLOSE_CALL = CLOSE_CALL_TEXT.format(floor="")
+# without a contrast curve TRICERATOPS lets a bound companion sit unresolved anywhere inside this (Giacalone et al.
+# 2021, section 2.4.3): the open false-positive channel the last caveat names (referee pack ruling o)
+UNRESOLVED_COMPANION_ARCSEC = 2.2
 SERIES_BIN_DAYS = 0.25
 GALLERY_HALF_HOURS = 8.0
 SPECTRUM_BINS = 1500
@@ -1042,7 +1045,10 @@ def caveats(data: dict) -> list[dict]:
                                 "that changes with the detector cannot be tested."})
     out.append({"title": "This is a candidate until independent follow-up confirms it",
                 "text": "Follow-up would need ground-based transit photometry at a predicted time, a spectrum of the "
-                        "host and high-resolution imaging."})
+                        "host and high-resolution imaging. Without imaging, an unresolved bound companion within "
+                        f"{UNRESOLVED_COMPANION_ARCSEC} arcsec that carries the transit is the open false-positive "
+                        "channel: SkySift's scenario model leaves it out, and TRICERATOPS counts it as its STP "
+                        "scenario."})
     return out
 
 

@@ -1,6 +1,7 @@
-"""The cross-check (referee pack spec 4): the inputs fingerprint, the export the TRICERATOPS tool reads, the import of
-its result into ``dossiers.cross_check``, the verdict the live gate reads and the pack's comparison sentence; and the
-tool's pure helpers, which run here under the engine's interpreter (no test calls TRICERATOPS)."""
+"""The cross-check (referee pack spec 4, rulings n to v): the inputs fingerprint, the export the TRICERATOPS tool reads,
+the import of its result into ``dossiers.cross_check``, the verdict the live gate reads, the class labels and the
+pack's comparison sentence; and the tool's pure helpers, which run here under the engine's interpreter (no test calls
+TRICERATOPS)."""
 import csv
 import importlib
 import json
@@ -14,26 +15,42 @@ from astropy.io import fits
 from skysift import crosscheck as cc
 from skysift.dossier import generate
 from skysift.lc.tpf import tpf_listing_url
+from skysift.stars import mamajek_table
 from skysift.store.db import TargetRow
 from tests.unit.synthetic_tpf import CCD_ORIGIN, NEIGHBOUR_KIC, tpf_fits, tpf_name, tpf_quarters
-from tests.unit.test_dossier import _make_env
+from tests.unit.test_dossier import RESPONSES, _make_env, fake_fetch
 from tests.unit.ui_seed import STAGE2_TARGET
 
 DATA = {"ephemeris": {"period_days": 40.29, "t0_bkjd": 136.3, "depth_ppm": 2180.0, "duration_h": 4.16},
         "target": {"gmag": 16.2},
         "fpp": {"inputs": {"neighbours": [{"source_id": "2", "sep_arcsec": 10.8, "gmag": 12.8, "bp_rp": 1.1},
                                           {"source_id": "1", "sep_arcsec": 7.1, "gmag": 19.7, "bp_rp": 1.8}]}}}
+# the Gaia answer to the neighbours' parameter query: the 7.14 arcsec neighbour of the seed's cone with a GSP-Phot Teff
+# and radius but no FLAME mass; the 10.8 arcsec one has no row, so its parameters come from its colour
+NEIGHBOUR_PARAMS_CSV = (b"source_id,teff_gspphot,bp_rp,radius_gspphot,mass_flame\n"
+                        b"2101234567890120001,3500.0,1.814,0.45,\n")
+EXPORT_RESPONSES = {**RESPONSES, "n.source_id IN": NEIGHBOUR_PARAMS_CSV}
 
 
-def fake_result(sha: str, fpp: float = 0.012, nfpp: float = 1e-4, n: int = cc.N_RUNS) -> dict:
-    """A result file as the tool writes it: ``n`` runs whose median is ``fpp`` and ``nfpp``."""
+def fake_runs(fpp: float = 0.012, nfpp: float = 1e-4, n: int = cc.N_RUNS, p_stp: float = 0.0,
+              p_ptp: float = 0.1) -> list[dict]:
+    """``n`` identical runs as the tool writes them."""
+    return [{"seed": 1 + k, "fpp": fpp, "fpp_no_stp": cc.fpp_without_stp(fpp, p_stp), "nfpp": nfpp, "p_stp": p_stp,
+             "p_ptp": p_ptp, "best_scenario": {"id": "169822650", "scenario": "TP", "prob": 1 - fpp},
+             "degenerate": False} for k in range(n)]
+
+
+def fake_result(sha: str, fpp: float = 0.012, nfpp: float = 1e-4, n: int = cc.N_RUNS, p_stp: float = 0.0,
+                scenarios: list | None = None) -> dict:
+    """A result file as the tool writes it: ``n`` runs whose medians are ``fpp`` and ``nfpp``."""
+    runs = fake_runs(fpp, nfpp, n, p_stp)
     return {"tool": cc.TOOL, "tool_version": "1.1.0", "run_utc": "2026-10-22T12:00:00+00:00", "n_runs": n,
-            "fpp": fpp, "nfpp": nfpp, "fpp_runs": [fpp] * n, "nfpp_runs": [nfpp] * n,
-            "scenarios": [{"ID": "169822650", "scenario": "TP", "prob": 1 - fpp}],
+            "n_degenerate": 0, **cc.summarise(runs), "runs": runs,
+            "scenarios": scenarios or [{"ID": "169822650", "scenario": "TP", "prob": 1 - fpp}],
             "stars": [{"id": "169822650", "tmag": 15.19, "sep_arcsec": 0.0, "flux_ratio": 0.98, "tdepth": 0.0022}],
             "inputs_sha256": sha,
-            "caveats": [("TRICERATOPS shares the light in the aperture by TIC TESS magnitudes (Tmag), not Kepler "
-                         "magnitudes; its limb darkening comes from its Kepler table.")],
+            "caveats": [("The light is shared in the Kepler band with Gaia G as the proxy; the limb darkening comes "
+                         "from the package's Kepler table.")],
             "settings": {"N": 1_000_000, "exptime_days": 0.0204}}
 
 
@@ -58,10 +75,12 @@ def store_pixel_files(env) -> None:
 
 @pytest.fixture
 def env(settings, monkeypatch):
-    """The seed's stage-2 dossier with the pixel files of ``store_pixel_files``."""
+    """The seed's stage-2 dossier with the pixel files of ``store_pixel_files``; ``env.xfetch`` answers the export's
+    neighbour-parameter query too."""
     env = _make_env(settings, monkeypatch)
     store_pixel_files(env)
     env.report = generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch)
+    env.xfetch = fake_fetch(EXPORT_RESPONSES)
     return env
 
 
@@ -93,15 +112,30 @@ def test_inputs_fingerprint_changes_with_the_period_and_the_neighbours():
 
 
 def test_export_writes_inputs_lightcurve_and_the_pixel_files(env, tmp_path):
-    out = cc.export_inputs(env.store, env.blob, env.settings, STAGE2_TARGET, tmp_path / "cc")
+    out = cc.export_inputs(env.store, env.blob, env.settings, STAGE2_TARGET, tmp_path / "cc", fetch=env.xfetch)
     data = _stored(env)
     inputs = json.loads((out / "inputs.json").read_text(encoding="utf-8"))
     assert inputs["fingerprint"] == cc.inputs_fingerprint(data)
     assert inputs["target"]["target_id"] == STAGE2_TARGET and inputs["target"]["ra"] == data["target"]["ra"]
+    # the KBonus contamination budget (ruling n) and the KIC Kp check (ruling r; the seed stores no Kp)
+    assert inputs["target"]["crowdsap"] == 0.9 and inputs["target"]["psffrac"] == 0.9
+    assert inputs["target"]["kepmag"] is None
     assert inputs["ephemeris"] == data["ephemeris"] and "period_err_days" in inputs["ephemeris"]
     assert inputs["star"] == data["star"] and inputs["neighbour_kic"] == NEIGHBOUR_KIC
-    assert inputs["neighbours"] == [{k: n[k] for k in ("source_id", "sep_arcsec", "gmag", "bp_rp")}
-                                    for n in data["fpp"]["inputs"]["neighbours"]] and inputs["neighbours"]
+    stored = data["fpp"]["inputs"]["neighbours"]
+    assert [{k: n[k] for k in ("source_id", "sep_arcsec", "gmag", "bp_rp")} for n in inputs["neighbours"]] == [
+        {k: n[k] for k in ("source_id", "sep_arcsec", "gmag", "bp_rp")} for n in stored] and stored
+    # ruling q: Gaia DR3 GSP-Phot Teff and radius, the mass from the dwarf table's mass-radius relation; the
+    # neighbour Gaia has no row for takes all three from its colour
+    near, far = inputs["neighbours"]
+    assert (near["teff"], near["radius"]) == (3500.0, 0.45) and near["params_source"]["teff"] == "Gaia DR3 GSP-Phot"
+    assert near["params_source"]["mass"].startswith("Mamajek dwarf table mass-radius relation")
+    tab = mamajek_table()
+    assert far["teff"] == pytest.approx(np.interp(1.1, tab[:, 0], tab[:, 1]), abs=1)
+    assert far["mass"] == pytest.approx(np.interp(1.1, tab[:, 0], tab[:, 3]), abs=1e-3)
+    assert far["params_source"]["radius"].startswith("Mamajek dwarf table at BP-RP 1.100")
+    assert inputs["neighbour_params_note"] is None
+    assert inputs["leak"] == {"depth_ppm": 14.0, "err_ppm": 31.0, "kic": NEIGHBOUR_KIC}      # a consistency check
     assert inputs["quarters"] == [1, 2, 3, 4, 5]
     assert inputs["tpf_files"] == [f"tpf/q{q:02d}.fits.gz" for q in (1, 2, 3, 4, 5)]
     for b in env.tpfs:
@@ -114,19 +148,79 @@ def test_export_writes_inputs_lightcurve_and_the_pixel_files(env, tmp_path):
     t = np.array([float(r["time_bkjd"]) for r in rows])
     phase = (t - t0 + period / 2) % period - period / 2
     assert np.all(np.abs(phase) <= 3 * dur + 1e-6) and np.abs(phase).min() < dur / 2
-    assert inputs["lightcurve"]["n"] == len(rows) and inputs["lightcurve"]["window_durations"] == 3
+    lc = inputs["lightcurve"]
+    assert lc["n"] == len(rows) and lc["window_durations"] == 3 and lc["clip_mad"] == 5.0
+    assert isinstance(lc["clipped"], int) and lc["clipped"] >= 0 and lc["clip_half_width"] > 0
     flux = np.array([float(r["flux_rel"]) for r in rows])
     assert abs(np.median(flux) - 1.0) < 0.01 and flux.min() < 1 - 0.001          # normalised, the transits inside
     assert {int(r["quarter"]) for r in rows} <= set(range(18)) and all(float(r["err_rel"]) > 0 for r in rows)
+    # the parameter query is logged like every other request
+    from sqlalchemy import select
+
+    from skysift.store.db import QueryRow
+    with env.store.session() as s:
+        assert any("n.source_id IN" in (q.params or "") for q in s.scalars(select(QueryRow)))
+
+
+def test_export_without_gaia_takes_the_neighbours_parameters_from_the_colour(env, tmp_path):
+    from skysift.net import ServiceUnavailable
+
+    def down(url, **_kw):
+        raise ServiceUnavailable("gaia down")
+    out = cc.export_inputs(env.store, env.blob, env.settings, STAGE2_TARGET, tmp_path / "cc", fetch=down)
+    inputs = json.loads((out / "inputs.json").read_text(encoding="utf-8"))
+    assert "Gaia DR3 was not reached" in inputs["neighbour_params_note"]
+    assert all(n["params_source"]["teff"].startswith("Mamajek dwarf table at BP-RP") for n in inputs["neighbours"])
+
+
+def test_clip_window_drops_outliers_and_keeps_the_transits():
+    rng = np.random.default_rng(4)
+    eph = {"period_days": 10.0, "t0_bkjd": 0.5, "duration_h": 4.8, "depth_ppm": 3000.0}
+    time = np.linspace(-0.6, 0.6, 2000) + 0.5                      # three durations either side of one transit
+    phase = (time - 0.5 + 5.0) % 10.0 - 5.0
+    intransit = np.abs(phase) <= 0.1
+    flux = 1.0 + rng.normal(0.0, 0.0009, time.size) - np.where(intransit, 0.003, 0.0)
+    flux[[100, 900, 1700]] += np.array([0.02, -0.02, 0.015])      # three outliers, one inside the transit
+    keep, half = cc.clip_window(time, flux, eph)
+    assert not keep[[100, 900, 1700]].any()
+    assert keep[intransit].mean() > 0.99                          # the transit itself is not clipped
+    assert half == pytest.approx(5.0 * 0.0009 / 1.4826, rel=0.1)  # 5 MAD of the residuals
+    no_depth = cc.clip_window(time, flux, {**eph, "depth_ppm": None})
+    assert no_depth[0].all() and no_depth[1] is None
+    flat = cc.clip_window(time, np.ones(time.size), {**eph, "depth_ppm": 0.0})
+    assert flat[0].all() and flat[1] is None                       # no scatter: nothing to clip
+
+
+def test_neighbour_params_prefers_gaia_and_falls_back_to_the_dwarf_table():
+    tab = mamajek_table()
+    full = cc.neighbour_params({"teff_gspphot": "5484", "radius_gspphot": "0.68", "mass_flame": "0.9", "bp_rp": "0.92"},
+                               0.92)
+    assert (full["teff"], full["radius"], full["mass"]) == (5484.0, 0.68, 0.9)
+    assert full["source"] == {"teff": "Gaia DR3 GSP-Phot", "radius": "Gaia DR3 GSP-Phot", "mass": "Gaia DR3 FLAME"}
+    no_mass = cc.neighbour_params({"teff_gspphot": "5484", "radius_gspphot": "0.68", "mass_flame": ""}, 0.92)
+    order = np.argsort(tab[:, 2])
+    assert no_mass["mass"] == pytest.approx(np.interp(0.68, tab[order, 2], tab[order, 3]), abs=1e-3)
+    colour = cc.neighbour_params(None, 1.1)
+    assert colour["teff"] == pytest.approx(np.interp(1.1, tab[:, 0], tab[:, 1]), abs=1)
+    assert colour["radius"] == pytest.approx(np.interp(1.1, tab[:, 0], tab[:, 2]), abs=1e-3)
+    assert all(s.startswith("Mamajek dwarf table at BP-RP 1.100 (Pecaut") for s in colour["source"].values())
+    nothing = cc.neighbour_params(None, None)
+    assert (nothing["teff"], nothing["radius"], nothing["mass"]) == (None, None, None)
 
 
 def test_import_validates_and_stores_the_result(env, tmp_path):
     sha = cc.inputs_fingerprint(_stored(env))
+    good_runs = fake_result(sha)["runs"]
+    bad_run = [dict(good_runs[0], fpp_no_stp=0.5), *good_runs[1:]]
     for bad, why in ((dict(fake_result(sha), fpp=1.5), "fpp"), (dict(fake_result(sha), nfpp=float("nan")), "nfpp"),
                      ({k: v for k, v in fake_result(sha).items() if k != "stars"}, "stars"),
                      (dict(fake_result(sha), tool="vespa"), "tool"),
-                     (dict(fake_result(sha), fpp_runs=[0.012] * 3), "fpp_runs"),
-                     (dict(fake_result(sha), fpp=0.2), "median"),
+                     (dict(fake_result(sha), runs=good_runs[:3]), "runs"),
+                     (dict(fake_result(sha), fpp=0.2), "non-degenerate runs' value"),
+                     (dict(fake_result(sha), fpp_p84=0.3), "fpp_p84"),
+                     (dict(fake_result(sha), runs=bad_run), "fpp_no_stp is not"),
+                     (dict(fake_result(sha), n_degenerate=2), "n_degenerate"),
+                     (fake_result(sha, n=5), "at least 20"),
                      (dict(fake_result(sha), inputs_sha256="abc"), "inputs_sha256"),
                      (dict(fake_result(sha), n_runs=True), "n_runs")):
         with pytest.raises(cc.BadResult, match=why):
@@ -141,13 +235,37 @@ def test_import_validates_and_stores_the_result(env, tmp_path):
         cc.import_result(env.store, "kic-000000001", _write(tmp_path / "ok.json", fake_result(sha)))
     good = dict(fake_result(sha), extra="not kept")
     block = cc.import_result(env.store, STAGE2_TARGET, _write(tmp_path / "ok.json", good))
-    assert block["current"] is True and set(block) == {*cc.RESULT_KEYS, "current"}
+    assert block["current"] is True and set(block) == {*cc.RESULT_KEYS, "current", "class"}
     assert env.store.dossier(STAGE2_TARGET)["cross_check"] == block and block["fpp"] == 0.012
-    assert cc.verdict(block) == (False, None)
+    assert block["class"] == "validated" and cc.verdict(block) == (False, None)
+
+
+def test_a_hand_made_20_run_file_with_degenerate_runs_is_summarised_over_the_others():
+    """Twenty runs, the last two degenerate: the medians and the 16th and 84th percentiles are over the eighteen
+    others (FPP 0.01 to 0.18: median 0.095, 16th percentile 0.0372, 84th 0.1528, numpy's linear rule)."""
+    runs = []
+    for k in range(20):
+        fpp, p_stp = (k + 1) / 100, (k + 1) / 200
+        runs.append({"seed": 7 + k, "fpp": fpp, "fpp_no_stp": cc.fpp_without_stp(fpp, p_stp), "nfpp": 1e-5 * (k + 1),
+                     "p_stp": p_stp, "p_ptp": 0.1, "best_scenario": None, "degenerate": k >= 18})
+    runs[18]["fpp"] = runs[19]["fpp"] = 1.0
+    runs[18]["fpp_no_stp"] = cc.fpp_without_stp(1.0, runs[18]["p_stp"])
+    runs[19]["fpp_no_stp"] = cc.fpp_without_stp(1.0, runs[19]["p_stp"])
+    s = cc.summarise(runs)
+    assert (s["fpp"], s["fpp_p16"], s["fpp_p84"]) == pytest.approx((0.095, 0.0372, 0.1528))
+    assert s["p_stp"] == pytest.approx(0.0475) and s["p_ptp"] == pytest.approx(0.1) == s["p_ptp_p84"]
+    assert s["nfpp"] == pytest.approx(9.5e-5)
+    assert cc.fpp_without_stp(0.046, 0.0455) == pytest.approx(0.0005 / 0.9545)        # the smoke run: about 0.05 %
+    assert cc.fpp_without_stp(1.0, 1.0) is None and cc.fpp_without_stp(0.01, 0.02) == 0.0
+    result = {**fake_result("c" * 64), "runs": runs, "n_degenerate": 2, **s}
+    cc.validate_result(result)
+    with pytest.raises(cc.BadResult, match="every run was degenerate"):
+        every = [dict(r, degenerate=True) for r in runs]
+        cc.validate_result({**result, "runs": every, "n_degenerate": 20, **cc.summarise(every)})
 
 
 def test_a_cross_check_against_another_fingerprint_is_not_current(env, tmp_path):
-    out = cc.export_inputs(env.store, env.blob, env.settings, STAGE2_TARGET, tmp_path / "cc")
+    out = cc.export_inputs(env.store, env.blob, env.settings, STAGE2_TARGET, tmp_path / "cc", fetch=env.xfetch)
     sha = json.loads((out / "inputs.json").read_text(encoding="utf-8"))["fingerprint"]
     data = _stored(env)
     data["ephemeris"]["period_days"] += 0.01                                     # the stored dossier moved on
@@ -161,39 +279,93 @@ def test_a_cross_check_against_another_fingerprint_is_not_current(env, tmp_path)
     assert cc.with_current(None, data) is None
 
 
-def test_verdict_blocks_a_likely_false_positive_and_passes_a_small_disagreement():
+def test_classes_are_giacalone_labels():
+    assert [cc.classify(f, n) for f, n in ((0.01, 1e-4), (0.015, 1e-4), (0.3, 9e-4), (0.3, 1e-3), (0.6, 0.2),
+                                           (0.01, 0.11), (0.6, 1e-4), (0.2, 0.05))] == [
+        "validated", "likely planet", "likely planet", "candidate", "likely nearby false positive",
+        "likely nearby false positive", "candidate", "candidate"]
+    assert cc.classify(None, 0.1) is None
+    assert not hasattr(cc, "LIKELY_FP_FPP")                       # the "likely false positive" class is withdrawn
+
+
+def test_the_gate_blocks_only_a_missing_stale_or_old_cross_check():
     sha = "a" * 64
     block = {**fake_result(sha), "current": True}
     assert cc.verdict(None) == (True, "no independent cross-check")
     assert cc.verdict({**block, "current": False}) == (True, "the cross-check was made for an earlier dossier")
-    assert cc.verdict({**block, "fpp": 0.5}) == (True, "the cross-check calls it a likely false positive")
-    assert cc.verdict({**block, "nfpp": 0.1}) == (True, "the cross-check calls it a likely nearby false positive")
-    assert cc.verdict({**block, "fpp": 0.49, "nfpp": 0.099}) == (False, None)
-    assert cc.verdict(block) == (False, None)                                    # 0.012 against SkySift's 0.0035
+    old = {"tool": cc.TOOL, "fpp": 0.01, "nfpp": 1e-4, "fpp_runs": [0.01], "current": True}
+    assert cc.verdict(old) == (True, "the cross-check was stored by an earlier version of the tool; run it again")
+    assert cc.with_current(old, DATA)["class"] is None and cc.comparison_sentence({"cross_check": old}) is None
+    # the numbers never block (ruling t): a median full FPP of 0.6 or an NFPP of 0.2 is a label and a sentence
+    for fpp, nfpp in ((0.6, 1e-4), (0.01, 0.2), (0.99, 0.5)):
+        assert cc.verdict({**fake_result(sha, fpp=fpp, nfpp=nfpp), "current": True}) == (False, None)
+
+
+def test_comparison_sentence_prints_both_fpps_with_their_ranges_and_the_class():
+    sha = "a" * 64
+    runs = fake_runs(fpp=0.046, nfpp=1e-4, p_stp=0.0455)
+    runs[0] = dict(runs[0], fpp=0.017, fpp_no_stp=cc.fpp_without_stp(0.017, 0.0455), p_stp=0.0455)
+    runs[1] = dict(runs[1], fpp=0.092, fpp_no_stp=cc.fpp_without_stp(0.092, 0.0455), nfpp=2.5e-3)
+    block = {**fake_result(sha), "runs": runs, **cc.summarise(runs), "current": True}
     data = {"fpp": {"value": 0.0035}, "cross_check": block}
     text = cc.comparison_sentence(data)
-    assert text.startswith("An independent estimate with TRICERATOPS (Giacalone et al. 2021) gives a false-positive "
-                           "probability of 0.012 and a nearby false-positive probability of 1 in 10,000")
-    assert "e-0" not in text and "e-0" not in cc.comparison_sentence(data, tex=True)          # never 1.0e-04 (M9)
-    # SkySift's estimate is provisional until signed off, as the other sentences say
-    assert "SkySift's own estimate (provisional until its factor tables are reviewed) is 0.0035" in text
-    assert "a factor of 3.4 apart" in text
+    assert text.startswith("An independent estimate with TRICERATOPS 1.1.0 (Giacalone et al. 2021), run on the KBonus "
+                           "light curve (Martinez-Palomera et al. 2023) with Kepler limb darkening and the package's "
+                           "Gaia DR3 field-star population, gives a false-positive probability of 0.046 (16th to 84th "
+                           "percentile 0.046 to 0.046)")
+    assert "1 in 1,900 (1 in 1,900 to 1 in 1,900) without a planet transiting an unresolved bound companion (STP)" in text
+    assert "nearby false-positive probability of 1 in 10,000" in text and "the medians of 20 runs." in text
+    assert "On the scale of Giacalone et al. the medians are a likely planet (FPP below 0.5, NFPP below 0.001)." in text
+    # SkySift's own estimate is set beside the FPP without STP, the like-for-like number (ruling o)
+    assert "SkySift's own estimate (provisional until its factor tables are reviewed) is 0.0035, a factor of 6.7 from " \
+           "the value without STP." in text and "answer different questions" in text
+    assert "e-0" not in text and "e-0" not in cc.comparison_sentence(data, tex=True)
+    assert chr(0x2014) not in text and "discover" not in text.lower() and "validated" not in text
     signed = cc.comparison_sentence({"fpp": {"value": 0.0035, "signed_off": True}, "cross_check": block})
     assert "SkySift's own estimate is 0.0035" in signed and "provisional" not in signed
     assert [cc.probability_text(x) for x in (0.012, 0.0035, 1.2e-4, 1e-4, 0.0)] == [
         "0.012", "0.0035", "1 in 8,300", "1 in 10,000", "0"]
-    assert "answer different questions" in text and "marginalises over an unresolved companion population" in text
-    assert chr(0x2014) not in text and "discover" not in text.lower()
-    close = cc.comparison_sentence({"fpp": {"value": 0.01}, "cross_check": block})
-    assert "0.010" in close and "a factor of" not in close and "different questions" not in close
+    close = cc.comparison_sentence({"fpp": {"value": 0.0006}, "cross_check": block})
+    assert "a factor of" not in close and "different questions" not in close
     tex = cc.comparison_sentence(data, tex=True)
-    assert r"TRICERATOPS \citep{giacalone2021} gives" in tex and "Giacalone et al." not in tex
+    assert r"TRICERATOPS 1.1.0 \citep{giacalone2021}, run on the KBonus light curve \citep{kbonus} with" in tex
+    assert "Giacalone et al. 2021" not in tex and "Martinez-Palomera" not in tex
     assert cc.comparison_sentence({"fpp": {"value": 0.0035}, "cross_check": None}) is None
     assert cc.comparison_sentence({"fpp": {"value": 0.0035}, "cross_check": {**block, "current": False}}) is None
-    zeros = cc.comparison_sentence({"fpp": {"value": 0.0}, "cross_check": {**block, "fpp": 0.0, "fpp_runs": [0.0]}})
-    assert "estimate (provisional until its factor tables are reviewed) is 0." in zeros and "apart" not in zeros
+    zero_runs = fake_runs(fpp=0.0, nfpp=0.0)
+    zeros = cc.comparison_sentence({"fpp": {"value": 0.0}, "cross_check": {**block, "runs": zero_runs,
+                                                                          **cc.summarise(zero_runs)}})
+    assert "estimate (provisional until its factor tables are reviewed) is 0." in zeros and "a factor of" not in zeros
     alone = cc.comparison_sentence({"fpp": {"value": None}, "cross_check": block})
-    assert "SkySift" not in alone and alone.endswith("over 10 runs.")
+    assert "SkySift's own" not in alone and alone.endswith("(FPP below 0.5, NFPP below 0.001).")
+    # a degenerate run is left out and counted; the validated label is never written as a validation
+    deg = [*runs[:19], dict(runs[19], degenerate=True)]
+    v = cc.comparison_sentence({"cross_check": {**block, "runs": deg, "n_degenerate": 1, **cc.summarise(deg)}})
+    assert "the medians of 20 runs, 1 degenerate run left out." in v
+    tiny = fake_runs(fpp=0.001, nfpp=1e-6)
+    low = cc.comparison_sentence({"cross_check": {**block, "runs": tiny, **cc.summarise(tiny)}})
+    assert "inside its validation lines" in low and "so it is not called validated here" in low
+    assert "section 4.2" in low
+
+
+def test_a_full_fpp_at_or_above_one_half_names_its_dominant_scenario():
+    sha = "a" * 64
+    scen = [{"ID": "169822650", "scenario": "TP", "prob": 0.3}, {"ID": "169822650", "scenario": "STP", "prob": 0.1},
+            {"ID": "120686466", "scenario": "NEB", "prob": 0.55}, {"ID": "169822650", "scenario": "PTP", "prob": 0.05}]
+    block = {**fake_result(sha, fpp=0.65, nfpp=0.55, scenarios=scen), "current": True}
+    text = cc.comparison_sentence({"fpp": {"value": 0.0016}, "cross_check": block})
+    assert ("Its full false-positive probability is at or above 0.5 mainly through an eclipsing binary on a nearby "
+            "star (TIC 120686466), the NEB scenario, at a probability of 0.55 in the median run.") in text
+    assert "a likely nearby false positive (NFPP above 0.1)" in text
+    flag = cc.owner_flag({"cross_check": block})
+    assert flag.startswith("TRICERATOPS puts the median full false-positive probability at 0.65.")
+    assert "does not block the draft" in flag
+    assert cc.owner_flag({"cross_check": {**fake_result(sha), "current": True}}) is None
+    assert cc.owner_flag({"cross_check": {**block, "current": False}}) is None
+    stp = [{"ID": "1", "scenario": "TP", "prob": 0.4}, {"ID": "1", "scenario": "STP", "prob": 0.6}]
+    bound = cc.comparison_sentence({"cross_check": {**fake_result(sha, fpp=0.6, scenarios=stp), "current": True}})
+    assert "mainly through a planet transiting an unresolved bound companion, the STP scenario, at a probability " \
+           "of 0.60" in bound
 
 
 # ---------------------------------------------------------------------------------------------------- the tool
@@ -250,16 +422,130 @@ def test_tool_helpers_match_neighbours_and_estimate_tmag(tmp_path):
                                   b.neighbour_radec, gz=False, ccd_origin=None))
     with pytest.raises(ValueError, match="no 1CRV4P or 2CRV4P"):
         tc.quarter_images([bare])
-    runs = [{"seed": 7 + k, "fpp": f, "nfpp": f / 10, "degenerate": False,
-             "scenarios": [{"ID": "1", "scenario": "TP", "prob": 1 - f}]} for k, f in enumerate((0.03, 0.01, 0.02))]
-    result = tc.assemble_result(runs, [{"id": "1", "tmag": 15.2}], {"N": 10}, {"fingerprint": "b" * 64}, "1.1.0")
-    assert tuple(result) == cc.RESULT_KEYS and result["tool"] == cc.TOOL
-    assert result["fpp"] == pytest.approx(0.02) and result["nfpp"] == pytest.approx(0.002)
-    assert result["fpp_runs"] == [0.03, 0.01, 0.02] and result["scenarios"] == runs[2]["scenarios"]
-    assert result["settings"]["seeds"] == [7, 8, 9] and result["settings"]["median_run_seed"] == 9
-    assert any("Tmag" in c and "Kepler table" in c for c in result["caveats"]) and result["inputs_sha256"] == "b" * 64
-    assert not any("TESS-band limb darkening" in c for c in result["caveats"])
+
+
+def test_tool_leakage_shares_two_stars_by_hand():
+    """KIC 6146676 and KIC 6146666 (ruling n): CROWDSAP 0.8565 gives a budget B = 0.1435, all of it the one
+    neighbour's; the target's share of the light is 1 / (1 + B), the neighbour's B / (1 + B), and the depth the
+    neighbour would need is the on-target depth over B."""
+    from tools import triceratops_check as tc
+    stars = [{"ID": "169822650", "Tmag": 15.19, "fluxratio": 0.616},
+             {"ID": "169822655", "Tmag": 12.39, "fluxratio": 0.384}]
+    out = tc.leakage_shares(stars, 0.8565, [16.24, 12.81], 0.0021653)
+    assert out["source"] == "contamination budget" and out["budget"] == pytest.approx(0.1435)
+    t, n = out["rows"]
+    assert t["fluxratio"] == pytest.approx(1 / 1.1435) and n["fluxratio"] == pytest.approx(0.1435 / 1.1435)
+    assert t["fluxratio"] + n["fluxratio"] == pytest.approx(1.0)
+    assert t["tdepth"] == pytest.approx(0.0021653) and n["tdepth"] == pytest.approx(0.0021653 / 0.1435)
+    assert n["share"] == pytest.approx(0.1435) and t["share"] is None
+    assert n["kepler_flux"] == pytest.approx(10 ** (0.4 * (16.24 - 12.81))) and t["kepler_flux"] == 1.0
+    assert n["g_package"] == 0.384 and n["band"] == "Gaia G"
+    # the package's box fractions re-weighted into the Kepler band: G - T is 1.05 for the target, 0.42 for the
+    # neighbour, so the neighbour's fraction grows by 10^(0.4 x 0.63)
+    w = 0.384 * 10 ** (0.4 * 0.63)
+    assert n["g"] == pytest.approx(w / (w + 0.616)) and t["g"] == pytest.approx(0.616 / (w + 0.616))
+    assert all(r["source"] == "contamination budget" for r in out["rows"])
+
+
+def test_tool_leakage_shares_split_the_budget_in_the_kepler_band_and_fall_back_to_the_box():
+    from tools import triceratops_check as tc
+    stars = [{"ID": "t", "Tmag": 15.0, "fluxratio": 0.6}, {"ID": "a", "Tmag": 13.0, "fluxratio": 0.3},
+             {"ID": "b", "Tmag": 16.0, "fluxratio": 0.1}, {"ID": "c", "Tmag": 18.0, "fluxratio": 0.0}]
+    out = tc.leakage_shares(stars, 0.75, [16.0, 13.5, None, 18.5], 0.002)
+    _target, a, b, c = out["rows"]
+    # "b" has no G, so it keeps the target's G - T offset; "c" sits outside the box and gets nothing
+    assert b["band"] == "Tmag" and b["kepler_flux"] is None and c["share"] == 0.0 and c["tdepth"] == 0.0
+    ga, gb = 0.3 * 10 ** (-0.4 * (0.5 - 1.0)), 0.1
+    assert a["share"] == pytest.approx(0.25 * ga / (ga + gb)) and b["share"] == pytest.approx(0.25 * gb / (ga + gb))
+    assert a["share"] + b["share"] == pytest.approx(0.25)
+    assert sum(r["fluxratio"] for r in out["rows"]) == pytest.approx(1.0)
+    assert a["tdepth"] == pytest.approx(0.002 / a["share"]) and b["tdepth"] == pytest.approx(0.002 / b["share"])
+    deep = tc.leakage_shares(stars, 0.9999, [16.0, 13.5, None, 18.5], 0.002)
+    assert deep["rows"][2]["tdepth"] == 0.0 and deep["rows"][1]["tdepth"] == 0.0       # above 1: no such eclipse
+    for crowdsap in (None, 1.2, 0.0, math.nan):              # no budget: the package's Gaussian box stands
+        box = tc.leakage_shares(stars, crowdsap, [16.0, 13.5, None, 18.5], 0.002)
+        assert box["source"] == "package Gaussian box" and box["budget"] is None
+        assert [r["fluxratio"] for r in box["rows"]] == [0.6, 0.3, 0.1, 0.0]
+        assert box["rows"][1]["tdepth"] == pytest.approx(0.002 * 0.6 / 0.3) and box["rows"][3]["tdepth"] == 0.0
+    clean = tc.leakage_shares(stars, 1.0, [16.0, 13.5, None, 18.5], 0.002)
+    assert clean["budget"] == 0.0 and all(r["tdepth"] == 0.0 for r in clean["rows"][1:])
+
+
+def test_tool_param_updates_fill_only_what_the_tic_lacks():
+    from tools import triceratops_check as tc
+    given = {"teff": 5484.0, "radius": 0.677, "mass": 0.8,
+             "params_source": {"teff": "Gaia DR3 GSP-Phot", "radius": "Gaia DR3 GSP-Phot", "mass": "table"}}
+    updates, sources = tc.param_updates({"Teff": 5400.0, "rad": 0.9, "mass": 1.0, "params_estimated": "rad,mass"},
+                                        given, added=False)
+    assert updates == [("rad", 0.677), ("mass", 0.8)]
+    assert sources == {"Teff": "TIC", "rad": "Gaia DR3 GSP-Phot", "mass": "table"}
+    updates, sources = tc.param_updates({"Teff": 3700.0, "rad": 0.5, "mass": 0.5, "params_estimated": ""}, given,
+                                        added=False)
+    assert updates == [] and set(sources.values()) == {"TIC"}
+    updates, sources = tc.param_updates({"Teff": 4000.0, "rad": 0.6, "mass": 0.6, "params_estimated": "Teff"}, None,
+                                        added=False)
+    assert updates == [] and sources["Teff"] == "TRICERATOPS estimate from photometry" and sources["rad"] == "TIC"
+    updates, sources = tc.param_updates({"Tmag": 19.0, "params_estimated": math.nan}, given, added=True)
+    assert updates == [("Teff", 5484.0), ("rad", 0.677), ("mass", 0.8)]
+    updates, sources = tc.param_updates({"Tmag": 19.0}, None, added=True)
+    assert updates == [] and set(sources.values()) == {"none (the package assumes solar values)"}
+
+
+def test_tool_runs_are_recorded_summarised_and_pass_the_import_checks():
+    from tools import triceratops_check as tc
+    scen = [{"ID": "169822650", "scenario": "TP", "prob": 0.735}, {"ID": "169822650", "scenario": "PTP", "prob": 0.177},
+            {"ID": "169822650", "scenario": "STP", "prob": 0.0455}, {"ID": "169822650", "scenario": "DTP", "prob": 0.042},
+            {"ID": "169822655", "scenario": "NEB", "prob": 5e-4}]
+    r = tc.run_record(3, 0.046, 1.9e-9, False, scen)
+    assert r["p_stp"] == pytest.approx(0.0455) and r["p_ptp"] == pytest.approx(0.177)
+    assert r["fpp_no_stp"] == pytest.approx(0.0005 / 0.9545) and r["seed"] == 3
+    assert r["best_scenario"] == {"id": "169822650", "scenario": "TP", "prob": 0.735}
+    assert tc.run_record(1, -1e-17, 0.0, False, [])["fpp"] == 0.0            # rounding below 0 is clipped
+    runs = [tc.run_record(7 + k, f, f / 10, k == 4, scen) for k, f in enumerate(np.linspace(0.01, 0.2, 20))]
+    settings = {"N": 10, "notes": ["a note"], "parallel": True}
+    result = tc.assemble_result(runs, [{"id": "1", "tmag": 15.2}], settings, {"fingerprint": "b" * 64}, "1.1.0")
+    assert tuple(result) == cc.RESULT_KEYS and result["tool"] == cc.TOOL and result["n_degenerate"] == 1
+    good = [x for x in runs if not x["degenerate"]]
+    assert result["fpp"] == pytest.approx(float(np.median([x["fpp"] for x in good])))
+    assert result["fpp_p16"] < result["fpp"] < result["fpp_p84"]
+    assert result["settings"]["seeds"] == list(range(7, 27)) and "notes" not in result["settings"]
+    assert result["scenarios"] == scen and not runs[[x["seed"] for x in runs].index(
+        result["settings"]["median_run_seed"])]["degenerate"]
+    assert "a note" in result["caveats"] and "1 of 20 runs had degenerate scenario evidences" in " ".join(
+        result["caveats"])
+    caveats = " ".join(result["caveats"])
+    assert "Kepler band" in caveats and "Gaia G" in caveats and "Kepler table" in caveats and "TESS band" in caveats
+    assert "2.2 arcsec" in caveats and "section 4.2" in caveats and "no candidate is called validated" in caveats
+    assert "Gaia DR3 field-star population" in caveats and "TESS-band limb darkening" not in caveats
+    assert any("separation from the target only" in c for c in tc.CAVEATS)
     cc.validate_result(result)                                         # the tool's file passes the import's checks
+    assert tc.summarise(runs) == cc.summarise(runs)                    # the copy in the tool agrees with the engine
+
+
+def test_tool_parallel_check_and_caveats():
+    from tools import triceratops_check as tc
+    # the smoke of 22 October 2026: the FPPs equal, the NFPPs 20 percent apart at 20,000 draws, which is noise
+    seeds = [2.849e-6, 3.6e-6, 2.2e-6, 3.1e-6]
+    rec = tc.parallel_check_record(1, 20_000, {"fpp": 0.11471, "nfpp": 3.421e-6}, {"fpp": 0.11468, "nfpp": 2.849e-6},
+                                   seeds)
+    assert (rec["fpp_serial"], rec["fpp_parallel"], rec["nfpp_serial"], rec["nfpp_parallel"], rec["N"]) == (
+        0.11471, 0.11468, 3.421e-6, 2.849e-6, 20_000)
+    assert not any(isinstance(v, bool) for v in rec.values())                 # no pass flag: values and words
+    assert rec["nfpp_noise_sd"] == pytest.approx(float(np.std(seeds, ddof=1)))
+    assert rec["nfpp_difference_in_sd"] == pytest.approx(0.572e-6 / rec["nfpp_noise_sd"])
+    assert "are equal to 3 decimals" in rec["comparison"] and "so the gap is within that noise" in rec["comparison"]
+    assert "seed-to-seed scatter of the parallel NFPP over 4 seeds at 20,000 draws" in rec["comparison"]
+    far = tc.parallel_check_record(1, 10, {"fpp": 0.05, "nfpp": 1e-3}, {"fpp": 0.07, "nfpp": 1e-4}, [1e-4, 1.1e-4])
+    assert "are not equal to 3 decimals" in far["comparison"] and "beyond that noise" in far["comparison"]
+    one = tc.parallel_check_record(1, 10, {"fpp": 0.05, "nfpp": 1e-4}, {"fpp": 0.05, "nfpp": 1e-4}, [1e-4])
+    assert one["nfpp_noise_sd"] is None and "cannot be set against" in one["comparison"]
+    text = tc.leakage_caveat({"source": "contamination budget", "budget": 0.1435}, 0.8565)
+    assert "1 - CROWDSAP = 0.1435" in text and "upper bound" in text and "Gaia G" in text
+    assert "aperture photometry" in tc.leakage_caveat({"source": "package Gaussian box", "budget": None}, None)
+    leak = tc.leak_caveat({"depth_ppm": 14.0, "err_ppm": 31.0, "kic": 6146666})
+    assert "14 +- 31 ppm" in leak and "KIC 6146666" in leak and "consistency check" in leak
+    assert tc.leak_caveat(None) is None
+    assert "3 points" in tc.clip_caveat({"clipped": 3, "clip_mad": 5.0}) and tc.clip_caveat({}) is None
 
 
 def test_tool_module_imports_without_triceratops(tmp_path, monkeypatch, capsys):
@@ -284,7 +570,7 @@ def test_an_export_from_a_dossier_below_the_current_version_is_refused(env, tmp_
     path = Path(env.store.dossier(STAGE2_TARGET)["data_path"])
     path.write_text(json.dumps({**_stored(env), "dossier_version": "2"}), encoding="utf-8")
     with pytest.raises(cc.OldDossier, match="dossier version 2 is below 3; regenerate first"):
-        cc.export_inputs(env.store, env.blob, env.settings, STAGE2_TARGET, tmp_path / "cc")
+        cc.export_inputs(env.store, env.blob, env.settings, STAGE2_TARGET, tmp_path / "cc", fetch=env.xfetch)
     assert not (tmp_path / "cc").exists()
     from typer.testing import CliRunner
 
@@ -309,7 +595,6 @@ def test_tool_flux_error_is_the_robust_out_of_transit_scatter():
     assert which_all.startswith("every point") and err_all > 0
     text = tc.flux_err_caveat(0.00092, 0.00072, which)
     assert "1.4826 times the median absolute deviation" in text and "0.000920" in text and "0.000720" in text
-    assert any("separation from the target only" in c for c in tc.CAVEATS)                    # M13
 
 
 def test_tool_reports_an_unreadable_export_without_a_traceback(tmp_path, monkeypatch, capsys):
@@ -335,5 +620,5 @@ def test_an_export_without_pixel_files_is_refused(settings, monkeypatch, tmp_pat
     env = _make_env(settings, monkeypatch)                  # the seed keeps no pixel file for this star
     generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch)
     with pytest.raises(cc.NoPixelFiles, match="tpf_missing: none is kept.*the folder the command runs in"):
-        cc.export_inputs(env.store, env.blob, env.settings, STAGE2_TARGET, tmp_path / "cc")
+        cc.export_inputs(env.store, env.blob, env.settings, STAGE2_TARGET, tmp_path / "cc", fetch=env.fetch)
     assert not (tmp_path / "cc" / "inputs.json").exists()

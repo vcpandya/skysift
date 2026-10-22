@@ -64,6 +64,10 @@ The two numbers answer different questions and are never combined: the first is 
 
 {{ n.cross_check_sentence }}
 {% endif %}
+{% if n.cross_check_flag %}
+
+For the owner: {{ n.cross_check_flag }}
+{% endif %}
 {% if n.cross_check_block %}
 
 The live Zenodo draft waits on the cross-check: {{ n.cross_check_block }}. Run `skysift crosscheck --target {{ n.target_id }} --export <folder>`, then `tools/triceratops_check.py` under `.venv-triceratops`, then `skysift crosscheck --target {{ n.target_id }} --import <result.json>`.

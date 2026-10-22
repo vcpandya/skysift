@@ -775,20 +775,30 @@ def test_dossier_page_shows_the_cross_check_block(seeded_dossier):
     checks = html.split('id="checks"')[1].split('id="pixels"')[0]
     assert "Cross-check" in checks and "No independent cross-check is stored yet" in checks
     result = fake_result(cc.inputs_fingerprint(data))
-    result["fpp_runs"] = [0.008, 0.012, 0.012, 0.012, 0.012, 0.012, 0.012, 0.012, 0.012, 0.03]
-    app.state.store.set_cross_check(STAGE2_TARGET, {**result, "current": False})     # current is recomputed
+    # twenty runs with FPP 0.010 to 0.029: median 0.0195, 16th to 84th percentile 0.013 to 0.026 (ruling s)
+    runs = [dict(r, fpp=0.01 + 0.001 * k, fpp_no_stp=cc.fpp_without_stp(0.01 + 0.001 * k, 0.005), p_stp=0.005)
+            for k, r in enumerate(result["runs"])]
+    result = {**result, "runs": runs, **cc.summarise(runs)}
+    app.state.store.set_cross_check(STAGE2_TARGET, {**result, "current": False, "class": "validated"})   # recomputed
     for mode in ("simple", "expert"):
         client.cookies.set("skysift_mode", mode)
         checks = client.get(f"/dossiers/{STAGE2_TARGET}").text.split('id="checks"')[1].split('id="pixels"')[0]
-        assert "Cross-check" in checks and "TRICERATOPS 1.1.0" in checks
-        assert "0.012" in checks and "0.0001" in checks
-        assert "over 10 runs the false-positive probability ran from" in checks and "0.008 to 0.03" in checks
-        assert "the nearby false-positive probability from" in checks and "0.0001 to 0.0001" in checks
+        assert "Cross-check" in checks and "TRICERATOPS 1.1.0" in checks and "over 20 runs:" in checks
+        assert "median false-positive probability" in checks and "0.0195" in checks
+        assert "16th to 84th percentile" in checks and "0.013 to 0.026" in checks
+        assert "without a planet transiting an unresolved bound companion (STP)" in checks and "0.0146" in checks
+        assert "nearby false-positive probability" in checks and "0.0001 to 0.0001" in checks
+        assert "read as" in checks and "likely planet" in checks and "never block the live draft" in checks
         assert "made for this dossier" in checks and "earlier dossier" not in checks
         assert "Kepler table" in checks and chr(0x2014) not in checks
     app.state.store.set_cross_check(STAGE2_TARGET, {**result, "inputs_sha256": "0" * 64, "current": True})
     checks = client.get(f"/dossiers/{STAGE2_TARGET}").text.split('id="checks"')[1].split('id="pixels"')[0]
     assert "made for an earlier dossier" in checks
+    old = {"tool": cc.TOOL, "tool_version": "1.1.0", "fpp": 0.01, "nfpp": 1e-4, "fpp_runs": [0.01] * 10,
+           "inputs_sha256": cc.inputs_fingerprint(data)}
+    app.state.store.set_cross_check(STAGE2_TARGET, old)                # the format before 22 October 2026
+    checks = client.get(f"/dossiers/{STAGE2_TARGET}").text.split('id="checks"')[1].split('id="pixels"')[0]
+    assert "stored by an earlier version of the tool" in checks and "median false-positive" not in checks
 
 
 def test_the_standalone_page_carries_a_cross_check_imported_after_its_export(seeded_dossier, tmp_path):
@@ -806,7 +816,7 @@ def test_the_standalone_page_carries_a_cross_check_imported_after_its_export(see
     blob = after.split('<script id="dossier-data" type="application/json">')[1].split("</script>")[0]
     block = json.loads(blob)["cross_check"]
     assert block["fpp"] == 0.0234 and block["nfpp"] == 0.0012 and block["current"] is True
-    assert "over ${CC.n_runs} runs the false-positive probability ran from" in after
+    assert "over ${CC.n_runs} runs" in after and "16th to 84th percentile" in after and "read as ${cls}" in after
 
 
 def test_the_pixel_section_quotes_the_offset_against_the_rule(seeded_dossier):

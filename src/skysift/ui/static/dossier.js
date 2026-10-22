@@ -509,10 +509,14 @@
     // the cross-check, as the dashboard's section 03 draws it
     const CC = D.cross_check;
     const g3 = (x) => (isNum(x) ? String(Number(x.toPrecision(3))) : "–");
-    const spread = (xs) => (Array.isArray(xs) && xs.length ? `${g3(Math.min(...xs))} to ${g3(Math.max(...xs))}` : "–");
+    // the median with its 16th to 84th percentile range (referee pack ruling s)
+    const spread = (m) => `${g3(CC[m])} (16th to 84th percentile ${g3(CC[`${m}_p16`])} to ${g3(CC[`${m}_p84`])})`;
     sec(2).appendChild(h("h3", null, "Cross-check"));
-    if (CC) {
-      para(2, `An independent estimate with TRICERATOPS ${CC.tool_version} (Giacalone et al. 2021): median false-positive probability ${g3(CC.fpp)} and nearby false-positive probability ${g3(CC.nfpp)}; over ${CC.n_runs} runs the false-positive probability ran from ${spread(CC.fpp_runs)} and the nearby false-positive probability from ${spread(CC.nfpp_runs)}. ${CC.current
+    if (CC && Array.isArray(CC.runs)) {
+      const cls = CC.class === "validated"
+        ? "validated, a region the paper could not set at the 30-minute cadence of these data (its section 4.2), so it is not called validated here"
+        : CC.class;
+      para(2, `An independent estimate with TRICERATOPS ${CC.tool_version} (Giacalone et al. 2021) over ${CC.n_runs} runs${CC.n_degenerate ? `, ${CC.n_degenerate} degenerate and left out` : ""}: median false-positive probability ${spread("fpp")}, ${spread("fpp_no_stp")} without a planet transiting an unresolved bound companion (STP), which SkySift's model leaves out, and nearby false-positive probability ${spread("nfpp")}. On Giacalone et al.'s scale the medians read as ${cls}; the classes are labels and never block the live draft. ${CC.current
         ? "It was made for this dossier's period, depth and neighbours."
         : "It was made for an earlier dossier (the period, the depth or the neighbours have changed since), so it does not count until it is run again."}`);
       if ((CC.caveats || []).length) {
@@ -520,6 +524,8 @@
         CC.caveats.forEach((c) => ul.appendChild(h("li", null, c)));
         sec(2).appendChild(ul);
       }
+    } else if (CC) {
+      para(2, "This cross-check was stored by an earlier version of the tool, before its median and range and the FPP without STP; run it again.");
     } else {
       para(2, "No independent cross-check is stored yet.");
     }

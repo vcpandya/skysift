@@ -405,11 +405,13 @@ def test_the_recheck_line_says_when_the_recheck_stopped():
 
 
 def test_cli_crosscheck_export_and_import(settings, monkeypatch, tmp_path):
+    from skysift import net
     from skysift.dossier import generate
-    from tests.unit.test_crosscheck import fake_result, store_pixel_files
-    from tests.unit.test_dossier import _make_env
+    from tests.unit.test_crosscheck import EXPORT_RESPONSES, fake_result, store_pixel_files
+    from tests.unit.test_dossier import _make_env, fake_fetch
     from tests.unit.ui_seed import STAGE2_TARGET
     env = _make_env(settings, monkeypatch)
+    monkeypatch.setattr(net, "fetch", fake_fetch(EXPORT_RESPONSES))         # the neighbours' parameter query
     r = runner.invoke(app, ["crosscheck", "--target", STAGE2_TARGET, "--export", str(tmp_path / "cc")])
     assert r.exit_code == 1 and "skysift dossier --target" in r.output                  # no dossier yet
     generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch)
@@ -428,7 +430,8 @@ def test_cli_crosscheck_export_and_import(settings, monkeypatch, tmp_path):
     r = runner.invoke(app, ["crosscheck", "--target", STAGE2_TARGET, "--import", str(good)])
     assert r.exit_code == 0, r.output
     report = json.loads(r.stdout)
-    assert report["current"] is True and report["fpp"] == 0.012
+    assert report["current"] is True and report["fpp"] == 0.012 and report["class"] == "validated"
+    assert report["fpp_p16"] == report["fpp_p84"] == 0.012 and report["n_degenerate"] == 0
     assert report["blocks_live_gate"] is False and report["live_gate_reason"] is None
     assert env.store.dossier(STAGE2_TARGET)["cross_check"]["fpp"] == 0.012
     bad = tmp_path / "bad.json"

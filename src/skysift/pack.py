@@ -826,6 +826,7 @@ def numbers(data: dict, tex: bool = False, after_bjd: float | None = None) -> di
         "fap_text": fap_text, "fpp_text": fpp_text, "caveats": caveats,
         "cross_check_sentence": cross_check_sentence(data, tex),
         "cross_check_block": cc.verdict(data.get("cross_check"))[1],
+        "cross_check_flag": cc.owner_flag(data),
         "abstract": abstract_text(data),
         "prior_text": prior_claim_sentence(data, tex), "prior_plain": prior_claim_sentence(data),
         "prior_notes": "; ".join(c["note"] for c in prior_claims(data) if c.get("note")) or None,
@@ -988,9 +989,10 @@ FILE_NOTES = {
     "data/events.csv": "every transit: epoch, mid-time, quarter, depth, error, coverage, single-event statistic",
     "data/periodogram.json": "the periodogram envelope, its peaks and the alias and systematic periods",
     "data/rung_metrics.json": "every vetting rung's status, reason and metrics",
-    "data/cross_check.json": "the independent TRICERATOPS cross-check: the median and every run's false-positive and "
-                             "nearby false-positive probability, the scenario table, the stars, the inputs it was "
-                             "made for and the caveats",
+    "data/cross_check.json": "the independent TRICERATOPS cross-check: every run's false-positive probability with "
+                             "and without STP, nearby false-positive probability, P(STP) and P(PTP), their medians "
+                             "and 16th to 84th percentiles, the median run's scenario table, the stars with their "
+                             "flux shares and parameter sources, the inputs it was made for and the caveats",
     "dossier.html": "the standalone dossier (opens offline in any browser)",
     "archive_email.txt": "the paragraph for the NASA Exoplanet Archive help desk (step 4)",
     "zenodo_metadata.json": "the Zenodo metadata, for a deposit made by hand (step 1)",
@@ -1054,7 +1056,8 @@ def gate_problems(raw: dict) -> list[str]:
     """Why a live Zenodo draft is refused on the stored dossier JSON (with its stored cross-check merged in as
     ``cross_check``), one sentence per problem: the ephemeris carries no error (no timing block, or its fit is not
     ok), the transit shape carries no error (no shape block, or it is not ok), and ``crosscheck.verdict``'s reason
-    (no cross-check, one made for an earlier dossier, or a likely false positive on its own scale), and a stored
+    (no cross-check, one stored by an earlier version of the tool or one made for an earlier dossier; its numbers
+    never block, ruling t), and a stored
     commit that is dirty or unknown (the software statement could not name archived code; ruling g). Empty when the
     dossier may go to zenodo.org."""
     out = []
@@ -1733,9 +1736,9 @@ def build_pack(store, blob, settings, target_id: str, *, out_dir: Path | None = 
     written into the texts (a sandbox DOI with the words that it must be replaced), the metadata filled and the zip
     uploaded. The draft is never published, and a live draft is refused for a candidate no reviewer has approved,
     while the FPP is provisional (``fpp.SIGNED_OFF`` False), for a stale dossier and for one whose ephemeris or
-    shape carries no error or whose TRICERATOPS cross-check is missing, made for an earlier dossier or a likely false
-    positive (``gate_problems``), so a provisional number never reaches a live record. The README names
-    the target's other stage 2 signals whose periods are independent of this one (``independent_periods``).
+    shape carries no error or whose TRICERATOPS cross-check is missing, stored by an earlier version of the tool or
+    made for an earlier dossier (``gate_problems``), so a provisional number never reaches a live record. The README
+    names the target's other stage 2 signals whose periods are independent of this one (``independent_periods``).
     Records the folder on the dossiers row and the candidate row.
 
     Raises NoDossier, ``dossier.LightCurveReleased`` (nothing is downloaded), PackError (bad TIC id, tag or folder; a
@@ -1882,7 +1885,7 @@ def _write_pack(out_dir: Path, data: dict, raw: dict, row: dict, lc, fnorm, targ
            jsonutil.dumps(_calibration(raw, data, settings.data_dir), indent=1))
     _write(out_dir / MARKER, jsonutil.dumps(_versions(data, row, now, Figure, zip_path.name, creators_source),
                                             indent=1))
-    metadata = metadata_from(data, citation)
+    metadata = metadata_from(data, citation, prior=prior_claim_sentence(data))
     _write(out_dir / "zenodo_metadata.json", jsonutil.dumps(metadata, indent=1))
     for name, source, _what in _exofop_list(target_id, date, png, pixels_figure):
         shutil.copyfile(out_dir / source, out_dir / "exofop" / name)

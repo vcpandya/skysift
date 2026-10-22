@@ -1392,25 +1392,40 @@ def test_pack_prints_the_cross_check_and_the_gate_refuses_without_one(env_with_d
     assert "TRICERATOPS" not in (rep.out_dir / "exofop" / "note.txt").read_text(encoding="utf-8")
     assert "The live Zenodo draft waits on the cross-check: no independent cross-check" in readme
     assert "data/cross_check.json" not in rep.files
-    _store_cross_check(env, fpp=0.6, fpp_runs=[0.6] * 10)                   # a likely false positive blocks
-    with pytest.raises(PackError, match="the cross-check calls it a likely false positive"):
-        _build(env, zenodo=live)
+    # ruling t: the numbers never block; a median full FPP at or above 0.5 is explained and flagged for the owner
+    from tests.unit.test_crosscheck import fake_result
+    scen = [{"ID": "169822650", "scenario": "TP", "prob": 0.4}, {"ID": "169822650", "scenario": "STP", "prob": 0.6}]
+    high = {**fake_result(cross_check.inputs_fingerprint(_stored(env)), fpp=0.6, scenarios=scen), "current": True}
+    env.store.set_cross_check(STAGE2_TARGET, high)
+    assert pack_module.gate_problems(_stored_with_cross_check(env)) == []
+    rep = _build(env)
+    readme = (rep.out_dir / "README.md").read_text(encoding="utf-8")
+    assert "For the owner: TRICERATOPS puts the median full false-positive probability at 0.60." in readme
+    assert "mainly through a planet transiting an unresolved bound companion, the STP scenario" in readme
+    old = {"tool": cross_check.TOOL, "fpp": 0.01, "nfpp": 1e-4, "fpp_runs": [0.01] * 10,
+           "inputs_sha256": cross_check.inputs_fingerprint(_stored(env))}
+    env.store.set_cross_check(STAGE2_TARGET, old)                           # the format before 22 October 2026
+    assert pack_module.gate_problems(_stored_with_cross_check(env)) == [
+        "the cross-check was stored by an earlier version of the tool; run it again"]
     block = _store_cross_check(env)                                          # 0.012 against SkySift's FPP
     rep = _build(env, zenodo=live)
     assert rep.zenodo is not None and not rep.zenodo["sandbox"]
     sentence = cross_check.comparison_sentence({**_stored(env), "cross_check": block})
-    assert sentence.startswith("An independent estimate with TRICERATOPS (Giacalone et al. 2021)")
+    assert sentence.startswith("An independent estimate with TRICERATOPS 1.1.0 (Giacalone et al. 2021), run on the "
+                               "KBonus light curve (Martinez-Palomera et al. 2023) with Kepler limb darkening")
+    assert "16th to 84th percentile" in sentence and "without a planet transiting an unresolved bound" in sentence
     for name in ("README.md", "exofop/note.txt", "archive_email.txt"):
         assert sentence in (rep.out_dir / name).read_text(encoding="utf-8"), name
     readme = (rep.out_dir / "README.md").read_text(encoding="utf-8")
-    assert "waits on the cross-check" not in readme
+    assert "waits on the cross-check" not in readme and "For the owner" not in readme
     tex = (rep.out_dir / "note" / "note.tex").read_text(encoding="utf-8")
     fp_section = tex.split(r"\section{How likely is a false positive}")[1].split(r"\section")[0]
-    assert r"TRICERATOPS \citep{giacalone2021}" in fp_section
+    assert r"TRICERATOPS 1.1.0 \citep{giacalone2021}, run on the KBonus light curve \citep{kbonus}" in fp_section
     assert "{Giacalone} et~al.(2021)" in tex.split(r"\begin{thebibliography}")[1]
     assert note_problems(note_words(tex), tex) == []
     stored = json.loads((rep.out_dir / "data" / "cross_check.json").read_text(encoding="utf-8"))
-    assert stored == block and "data/cross_check.json" in rep.files and "data/cross_check.json" in readme
+    assert stored == cross_check.with_current(block, _stored(env)) and stored["class"] == "validated"
+    assert "data/cross_check.json" in rep.files and "data/cross_check.json" in readme
 
 
 # ---------------------------------------------------------------------------------------------------- final fix wave
@@ -1566,6 +1581,11 @@ def test_a_prior_claim_makes_every_text_an_independent_recovery(env_prior):
                          PLANET_COLUMNS)
     assert planet["paper"] == f"https://doi.org/{PRIOR_DOI}" and PRIOR_DOI in planet["notes"]
     assert RECOVERY in planet["notes"] and len(planet["notes"]) <= exofop.EXOFOP_NOTES_MAX
+    # item 10 of Task 9: the Zenodo description names the claim in the README's own words, with its DOI and date
+    description = json.loads((rep.out_dir / "zenodo_metadata.json").read_text(encoding="utf-8"))["description"]
+    prior = pack_module.prior_claim_sentence(env.data)
+    assert f"Prior claim: {prior}" in texts["README.md"] and f"<p>Prior claim: {zenodo._html(prior)}</p>" in description
+    assert PRIOR_DOI in description and "13 October 2026" in description and "found again in a blind sweep" in description
 
 
 def test_without_a_prior_claim_nothing_speaks_of_a_recovery(env_with_dossier):

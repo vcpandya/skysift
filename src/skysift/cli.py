@@ -392,7 +392,9 @@ def crosscheck_command(target: str = typer.Option(..., "--target", help="The tar
                       "quarters": inputs["quarters"], "lightcurve_points": inputs["lightcurve"]["n"]}
         else:
             block = cc.import_result(store, target, Path(result))
-            report = {"target_id": target, "fpp": block["fpp"], "nfpp": block["nfpp"], "n_runs": block["n_runs"],
+            report = {"target_id": target, "fpp": block["fpp"], "fpp_p16": block["fpp_p16"],
+                      "fpp_p84": block["fpp_p84"], "fpp_no_stp": block["fpp_no_stp"], "nfpp": block["nfpp"],
+                      "n_runs": block["n_runs"], "n_degenerate": block["n_degenerate"], "class": block["class"],
                       "current": block["current"], "blocks_live_gate": cc.verdict(block)[0],
                       "live_gate_reason": cc.verdict(block)[1]}
     except cc.NoDossier as e:

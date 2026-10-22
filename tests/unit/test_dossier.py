@@ -1107,7 +1107,9 @@ def test_generate_merges_the_stored_cross_check_and_a_regeneration_keeps_it(env)
     block = {**fake_result(cc.inputs_fingerprint(first)), "current": True}
     env.store.set_cross_check(STAGE2_TARGET, block)
     again = _data(generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch, force=True))
-    assert again["cross_check"] == block and env.store.dossier(STAGE2_TARGET)["cross_check"] == block
+    # the class of the medians is recomputed at every merge, never read from the stored block
+    assert again["cross_check"] == {**block, "class": "validated"}
+    assert env.store.dossier(STAGE2_TARGET)["cross_check"] == block
     env.store.set_cross_check(STAGE2_TARGET, {**block, "inputs_sha256": "0" * 64})     # made for other inputs
     stale = _data(generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch, force=True))
     assert stale["cross_check"]["current"] is False and stale["cross_check"]["fpp"] == 0.012
