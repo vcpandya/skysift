@@ -791,6 +791,18 @@ def _self_reference(s: dict) -> tuple[np.ndarray, str] | None:
     return (pt + shift, "fit") if pt is not None and shift is not None else None
 
 
+EXCLUSION_FLOOR_ARCSEC = 0.5
+EXCLUSION_RULE = "max(3 sigma, 0.5 arcsec) about the Gaia-referenced difference centroid (spec 11.5)"
+
+
+def exclusion_radius(block: dict | None) -> float | None:
+    """The radius about the Gaia-referenced difference centroid inside which a background source is not excluded
+    (spec 11.5): three times ``catalogue_referenced_err_arcsec``, at least ``EXCLUSION_FLOOR_ARCSEC``. None without
+    the block or the error."""
+    err = _num(block, "catalogue_referenced_err_arcsec") if isinstance(block, dict) else None
+    return None if err is None else max(3.0 * err, EXCLUSION_FLOOR_ARCSEC)
+
+
 def centroid_offset(rung5_metrics: dict) -> dict | None:
     """The ``centroid_offset`` block of section 04 (referee pack spec 5, ruling e), or None without a voting season:
     ``self_referenced_arcsec``, the length of the weighted vector mean over the voting seasons of the difference
@@ -800,7 +812,9 @@ def centroid_offset(rung5_metrics: dict) -> dict | None:
     ``sigma_level``, the rule's two thresholds, ``counts`` (both exceeded; None unless every season's reference is
     the star's own direct-image centroid, since the fit's common shift is not Bryson's estimator), ``rule``,
     ``reference`` (what the star's own position was) and ``n_seasons``. Both errors are the larger of the seasons'
-    combined error and their scatter. The self-referenced keys are None when a voting season has no position."""
+    combined error and their scatter. The self-referenced keys are None when a voting season has no position.
+    ``exclusion_radius_arcsec`` (``exclusion_radius``) and ``exclusion_rule`` say how far about the Gaia-referenced
+    centroid a background source is not excluded."""
     est = centroid_estimate(rung5_metrics)
     if est is None:
         return None
@@ -817,6 +831,7 @@ def centroid_offset(rung5_metrics: dict) -> dict | None:
              "reference": None, "catalogue_referenced_arcsec": est.offset,
              "catalogue_referenced_err_arcsec": est.sigma, "level_arcsec": OFFSET_LEVEL_ARCSEC,
              "sigma_level": OFFSET_SIGMA, "rule": OFFSET_RULE, "n_seasons": est.n_seasons}
+    block.update(exclusion_radius_arcsec=exclusion_radius(block), exclusion_rule=EXCLUSION_RULE)
     if rows:
         mean, stat, scatter = _vector_mean(rows)
         # the larger of the combined error and the scatter, the rule of the catalogue-referenced error
@@ -1260,7 +1275,7 @@ def caveats(data: dict) -> list[dict]:
             out.append({"title": "The depth is measured in one season only",
                         "text": f"Rung 3 found data in {n_seasons} season{'' if n_seasons == 1 else 's'}, so a depth "
                                 "that changes with the detector cannot be tested."})
-    out.append({"title": "This is a candidate until independent follow-up confirms it",
+    out.append({"title": "This is a candidate until follow-up confirms it",
                 "text": "Follow-up would need ground-based transit photometry at a predicted time, a spectrum of the "
                         "host and high-resolution imaging. Without imaging, an unresolved bound companion within "
                         f"{UNRESOLVED_COMPANION_ARCSEC} arcsec that carries the transit is the open false-positive "
@@ -1420,19 +1435,28 @@ def _section(name: str, errors: dict, build: Callable[[], object]):
 
 
 CANDIDATES_DIR = Path(__file__).resolve().parents[2] / "docs" / "candidates"     # present in a source checkout only
-PRIOR_CLAIM_FIELDS = ("doi", "date", "author", "title", "status", "note")
+# how SkySift's result stands to a prior claim (spec 11.1): found again knowing of the claim, found before knowing of
+# it, or only vetted on the claim's ephemeris
+RELATIONSHIPS = ("re-detection", "blind-recovery", "vetting-only")
+PRIOR_CLAIM_NUMBERS = ("period_days", "period_err_days", "t0_bjd", "t0_err_days", "depth_ppm", "depth_err_ppm", "fpp")
+PRIOR_CLAIM_FIELDS = ("doi", "date", "author", "title", "status", "note", "relationship", "development_note",
+                      *PRIOR_CLAIM_NUMBERS, "fpp_tool")
 PRIOR_CLAIM_REQUIRED = ("doi", "date", "author", "title")
 
 
 class PriorClaimsError(ValueError):
-    """A ``prior_claims.json`` that is not a list of claims each carrying a DOI, a date, an author and a title."""
+    """A ``prior_claims.json`` that is not a list of claims each carrying a DOI, a date, an author and a title, or
+    that names a relationship outside ``RELATIONSHIPS``."""
 
 
 def prior_claims(target_id: str, root: Path | None = None) -> list[dict]:
     """The public, dated claims on the same signal made before SkySift's, as the person running the engine declared
-    them in ``docs/candidates/<target>/prior_claims.json`` (a list of {doi, date, author, title, status, note}; the
-    date as YYYY-MM-DD). An empty list when the file is absent. A file that does not read as such a list raises
-    PriorClaimsError, since a claim dropped in silence would let the texts call a recovery a new candidate."""
+    them in ``docs/candidates/<target>/prior_claims.json`` (a list of {doi, date, author, title, status, note,
+    relationship, development_note, the claim's numbers ``PRIOR_CLAIM_NUMBERS`` and fpp_tool}; the date as
+    YYYY-MM-DD). Text fields come back as stripped strings ("" when absent), numbers as finite floats or None, and the
+    relationship as one of ``RELATIONSHIPS`` or None when absent. An empty list when the file is absent. A file that
+    does not read as such a list, or names another relationship, raises PriorClaimsError, since a claim dropped in
+    silence would let the texts call a re-detection a new candidate."""
     path = Path(CANDIDATES_DIR if root is None else root) / target_id / "prior_claims.json"
     if not path.is_file():
         return []
@@ -1449,11 +1473,21 @@ def prior_claims(target_id: str, root: Path | None = None) -> list[dict]:
             raise PriorClaimsError(f"{path}: claim {i + 1} has no {', '.join(missing)}")
         if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(claim["date"])):
             raise PriorClaimsError(f"{path}: claim {i + 1} has the date {claim['date']!r}, not YYYY-MM-DD")
-        out.append({k: str(claim.get(k) or "").strip() for k in PRIOR_CLAIM_FIELDS})
+        value = claim.get("relationship")
+        relationship = str(value).strip() if value is not None and str(value).strip() else None
+        if relationship is not None and relationship not in RELATIONSHIPS:
+            raise PriorClaimsError(f"{path}: claim {i + 1} has the relationship {value!r}, not one of "
+                                   f"{', '.join(RELATIONSHIPS)}")
+        row = {k: (_num(claim, k) if k in PRIOR_CLAIM_NUMBERS else str(claim.get(k) or "").strip())
+               for k in PRIOR_CLAIM_FIELDS}
+        out.append({**row, "relationship": relationship})
     return sorted(out, key=lambda c: c["date"])
 
 
-PRIOR_CLAIM_PUBLIC = ("doi", "date", "author", "title")     # what may travel with a pack about a prior claim
+# what may travel with a pack about a prior claim: the status of someone else's submission and the owner's note stay
+# in prior_claims.json (pack_text.PRIOR_CLAIM_PUBLIC holds the same names)
+PRIOR_CLAIM_PUBLIC = ("doi", "date", "author", "title", "relationship", "development_note", *PRIOR_CLAIM_NUMBERS,
+                      "fpp_tool")
 
 
 def public_claims(data: dict) -> dict:
@@ -1546,6 +1580,25 @@ def _model_line(shape: dict | None) -> dict | None:
             "exposure_days": fit["exposure_min"] / 1440.0}
 
 
+SWEEP_QUERY = ("distinct target_id of runs with status done, the signal's detector and detector version, a job key "
+               "not starting 'recheck:', on targets of the signal's source")
+
+
+def calibration_block(store: Store, signal: dict, source: str, rows: list[dict], fap, target_id: str) -> dict:
+    """The ``calibration`` block the false-alarm sentence reads (spec 11.4): ``sweep_size``, the targets the sweep
+    searched with the signal's search (``Store.sweep_size``, by ``SWEEP_QUERY``; None when the count is 0, a store
+    of recheck runs only or a signal of another search version), the source, detector and version it was counted
+    for, ``null_stars`` (the distinct stars of the null calibration other than this target), ``null_searches``
+    (``fap.n``) and ``expected_by_chance``, the sweep size times the FAP (None without either)."""
+    detector, version = str(signal.get("detector") or ""), str(signal.get("detector_version") or "")
+    size = store.sweep_size(source, detector, version) or None
+    stars = {str(r.get("target_id")) for r in rows if r.get("target_id") and r.get("target_id") != target_id}
+    return {"sweep_size": size, "sweep_source": source, "sweep_detector": detector,
+            "sweep_detector_version": version, "sweep_query": SWEEP_QUERY, "null_stars": len(stars),
+            "null_searches": fap.n,
+            "expected_by_chance": size * fap.fap if size is not None and fap.fap is not None else None}
+
+
 def generate(store: Store, blob, settings, target_id: str, *, signal_id: int | None = None, force: bool = False,
              fetch=net.fetch, log: Callable[[str], None] | None = None, n_boot: int | None = None) -> DossierReport:
     """Write ``<data_dir>/dossiers/<target_id>/dossier_data.json`` and its ``dossiers`` row (spec 5.4). A no-op
@@ -1604,6 +1657,7 @@ def generate(store: Store, blob, settings, target_id: str, *, signal_id: int | N
     fap = cal.false_alarm(rows, float(signal["sde"]), version)
     data = _assemble(store, signal, target, tests, decisions, plots, pixels, star, planet, gaia_errors, fap, fpp,
                      inputs, calibration, version, settings.data_dir, blocks)
+    data["calibration"] = calibration_block(store, signal, source, rows, fap, target_id)
     data["prior_claims"] = claims
     data["hand_built_localisation"] = hand_built_localisation(target_id, _metrics(tests, "rung5_pixels"))
     data["section_errors"] = errors

@@ -213,16 +213,33 @@ def ephemeris_sentence(data: dict) -> str:
     return ", ".join(p for p in parts if p)
 
 
-PRIOR_CLAIM_PUBLIC = ("doi", "date", "author", "title")     # what the public texts may say about a prior claim
+# what the public texts may say about a prior claim (dossier.PRIOR_CLAIM_PUBLIC holds the same names)
+PRIOR_CLAIM_NUMBERS = ("period_days", "period_err_days", "t0_bjd", "t0_err_days", "depth_ppm", "depth_err_ppm", "fpp")
+PRIOR_CLAIM_PUBLIC = ("doi", "date", "author", "title", "relationship", "development_note", *PRIOR_CLAIM_NUMBERS,
+                      "fpp_tool")
+# spec 11.1: how each text names the relationship of SkySift's result to the claim, as a noun and as a verb
+RELATIONSHIP_WORDS = {"re-detection": "a re-detection",
+                      "blind-recovery": "a recovery made before SkySift knew of the claim",
+                      "vetting-only": "a vetting of the claim's signal, not a detection"}
+RELATIONSHIP_VERBS = {"re-detection": "re-detected it in its sweep of",
+                      "blind-recovery": "found it in its sweep of", "vetting-only": "vetted it on"}
 
 
 def prior_claims(data: dict) -> list[dict]:
     """The dossier's ``prior_claims`` (``dossier.prior_claims``: earlier public claims on the same signal, earliest
     first), each with a DOI, cut to ``PRIOR_CLAIM_PUBLIC``: the texts cite the record, never the status of someone
-    else's submission, even from a dossier stored before the status was dropped. An empty list for a dossier
-    without the key (a version-3 reader allows it) or with None (the claims were not checked)."""
+    else's submission, even from a dossier stored before the status was dropped. Text fields are stripped strings,
+    the claim's numbers finite floats or None, and ``relationship`` a key of ``RELATIONSHIP_WORDS`` or None. An
+    empty list for a dossier without the key (a version-3 reader allows it) or with None (the claims were not
+    checked)."""
     claims = data.get("prior_claims")
     if not isinstance(claims, list):
         return []
-    return [{k: str(c.get(k) or "").strip() for k in PRIOR_CLAIM_PUBLIC} for c in claims
-            if isinstance(c, dict) and str(c.get("doi") or "").strip()]
+    out = []
+    for c in claims:
+        if not isinstance(c, dict) or not str(c.get("doi") or "").strip():
+            continue
+        row = {k: _num(c.get(k)) if k in PRIOR_CLAIM_NUMBERS else str(c.get(k) or "").strip()
+               for k in PRIOR_CLAIM_PUBLIC}
+        out.append({**row, "relationship": row["relationship"] or None})
+    return out

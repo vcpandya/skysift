@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 
 from skysift.pack_rows import logg_value, provenance_rows, star_characterized
-from skysift.pack_text import _bjd, _errors, _num, _pm_parts, prior_claims
+from skysift.pack_text import RELATIONSHIP_WORDS, _bjd, _errors, _num, _pm_parts, prior_claims
 
 # ExoFOP's bulk templates (ExoFOP help, read 22 October 2026), pipe-delimited, one row per target
 EXOFOP_PLANET_TEMPLATE = "params_planet_{date}_001.txt"
@@ -75,16 +75,18 @@ def _candname(data: dict) -> str:
 
 def prior_fields(data: dict) -> dict:
     """The planet file's ``paper`` and ``notes`` when the dossier holds a prior claim (``pack_text.prior_claims``):
-    the earliest claim's DOI as the paper, and a note, at most ``EXOFOP_NOTES_MAX`` characters, that SkySift's result
-    is an independent recovery and vetting of it. Empty without a claim, so the placeholders stay."""
+    the earliest claim's DOI as the paper, and a note, at most ``EXOFOP_NOTES_MAX`` characters, that this is SkySift's
+    vetting of the signal that claim reported first, with the relationship in words (``RELATIONSHIP_WORDS``, spec
+    11.1; left out when it does not fit). Empty without a claim, so the placeholders stay."""
     claims = prior_claims(data)
     if not claims:
         return {}
     doi, date = claims[0]["doi"], claims[0].get("date") or ""
-    note = f"independent recovery and vetting by SkySift of the prior claim doi:{doi} ({date})"
-    if len(note) > EXOFOP_NOTES_MAX:
-        note = f"independent recovery of doi:{doi}"[:EXOFOP_NOTES_MAX]
-    return {"paper": f"https://doi.org/{doi}", "notes": note}
+    note = f"SkySift vetting of the signal first reported in doi:{doi} ({date})"
+    relationship = RELATIONSHIP_WORDS.get(claims[0].get("relationship") or "")
+    if relationship and len(f"{note}; {relationship}") <= EXOFOP_NOTES_MAX:
+        note = f"{note}; {relationship}"
+    return {"paper": f"https://doi.org/{doi}", "notes": note[:EXOFOP_NOTES_MAX]}
 
 
 def render_exofop_planet(data: dict, date: str, tic: str | None, tag: str) -> str:

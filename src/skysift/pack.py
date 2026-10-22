@@ -57,7 +57,7 @@ from skysift import dossier as ds
 from skysift import fpp as fpp_model
 from skysift import jsonutil
 from skysift import tess as tess_module
-from skysift.ephemeris import SES_MIN, SHAPE_PRIOR_DRAW
+from skysift.ephemeris import BKJD_OFFSET, SES_MIN, SHAPE_PRIOR_DRAW, predict_from
 from skysift.exofop import (
     EXOFOP_PLANET_TEMPLATE,
     EXOFOP_STELLAR_TEMPLATE,
@@ -65,6 +65,7 @@ from skysift.exofop import (
     render_exofop_planet,
     render_exofop_stellar,
 )
+from skysift.exofop import prior_fields as exofop_prior_fields
 from skysift.lc.loader import LightCurveLoader
 from skysift.lc.transit_model import A_LABEL_FITTED, A_LABEL_STELLAR, UNCONSTRAINED
 from skysift.pack_rows import (
@@ -86,6 +87,8 @@ from skysift.pack_rows import (
     timing_rows,
 )
 from skysift.pack_text import (
+    RELATIONSHIP_VERBS,
+    RELATIONSHIP_WORDS,
     Raw,
     _bjd,
     _f,
@@ -101,7 +104,15 @@ from skysift.pack_text import (
     value_text,
 )
 from skysift.store.db import SignalRow, Store
-from skysift.zenodo import KBONUS_DOI, ZenodoClient, ZenodoError, metadata_from, probability_sentences
+from skysift.zenodo import (
+    IN_HOUSE,  # noqa: F401  (re-exported: the in-house wording, spec 11.2)
+    KBONUS_DOI,
+    ZenodoClient,
+    ZenodoError,
+    in_house_text,
+    metadata_from,
+    probability_sentences,
+)
 
 PACK_VERSION = "3"         # 3: errors in every text and file, ExoFOP files, provenance, dilution (22 Oct 2026)
 # the five steps, in the README's order; the dashboard's step list (ui.routes.dossiers.PACK_STEPS) is built from these
@@ -348,8 +359,12 @@ BIBLIOGRAPHY = (
 )
 
 
-RECOVERY_WORDS = ("SkySift found it again in a blind sweep, so this is an independent recovery and vetting of "
-                  "{that}, not a new candidate.")
+# spec 11.1: words no public text may carry (case-insensitive); "independent" is kept for the vetting ladder alone
+FORBIDDEN_WORDS = (r"\bblind\b", r"\bindependent recovery\b")
+# spec 11.2: what the two false-positive estimates share once the pixels are counted, and what neither excludes
+BOTH_TOOLS = ("Both tools exclude a nearby or background eclipsing binary once the pixels are counted; an unresolved "
+              "bound companion is the open channel.")
+COMPARED = ("period", "epoch", "depth")         # the claim's quantities set against the dossier's, in this order
 
 
 def _family(author: str) -> str:
@@ -386,9 +401,10 @@ def prior_bib(data: dict) -> list[tuple[str, Raw, str]]:
 
 
 def prior_claim_sentence(data: dict, tex: bool = False) -> str | None:
-    """Who reported the signal first, when and where (the DOI of the public record), and that SkySift's result is an
-    independent blind recovery and vetting of that claim, never a new candidate. None without a prior claim. With
-    ``tex`` a ``Raw`` citing each record (``prior_bib``); the plain text names the record's title instead."""
+    """Who reported the signal first, when and where (the DOI of the public record), and how SkySift's result stands
+    to that claim: the earliest claim's relationship (``RELATIONSHIP_WORDS``) and its development note (spec 11.1).
+    None without a prior claim. With ``tex`` a ``Raw`` citing each record (``prior_bib``); the plain text names the
+    record's title instead."""
     pairs = prior_keys(data)
     if not pairs:
         return None
@@ -400,7 +416,13 @@ def prior_claim_sentence(data: dict, tex: bool = False) -> str | None:
         parts.append(Raw(rf"\citet{{{key}}}") if tex else claim["author"])
         said = "reported this signal first" if i == 0 else "reported it again"
         parts.append(f" {said} ({record})" if tex else f' {said}, in "{claim["title"]}" ({record})')
-    parts.append(". " + RECOVERY_WORDS.format(that="that claim" if len(pairs) == 1 else "those claims"))
+    first = pairs[0][0]
+    relationship = RELATIONSHIP_WORDS.get(first.get("relationship") or "")
+    note = first.get("development_note") or ""
+    if relationship:
+        parts.append(f"; SkySift's result is {relationship}" + (f": {note}." if note else "."))
+    else:
+        parts.append(f"; {note}." if note else ".")
     return _joined(tex, *parts)
 
 
@@ -410,9 +432,125 @@ def priority_sentence(data: dict) -> str | None:
     if not claims:
         return None
     first = claims[0]
+    relationship = RELATIONSHIP_WORDS.get(first.get("relationship") or "")
+    how = f" ({relationship})" if relationship else ""
     return (f"the prior claim ({first['author']}, {date_words(first['date'])}, doi:{first['doi']}) is the record of "
-            "priority. The upload note presents this result as an independent recovery and vetting of that claim, "
-            "and the planet file's paper and notes fields name its DOI.")
+            f"priority. The upload note presents this result as SkySift's vetting of that claim's signal{how}, and "
+            "the planet file's paper and notes fields name its DOI.")
+
+
+def _against(ours: float, ours_err: float | None, theirs: float, theirs_err: float | None) -> dict:
+    """One compared quantity: both values, both errors and the difference in sigma over the errors present (None
+    when neither has one)."""
+    errs = [e for e in (ours_err, theirs_err) if e is not None and e > 0]
+    sigma = abs(ours - theirs) / math.hypot(*errs) if errs else None
+    return {"ours": ours, "ours_err": ours_err, "theirs": theirs, "theirs_err": theirs_err, "sigma": sigma}
+
+
+def _claim_epoch(timing: dict, t0_bkjd: float) -> int | None:
+    """The epoch of the linear ephemeris nearest the claim's mid-transit time: from the reference epoch when the
+    timing is ok, from the first transit otherwise; None without the numbers."""
+    period = _num(timing.get("period"))
+    if not period:
+        return None
+    if timing.get("ok") is True:
+        t_ref, ref = _num(timing.get("t_ref")), timing.get("epoch_ref")
+        if t_ref is None or not isinstance(ref, int) or _num(timing.get("t_ref_err")) is None:
+            return None
+        return ref + round((t0_bkjd - t_ref) / period)
+    t0 = _num(timing.get("t0"))
+    return None if t0 is None else round((t0_bkjd - t0) / period)
+
+
+def prior_comparison(data: dict) -> dict | None:
+    """The earliest prior claim set against the dossier (spec 11.1): ``period``, ``epoch`` (the claim's mid-transit
+    time against ours propagated to the same epoch, ``ephemeris.predict_from``, with that ``epoch``) and ``depth``,
+    each {"ours", "ours_err", "theirs", "theirs_err", "sigma"} with sigma the difference over the errors present
+    added in quadrature; ``fpp`` {"theirs", "tool", "ours", "ours_tool"}, ours the TRICERATOPS median when a current
+    cross-check exists, else the in-house value; and ``one_sided``, the quantities compared with our error alone. A
+    quantity the claim does not give (or the dossier lacks) is left out. None without a claim."""
+    claims = prior_claims(data)
+    if not claims:
+        return None
+    claim, eph = claims[0], data.get("ephemeris") or {}
+    timing = data.get("timing") if isinstance(data.get("timing"), dict) else {}
+    out: dict = {}
+    period = _num(eph.get("period_days"))
+    if claim["period_days"] is not None and period is not None:
+        out["period"] = _against(period, _num(eph.get("period_err_days")), claim["period_days"],
+                                 claim["period_err_days"])
+    if claim["t0_bjd"] is not None:
+        theirs = claim["t0_bjd"] - BKJD_OFFSET
+        epoch = _claim_epoch(timing, theirs)
+        if epoch is not None:
+            ours, err = predict_from(timing, epoch)
+            out["epoch"] = {**_against(ours, err, theirs, claim["t0_err_days"]), "epoch": epoch}
+    depth = _num(eph.get("depth_ppm"))
+    if claim["depth_ppm"] is not None and depth is not None:
+        out["depth"] = _against(depth, _num(eph.get("depth_ppm_err")), claim["depth_ppm"], claim["depth_err_ppm"])
+    if claim["fpp"] is not None:
+        block = data.get("cross_check")
+        if cc.complete(block) and block.get("current") is True:
+            ours, tool = _num(block.get("fpp")), "TRICERATOPS"
+        else:
+            ours, tool = _num((data.get("fpp") or {}).get("value")), "SkySift's four-scenario estimate"
+        out["fpp"] = {"theirs": claim["fpp"], "tool": claim["fpp_tool"], "ours": ours, "ours_tool": tool}
+    out["one_sided"] = [k for k in COMPARED if k in out and out[k]["ours_err"] is not None
+                        and out[k]["theirs_err"] is None]
+    return out
+
+
+def _listed(items: list[str], last: str = "and") -> str:
+    return items[0] if len(items) == 1 else f"{', '.join(items[:-1])} {last} {items[-1]}"
+
+
+def _difference(name: str, row: dict) -> str:
+    """The difference of a quantity neither side gives an error for, in its unit."""
+    diff = abs(row["ours"] - row["theirs"])
+    if name == "depth":
+        return f"{diff:,.0f} ppm, with no error on either"
+    if name == "epoch":
+        return f"{diff * 1440:.1f} min, with no error on either"
+    return f"{diff:.6f} d, with no error on either"
+
+
+def comparison_text(data: dict, tex: bool = False) -> str | None:
+    """The one sentence comparing SkySift's numbers with the earliest prior claim's (spec 11.1,
+    ``prior_comparison``): each difference in sigma to one decimal, the claim's depth and false-positive probability
+    as the claim gives them (another work's numbers, so not rounded by ``pm_text``'s two-figure rule), which
+    differences use our error alone, and our false-positive probability beside the claim's. None without a claim or
+    without anything to compare. With ``tex`` a ``Raw``."""
+    cmp = prior_comparison(data)
+    if cmp is None:
+        return None
+    rows = [(k, cmp[k]) for k in COMPARED if k in cmp]
+    sentence = ""
+    if rows:
+        said = []
+        for i, (name, row) in enumerate(rows):
+            what = f"the mid-transit time at epoch {row['epoch']}" if name == "epoch" else f"the {name}"
+            by = _difference(name, row) if row["sigma"] is None else f"{row['sigma']:.1f} sigma"
+            said.append(f"{what} {'differs by' if i == 0 else 'by'} {by}")
+        notes = []
+        if "depth" in cmp:
+            d = cmp["depth"]
+            err = f" ± {d['theirs_err']:,g}" if d["theirs_err"] is not None else ""
+            notes.append(f"{d['theirs']:,g}{err} ppm there")
+        if cmp["one_sided"]:
+            names = [f"the {k}" for k in cmp["one_sided"]]
+            uses = "those use" if len(names) > 1 else "that uses"
+            notes.append(f"the claim gives no error on {_listed(names, 'or')}, so {uses} ours alone")
+        which = "that claim" if len(prior_claims(data)) == 1 else "the first claim"
+        sentence = f"Against {which} {_listed(said)}" + (f" ({'; '.join(notes)})" if notes else "")
+    if "fpp" in cmp:
+        f = cmp["fpp"]
+        theirs = f"{f['theirs']:,g}" + (f" ({f['tool']})" if f["tool"] else "")
+        clause = (f"false-positive probability of {theirs} sits beside our {cc.probability_text(f['ours'])} "
+                  f"({f['ours_tool']})" if f["ours"] is not None else f"false-positive probability is {theirs}")
+        sentence = f"{sentence}; its {clause}" if sentence else f"The claim's {clause}"
+    if not sentence:
+        return None
+    return _joined(tex, sentence + ".")
 
 
 def hand_built_sentence(data: dict) -> str | None:
@@ -537,6 +675,19 @@ def cross_check_sentence(data: dict, tex: bool = False) -> str | None:
     """The TRICERATOPS cross-check beside SkySift's own estimate (``crosscheck.comparison_sentence``), for the four
     texts; None without a cross-check made for this dossier's inputs, which the texts then leave out."""
     return cc.comparison_sentence(data, tex=tex)
+
+
+def both_tools(data: dict) -> str | None:
+    """``BOTH_TOOLS`` (spec 11.2) when a current cross-check is printed and the pixel rung voted, so that both
+    estimates have counted the pixels; None otherwise."""
+    if cross_check_sentence(data) is None:
+        return None
+    voting, _silent = _pixel_votes(_test(data, "rung5_pixels"))
+    return BOTH_TOOLS if voting else None
+
+
+def _capital(text: str) -> str:
+    return text[:1].upper() + text[1:]
 
 
 def tess_text(data: dict, tex: bool = False) -> str:
@@ -1030,6 +1181,8 @@ def numbers(data: dict, tex: bool = False, after_bjd: float | None = None) -> di
         "stellar parameters", "hz_where": _hz_where(planet), "hz_inner": _f(planet.get("hz_inner_au"), 3),
         "hz_outer": _f(planet.get("hz_outer_au"), 3),
         "fap_text": fap_text, "fpp_text": fpp_text, "caveats": caveats,
+        "in_house_text": in_house_text(data), "in_house_capital": _capital(in_house_text(data)),
+        "both_tools": both_tools(data),
         "cross_check_sentence": cross_check_sentence(data, tex),
         "cross_check_block": cc.verdict(data.get("cross_check"))[1],
         "cross_check_flag": cc.owner_flag(data),
@@ -1038,6 +1191,7 @@ def numbers(data: dict, tex: bool = False, after_bjd: float | None = None) -> di
         "tess_pointer": bool(tess_module.note_cites(data.get("tess"))),   # the README labels its paragraph by it (M-2)
         "abstract": abstract_text(data),
         "prior_text": prior_claim_sentence(data, tex), "prior_plain": prior_claim_sentence(data),
+        "comparison_text": comparison_text(data, tex), "comparison_plain": comparison_text(data),
         "priority_text": priority_sentence(data),
         "caveat_text": " ".join(f"{c['title'].rstrip('.')}." for c in caveats) or "No caveat is recorded.",
         "window_h": _f(plots.get("window_h"), 1), "bin_minutes": bin_minutes(data),
@@ -1070,12 +1224,13 @@ def abstract_text(data: dict) -> str:
     name = target.get("name") or target.get("target_id")
     claims = prior_claims(data)
     # the claim's date and DOI are printed once, in the body beside its citation (Task 8 fix round 3)
-    first = f"; {claims[0]['author']} reported the signal first" if claims else ""
-    what = "an independent recovery of a transit candidate" if claims else "a transit candidate"
-    parts = [(f"This note reports {what} on {name}, a star that Kepler recorded only in the background "
-              f"of other targets' pixels{first}."),
-             (f"In its KBonus Kepler Background light curve a dip of {_f(eph.get('depth_ppm'), 0, True)} ppm lasting "
-              f"{_f(eph.get('duration_h'), 2)} hours repeats every {_f(eph.get('period_days'), 5)} days over "
+    opening = (f"This note vets the transit candidate {claims[0]['author']} reported first" if claims
+               else "This note reports a transit candidate")
+    # round 2 (spec 11.2) puts both false-positive estimates in the abstract, so the other sentences are kept short
+    # to stay inside the RNAAS 150 words; the body carries the radius source, the orbit and the light curve's name
+    parts = [f"{opening} on {name}, a star Kepler recorded only in other targets' pixels.",
+             (f"Its KBonus light curve shows a {_f(eph.get('duration_h'), 2)} hour, "
+              f"{_f(eph.get('depth_ppm'), 0, True)} ppm dip every {_f(eph.get('period_days'), 5)} days over "
               f"{eph.get('n_events')} transits.")]
     row = _test(data, "rung5_pixels")
     voting, silent = _pixel_votes(row)
@@ -1088,23 +1243,17 @@ def abstract_text(data: dict) -> str:
     else:
         near = sum(1 for s in voting if s.get("nearer") == "target")
         parts.append(f"In difference images {_seasons_phrase(near, voting, silent)}{ds.partial_box_clause(voting)}.")
-    rp, a = (data.get("planet") or {}).get("rp_rearth"), (data.get("planet") or {}).get("a_au")
+    rp = (data.get("planet") or {}).get("rp_rearth")
     if isinstance(rp, dict) and _num(rp.get("median")) is not None:
-        orbit = f" on a {_num(a.get('median')):.3f} AU orbit" if isinstance(a, dict) and _num(a.get("median")) else ""
-        parts.append(f"With the stellar radius from Gaia photometry the planet would be about "
-                     f"{_num(rp['median']):.1f} Earth radii{orbit}.")
-    fap, fpp = data.get("fap") or {}, data.get("fpp") or {}
-    against = (f" against {fap['n']:,} null searches of this source" if fap.get("calibrated") and fap.get("n")
+        parts.append(f"The planet would be about {_num(rp['median']):.1f} Earth radii.")
+    fap = data.get("fap") or {}
+    against = (f" against {fap['n']:,} null searches of other KBonus stars" if fap.get("calibrated") and fap.get("n")
                else "")
-    tail = ", provisional until its factor tables are reviewed" if not fpp.get("signed_off") else ""
-    if fpp.get("neighbours_known") is False:
-        fpp_part = ("the false-positive probability is not computed, since the Gaia neighbour list needed for the "
-                    "background binary term is missing")
-    else:
-        fpp_part = (f"a scenario estimate puts the false-positive probability at {fpp.get('words') or 'not computed'}"
-                    f"{tail}")
-    parts.append(f"The false-alarm probability{against} is {fap.get('words') or 'not computed'}, and {fpp_part}.")
-    parts.append("It remains a candidate until independent follow-up confirms it.")
+    # spec 11.2: the TRICERATOPS headline first when a current cross-check exists, the in-house estimate after it
+    head = cc.headline(data)
+    fpp_part = f"{head}; {in_house_text(data)}" if head else in_house_text(data)
+    parts.append(f"The false-alarm probability{against} is {fap.get('words') or 'not computed'}; {fpp_part}.")
+    parts.append("It remains a candidate until follow-up confirms it.")
     return " ".join(parts)
 
 
@@ -1117,12 +1266,14 @@ def archive_paragraph(data: dict, doi: str, tic: str | None) -> str:
     claims = prior_claims(data)
     if claims:
         c = claims[0]
+        verb = RELATIONSHIP_VERBS.get(c.get("relationship") or "", "found it in its sweep of")
+        note = f"; {c['development_note']}" if c.get("development_note") else ""
         opening = (f"I write about a transit candidate on {n['name']}{where}, first reported by {c['author']} on "
-                   f"{date_words(c['date'])} (doi:{c['doi']}). SkySift's independent recovery and vetting of it is "
-                   f"now in an accepted refereed paper (doi:{PAPER_DOI_PLACEHOLDER}), since the archive takes "
-                   "parameters from such a paper and not from the Research Note of the AAS that reported the "
-                   f"recovery (doi:{RNAAS_DOI_PLACEHOLDER}). SkySift (search version {n['search_version']}, commit "
-                   f"{n['commit']}) found it again in a blind sweep of the KBonus Kepler Background light curves. ")
+                   f"{date_words(c['date'])} (doi:{c['doi']}). SkySift's vetting of it is now in an accepted refereed "
+                   f"paper (doi:{PAPER_DOI_PLACEHOLDER}), since the archive takes parameters from such a paper and "
+                   "not from the Research Note of the AAS that reported the vetting "
+                   f"(doi:{RNAAS_DOI_PLACEHOLDER}). SkySift (search version {n['search_version']}, commit "
+                   f"{n['commit']}) {verb} the KBonus Kepler Background light curves{note}. ")
     else:
         opening = (f"I write about a transit candidate on {n['name']}{where}, now in an accepted refereed paper "
                    f"(doi:{PAPER_DOI_PLACEHOLDER}), since the archive takes parameters from such a paper and not "
@@ -1201,7 +1352,7 @@ FILE_NOTES = {
     f"exofop/{EXOFOP_STELLAR_TEMPLATE}": "the stellar parameters in ExoFOP's bulk template (upload now)",
     "data/periodogram.json": "the periodogram envelope, its peaks and the alias and systematic periods",
     "data/rung_metrics.json": "every vetting rung's status, reason and metrics",
-    "data/cross_check.json": "the independent TRICERATOPS cross-check: every run's false-positive probability with "
+    "data/cross_check.json": "the TRICERATOPS cross-check: every run's false-positive probability with "
                              "and without STP, nearby false-positive probability, P(STP) and P(PTP), their medians "
                              "and 16th to 84th percentiles, the median run's scenario table, the stars with their "
                              "flux shares and parameter sources, the inputs it was made for and the caveats",
@@ -1287,7 +1438,10 @@ def gate_problems(raw: dict) -> list[str]:
     made under an older pixel rule (``dossier.pixel_rule_stale``), a pixel rerun that disagrees with the reviewer
     (``dossier.pixel_verdict_disagrees``), prior claims that were not checked (``dossier.prior_claims_unchecked``)
     and a rendered Research Note over the RNAAS limit of 1,500 words (``note_words``; the TESS statement itself never
-    blocks). Empty when the dossier may go to zenodo.org."""
+    blocks); and, after spec 11.1 and 11.2, a prior claim without a relationship, a ``FORBIDDEN_WORDS`` match in
+    the Research Note, the abstract, the archive email or the ExoFOP notes field (the README and the upload note
+    print the same sentence functions), and an abstract without the TRICERATOPS probability when a cross-check of
+    the present format is stored. Empty when the dossier may go to zenodo.org."""
     out = []
     for key, what in (("timing", "the ephemeris"), ("shape", "the transit shape")):
         block = raw.get(key)
@@ -1306,12 +1460,30 @@ def gate_problems(raw: dict) -> list[str]:
         out.append(f"{stale}; the recheck reruns the pixel step first")
     if ds.pixel_verdict_disagrees(raw):
         out.append("the pixel rerun disagrees with the reviewer's decision; a reviewer looks again first")
-    words = note_words(render_note(raw))["total"]
+    note = render_note(raw)
+    words = note_words(note)["total"]
     if words > NOTE_LIMITS["total"]:
         out.append(f"the Research Note has {words:,} words, over the RNAAS limit of {NOTE_LIMITS['total']:,}; "
                    "shorten it first")
     if ds.prior_claims_unchecked(raw):
         out.append("prior claims on the signal were not checked (no docs/candidates folder)")
+    # spec 11.1: every prior claim states how SkySift's result stands to it, and no text calls it blind
+    for claim in prior_claims(raw):
+        if not claim.get("relationship"):
+            out.append(f"prior claim doi:{claim['doi']} has no relationship (re-detection, blind-recovery or "
+                       "vetting-only)")
+    abstract = abstract_text(raw)
+    texts = (("Research Note", note), ("abstract", abstract),
+             ("archive email", archive_paragraph(raw, DOI_PLACEHOLDER, None)),
+             ("ExoFOP notes field", exofop_prior_fields(raw).get("notes", "")))
+    for name, text in texts:
+        for pattern in FORBIDDEN_WORDS:
+            found = re.search(pattern, text, re.IGNORECASE)
+            if found:
+                out.append(f"the {name} says '{found.group(0)}', which spec 11.1 rules out")
+    # spec 11.2: with a cross-check, the abstract leads with its probability, never the in-house one alone
+    if cc.complete(raw.get("cross_check")) and "TRICERATOPS" not in abstract:
+        out.append("the abstract carries the in-house false-positive probability without the TRICERATOPS one")
     return out
 
 
@@ -1350,8 +1522,8 @@ def other_signals_sentence(periods: list[float]) -> str:
     listed = [f"{p:.3f}" for p in periods]
     what = (f"another stage 2 signal at {listed[0]} days" if len(listed) == 1
             else f"other stage 2 signals at {', '.join(listed[:-1])} and {listed[-1]} days")
-    return (f"This star also has {what}, independent of this one; this pack covers one candidate only, so that "
-            "signal needs its own dossier and pack.")
+    return (f"This star also has {what}, at a period unrelated to this one; this pack covers one candidate only, so "
+            "that signal needs its own dossier and pack.")
 
 
 def zip_name(target_id: str, date: str) -> str:

@@ -26,6 +26,7 @@ from skysift.dossier import (
     CLOSE_CALL,
     DOSSIER_VERSION,
     STATUS_ORDER,
+    SWEEP_QUERY,
     LightCurveReleased,
     NoSignal,
     calibration_version_for,
@@ -884,7 +885,7 @@ def test_the_pack_texts_say_the_fpp_is_not_computed_without_neighbours(env):
     _fap, fpp_text = probability_sentences(data)
     assert fpp_text.startswith("False-positive probability: not computed, since the Gaia neighbour list")
     assert "percent" not in fpp_text
-    assert "the false-positive probability is not computed" in pack.abstract_text(data)
+    assert "the four-scenario estimate is not computed" in pack.abstract_text(data)
 
 
 def test_the_null_calibration_size_is_in_the_fingerprint(env):
@@ -1200,10 +1201,59 @@ def test_a_stamp_wcs_shifted_by_a_fifth_of_a_pixel_moves_only_the_catalogue_offs
 
 # ---------------------------------------------------------------------------------------------------- prior claims (P1)
 
+DEVELOPMENT_NOTE = ("the sweep's target list and the pipeline's tests used this star from 14 October 2026, the day "
+                    "after the claim; the search itself used no prior ephemeris")
 PRIOR_CLAIM = {"doi": "10.5281/zenodo.23325261", "date": "2026-10-13", "author": "Kuber Mehta",
                "title": "Planethunt: archival evidence for the KIC 5689121 transit candidate",
                "status": "Research Note submitted 13 October 2026, reported not accepted",
-               "note": "same host assignment; SkySift's sweep a week later"}
+               "note": "same host assignment; SkySift's sweep a week later",
+               "relationship": "re-detection", "development_note": DEVELOPMENT_NOTE,
+               "period_days": 13.769448, "period_err_days": None, "t0_bjd": 2455630.24543, "t0_err_days": None,
+               "depth_ppm": 1883, "depth_err_ppm": 106, "fpp": 0.07, "fpp_tool": "TRICERATOPS"}
+
+
+def test_prior_claims_read_the_relationship_and_the_numbers(tmp_path):
+    folder = tmp_path / "kic-005689121"
+    folder.mkdir()
+    (folder / "prior_claims.json").write_text(json.dumps([PRIOR_CLAIM]), encoding="utf-8")
+    claim = dossier_module.prior_claims("kic-005689121", root=tmp_path)[0]
+    assert claim["relationship"] == "re-detection" and claim["development_note"] == DEVELOPMENT_NOTE
+    assert (claim["period_days"], claim["t0_bjd"], claim["depth_ppm"], claim["depth_err_ppm"], claim["fpp"]) == (
+        13.769448, 2455630.24543, 1883.0, 106.0, 0.07)
+    assert claim["period_err_days"] is None and claim["fpp_tool"] == "TRICERATOPS"
+    public = dossier_module.public_claims({"prior_claims": [claim]})["prior_claims"][0]
+    assert set(public) == set(dossier_module.PRIOR_CLAIM_PUBLIC) and "status" not in public and "note" not in public
+
+
+def test_a_prior_claim_with_an_unknown_relationship_is_refused(tmp_path):
+    folder = tmp_path / "kic-005689121"
+    folder.mkdir()
+    (folder / "prior_claims.json").write_text(json.dumps([{**PRIOR_CLAIM, "relationship": "independent"}]),
+                                              encoding="utf-8")
+    with pytest.raises(dossier_module.PriorClaimsError, match="relationship 'independent'"):
+        dossier_module.prior_claims("kic-005689121", root=tmp_path)
+    (folder / "prior_claims.json").write_text(json.dumps([{k: v for k, v in PRIOR_CLAIM.items()
+                                                           if k != "relationship"}]), encoding="utf-8")
+    assert dossier_module.prior_claims("kic-005689121", root=tmp_path)[0]["relationship"] is None
+
+
+def test_the_exclusion_radius_is_three_sigma_with_a_half_arcsec_floor():
+    assert dossier_module.exclusion_radius({"catalogue_referenced_err_arcsec": 0.25312484}) == pytest.approx(
+        0.75937, abs=1e-5)                                          # KIC 5689121's live error
+    assert dossier_module.exclusion_radius({"catalogue_referenced_err_arcsec": 0.1}) == 0.5
+    assert dossier_module.exclusion_radius(None) is None
+    assert dossier_module.exclusion_radius({"catalogue_referenced_err_arcsec": None}) is None
+
+
+def test_the_dossier_stores_the_sweep_size_and_the_exclusion_radius(env):
+    d = json.loads(generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch,
+                            force=True).data_path.read_text(encoding="utf-8"))
+    sig = d["signal"]
+    assert d["calibration"]["sweep_size"] == env.store.sweep_size("kbonus_bkg", sig["detector"],
+                                                                  sig["detector_version"])
+    assert d["calibration"]["null_searches"] == d["fap"]["n"] and d["calibration"]["sweep_query"] == SWEEP_QUERY
+    co = d["centroid_offset"]
+    assert co["exclusion_radius_arcsec"] == pytest.approx(max(3 * co["catalogue_referenced_err_arcsec"], 0.5))
 
 
 def test_prior_claims_are_read_from_the_target_folder(tmp_path):
@@ -1256,7 +1306,7 @@ def test_generate_stores_the_prior_claims(env):
     (folder / "prior_claims.json").write_text(json.dumps([PRIOR_CLAIM]), encoding="utf-8")
     data = json.loads(generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch, force=True)
                       .data_path.read_text(encoding="utf-8"))
-    stored = {k: PRIOR_CLAIM[k] for k in ("doi", "date", "author", "title")}  # status and note stay in the file
+    stored = {k: PRIOR_CLAIM[k] for k in dossier_module.PRIOR_CLAIM_PUBLIC}     # status and note stay in the file
     assert data["prior_claims"] == [stored] and data["dossier_version"] == DOSSIER_VERSION
     assert "prior_claims_unchecked" not in [c.get("key") for c in data["caveats"]]
 
@@ -1395,7 +1445,7 @@ def test_the_export_embeds_only_the_public_fields_of_a_prior_claim():
     page = export_html(data)
     blob = page.split('<script id="dossier-data" type="application/json">')[1].split("</script>")[0]
     embedded = json.loads(blob.replace("\\/", "/"))
-    assert embedded["prior_claims"] == [{k: PRIOR_CLAIM[k] for k in ("doi", "date", "author", "title")}]
+    assert embedded["prior_claims"] == [{k: PRIOR_CLAIM[k] for k in dossier_module.PRIOR_CLAIM_PUBLIC}]
     assert "reported not accepted" not in page and "sweep a week later" not in page
     assert dossier_module.public_claims({"prior_claims": None})["prior_claims"] is None
     assert data["prior_claims"] == [PRIOR_CLAIM]                              # the caller's dict is not changed

@@ -773,7 +773,7 @@ def test_dossier_page_shows_the_cross_check_block(seeded_dossier):
     client, app, _ids, data = seeded_dossier
     html = client.get(f"/dossiers/{STAGE2_TARGET}").text
     checks = html.split('id="checks"')[1].split('id="pixels"')[0]
-    assert "Cross-check" in checks and "No independent cross-check is stored yet" in checks
+    assert "Cross-check" in checks and "No TRICERATOPS cross-check is stored yet" in checks
     result = fake_result(cc.inputs_fingerprint(data))
     # twenty runs with FPP 0.010 to 0.029: median 0.0195, 16th to 84th percentile 0.013 to 0.026 (ruling s)
     runs = [dict(r, fpp=0.01 + 0.001 * k, fpp_no_stp=cc.fpp_without_stp(0.01 + 0.001 * k, 0.005), p_stp=0.005)
@@ -807,7 +807,7 @@ def test_the_standalone_page_carries_a_cross_check_imported_after_its_export(see
     client, app, _ids, data = seeded_dossier
     before = client.get(f"/dossiers/{STAGE2_TARGET}/export.html").text
     assert '"cross_check":null' in before.replace(" ", "")
-    assert "Cross-check" in before and "No independent cross-check is stored yet." in before     # dossier.js draws it
+    assert "Cross-check" in before and "No TRICERATOPS cross-check is stored yet." in before     # dossier.js draws it
     result = tmp_path / "result.json"
     result.write_text(json.dumps(fake_result(cc.inputs_fingerprint(data), fpp=0.0234, nfpp=0.0012)), encoding="utf-8")
     cc.import_result(app.state.store, STAGE2_TARGET, result)
@@ -845,23 +845,28 @@ def test_the_pixel_section_quotes_the_offset_against_the_rule(seeded_dossier):
     assert "not assessed from the star's own image" in export          # the script's twin of the fallback
 
 
-def test_section_01_presents_a_prior_claim_as_an_independent_recovery(seeded_dossier):
-    """P1: with a prior claim stored, the page's section 01 cites it (author, DOI, date) and calls the result an
-    independent recovery; the standalone page carries the claim in its JSON and the same words in its script."""
+def test_section_01_presents_a_prior_claim_with_its_relationship(seeded_dossier):
+    """P1 and spec 11.1: with a prior claim stored, the page's section 01 cites it (author, DOI, date) and states the
+    relationship and the development note, never "blind" or "independent recovery"; the standalone page carries the
+    claim in its JSON and the same words in its script."""
+    import re
     from pathlib import Path
 
     from tests.unit.test_dossier import PRIOR_CLAIM
     client, app, _ids, data = seeded_dossier
     signal = client.get(f"/dossiers/{STAGE2_TARGET}").text.split('id="signal"')[1].split('id="repeat"')[0]
-    assert "independent recovery" not in signal and PRIOR_CLAIM["doi"] not in signal
+    assert "re-detection" not in signal and PRIOR_CLAIM["doi"] not in signal
     path = Path(app.state.store.dossier(STAGE2_TARGET)["data_path"])
     path.write_text(json.dumps({**data, "prior_claims": [PRIOR_CLAIM]}), encoding="utf-8")
     signal = client.get(f"/dossiers/{STAGE2_TARGET}").text.split('id="signal"')[1].split('id="repeat"')[0]
     assert "Kuber Mehta reported this signal first" in signal and "doi:10.5281/zenodo.23325261" in signal
     assert "13 October 2026" in signal
-    assert "independent recovery and vetting of that claim, not a new candidate" in signal
+    assert "result is a re-detection: the sweep" in signal and "the search itself used no prior ephemeris" in signal
     export = client.get(f"/dossiers/{STAGE2_TARGET}/export.html").text
-    assert '"prior_claims":[{' in export.replace(" ", "") and "independent recovery and vetting of" in export
+    assert '"prior_claims":[{' in export.replace(" ", "") and "a recovery made before SkySift knew of" in export
+    for page in (signal, export):
+        # the relationship key "blind-recovery" is data the script maps to words, never prose
+        assert not re.search(r"\bblind\b(?!-recovery)", page, re.IGNORECASE) and "independent recovery" not in page
 
 
 def test_the_validated_class_is_not_named_and_withdrawn_in_one_breath(seeded_dossier):

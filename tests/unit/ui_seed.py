@@ -469,6 +469,11 @@ def seed_dossier(store: Store, data_dir, target_id: str = STAGE2_TARGET) -> dict
         "pixels": _seed_pixels(),
         "centroid_offset": ds.centroid_offset(next((x["metrics"] for x in tests if x["rung"] == "rung5_pixels"), {})),
         "prior_claims": [], "hand_built_localisation": None,
+        # spec 11.4: the sweep the false-alarm sentence counts (the seed's own searches, by SWEEP_QUERY)
+        "calibration": {"sweep_size": 1579, "sweep_source": "kbonus_bkg", "sweep_detector": sig["detector"],
+                        "sweep_detector_version": sig["detector_version"], "sweep_query": ds.SWEEP_QUERY,
+                        "null_stars": 850, "null_searches": fap.get("n"),
+                        "expected_by_chance": 1579 * fap["fap"] if fap.get("fap") is not None else None},
         "star": star, "planet": planet, "look": look, "caveats": [],
         "section_errors": {}, "cross_check": None,
         "provenance": {"search_version": sig["detector_version"], "ladder_version": ladder,

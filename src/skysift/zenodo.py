@@ -9,11 +9,13 @@ never put in a URL and never appears in an error message or a repr. The HTTP ses
 fake one and nothing reaches the network."""
 from __future__ import annotations
 
+import math
 import os
 import re
 from pathlib import Path
 from urllib.parse import quote
 
+from skysift import crosscheck as cc
 from skysift.pack_text import ephemeris_sentence
 
 SANDBOX = "https://sandbox.zenodo.org/api"
@@ -128,26 +130,79 @@ def _creator(author: dict) -> dict | None:
     return out
 
 
-def probability_sentences(data: dict) -> tuple[str, str]:
-    """The two probabilities, each in its own sentence; the false-positive one says "provisional" until its factor
-    tables are signed off, and "not computed" without the Gaia neighbour list. Every pack text uses these, so the
-    numbers never merge into one."""
-    fap, fpp = data.get("fap") or {}, data.get("fpp") or {}
-    fap_words = fap.get("words") or "not computed"
-    if fap.get("calibrated") and fap.get("n") is not None:
-        fap_text = (f"False-alarm probability: {fap_words} ({fap.get('k')} of {fap.get('n'):,} null searches of this "
-                    "source reached the signal's strength).")
+# spec 11.4: what the false-alarm probability was measured against, and what it means across the whole sweep
+FAP_NULLS = ("{k} of {n:,} null searches (the inverted and scrambled light curves of {stars:,} other KBonus stars, "
+             "searched without the masked pass and alias resolution) reached the signal's SDE")
+FAP_SWEEP = ("; across the {s:,}-star sweep {expected} expected by chance, and the vetting ladder, not the SDE, "
+             "separates the candidate from them")
+FAP_NO_SWEEP = "; the vetting ladder, not the SDE, separates the candidate from such peaks"
+# spec 11.2: the in-house estimate follows the TRICERATOPS one, named for the scenarios it leaves out
+IN_HOUSE = "a four-scenario estimate without a bound-companion or diluted-planet scenario gives {value}, a lower bound"
+IN_HOUSE_NO_NEIGHBOURS = ("the four-scenario estimate is not computed, since the Gaia neighbour list needed for the "
+                          "background binary term is missing")
+PROVISIONAL = ", provisional until its factor tables are reviewed"
+
+
+def _expected(x: float) -> str:
+    """How many peaks the sweep should hold by chance, as ``FAP_SWEEP`` prints it: "about 31 such peaks are",
+    "about one such peak is", "fewer than one such peak is" below 0.5."""
+    n = round(x)
+    if n < 1:
+        return "fewer than one such peak is"
+    return "about one such peak is" if n == 1 else f"about {n:,} such peaks are"
+
+
+def fap_sentence(data: dict) -> str:
+    """"False-alarm probability: <words>." and, when calibrated, ``FAP_NULLS`` with ``FAP_SWEEP`` (the stored
+    ``calibration.sweep_size`` times the FAP) or ``FAP_NO_SWEEP`` without a sweep size. A dossier stored before the
+    calibration block says "other KBonus stars" without their count."""
+    fap, calib = data.get("fap") or {}, data.get("calibration") or {}
+    words = fap.get("words") or "not computed"
+    if not (fap.get("calibrated") and fap.get("n") is not None):
+        return f"False-alarm probability: {words}."
+    stars = calib.get("null_stars")
+    nulls = (FAP_NULLS.format(k=fap.get("k"), n=fap["n"], stars=stars) if isinstance(stars, int)
+             else FAP_NULLS.replace("{stars:,} ", "").format(k=fap.get("k"), n=fap["n"]))
+    size, value = calib.get("sweep_size"), fap.get("fap")
+    if isinstance(size, int) and size > 0 and isinstance(value, (int, float)) and math.isfinite(value):
+        sweep = FAP_SWEEP.format(s=size, expected=_expected(size * value))
     else:
-        fap_text = f"False-alarm probability: {fap_words}."
+        sweep = FAP_NO_SWEEP
+    return f"False-alarm probability: {words}. {nulls}{sweep}."
+
+
+def in_house_text(data: dict) -> str:
+    """The in-house false-positive estimate as the texts print it after the TRICERATOPS one (spec 11.2): ``IN_HOUSE``
+    with the value in prose (``crosscheck.probability_text``) and, until its factor tables are signed off, the
+    provisional clause; "not computed" wording without the Gaia neighbour list or without a value."""
+    fpp = data.get("fpp") or {}
+    if fpp.get("neighbours_known") is False:
+        return IN_HOUSE_NO_NEIGHBOURS
+    value = fpp.get("value")
+    ok = isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+    text = IN_HOUSE.format(value=cc.probability_text(value) if ok else "no value (not computed)")
+    return text + ("" if fpp.get("signed_off") else PROVISIONAL)
+
+
+def _capital(text: str) -> str:
+    return text[:1].upper() + text[1:]
+
+
+def probability_sentences(data: dict) -> tuple[str, str]:
+    """The two probabilities, each in its own sentence (``fap_sentence``; the false-positive one leads with the
+    TRICERATOPS headline, ``crosscheck.headline``, when a current cross-check exists, then ``in_house_text``). The
+    in-house estimate says "provisional" until its factor tables are signed off, and "not computed" without the Gaia
+    neighbour list. Every pack text uses these, so the numbers never merge into one."""
+    fpp = data.get("fpp") or {}
+    fap_text = fap_sentence(data)
+    pixels = "" if fpp.get("pixels", True) else " (no pixel data yet)"
+    head = cc.headline(data)
+    if head is not None:
+        return fap_text, f"False-positive probability{pixels}: {head}; {in_house_text(data)}."
     if fpp.get("neighbours_known") is False:
         return fap_text, ("False-positive probability: not computed, since the Gaia neighbour list needed for the "
                           "background binary term is missing.")
-    fpp_words = fpp.get("words") or "not computed"
-    tail = (" It is provisional until its factor tables are reviewed and signed off." if not fpp.get("signed_off")
-            else "")
-    pixels = "" if fpp.get("pixels", True) else " (no pixel data yet)"
-    fpp_text = f"False-positive probability{pixels}: {fpp_words}, from a scenario estimate.{tail}"
-    return fap_text, fpp_text
+    return fap_text, f"False-positive probability{pixels}: {_capital(in_house_text(data))}."
 
 
 def metadata_from(data: dict, citation: dict | None, prior: str | None = None) -> dict:

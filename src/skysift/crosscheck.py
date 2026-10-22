@@ -1,4 +1,4 @@
-"""The independent false-positive cross-check (referee pack spec 4, revised by its rulings (n) to (v) of 22 October
+"""The TRICERATOPS false-positive cross-check (referee pack spec 4, revised by its rulings (n) to (v) of 22 October
 2026): TRICERATOPS (Giacalone et al. 2021), run in its own environment by ``tools/triceratops_check.py``, since it
 needs numpy 1.26 and the engine stands on numpy 2.
 
@@ -35,7 +35,6 @@ RADIUS_MISMATCH = 0.2  # a radius more than this fraction above the dwarf table'
 N_RUNS = 20                     # at least this many seeded runs (ruling s); the import refuses fewer
 WINDOW_DURATIONS = 3.0          # the exported light curve: within this many durations of each transit
 CLIP_MAD = 5.0                  # a point further than this many MADs from a box model is clipped (ruling p)
-RATIO_SENTENCE_ABOVE = 3.0      # the pack explains the difference when the two estimates differ by more than this
 # Giacalone et al. 2021 (abstract, section 4.1, Figure 12): the lines of its classes, labels only (ruling t)
 VALIDATED_FPP, LIKELY_PLANET_FPP, PLANET_NFPP, LIKELY_NFP_NFPP = 0.015, 0.5, 1e-3, 0.1
 CLASSES = ("validated", "likely planet", "likely nearby false positive", "candidate")
@@ -46,10 +45,8 @@ RESULT_KEYS = ("tool", "tool_version", "run_utc", "n_runs", "n_degenerate", *SUM
                "stars", "inputs_sha256", "caveats", "settings")
 RUN_KEYS = ("seed", "fpp", "fpp_no_stp", "nfpp", "p_stp", "p_ptp", "best_scenario", "degenerate")
 CITATION = "(Giacalone et al. 2021)"
-# the reason the two estimates may differ, in the short form the word-limited note can carry (Task 8 fix round 1):
-# SkySift's scenario model counts the catalogued neighbours and the pixel exclusion, TRICERATOPS marginalises over an
-# unresolved companion population with its own priors
-DIFFERENT_QUESTIONS = "the two models answer different questions"
+# spec 11.2: the paper's classes do not apply at Kepler's 30-minute cadence, so the texts name none
+NO_CLASS_CLAUSE = "in none of its validation classes, which do not apply at 30-minute cadence"
 # the scenarios of the package's probability table in words, for the sentence on a dominant scenario
 SCENARIO_WORDS = {
     "TP": "a planet transiting the target", "EB": "an eclipsing binary on the target",
@@ -252,6 +249,20 @@ def _query_neighbour_params(neighbours: list[dict], *, fetch, store, target_id: 
     return {str(r.get("source_id")): r for r in rows}, None
 
 
+def _pixel_exclusion(data: dict, ds) -> dict | None:
+    """``inputs.json``'s ``pixel_exclusion`` (spec 11.2): the radius about the Gaia-referenced difference centroid
+    inside which a background source is not excluded (``dossier.exclusion_radius``), its rule and the centroid's
+    offset from the star; None without a centroid block or its error. The tool does not read it yet: a rerun with
+    the excluded field stars removed is a follow-up."""
+    co = data.get("centroid_offset")
+    radius = _finite((co or {}).get("exclusion_radius_arcsec")) if isinstance(co, dict) else None
+    radius = ds.exclusion_radius(co) if radius is None else radius
+    if radius is None:
+        return None
+    return {"radius_arcsec": radius, "rule": co.get("exclusion_rule") or ds.EXCLUSION_RULE,
+            "centre_offset_arcsec": _finite(co.get("catalogue_referenced_arcsec"))}
+
+
 def _leak(data: dict) -> dict | None:
     """Rung 5's leak test, the dip at the ephemeris in the neighbour's own aperture: {"depth_ppm", "err_ppm",
     "kic"}, or None when it was not stored. It is the opposite direction to the leak into this star's light curve, so
@@ -393,7 +404,8 @@ def export_inputs(store, blob, settings, target_id: str, out_dir: Path, *, fetch
                          "kepmag": _finite(kepmag)},
               "signal_id": sid, "dossier_generated": data.get("generated"), "ephemeris": data.get("ephemeris"),
               "star": data.get("star"), "neighbours": neighbours, "neighbour_params_note": params_note,
-              "leak": _leak(data), "neighbour_kic": kic, "quarters": quarters, "tpf_files": files,
+              "leak": _leak(data), "pixel_exclusion": _pixel_exclusion(data, ds), "neighbour_kic": kic,
+              "quarters": quarters, "tpf_files": files,
               "tpf_kept": [q for q in quarters if q not in fetched], "tpf_fetched": fetched, "tpf_missing": missing,
               "lightcurve": {"file": "lightcurve.csv", "window_durations": int(WINDOW_DURATIONS), "n": len(rows),
                              "columns": ["time_bkjd", "flux_rel", "err_rel", "quarter"], "clipped": clipped,
@@ -567,7 +579,7 @@ def verdict(block: dict | None) -> tuple[bool, str | None]:
     or a block made for an earlier dossier (ruling t keeps only the missing-or-stale rule). The numbers never block:
     Giacalone et al.'s classes are labels, and a disagreement with SkySift's estimate is a sentence, not a refusal."""
     if not block:
-        return True, "no independent cross-check"
+        return True, "no TRICERATOPS cross-check"
     if not complete(block):
         return True, "the cross-check was stored by an earlier version of the tool; run it again"
     if block.get("current") is not True:
@@ -644,17 +656,35 @@ def owner_flag(data: dict) -> str | None:
             f"{why} Read the cross-check (data/cross_check.json) before the upload; it does not block the draft.")
 
 
+def _current(data: dict) -> dict | None:
+    block = data.get("cross_check")
+    return block if complete(block) and block.get("current") is True else None
+
+
+def headline(data: dict, tex: bool = False) -> str | None:
+    """The false-positive probability every public text leads with (spec 11.2): the TRICERATOPS median full FPP,
+    its value without STP and ``NO_CLASS_CLAUSE``, citing Giacalone et al. 2021; None without a complete, current
+    cross-check. With ``tex`` a LaTeX ``Raw`` citing ``giacalone2021``."""
+    block = _current(data)
+    if block is None:
+        return None
+    words = (f"TRICERATOPS {block['tool_version']} gives a false-positive probability of {_p(block['fpp'])} "
+             f"({_p(block['fpp_no_stp'])} without a planet on an unresolved bound companion), {NO_CLASS_CLAUSE}")
+    if tex:
+        return Raw(tex_escape(words) + r" \citep{giacalone2021}")
+    return f"{words} {CITATION}"
+
+
 def comparison_sentence(data: dict, tex: bool = False) -> str | None:
     """For the pack's texts: the method (the TRICERATOPS version, the KBonus light curve, Kepler limb darkening,
     the package's Gaia DR3 field-star population; ruling u), the medians of the full FPP, the FPP without STP and the
-    NFPP each with its 16th to 84th percentile range and the run count (ruling s), the class of the medians on
-    Giacalone et al.'s scale (ruling t), the dominant scenario when the full FPP is at or above 0.5, and SkySift's own
-    FPP set beside the FPP without STP, the like-for-like number (ruling o), with one sentence on why when the two
-    differ by more than a factor of three. None without a current cross-check of the present format. With ``tex`` a
-    LaTeX ``Raw`` citing ``giacalone2021``. Trimmed in Task 8 fix round 1 so the note keeps inside the RNAAS limit
-    with the TESS statement: both FPPs, their ranges, the class and the limb darkening (round 2) stay."""
-    block = data.get("cross_check")
-    if not complete(block) or block.get("current") is not True:
+    NFPP each with its 16th to 84th percentile range and the run count (ruling s), ``NO_CLASS_CLAUSE`` where the
+    class on Giacalone et al.'s scale stood (spec 11.2; ``CLASS_PHRASES`` stay for the dossier page) and the dominant
+    scenario when the full FPP is at or above 0.5. SkySift's own estimate is not set beside it here: the texts print
+    it after, as the in-house sentence (``zenodo.in_house_text``). None without a current cross-check of the present
+    format. With ``tex`` a LaTeX ``Raw`` citing ``giacalone2021``."""
+    block = _current(data)
+    if block is None:
         return None
     n, deg = block["n_runs"], block["n_degenerate"]
     left_out = f", {deg} degenerate run{'s' if deg != 1 else ''} left out" if deg else ""
@@ -664,22 +694,10 @@ def comparison_sentence(data: dict, tex: bool = False) -> str | None:
             f"{range_text(block, 'fpp')}), {_p(block['fpp_no_stp'])} ({range_text(block, 'fpp_no_stp')}) without a "
             "planet transiting an unresolved bound companion (STP), absent from SkySift's model, and a nearby "
             f"false-positive probability of {_p(block['nfpp'])} ({range_text(block, 'nfpp')}) over {n} "
-            f"runs{left_out}; {CLASS_PHRASES[classify(block['fpp'], block['nfpp'])]}.")
+            f"runs{left_out}, {NO_CLASS_CLAUSE}.")
     dominant = dominant_sentence(block)
     if dominant:
         rest += f" {dominant}"
-    own = (data.get("fpp") or {}).get("value")
-    whose = ("SkySift's own estimate" if (data.get("fpp") or {}).get("signed_off")
-             else "SkySift's own estimate (provisional until its factor tables are reviewed)")
-    theirs = block["fpp_no_stp"] if block["fpp_no_stp"] is not None else block["fpp"]
-    if isinstance(own, (int, float)) and not isinstance(own, bool) and math.isfinite(own):
-        hi, lo = max(own, theirs), min(own, theirs)
-        ratio = 1.0 if hi == 0 else hi / lo if lo > 0 else math.inf          # both 0 agree
-        if ratio > RATIO_SENTENCE_ABOVE:
-            apart = "far" if math.isinf(ratio) else f"a factor of {ratio:.1f}"
-            rest += f" {whose} is {probability_text(own)}, {apart} from the value without STP: {DIFFERENT_QUESTIONS}."
-        else:
-            rest += f" {whose} is {probability_text(own)}."
     if tex:
         return Raw(tex_escape(head) + r"\citep{giacalone2021}" + tex_escape(rest))
     return head + CITATION + rest

@@ -528,3 +528,17 @@ def test_set_candidate_pack_writes_only_an_existing_candidate_row(tmp_path):
     with s.session() as session:
         row = session.scalars(select(CandidateRow).where(CandidateRow.signal_id == sid)).one()
         assert row.pack_path == "/packs/kic-1/20261021" and row.status == "approved"
+
+
+def test_sweep_size_counts_the_done_sweep_runs_of_one_source_and_search(tmp_path):
+    s = make_store(tmp_path)
+    for tid, source in (("a", "kbonus_bkg"), ("b", "kbonus_bkg"), ("c", "kbonus_bkg"), ("d", "kbonus_bkg"),
+                        ("e", "kbonus_bkg"), ("f", "other"), ("g", "kbonus_bkg")):
+        s.upsert_target(Target(source=source, target_id=tid, ra=0, dec=0))
+    for job, tid, version, status in (("a", "a", "5", "done"), ("b", "b", "5", "done"), ("c1", "c", "5", "error"),
+                                      ("c2", "c", "5", "done"), ("d", "d", "5", "error"),
+                                      ("recheck:P/2:1", "e", "5", "done"), ("f", "f", "5", "done"),
+                                      ("g", "g", "4", "done")):
+        s.finish_run(s.start_run(job, tid, "box_dip", version, "1"), status)
+    assert s.sweep_size("kbonus_bkg", "box_dip", "5") == 3            # a, b and c; not d, e, f or g
+    assert s.sweep_size("kbonus_bkg", "box_dip", "9") == 0

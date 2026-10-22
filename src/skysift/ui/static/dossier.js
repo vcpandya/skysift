@@ -453,14 +453,20 @@
     };
     // 01 to 08
     para(0, `Every ${fmt(E.period_days, 2)} days the star dims by ${fmt(E.depth_ppm)} parts per million for ${fmt(E.duration_h, 1)} hours.`, "lede");
-    // a prior public claim on the signal, as skysift.pack.prior_claim_sentence words it: this is a recovery
+    // a prior public claim on the signal, as skysift.pack.prior_claim_sentence words it: the relationship of
+    // SkySift's result to the earliest claim and its development note (spec 11.1; pack_text.RELATIONSHIP_WORDS)
     const claims = (Array.isArray(D.prior_claims) ? D.prior_claims : []).filter((c) => c && c.doi);
     if (claims.length) {
       const months = ["January", "February", "March", "April", "May", "June", "July", "August", "September",
         "October", "November", "December"];
       const day = (iso) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso || ""); return m ? `${+m[3]} ${months[+m[2] - 1]} ${m[1]}` : (iso || ""); };
       const said = claims.map((c, i) => `${c.author} ${i ? "reported it again" : "reported this signal first"}, in "${c.title}" (Zenodo, ${day(c.date)}, doi:${c.doi})`);
-      para(0, `${said.join(", and ")}. SkySift found it again in a blind sweep, so this is an independent recovery and vetting of ${claims.length === 1 ? "that claim" : "those claims"}, not a new candidate.`, "prior-claim");
+      const words = {"re-detection": "a re-detection",
+        "blind-recovery": "a recovery made before SkySift knew of the claim",
+        "vetting-only": "a vetting of the claim's signal, not a detection"};
+      const rel = words[claims[0].relationship] || "", note = (claims[0].development_note || "").trim();
+      const tail = rel ? `; SkySift's result is ${rel}${note ? `: ${note}` : ""}.` : (note ? `; ${note}.` : ".");
+      para(0, `${said.join(", and ")}${tail}`, "prior-claim");
     }
     fig(0, "fold", "The folded light curve: single cadences, their bins and the model.");
     fig(0, "spectrum", "The detection spectrum, with the aliases of the period marked.", true);
@@ -525,7 +531,7 @@
       const cls = CC.class === "validated"
         ? "fall inside the paper's validation lines (FPP < 0.015 and NFPP < 0.001), which the paper could not set at 30-minute cadence, so it is not called validated here"
         : `read as ${CC.class}`;
-      para(2, `An independent estimate with TRICERATOPS ${CC.tool_version} (Giacalone et al. 2021) over ${CC.n_runs} runs${CC.n_degenerate ? `, ${CC.n_degenerate} degenerate and left out` : ""}: median false-positive probability ${spread("fpp")}, ${spread("fpp_no_stp")} without a planet transiting an unresolved bound companion (STP), which SkySift's model leaves out, and nearby false-positive probability ${spread("nfpp")}. On Giacalone et al.'s scale the medians ${cls}; the classes are labels and never block the live draft. ${CC.current
+      para(2, `An estimate with TRICERATOPS ${CC.tool_version} (Giacalone et al. 2021) over ${CC.n_runs} runs${CC.n_degenerate ? `, ${CC.n_degenerate} degenerate and left out` : ""}: median false-positive probability ${spread("fpp")}, ${spread("fpp_no_stp")} without a planet transiting an unresolved bound companion (STP), which SkySift's model leaves out, and nearby false-positive probability ${spread("nfpp")}. On Giacalone et al.'s scale the medians ${cls}; the classes are labels and never block the live draft. ${CC.current
         ? "It was made for this dossier's period, depth and neighbours."
         : "It was made for an earlier dossier (the period, the depth or the neighbours have changed since), so it does not count until it is run again."}`);
       if ((CC.caveats || []).length) {
@@ -536,7 +542,7 @@
     } else if (CC) {
       para(2, "This cross-check was stored by an earlier version of the tool, before its median and range and the FPP without STP; run it again.");
     } else {
-      para(2, "No independent cross-check is stored yet.");
+      para(2, "No TRICERATOPS cross-check is stored yet.");
     }
     // the TESS statement, as the dashboard's section 03 draws it (referee pack spec 10)
     const TS = D.tess;

@@ -14,7 +14,7 @@ This candidate is not yet approved by a reviewer. Build the record, but do not f
 {{ n.summary }}
 {% if n.prior_plain %}
 
-Prior claim: {{ n.prior_plain }}
+Prior claim: {{ n.prior_plain }}{% if n.comparison_plain %} {{ n.comparison_plain }}{% endif %}
 {% endif %}
 
 This pack was built on {{ f.built_words }} by SkySift (pack format {{ f.pack_version }}) from the dossier generated on {{ n.generated_words }} for signal {{ n.signal_id }} (search version {{ n.search_version }}, ladder version {{ n.ladder_version }}). Every number below comes from that dossier.
@@ -67,11 +67,13 @@ Pixel offset: {{ n.offset_text }}
 {{ n.fap_text }}
 
 {{ n.fpp_text }}
-
-The two numbers answer different questions and are never combined: the first is about noise alone, the second about the common astrophysical impostors (a background eclipsing binary, an eclipsing binary on the target).
 {% if n.cross_check_sentence %}
 
 {{ n.cross_check_sentence }}
+{% endif %}
+{% if n.both_tools %}
+
+{{ n.both_tools }}
 {% endif %}
 {% if n.cross_check_flag %}
 

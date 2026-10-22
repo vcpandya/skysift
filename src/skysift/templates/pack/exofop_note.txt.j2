@@ -4,12 +4,12 @@
 NOT YET APPROVED BY A REVIEWER: do not upload this before the approval.
 
 {% endif %}
-SkySift {% if n.prior_plain %}independent recovery of the {% endif %}transit candidate on {{ n.name }}{% if n.gaia_id %} = Gaia DR3 {{ n.gaia_id }}{% endif %}{% if f.tic %} = TIC {{ f.tic }}{% endif %}{{ "" }}
+SkySift {% if n.prior_plain %}vetting of the {% endif %}transit candidate on {{ n.name }}{% if n.gaia_id %} = Gaia DR3 {{ n.gaia_id }}{% endif %}{% if f.tic %} = TIC {{ f.tic }}{% endif %}{{ "" }}
 
 Found in the KBonus Kepler Background light curve (Martinez-Palomera, Hedges and Dotson 2023, AJ 166, 265; data doi:10.17909/7jbr-w430); Kepler recorded this star only in other targets' pixels.
 {% if n.prior_plain %}
 
-Prior claim: {{ n.prior_plain }}
+Prior claim: {{ n.prior_plain }}{% if n.comparison_plain %} {{ n.comparison_plain }}{% endif %}
 {% endif %}
 
 Ephemeris: {{ n.ephemeris_text }}; {{ n.n_events }} transits, SDE {{ n.sde }}, S/N {{ n.snr }}.{% if n.timed %} Reference mid-transit BJD_TDB {{ n.t_ref_bjd_pm }} at epoch {{ n.epoch_ref }}; {{ n.n_used }} of {{ n.n_measured }} timed transits fit the linear ephemeris with an rms of {{ n.rms_min }} min.{% else %} Allow at least one duration either side of a predicted time.{% endif %} Found by SkySift (search version {{ n.search_version }}, commit {{ n.commit }}).
@@ -30,4 +30,4 @@ Pixels: {{ n.pixel_plain }}
 
 Files: the detrended light curve (CSV: time BKJD, relative flux and error in ppm, quarter), the ephemeris and parameters with errors (CSV), {% if f.exofop_stellar %}the stellar parameters in ExoFOP's template{% else %}no stellar parameter file (the star could not be characterised from Gaia photometry){% endif %}, the folded, odd and even, periodogram{% if f.pixels_figure %} and centroid{% endif %} figures, and the standalone dossier (HTML, all vetting numbers).
 
-Frozen record: doi:{{ f.doi_shown }}. This is a candidate until independent follow-up confirms it.
+Frozen record: doi:{{ f.doi_shown }}. This is a candidate until follow-up confirms it.

@@ -6,6 +6,7 @@ Zenodo is a fake session, so nothing reaches the network."""
 import csv
 import hashlib
 import json
+import math
 import re
 import shutil
 import sys
@@ -39,7 +40,7 @@ from skysift.pack import (
 )
 from skysift.store.db import CandidateRow, QueryRow
 from skysift.zenodo import ZenodoClient, ZenodoError
-from tests.unit.test_dossier import _make_env, _pixels_npz, _store_pixels
+from tests.unit.test_dossier import PRIOR_CLAIM, _make_env, _pixels_npz, _store_pixels
 from tests.unit.test_zenodo import DEPOSITION_ID, FakeSession
 from tests.unit.ui_seed import STAGE2_TARGET
 
@@ -401,7 +402,8 @@ def test_note_is_aastex7_with_an_abstract_inside_the_rnaas_limits(env_with_dossi
     assert r"\uat{Transit photometry}{1709}" in tex
     assert tex.count(r"\begin{document}") == 1                          # the frame never names the begin line
     abstract = tex.split(r"\begin{abstract}")[1].split(r"\end{abstract}")[0]
-    assert "1 in 440" in abstract and "under 1 percent" in abstract and "provisional" not in abstract   # signed off
+    in_house = cross_check.probability_text(data["fpp"]["value"])
+    assert "1 in 440" in abstract and f"gives {in_house}, a lower bound" in abstract and "provisional" not in abstract
     assert re.search(r"the dip is nearer this star than its brightest neighbour in \d of \d "
                      r"(observing seasons|seasons that voted)\.", abstract)
     assert "lost light" not in tex and "on this star in" not in tex
@@ -487,7 +489,8 @@ def test_note_escapes_latex_characters(env_with_dossier):
 
 def test_every_pack_text_gives_both_probabilities_without_the_provisional_mark(env_with_dossier):
     rep = _build(env_with_dossier)
-    fap, fpp = env_with_dossier.data["fap"]["words"], env_with_dossier.data["fpp"]["words"]
+    fap = env_with_dossier.data["fap"]["words"]
+    fpp = f"gives {cross_check.probability_text(env_with_dossier.data['fpp']['value'])}, a lower bound"
     for name in ("README.md", "note/note.tex", "exofop/note.txt", "archive_email.txt"):
         text = (rep.out_dir / name).read_text(encoding="utf-8")
         assert fap in text and fpp in text and "provisional" not in text, name       # signed off 21 October 2026
@@ -1433,9 +1436,9 @@ def test_a_live_draft_refuses_a_dossier_without_ephemeris_errors(env_with_dossie
     assert fake_session.calls == [] and env.store.dossier(STAGE2_TARGET)["pack_path"] == ""
     assert pack_module.gate_problems({}) == ["the ephemeris carries no error (no timing block)",
                                              "the transit shape carries no error (no shape block)",
-                                             "no independent cross-check", "the stored commit is dirty or unknown"]
+                                             "no TRICERATOPS cross-check", "the stored commit is dirty or unknown"]
     assert pack_module.gate_problems(_with_errors(_stored(env))) == [
-        "the ephemeris carries no error (fewer than 3 transits timed)", "no independent cross-check"]
+        "the ephemeris carries no error (fewer than 3 transits timed)", "no TRICERATOPS cross-check"]
     monkeypatch.setattr(net, "fetch", env.fetch)
     monkeypatch.setattr(zenodo, "new_session", lambda: fake_session)
     monkeypatch.setenv("SKYSIFT_ZENODO_TOKEN", "a-secret")
@@ -1443,7 +1446,7 @@ def test_a_live_draft_refuses_a_dossier_without_ephemeris_errors(env_with_dossie
     assert r.exit_code == 2 and "the ephemeris carries no error" in r.output and fake_session.calls == []
     assert _build(env, zenodo=ZenodoClient("t", session=fake_session)).zenodo is not None    # the sandbox builds
     _store(env, _with_errors(env.data))
-    assert pack_module.gate_problems(_stored(env)) == ["no independent cross-check"]
+    assert pack_module.gate_problems(_stored(env)) == ["no TRICERATOPS cross-check"]
     _store_cross_check(env)
     assert pack_module.gate_problems(_stored_with_cross_check(env)) == []
 
@@ -1473,13 +1476,13 @@ def test_pack_prints_the_cross_check_and_the_gate_refuses_without_one(env_with_d
     _approve(env)
     _store_errors(env)
     live = ZenodoClient("t", sandbox=False, session=fake_session)
-    with pytest.raises(PackError, match="no independent cross-check"):
+    with pytest.raises(PackError, match="no TRICERATOPS cross-check"):
         _build(env, zenodo=live)
     assert fake_session.calls == []
     rep = _build(env)                                                        # without one: no sentence, no file
     readme = (rep.out_dir / "README.md").read_text(encoding="utf-8")
     assert "TRICERATOPS" not in (rep.out_dir / "exofop" / "note.txt").read_text(encoding="utf-8")
-    assert "The live Zenodo draft waits on the cross-check: no independent cross-check" in readme
+    assert "The live Zenodo draft waits on the cross-check: no TRICERATOPS cross-check" in readme
     assert "data/cross_check.json" not in rep.files
     # ruling t: the numbers never block; a median full FPP at or above 0.5 is explained and flagged for the owner
     from tests.unit.test_crosscheck import fake_result
@@ -1536,7 +1539,7 @@ def test_the_note_names_its_methods_and_cites_them(env_with_dossier):
             "bootstrap over transits (methods in the Zenodo pack's README).") in " ".join(signal.split())
     assert len(pack_module.errors_pointer(data).split()) <= 25
     assert "deeg2015" not in tex and "holczer2016" not in tex and "schmitt2014" not in tex
-    assert "It remains a candidate until independent follow-up confirms it." not in signal   # the abstract says it
+    assert "It remains a candidate until follow-up confirms it." not in signal   # the abstract says it
     readme = render_readme(data, {})
     errors = readme.split("Ephemeris and transit-parameter errors (the note's signal section points here): ")[1]
     errors = errors.split("\n")[0]
@@ -1643,14 +1646,12 @@ def test_the_readme_says_where_to_find_the_tic(env_with_dossier):
 
 # ---------------------------------------------------------------------------------------------------- prior claims (P1)
 
-RECOVERY = "independent recovery"
 PRIOR_DOI = "10.5281/zenodo.23325261"
 
 
 @pytest.fixture
 def env_prior(settings, monkeypatch):
     """The seed with a prior claim declared in its candidates folder, and a hand-built localisation beside it."""
-    from tests.unit.test_dossier import PRIOR_CLAIM
     env = _make_env(settings, monkeypatch)
     folder = dossier_module.CANDIDATES_DIR / STAGE2_TARGET
     (folder / "localisation").mkdir(parents=True)
@@ -1673,54 +1674,65 @@ def _texts(rep) -> dict[str, str]:
             for name in ("README.md", "note/note.tex", "exofop/note.txt", "archive_email.txt")}
 
 
-def test_a_prior_claim_makes_every_text_an_independent_recovery(env_prior):
+def test_a_prior_claim_makes_every_text_a_vetting_and_never_a_blind_recovery(env_prior):
     env = env_prior
     assert env.data["prior_claims"][0]["doi"] == PRIOR_DOI
     rep = _build(env, tic="169822650")
     texts = _texts(rep)
+    note = " ".join(texts["note/note.tex"].split())
+    assert r"\title{SkySift vetting of the 40.290 day transit candidate on KIC 6146676}" in note
     for name, text in texts.items():
-        assert RECOVERY in text and PRIOR_DOI in text and "13 October 2026" in text, name
+        assert not re.search(r"\bblind\b", text, re.IGNORECASE) and "independent recovery" not in text.lower(), name
+        assert "independent" not in text.lower().replace("independent in method", ""), name
+        assert PRIOR_DOI in text and "13 October 2026" in text, name
         assert "discovery" not in text.lower() and EM_DASH not in text and not IZE.search(text), name
+    for name in ("README.md", "note/note.tex"):
+        assert "a re-detection" in texts[name] and "the search itself used no prior ephemeris" in texts[name], name
+        assert "Against that claim the period differs by" in texts[name], name
+    # the citation, the bibliography and where the claim's date and DOI are printed stay as Task 8 set them
     note = texts["note/note.tex"]
-    assert r"\title{An independent recovery of the" in note and r"\citet{mehta2026}" in note
+    assert r"\citet{mehta2026}" in note
     assert (r"\bibitem[{Mehta}(2026)]{mehta2026} Mehta, K. 2026, Planethunt: archival evidence for the KIC "
             "5689121") in note
-    assert "This note reports a transit candidate" not in note and "not a new candidate" in note
-    # Task 8 fix round 3: the claim's date and DOI once, in the body beside the citation, not again in the abstract
+    assert "This note reports a transit candidate" not in note
     abstract = note.split(r"\begin{abstract}")[1].split(r"\end{abstract}")[0]
     body = note.split(r"\end{abstract}")[1].split(r"\begin{thebibliography}")[0]
-    assert "reported the signal first." in abstract and PRIOR_DOI not in abstract and "13 October" not in abstract
+    assert "This note vets the transit candidate Kuber Mehta reported first on KIC 6146676" in abstract
+    assert PRIOR_DOI not in abstract and "13 October" not in abstract
     assert body.count(PRIOR_DOI) == 1 and body.count("13 October 2026") == 1
-    assert "It remains a candidate until independent follow-up confirms it." in abstract
-    assert "It remains a candidate until independent follow-up confirms it." not in body
+    assert "It remains a candidate until follow-up confirms it." in abstract
+    assert "It remains a candidate until follow-up confirms it." not in body
     assert note.index("]{mann2019}") < note.index("]{mehta2026}") < note.index("]{morton2012}")   # alphabetical
     assert note_problems(note_words(note), note) == []
     step2 = texts["README.md"].split("## Step 2.")[1].split("## Step 3.")[0]
-    assert "record of priority" in step2 and PRIOR_DOI in step2
+    assert "record of priority" in step2 and PRIOR_DOI in step2 and "(a re-detection)" in step2
     assert "same host assignment" not in texts["README.md"]          # round 1: the texts cite the record only
-    assert "SkySift independent recovery of the transit candidate on " in texts["exofop/note.txt"]
+    assert "SkySift vetting of the transit candidate on " in texts["exofop/note.txt"]
     assert "first reported" in texts["archive_email.txt"]
+    assert "re-detected it in its sweep of the KBonus Kepler Background light curves" in texts["archive_email.txt"]
     # the pixel section says how far the dossier's centroid sits from the hand-built localisation
     for name in ("note/note.tex", "exofop/note.txt"):
         assert "hand-built localisation" in texts[name] and "within 0.03 px" in texts[name], name
     planet = _parse_pipe((rep.out_dir / "exofop" / f"params_planet_{_today()}_001.txt").read_text(encoding="utf-8"),
                          PLANET_COLUMNS)
     assert planet["paper"] == f"https://doi.org/{PRIOR_DOI}" and PRIOR_DOI in planet["notes"]
-    assert RECOVERY in planet["notes"] and len(planet["notes"]) <= exofop.EXOFOP_NOTES_MAX
+    assert planet["notes"].startswith("SkySift vetting of the signal first reported in doi:")
+    assert "a re-detection" in planet["notes"] and len(planet["notes"]) <= exofop.EXOFOP_NOTES_MAX
     # item 10 of Task 9: the Zenodo description names the claim in the README's own words, with its DOI and date
     description = json.loads((rep.out_dir / "zenodo_metadata.json").read_text(encoding="utf-8"))["description"]
     prior = pack_module.prior_claim_sentence(env.data)
     assert f"Prior claim: {prior}" in texts["README.md"] and f"<p>Prior claim: {zenodo._html(prior)}</p>" in description
     assert PRIOR_DOI in description and "13 October 2026" in description
-    assert "found it again in a blind sweep" in description
+    assert "a re-detection" in description and not re.search(r"\bblind\b", description, re.IGNORECASE)
 
 
-def test_without_a_prior_claim_nothing_speaks_of_a_recovery(env_with_dossier):
+def test_without_a_prior_claim_nothing_speaks_of_a_vetting_of_a_claim(env_with_dossier):
     env = env_with_dossier
     assert env.data["prior_claims"] == [] and env.data["hand_built_localisation"] is None
     texts = _texts(_build(env))
     for name, text in texts.items():
-        assert RECOVERY not in text and "record of priority" not in text and PRIOR_DOI not in text, name
+        assert "re-detection" not in text and "SkySift vetting of" not in text and "Against that claim" not in text
+        assert "record of priority" not in text and PRIOR_DOI not in text, name
         assert "hand-built localisation" not in text, name
     assert r"\title{A " in texts["note/note.tex"]
     assert note_problems(note_words(texts["note/note.tex"]), texts["note/note.tex"]) == []
@@ -1728,8 +1740,76 @@ def test_without_a_prior_claim_nothing_speaks_of_a_recovery(env_with_dossier):
 
 def test_a_version_3_dossier_without_the_key_reads_as_no_claim(env_with_dossier):
     data = {k: v for k, v in env_with_dossier.data.items() if k not in ("prior_claims", "hand_built_localisation")}
-    assert pack_module.prior_claim_sentence(data) is None and RECOVERY not in render_note(data)
+    assert pack_module.prior_claim_sentence(data) is None and "SkySift vetting of" not in render_note(data)
+    assert pack_module.prior_comparison(data) is None and pack_module.comparison_text(data) is None
     assert "record of priority" not in render_readme(data, {})
+
+
+LIVE_5689121 = {"ephemeris": {"period_days": 13.769414, "period_err_days": 4.7713013e-05, "depth_ppm": 2031.0,
+                              "depth_ppm_err": 113.0},
+                "timing": {"ok": True, "t0": 136.314294, "t_ref": 797.246185, "t_ref_err": 0.0014377853,
+                           "epoch_ref": 48, "period": 13.769414, "period_err": 4.7713013e-05},
+                "fpp": {"value": 0.0015958986, "signed_off": True},
+                "prior_claims": [{k: PRIOR_CLAIM[k] for k in dossier_module.PRIOR_CLAIM_PUBLIC}]}
+
+
+def test_prior_comparison_gives_each_difference_in_sigma():
+    cmp = pack_module.prior_comparison(LIVE_5689121)
+    assert cmp["period"]["sigma"] == pytest.approx(3.4e-5 / 4.7713013e-05, rel=1e-3)        # 0.71
+    assert cmp["epoch"]["epoch"] == 48
+    assert cmp["epoch"]["sigma"] == pytest.approx(0.000755 / 0.0014377853, rel=1e-3)          # 0.53
+    assert cmp["depth"]["sigma"] == pytest.approx(148 / math.hypot(113, 106), rel=1e-3)       # 0.96
+    assert cmp["one_sided"] == ["period", "epoch"] and cmp["fpp"]["theirs"] == 0.07
+    assert pack_module.comparison_text(LIVE_5689121) == (
+        "Against that claim the period differs by 0.7 sigma, the mid-transit time at epoch 48 by 0.5 sigma and the "
+        "depth by 1.0 sigma (1,883 ± 106 ppm there; the claim gives no error on the period or the epoch, so those "
+        "use ours alone); its false-positive probability of 0.07 (TRICERATOPS) sits beside our 0.0016 (SkySift's "
+        "four-scenario estimate).")
+
+
+def test_a_quantity_the_claim_does_not_give_is_left_out():
+    claim = {**LIVE_5689121["prior_claims"][0], "t0_bjd": None, "depth_ppm": None, "fpp": None,
+             "period_err_days": 2e-5}
+    data = {**LIVE_5689121, "prior_claims": [claim]}
+    cmp = pack_module.prior_comparison(data)
+    assert set(cmp) == {"period", "one_sided"} and cmp["one_sided"] == []
+    assert cmp["period"]["sigma"] == pytest.approx(3.4e-5 / math.hypot(4.7713013e-05, 2e-5), rel=1e-3)
+    assert pack_module.comparison_text(data) == "Against that claim the period differs by 0.7 sigma."
+
+
+def test_the_live_gate_refuses_a_claim_without_a_relationship_and_the_forbidden_words(env_prior):
+    data = _stored(env_prior)
+    claim = data["prior_claims"][0]
+    no_rel = {**data, "prior_claims": [{**claim, "relationship": None}]}
+    assert ("prior claim doi:10.5281/zenodo.23325261 has no relationship (re-detection, blind-recovery or "
+            "vetting-only)") in pack_module.gate_problems(no_rel)
+    blind = {**data, "prior_claims": [{**claim, "development_note": "a blind search found it"}]}
+    assert "the Research Note says 'blind', which spec 11.1 rules out" in pack_module.gate_problems(blind)
+    assert not [p for p in pack_module.gate_problems(data) if "relationship" in p or "spec 11.1" in p]
+
+
+def test_the_fpp_headline_leads_with_triceratops(env_with_dossier):
+    env = env_with_dossier
+    _store_errors(env)
+    _store_cross_check(env)
+    data = _stored_with_cross_check(env)
+    abstract = pack_module.abstract_text(data)
+    assert abstract.index("TRICERATOPS") < abstract.index("a four-scenario estimate without a bound-companion")
+    assert "in none of its validation classes, which do not apply at 30-minute cadence (Giacalone et al. 2021)" in (
+        abstract)
+    assert f"gives {cross_check.probability_text(data['fpp']['value'])}, a lower bound" in abstract
+    texts = _texts(_build(env))
+    assert all("answer different questions" not in t for t in texts.values())
+    assert pack_module.BOTH_TOOLS in " ".join(texts["note/note.tex"].split())
+
+
+def test_the_gate_refuses_an_abstract_with_the_in_house_fpp_alone(env_with_dossier, monkeypatch):
+    env = env_with_dossier
+    _store_errors(env)
+    _store_cross_check(env)
+    monkeypatch.setattr(cross_check, "headline", lambda data, tex=False: None)
+    assert ("the abstract carries the in-house false-positive probability without the TRICERATOPS one"
+            in pack_module.gate_problems(_stored_with_cross_check(env)))
 
 
 # ---------------------------------------------------------------------------------------------------- fix round 1
@@ -1891,14 +1971,13 @@ def _live_shape(cross: str, prior: bool = True) -> dict:
     each with the factor sentence."""
     from skysift import tess
     from tests.unit.test_crosscheck import fake_result
-    from tests.unit.test_dossier import PRIOR_CLAIM
     from tests.unit.ui_seed import SEED_TESS
     data = json.loads(GOLDEN.read_text(encoding="utf-8"))
     assert data["dossier_version"] == dossier_module.DOSSIER_VERSION
     assert data["timing"]["ok"] is True and data["shape"]["ok"] is True
     assert pack_module.self_referenced(data["centroid_offset"]) and data["hand_built_localisation"]["agrees"]
     if prior:
-        data["prior_claims"] = [{k: PRIOR_CLAIM[k] for k in ("doi", "date", "author", "title")}]
+        data["prior_claims"] = [{k: PRIOR_CLAIM[k] for k in dossier_module.PRIOR_CLAIM_PUBLIC}]
     meta = {**SEED_TESS, "sectors": [*SEED_TESS["sectors"], 109]}
     data["tess"] = tess.statement(meta, {**data["ephemeris"], "period_err_days": 0.002})
     if cross == "validated":
@@ -1922,10 +2001,11 @@ def _check_live_shape(cross: str, prior: bool) -> dict:
     assert block["sectors_skipped"] == [109] and block["uncertain"] and block["n_transits"] > 0
     tex = render_note(data)
     flat = " ".join(tex.split())
-    assert str(pack_module.cross_check_sentence(data, True)) in flat and "a factor of" in flat
+    assert str(pack_module.cross_check_sentence(data, True)) in flat
     assert ("Its full false-positive probability is at or above 0.5" in flat) == (cross == "dominant")
     assert ("2 degenerate runs left out" in flat) == (cross == "dominant")
-    assert ("validation lines" in flat) == (cross == "validated")
+    assert cross_check.NO_CLASS_CLAUSE in flat and "validation lines" not in flat
+    assert (str(pack_module.comparison_text(data, True)) in flat) == prior
     sentence = str(tess.note_sentence(block, True))
     assert sentence in flat and "Sector 109, not assessed" in sentence and "(count uncertain, about" in sentence
     assert sentence.endswith(r"\citep[noise model and thresholds in the README;][]{christ2019}.")
@@ -1970,8 +2050,8 @@ def test_the_body_does_not_repeat_the_abstract_and_keeps_every_number():
                              f"{golden['target']['gaia_id']}, $G = 16.2$), a dip of ")
     assert "This note reports" not in signal and "recorded only in the background" not in signal
     abstract = tex.split(r"\begin{abstract}")[1].split(r"\end{abstract}")[0]
-    assert abstract.startswith("\nThis note reports a transit candidate on KIC 6146676, a star that Kepler recorded "
-                               "only in the background of other targets' pixels.")
+    assert abstract.startswith("\nThis note reports a transit candidate on KIC 6146676, a star Kepler recorded only "
+                               "in other targets' pixels.")
     q = pack_text.quantities(golden, tex=True)
     for value in (q["depth_pm"], q["duration_pm"], q["period_pm"], q["t_ref_bjd_pm"]):
         assert str(value) in signal
@@ -2066,7 +2146,6 @@ def test_the_hand_built_sentence_without_an_error_gives_no_verdict():
 def test_the_pack_embeds_only_the_public_fields_of_a_prior_claim(env_prior):
     """Round 2, M1: a stored dossier that still carries the claim's status and note (code before round 2) is cut at
     pack time: the dossier.html in the pack and its ExoFOP copy embed neither."""
-    from tests.unit.test_dossier import PRIOR_CLAIM
     env = env_prior
     path = Path(env.store.dossier(STAGE2_TARGET)["data_path"])
     path.write_text(json.dumps({**env.data, "prior_claims": [PRIOR_CLAIM]}), encoding="utf-8")

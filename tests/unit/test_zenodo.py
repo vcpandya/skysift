@@ -75,7 +75,7 @@ DATA = {"target": {"name": "KIC 6146676", "gaia_id": "2101234567890123462", "ra"
         "ephemeris": {"period_days": 40.2899, "t0_bjd": 2454969.3, "depth_ppm": 2200.0, "duration_h": 2.304},
         "fap": {"words": "1 in 440", "calibrated": True, "k": 0, "n": 440},
         "fpp": {"words": "under 1 percent", "value": 2.7e-06, "signed_off": False, "label": "False positive"},
-        "caveats": [{"title": "This is a candidate until independent follow-up confirms it", "text": "Follow-up."}]}
+        "caveats": [{"title": "This is a candidate until follow-up confirms it", "text": "Follow-up."}]}
 
 
 def test_zenodo_client_never_publishes(fake_session, tmp_file):
@@ -140,8 +140,9 @@ def test_metadata_from_citation():
                                          "resource_type": "dataset"}]
     assert KBONUS_DOI == "10.17909/7jbr-w430"
     text = m["description"]
-    assert DATA["summary"] in text and "1 in 440" in text and "under 1 percent" in text and "provisional" in text
-    assert "This is a candidate until independent follow-up confirms it" in text
+    assert DATA["summary"] in text and "1 in 440" in text and "gives 1 in 370,000, a lower bound" in text
+    assert "provisional" in text
+    assert "This is a candidate until follow-up confirms it" in text
     assert "candidate" in m["keywords"][0] and "discover" not in str(m).lower() and chr(0x2014) not in str(m)
 
 
@@ -169,8 +170,22 @@ def test_metadata_description_quotes_the_ephemeris_with_errors():
 
 
 def test_a_prior_claim_says_found_again_once():
-    prior = ('A. Author reported this signal first, in "A title" (Zenodo, 13 October 2026, doi:10.5281/zenodo.1). '
-             "SkySift found it again in a blind sweep, so this is an independent recovery and vetting of it.")
+    prior = ('A. Author reported this signal first, in "A title" (Zenodo, 13 October 2026, doi:10.5281/zenodo.1); '
+             "SkySift's result is a re-detection: the search itself used no prior ephemeris.")
     text = metadata_from(DATA, None, prior=prior)["description"]
-    assert text.count("again in a blind sweep") == 1       # once, in the prior claim, not again at the close
+    assert text.count("a re-detection") == 1       # once, in the prior claim, not again at the close
     assert "submission pack of a transit candidate found by the SkySift engine" in text
+
+
+FAP = {"calibrated": True, "k": 38, "n": 1998, "words": "1 in 51", "fap": 0.019509755}
+
+
+def test_the_false_alarm_sentence_names_the_nulls_and_the_sweep():
+    fap, _fpp = zenodo.probability_sentences({"fap": FAP, "calibration": {"sweep_size": 1579, "null_stars": 999}})
+    assert fap == ("False-alarm probability: 1 in 51. 38 of 1,998 null searches (the inverted and scrambled light "
+                   "curves of 999 other KBonus stars, searched without the masked pass and alias resolution) reached "
+                   "the signal's SDE; across the 1,579-star sweep about 31 such peaks are expected by chance, and the "
+                   "vetting ladder, not the SDE, separates the candidate from them.")
+    fap, _fpp = zenodo.probability_sentences({"fap": FAP, "calibration": {"sweep_size": None, "null_stars": 999}})
+    assert fap.endswith("reached the signal's SDE; the vetting ladder, not the SDE, separates the candidate from "
+                        "such peaks.") and "of this source" not in fap

@@ -14,7 +14,7 @@ import pytest
 from astropy.io import fits
 
 from skysift import crosscheck as cc
-from skysift.dossier import generate
+from skysift.dossier import EXCLUSION_RULE, generate
 from skysift.lc.tpf import tpf_listing_url
 from skysift.stars import mamajek_table
 from skysift.store.db import TargetRow
@@ -397,7 +397,7 @@ def test_classes_are_giacalone_labels():
 def test_the_gate_blocks_only_a_missing_stale_or_old_cross_check():
     sha = "a" * 64
     block = {**fake_result(sha), "current": True}
-    assert cc.verdict(None) == (True, "no independent cross-check")
+    assert cc.verdict(None) == (True, "no TRICERATOPS cross-check")
     assert cc.verdict({**block, "current": False}) == (True, "the cross-check was made for an earlier dossier")
     old = {"tool": cc.TOOL, "fpp": 0.01, "nfpp": 1e-4, "fpp_runs": [0.01], "current": True}
     assert cc.verdict(old) == (True, "the cross-check was stored by an earlier version of the tool; run it again")
@@ -407,7 +407,7 @@ def test_the_gate_blocks_only_a_missing_stale_or_old_cross_check():
         assert cc.verdict({**fake_result(sha, fpp=fpp, nfpp=nfpp), "current": True}) == (False, None)
 
 
-def test_comparison_sentence_prints_both_fpps_with_their_ranges_and_the_class():
+def test_comparison_sentence_prints_both_fpps_with_their_ranges_and_no_class():
     sha = "a" * 64
     runs = fake_runs(fpp=0.046, nfpp=1e-4, p_stp=0.0455)
     runs[0] = dict(runs[0], fpp=0.017, fpp_no_stp=cc.fpp_without_stp(0.017, 0.0455), p_stp=0.0455)
@@ -419,40 +419,54 @@ def test_comparison_sentence_prints_both_fpps_with_their_ranges_and_the_class():
                            "darkening and Gaia DR3 field stars, gives a median false-positive probability of 0.046 "
                            "(16th to 84th percentile 0.046 to 0.046)")
     assert "1 in 1,900 (1 in 1,900 to 1 in 1,900) without a planet transiting an unresolved bound companion (STP)" in text
-    assert "nearby false-positive probability of 1 in 10,000" in text and "over 20 runs;" in text
-    assert ("; the medians fall in the paper's class 'likely planet' (FPP below 0.5, NFPP below 0.001).") in text
-    assert "the medians are" not in text
-    # SkySift's own estimate is set beside the FPP without STP, the like-for-like number (ruling o)
-    assert "SkySift's own estimate (provisional until its factor tables are reviewed) is 0.0035, a factor of 6.7 from " \
-           "the value without STP: the two models answer different questions." in text
+    assert "nearby false-positive probability of 1 in 10,000" in text and "over 20 runs," in text
+    # spec 11.2: no class on Giacalone et al.'s scale and no "different questions" tail; SkySift's own estimate is
+    # the in-house sentence's, not this one's
+    assert text.endswith(f"over 20 runs, {cc.NO_CLASS_CLAUSE}.")
+    assert "the medians" not in text and "SkySift's own" not in text and "different questions" not in text
     assert "e-0" not in text and "e-0" not in cc.comparison_sentence(data, tex=True)
     assert chr(0x2014) not in text and "discover" not in text.lower() and "validated" not in text
-    signed = cc.comparison_sentence({"fpp": {"value": 0.0035, "signed_off": True}, "cross_check": block})
-    assert "SkySift's own estimate is 0.0035" in signed and "provisional" not in signed
     assert [cc.probability_text(x) for x in (0.012, 0.0035, 1.2e-4, 1e-4, 0.0)] == [
         "0.012", "0.0035", "1 in 8,300", "1 in 10,000", "0"]
-    close = cc.comparison_sentence({"fpp": {"value": 0.0006}, "cross_check": block})
-    assert "a factor of" not in close and "different questions" not in close
     tex = cc.comparison_sentence(data, tex=True)
     assert r"TRICERATOPS 1.1.0 \citep{giacalone2021}, run on the KBonus light curve with" in tex
     assert "Giacalone et al. 2021" not in tex and "Martinez-Palomera" not in tex
     assert cc.comparison_sentence({"fpp": {"value": 0.0035}, "cross_check": None}) is None
     assert cc.comparison_sentence({"fpp": {"value": 0.0035}, "cross_check": {**block, "current": False}}) is None
-    zero_runs = fake_runs(fpp=0.0, nfpp=0.0)
-    zeros = cc.comparison_sentence({"fpp": {"value": 0.0}, "cross_check": {**block, "runs": zero_runs,
-                                                                          **cc.summarise(zero_runs)}})
-    assert "estimate (provisional until its factor tables are reviewed) is 0." in zeros and "a factor of" not in zeros
-    alone = cc.comparison_sentence({"fpp": {"value": None}, "cross_check": block})
-    assert "SkySift's own" not in alone and alone.endswith("(FPP below 0.5, NFPP below 0.001).")
-    # a degenerate run is left out and counted; the validated label is never written as a validation
+    # a degenerate run is left out and counted; medians inside the validation lines are not called validated
     deg = [*runs[:19], dict(runs[19], degenerate=True)]
     v = cc.comparison_sentence({"cross_check": {**block, "runs": deg, "n_degenerate": 1, **cc.summarise(deg)}})
-    assert "over 20 runs, 1 degenerate run left out;" in v
+    assert "over 20 runs, 1 degenerate run left out, " in v
     tiny = fake_runs(fpp=0.001, nfpp=1e-6)
     low = cc.comparison_sentence({"cross_check": {**block, "runs": tiny, **cc.summarise(tiny)}})
-    assert "the medians fall inside the paper's validation lines" in low
-    assert "so the signal is not called validated here" in low
-    assert "section 4.2" in low
+    assert cc.NO_CLASS_CLAUSE in low and "validation lines" not in low and "validated" not in low
+
+
+def test_the_headline_leads_with_both_triceratops_numbers():
+    sha = "a" * 64
+    block = {**fake_result(sha, fpp=0.046, p_stp=0.0455), "current": True}
+    data = {"fpp": {"value": 0.0035}, "cross_check": block}
+    assert cc.headline(data) == (f"TRICERATOPS 1.1.0 gives a false-positive probability of 0.046 "
+                                 f"({cc.probability_text(block['fpp_no_stp'])} without a planet on an unresolved bound "
+                                 "companion), in none of its validation classes, which do not apply at 30-minute "
+                                 "cadence (Giacalone et al. 2021)")
+    assert str(cc.headline(data, tex=True)).endswith(r"at 30-minute cadence \citep{giacalone2021}")
+    assert cc.headline({"cross_check": {**block, "current": False}}) is None and cc.headline({}) is None
+
+
+def test_the_export_writes_the_pixel_exclusion_radius(env, tmp_path):
+    out = cc.export_inputs(env.store, env.blob, env.settings, STAGE2_TARGET, tmp_path / "cc", fetch=env.xfetch)
+    inputs = json.loads((out / "inputs.json").read_text(encoding="utf-8"))
+    co = _stored(env)["centroid_offset"]
+    assert inputs["pixel_exclusion"] == {"radius_arcsec": co["exclusion_radius_arcsec"], "rule": EXCLUSION_RULE,
+                                         "centre_offset_arcsec": co["catalogue_referenced_arcsec"]}
+
+
+def test_the_comparison_sentence_names_no_class_and_no_different_questions(env):
+    data = {**_stored(env), "cross_check": {**fake_result(cc.inputs_fingerprint(_stored(env))), "current": True}}
+    sentence = cc.comparison_sentence(data)
+    assert cc.NO_CLASS_CLAUSE in sentence and "answer different questions" not in sentence
+    assert "SkySift's own estimate" not in sentence and not hasattr(cc, "DIFFERENT_QUESTIONS")
 
 
 def test_a_full_fpp_at_or_above_one_half_names_its_dominant_scenario():
@@ -463,7 +477,7 @@ def test_a_full_fpp_at_or_above_one_half_names_its_dominant_scenario():
     text = cc.comparison_sentence({"fpp": {"value": 0.0016}, "cross_check": block})
     assert ("Its full false-positive probability is at or above 0.5 mainly through an eclipsing binary on a nearby "
             "star (TIC 120686466), the NEB scenario, at a probability of 0.55 in the median run.") in text
-    assert "the medians fall in the paper's class 'likely nearby false positive' (NFPP above 0.1)" in text
+    assert cc.NO_CLASS_CLAUSE in text and "likely nearby false positive" not in text
     flag = cc.owner_flag({"cross_check": block})                # M1: never the median alone (ruling s)
     assert flag.startswith("TRICERATOPS puts the median full false-positive probability at 0.65 (16th to 84th "
                            "percentile 0.65 to 0.65).")
