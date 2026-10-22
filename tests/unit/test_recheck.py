@@ -606,6 +606,26 @@ def test_the_recheck_reruns_a_silenced_pixel_row_once_end_to_end(env):
     assert len(env.tpf_calls) == 1
 
 
+def test_an_outage_on_a_reopened_settled_row_keeps_its_verdict(env):
+    """A stage 2 candidate reopened by the rule version: when the pixel archive cannot be reached the step is
+    "skipped" with the outage reason and writes no rung 5 row, so the verdict and its row stand; the next recheck
+    tries again and writes the current version."""
+    v2 = {"seasons": SEASONS, "rule_version": 2}
+    sid = env.seed_signal(tpfs="target", tests=[("rung5_pixels", "pass", PASSED)], metrics={"rung5_pixels": v2})
+    before = env.store.latest_tests(sid)
+
+    def down(kic, **_kw):
+        raise ServiceUnavailable("mast https://archive.stsci.edu -> HTTP 503")
+    rep = recheck(env.store, env.blob, env.settings, fetch=fake_fetch.fetch, tpf_loader=down)
+    assert rep.steps["pixels"] == 0 and env.store.signal_status(sid) == "candidate_stage2"
+    assert env.store.latest_tests(sid) == before
+    [row] = env.store.rechecks(sid)
+    assert (row["step"], row["outcome"]) == ("pixels", "skipped") and row["reason"].startswith("outage:mast: ")
+    rep = recheck(env.store, env.blob, env.settings, fetch=fake_fetch.fetch, tpf_loader=env.tpf_loader)
+    assert rep.steps["pixels"] == 1 and env.store.signal_status(sid) == "candidate_stage2"
+    assert env.store.latest_tests(sid)[-1]["metrics"]["rule_version"] == 3
+
+
 def test_a_pixel_archive_outage_is_retried_by_the_next_recheck(env):
     sid = env.seed_signal(tpfs="target")
 

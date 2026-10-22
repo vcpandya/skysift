@@ -61,6 +61,8 @@ RNG_SEED = 20261020
 EVENT_IN_MIN = 3            # good in-transit cadences an event needs
 EVENT_OUT_MIN = 6           # good out-of-transit cadences an event needs
 EVENT_OUT_SIDE_MIN = 2      # ... of which at least this many on each side (a one-sided baseline follows any ramp)
+EVENT_IN_HALF = 0.5         # in transit: within this many durations of mid-transit
+EVENT_OUT_LO, EVENT_OUT_HI = 1.0, 3.0   # out of transit: between these many durations of mid-transit
 QUARTER_EVENTS_MIN = 2      # a quarter with fewer usable events is unusable
 SEASON_EVENTS_MIN = 2       # seasons with fewer events do not vote in the verdict
 TRANSITS_MIN = 3            # fewer usable transits in all leaves the rung undetermined
@@ -158,9 +160,11 @@ ALL_MISSING = BoxCoverage(0, False, _BOX_OFFSETS)      # the coverage of a star 
 class SeasonImage:
     """A season's stacked images on its union frame. ``offsets_pix`` is each quarter's integer (col, row) offset
     from the season's first usable quarter (round of the target-position difference), ``residual_offsets_pix`` the
-    target's leftover fractional (col, row) offset (at most 0.5 px by construction) and ``quarter_events`` each
-    quarter's usable events. The star positions are the event-weighted mean of the quarters' own positions on the
-    frame; ``registration_shift_pix`` is how far that moved the target from the first quarter's. ``box_target`` and
+    target's leftover fractional (col, row) offset (at most 0.5 px by construction), ``quarter_events`` each
+    quarter's usable events and ``quarter_shifts`` where each quarter sits on the frame (frame pixel (r, c) is that
+    quarter's pixel (r + sr, c + sc), ``_place_quarter``). The star positions are the event-weighted mean of the
+    quarters' own positions on the frame; ``registration_shift_pix`` is how far that moved the target from the first
+    quarter's. ``box_target`` and
     ``box_neighbour`` measure how much of that star's 3x3 box lies on valid frame pixels; ``target_on_frame`` and
     ``neighbour_on_frame`` say whether the box is eligible to vote (complete, or cut with its centre and at least
     BOX_PIXELS_MIN pixels)."""
@@ -180,6 +184,7 @@ class SeasonImage:
     target_on_frame: bool = False
     neighbour_on_frame: bool = False
     quarter_events: list[int] = field(default_factory=list)
+    quarter_shifts: list[tuple[int, int]] = field(default_factory=list)
     registration_shift_pix: tuple[float, float] = (0.0, 0.0)
 
 
@@ -376,8 +381,23 @@ def _shift_into(img: np.ndarray, shape: tuple[int, int], dc: int, dr: int, fill)
     return out
 
 
-def season_images(quarters: list[QuarterData], eph: Ephemeris, *, in_half: float = 0.5, out_lo: float = 1.0,
-                  out_hi: float = 3.0) -> list[SeasonImage]:
+def _place_quarter(events, valid: np.ndarray, direct: np.ndarray, shape: tuple[int, int], sc: int, sr: int,
+                   num: np.ndarray, wsum: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """One quarter's events (``_quarter_events``) placed on a frame of ``shape`` where frame pixel (r, c) is quarter
+    pixel (r + sr, c + sc): each event's difference image is added into ``num`` with its per-pixel inverse-variance
+    weight, the weights into ``wsum`` (both in place, event after event). Returns the quarter's valid mask on the frame
+    and its direct image there (0 off its valid pixels). The season stack and ``tools/centroid_floor.py`` both place
+    quarters through this."""
+    v = _shift_into(valid, shape, sc, sr, False)
+    for img, var in events:
+        vv = _shift_into(var, shape, sc, sr, np.inf)
+        w_pix = np.where(v & np.isfinite(vv), 1.0 / np.where(np.isfinite(vv), vv, 1.0), 0.0)
+        num += w_pix * _shift_into(img, shape, sc, sr, 0.0); wsum += w_pix
+    return v, np.where(v, _shift_into(np.nan_to_num(direct), shape, sc, sr, 0.0), 0.0)
+
+
+def season_images(quarters: list[QuarterData], eph: Ephemeris, *, in_half: float = EVENT_IN_HALF,
+                  out_lo: float = EVENT_OUT_LO, out_hi: float = EVENT_OUT_HI) -> list[SeasonImage]:
     """Per-season difference images from per-quarter stamps, sorted by season. Per quarter the events as in
     ``difference_images``; quarters with non-finite star positions are dropped. Within a season (``quarter_season``)
     each quarter is offset from the season's first usable quarter by round(pos_target - first pos_target) per axis;
@@ -385,7 +405,9 @@ def season_images(quarters: list[QuarterData], eph: Ephemeris, *, in_half: float
     and the events are stacked with per-pixel inverse-variance weights. Each star's season position is the mean of
     the quarters' own positions carried into the frame (each less its quarter's integer offset), weighted by the
     quarters' events, as the stack holds them; ``registration_shift_pix`` is the target's move from the first
-    quarter's position (zero for a season of one quarter)."""
+    quarter's position (zero for a season of one quarter). The stack itself weights each pixel of each event by its
+    inverse variance while the position is weighted by events; the two agree when the per-event noise is similar
+    across the season's quarters."""
     usable: dict[int, tuple] = {}
     for qd in sorted(quarters, key=lambda x: int(x.quarter)):
         if not (_finite2(qd.pos_target) and _finite2(qd.pos_neighbour)):
@@ -410,9 +432,9 @@ def season_images(quarters: list[QuarterData], eph: Ephemeris, *, in_half: float
             res_n.append((float(pn[0]) - dc - p_n[0], float(pn[1]) - dr - p_n[1]))
         n_ev = [len(usable[q][1]) for q in qs]
         # the stack holds each quarter's stars at its own positions less its integer offset: their event-weighted mean
-        w = np.array(n_ev, float) / sum(n_ev)
-        shift_t = tuple(float(x) for x in w @ np.array(residuals))
-        shift_n = tuple(float(x) for x in w @ np.array(res_n))
+        w_events = np.array(n_ev, float) / sum(n_ev)
+        shift_t = tuple(float(x) for x in w_events @ np.array(residuals))
+        shift_n = tuple(float(x) for x in w_events @ np.array(res_n))
         # quarter q covers first-quarter columns [-dc, -dc + width) and rows [-dr, -dr + height)
         c_min = min(-dc for dc, _ in offsets); r_min = min(-dr for _, dr in offsets)
         c_max = max(-dc + usable[q][2].shape[1] for q, (dc, _) in zip(qs, offsets))
@@ -421,15 +443,11 @@ def season_images(quarters: list[QuarterData], eph: Ephemeris, *, in_half: float
         num, wsum = np.zeros(shape), np.zeros(shape)
         dsum, dn = np.zeros(shape), np.zeros(shape)
         n_events = 0
-        for q, (dc, dr) in zip(qs, offsets):
+        shifts = [(dc + c_min, dr + r_min) for dc, dr in offsets]    # frame pixel (r, c) is quarter (r + sr, c + sc)
+        for q, (sc, sr) in zip(qs, shifts, strict=True):
             _qd, events, valid, direct = usable[q]
-            sc, sr = dc + c_min, dr + r_min             # frame pixel (r, c) is quarter pixel (r + sr, c + sc)
-            v = _shift_into(valid, shape, sc, sr, False)
-            for img, var in events:
-                vv = _shift_into(var, shape, sc, sr, np.inf)
-                w = np.where(v & np.isfinite(vv), 1.0 / np.where(np.isfinite(vv), vv, 1.0), 0.0)
-                num += w * _shift_into(img, shape, sc, sr, 0.0); wsum += w
-            dsum += np.where(v, _shift_into(np.nan_to_num(direct), shape, sc, sr, 0.0), 0.0); dn += v
+            v, direct_frame = _place_quarter(events, valid, direct, shape, sc, sr, num, wsum)
+            dsum += direct_frame; dn += v
             n_events += len(events)
         valid = wsum > 0
         safe = np.where(valid, wsum, 1.0)
@@ -442,7 +460,7 @@ def season_images(quarters: list[QuarterData], eph: Ephemeris, *, in_half: float
             direct=np.where(valid & (dn > 0), dsum / np.maximum(dn, 1), np.nan), valid=valid,
             pos_target=f_t, pos_neighbour=f_n, offsets_pix=offsets, residual_offsets_pix=residuals,
             box_target=box_t, box_neighbour=box_n, target_on_frame=box_t.eligible, neighbour_on_frame=box_n.eligible,
-            quarter_events=n_ev, registration_shift_pix=shift_t))
+            quarter_events=n_ev, quarter_shifts=shifts, registration_shift_pix=shift_t))
     return images
 
 
@@ -456,8 +474,9 @@ def _split_quarters(cube, time, quality, quarter, pos_target, pos_neighbour) -> 
             for q in np.unique(quarter)]
 
 
-def difference_images(cube, time, quality, quarter, eph: Ephemeris, *, in_half: float = 0.5, out_lo: float = 1.0,
-                      out_hi: float = 3.0, pos_target=None, pos_neighbour=None) -> list[SeasonImage]:
+def difference_images(cube, time, quality, quarter, eph: Ephemeris, *, in_half: float = EVENT_IN_HALF,
+                      out_lo: float = EVENT_OUT_LO, out_hi: float = EVENT_OUT_HI, pos_target=None,
+                      pos_neighbour=None) -> list[SeasonImage]:
     """Per-season difference images of one cube on one pixel grid, sorted by season. Per quarter, every event with
     at least EVENT_IN_MIN good cadences within ``in_half`` durations of mid-transit and EVENT_OUT_MIN good cadences
     between ``out_lo`` and ``out_hi`` durations (EVENT_OUT_SIDE_MIN on each side) gives mean(out) - mean(in) per

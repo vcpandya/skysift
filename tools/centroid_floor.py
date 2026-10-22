@@ -37,12 +37,15 @@ import numpy as np
 from sqlalchemy import select
 
 from skysift.lc.pixels import (
+    EVENT_IN_HALF,
+    EVENT_OUT_HI,
+    EVENT_OUT_LO,
     RNG_SEED,
     Ephemeris,
     QuarterData,
     _box_centroid,
+    _place_quarter,
     _quarter_events,
-    _shift_into,
     box_coverage,
     localise_quarters,
     season_images,
@@ -57,26 +60,19 @@ QUARTERS_MIN = 2            # a season needs this many quarters with a centroid 
 def _frames(quarters: list[QuarterData], eph: Ephemeris):
     """Per season image of ``season_images``, the season's quarters on its frame: for each quarter (in the image's
     order) its direct image, valid mask, stacked difference image and variance on the frame, and its event count.
-    The placement is ``season_images``'s: quarter q at its integer offset (dc, dr) from the first quarter, the frame
-    starting at the smallest of -dc and -dr."""
+    The events and the placement are the season builder's own (``_quarter_events`` with the rung's windows,
+    ``_place_quarter`` at the image's ``quarter_shifts``), each quarter stacked on its own."""
     by_q = {int(qd.quarter): qd for qd in quarters}
     out = []
     for im in season_images(quarters, eph):
         shape = im.valid.shape
-        c_min = min(-dc for dc, _ in im.offsets_pix); r_min = min(-dr for _, dr in im.offsets_pix)
         placed = []
-        for q, (dc, dr) in zip(im.quarters, im.offsets_pix, strict=True):
-            events, valid, direct = _quarter_events(by_q[q], eph, 0.5, 1.0, 3.0)
-            sc, sr = dc + c_min, dr + r_min
-            v = _shift_into(valid, shape, sc, sr, False)
+        for q, (sc, sr) in zip(im.quarters, im.quarter_shifts, strict=True):
+            events, valid, direct = _quarter_events(by_q[q], eph, EVENT_IN_HALF, EVENT_OUT_LO, EVENT_OUT_HI)
             num, wsum = np.zeros(shape), np.zeros(shape)
-            for img, var in events:
-                vv = _shift_into(var, shape, sc, sr, np.inf)
-                w = np.where(v & np.isfinite(vv), 1.0 / np.where(np.isfinite(vv), vv, 1.0), 0.0)
-                num += w * _shift_into(img, shape, sc, sr, 0.0); wsum += w
+            v, direct_frame = _place_quarter(events, valid, direct, shape, sc, sr, num, wsum)
             ok = wsum > 0
-            placed.append({"quarter": q, "direct": np.where(v, _shift_into(np.nan_to_num(direct), shape, sc, sr, 0.0),
-                                                            np.nan),
+            placed.append({"quarter": q, "direct": np.where(v, direct_frame, np.nan),
                            "valid": v, "diff": np.where(ok, num / np.where(ok, wsum, 1.0), 0.0),
                            "var": np.where(ok, 1.0 / np.where(ok, wsum, 1.0), np.inf), "n_events": len(events)})
         out.append((im, placed))
@@ -262,7 +258,8 @@ def rung5_rows(store) -> dict[str, list[dict]]:
 
 
 def _fmt(pair, nd: int = 3) -> str:
-    return "-" if pair is None else "/".join(f"{x:.{nd}f}" for x in pair)
+    """Numbers joined by "/", "-" for a missing pair or a missing number in it."""
+    return "-" if pair is None else "/".join("-" if x is None else f"{x:.{nd}f}" for x in pair)
 
 
 def main(argv=None) -> int:
@@ -305,11 +302,11 @@ def main(argv=None) -> int:
               f"{_fmt(s['target_rms']):16} {_fmt(s['neighbour_rms']):16} {_fmt(s['registration_mean']):18} "
               f"{'yes' if s['live_voting'] else 'no'}")
     nb = pooled["neighbour"]
-    print(f"\npooled target: {pooled['n_seasons']} seasons, {pooled['n_quarters']} quarters, rms col "
-          f"{pooled['rms_col']:.4f} row {pooled['rms_row']:.4f} axis mean {pooled['rms_axis_mean']:.4f} px")
-    print(f"pooled neighbour: rms col {nb['rms_col']:.4f} row {nb['rms_row']:.4f} axis mean "
-          f"{nb['rms_axis_mean']:.4f} px ({nb['dof']} degrees of freedom)")
-    print(f"adopted: {pooled['adopted']:.4f} px per axis (the {pooled['adopted_from']}'s)")
+    print(f"\npooled target: {pooled['n_seasons']} seasons, {pooled['n_quarters']} quarters, rms col/row/axis mean "
+          f"{_fmt([pooled['rms_col'], pooled['rms_row'], pooled['rms_axis_mean']], 4)} px")
+    print(f"pooled neighbour: rms col/row/axis mean {_fmt([nb['rms_col'], nb['rms_row'], nb['rms_axis_mean']], 4)} px "
+          f"({nb['dof']} degrees of freedom)")
+    print(f"adopted: {_fmt([pooled['adopted']], 4)} px per axis (the {pooled['adopted_from'] or 'no'} measurement)")
     for sid, v in validation.items():
         e = v["excess"]
         print(f"\nvalidation, signal {sid} ({v['target_id']}): {e['n_seasons']} voting seasons, {e['n_quarters']} "
@@ -318,7 +315,7 @@ def main(argv=None) -> int:
         for s in e["per_season"]:
             print(f"  season {s['season']} quarters {s['quarters']}: scatter {_fmt(s['scatter_rms'])}, quarter MC "
                   f"{s['quarter_sigma_mc_rms']:.3f}, excess {_fmt(s['excess'])}, chi2/dof {_fmt(s['chi2_dof'], 2)}; "
-                  f"season: empirical {_fmt(s['sem'])}, MC {s['season_sigma_mc']:.3f}, excess "
+                  f"season: empirical {_fmt(s['sem'])}, MC {_fmt([s['season_sigma_mc']])}, excess "
                   f"{_fmt(s['season_excess'])}")
         print(f"  season-level excess, largest: {_fmt([e['season_excess_max']], 4)} px")
     return 0

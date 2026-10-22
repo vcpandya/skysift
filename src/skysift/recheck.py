@@ -214,16 +214,16 @@ def reopened_queue(store: Store, detector_version: str) -> list[dict]:
     """Signals of this search version that no reviewer decided on, settled by their pixels (``SETTLED_BY_PIXELS``)
     under an older pixel rule (``floor_reopens`` on the latest rung 5 row), by id: they join the recheck for the
     pixel step alone (``wants_pixels``)."""
+    latest = (select(func.max(TestRow.id).label("id")).where(TestRow.rung == "rung5_pixels")
+              .group_by(TestRow.signal_id).subquery())
     with store.session() as s:
-        ids = s.scalars(select(SignalRow.id).outerjoin(DecisionRow, DecisionRow.signal_id == SignalRow.id)
-                        .where(SignalRow.final_status.in_(SETTLED_BY_PIXELS),
-                               SignalRow.detector_version == detector_version, DecisionRow.id.is_(None))
-                        .order_by(SignalRow.id)).all()
-        latest = dict(s.execute(select(TestRow.signal_id, TestRow.metrics).where(
-            TestRow.signal_id.in_(ids), TestRow.rung == "rung5_pixels").order_by(TestRow.id)).all())
-        targets = dict(s.execute(select(SignalRow.id, SignalRow.target_id).where(SignalRow.id.in_(ids))).all())
-    return [{"id": i, "target_id": targets[i]} for i in ids
-            if i in latest and floor_reopens({"metrics": latest[i]})]
+        rows = s.execute(select(SignalRow.id, SignalRow.target_id, TestRow.metrics)
+                         .join(TestRow, TestRow.signal_id == SignalRow.id).join(latest, latest.c.id == TestRow.id)
+                         .outerjoin(DecisionRow, DecisionRow.signal_id == SignalRow.id)
+                         .where(SignalRow.final_status.in_(SETTLED_BY_PIXELS),
+                                SignalRow.detector_version == detector_version, DecisionRow.id.is_(None))
+                         .order_by(SignalRow.id)).all()
+    return [{"id": i, "target_id": t} for i, t, metrics in rows if floor_reopens({"metrics": metrics})]
 
 
 def _deciding_reason(results: list[TestResult]) -> str:
@@ -324,12 +324,19 @@ def step_pixels(ctx: RecheckContext, sig: StoredSignal) -> StepWrite | None:
     """Step 4, the pixel stage (``wants_pixels``): ``rung5_pixels`` alone, its pixel files through ``ctx.tpf_loader``
     (``fetch_tpfs`` by default, kept in the blob), in the bundle ``revet`` builds; it stores the season arrays as the
     signal's ``pixels.npz``. The fetch and the localization happen here, before the step's one write: the rung 5 row
-    pointing at the rechecks row (outcome the rung's status, reason its reason); the status is derived again."""
-    if not wants_pixels(ctx.store, sig, ctx.store.latest_tests(sig.id)):
+    pointing at the rechecks row (outcome the rung's status, reason its reason); the status is derived again. A
+    signal its pixels settled (``SETTLED_BY_PIXELS``, reopened by ``floor_reopens``) keeps its verdict when the rerun
+    measures nothing (an archive outage or a crash): the step is "skipped" with the rung's reason and writes no rung 5
+    row, so the old row stands and the next recheck tries again."""
+    tests = ctx.store.latest_tests(sig.id)
+    if not wants_pixels(ctx.store, sig, tests):
         return None
+    settled = ctx.store.signal_status(sig.id) in SETTLED_BY_PIXELS
     rung = Rung5Pixels(tpf_loader=ctx.tpf_loader or fetch_tpfs, blob=ctx.blob, signal_id=sig.id)
     _outcome, results, timings = ctx.vet(sig.signal, Ladder([rung], DEFAULT_LADDER_VERSION), ctx.flux(sig))
     r = results[0]
+    if settled and r.reason.startswith(("outage:", "exception:")):
+        return _write(sig, "pixels", "skipped", r.reason)
     return _write(sig, "pixels", r.status.value, r.reason, results, timings)
 
 
