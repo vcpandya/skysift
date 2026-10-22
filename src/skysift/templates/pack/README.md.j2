@@ -46,6 +46,7 @@ This pack was built on {{ f.built_words }} by SkySift (pack format {{ f.pack_ver
 {% for row in n.dilution_rows %}
 | {{ row.parameter }} | {{ row.text }} |
 {% endfor %}
+| TESS | {{ n.tess_row }} |
 {% if n.crowdsap or n.psffrac %}
 
 CROWDSAP and PSFFRAC are KBonus header keywords. CROWDSAP is {{ crowdsap_definition }}; PSFFRAC is {{ psffrac_definition }}.

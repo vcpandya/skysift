@@ -227,7 +227,7 @@
     {%- macro g3(x) %}{{ "–" if x is none else "%.3g" | format(x) }}{% endmacro %}
     {%- macro spread(block, m) %}<span class="mono">{{ g3(block[m]) }}</span> (16th to 84th percentile <span class="mono">{{ g3(block[m ~ "_p16"]) }} to {{ g3(block[m ~ "_p84"]) }}</span>){% endmacro %}
     {%- if cc and cc.runs is defined %}
-    <p>An independent estimate with TRICERATOPS {{ cc.tool_version }} (Giacalone et al. 2021) over {{ cc.n_runs }} runs{% if cc.n_degenerate %}, {{ cc.n_degenerate }} degenerate and left out{% endif %}: median false-positive probability {{ spread(cc, "fpp") }}, {{ spread(cc, "fpp_no_stp") }} without a planet transiting an unresolved bound companion (STP), which SkySift's model leaves out, and nearby false-positive probability {{ spread(cc, "nfpp") }}. On Giacalone et al.'s scale the medians read as <b class="crosscheck-class">{{ cc["class"] }}</b>{% if cc["class"] == "validated" %}, a region the paper could not set at the 30-minute cadence of these data (its section 4.2), so it is not called validated here{% endif %}; the classes are labels and never block the live draft. {% if cc.current %}It was made for this dossier's period, depth and neighbours.{% else %}It was made for an earlier dossier (the period, the depth or the neighbours have changed since), so it does not count until it is run again.{% endif %}</p>
+    <p>An independent estimate with TRICERATOPS {{ cc.tool_version }} (Giacalone et al. 2021) over {{ cc.n_runs }} runs{% if cc.n_degenerate %}, {{ cc.n_degenerate }} degenerate and left out{% endif %}: median false-positive probability {{ spread(cc, "fpp") }}, {{ spread(cc, "fpp_no_stp") }} without a planet transiting an unresolved bound companion (STP), which SkySift's model leaves out, and nearby false-positive probability {{ spread(cc, "nfpp") }}. On Giacalone et al.'s scale the medians {% if cc["class"] == "validated" %}fall inside the paper's validation lines (FPP &lt; 0.015 and NFPP &lt; 0.001), which the paper could not set at 30-minute cadence, so it is not called validated here{% else %}read as <b class="crosscheck-class">{{ cc["class"] }}</b>{% endif %}; the classes are labels and never block the live draft. {% if cc.current %}It was made for this dossier's period, depth and neighbours.{% else %}It was made for an earlier dossier (the period, the depth or the neighbours have changed since), so it does not count until it is run again.{% endif %}</p>
     {%- if cc.caveats %}
     <ul class="dossier-small">{% for c in cc.caveats %}<li>{{ c }}</li>{% endfor %}</ul>
     {%- endif %}
@@ -235,6 +235,27 @@
     <p>This cross-check was stored by an earlier version of the tool, before its median and range and the FPP without STP; run it again (<span class="mono">skysift crosscheck --target {{ target_id }} --export</span>, then <span class="mono">--import</span>).</p>
     {%- else %}
     <p>No independent cross-check is stored yet. <span class="mono">skysift crosscheck --target {{ target_id }} --export</span> writes the inputs for TRICERATOPS; its result comes back with <span class="mono">--import</span>.</p>
+    {%- endif %}
+  </div>
+  {%- set ts = data.get("tess") %}
+  <div class="dossier-tess">
+    <h3>TESS</h3>
+    {%- if ts and ts.available %}
+    {%- set dil, noise, sig = ts.dilution, ts.noise, ts.significance %}
+    <p>{{ ts.sentence }}</p>
+    <div class="only-expert dossier-expert">
+      <div class="table-wrap"><table class="dossier-table">
+        <caption>TESS sectors on the Kepler ephemeris</caption>
+        <thead><tr><th scope="col" class="num">sector</th><th scope="col" class="num">cycle</th><th scope="col" class="num">full-frame cadence</th><th scope="col" class="num">transits in the windows</th><th scope="col" class="num">timing error, hours</th><th scope="col">count</th></tr></thead>
+        <tbody>{% for s in ts.sectors %}<tr><td class="num">{{ s.sector }}</td><td class="num">{{ s.cycle }}</td><td class="num">{% if (s.cadence_min - s.cadence_min | round) | abs < 1e-9 %}{{ s.cadence_min | round | int }} min{% else %}{{ (s.cadence_min * 60) | round | int }} s{% endif %}</td><td class="num">{{ s.n_transits }}</td><td class="num">{{ (s.timing_error_days * 24) | fmt(2) if s.timing_error_days is not none else "–" }}</td><td>{{ "uncertain" if s.uncertain else "firm" }}</td></tr>{% endfor %}</tbody>
+      </table></div>
+      <p class="mono dossier-small">TIC {{ ts.tic }} · Tmag {{ ts.tmag | fmt(2) }} ({{ ts.tmag_source or "source not stored" }}) · contamination c = {{ dil.c | fmt(2) }} over {{ dil.aperture_pixels }} pixels, {{ dil.c_hard42 | fmt(2) }} with the hard 42 arcsec cut · blended T = {{ dil.t_total | fmt(2) }} · diluted depth {{ dil.depth_tess_ppm | fmt(0) }} ppm, {{ dil.depth_tess_hard42_ppm | fmt(0) }} ppm at the hard cut · noise over the transit {{ noise.nominal_t14_ppm | fmt(0) }} to {{ noise.conservative_t14_ppm | fmt(0) }} ppm · per-transit S/N {{ sig.per_transit_conservative | fmt(2) }} to {{ sig.per_transit_nominal | fmt(2) }} · about {{ ts.n_expected | fmt(1) }} transits expected from phase coverage · inputs queried {{ ts.queried or "on an unknown date" }}</p>
+    </div>
+    {%- if ts.caveats %}
+    <ul class="dossier-small">{% for c in ts.caveats %}<li>{{ c }}</li>{% endfor %}</ul>
+    {%- endif %}
+    {%- else %}
+    <p>TESS coverage was not assessed{% if ts and ts.caveats %} ({{ ts.caveats | join("; ") }}){% endif %}. <span class="mono">tools/tess_inputs.py --target {{ target_id }}</span> fetches the star's TIC row, its neighbours and its TESS sectors; generate the dossier again afterwards.</p>
     {%- endif %}
   </div>
   <div class="only-expert dossier-expert">

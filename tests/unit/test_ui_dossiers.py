@@ -816,7 +816,7 @@ def test_the_standalone_page_carries_a_cross_check_imported_after_its_export(see
     blob = after.split('<script id="dossier-data" type="application/json">')[1].split("</script>")[0]
     block = json.loads(blob)["cross_check"]
     assert block["fpp"] == 0.0234 and block["nfpp"] == 0.0012 and block["current"] is True
-    assert "over ${CC.n_runs} runs" in after and "16th to 84th percentile" in after and "read as ${cls}" in after
+    assert "over ${CC.n_runs} runs" in after and "16th to 84th percentile" in after and "medians ${cls}" in after
 
 
 def test_the_pixel_section_quotes_the_offset_against_the_rule(seeded_dossier):
@@ -862,3 +862,57 @@ def test_section_01_presents_a_prior_claim_as_an_independent_recovery(seeded_dos
     assert "independent recovery and vetting of that claim, not a new candidate" in signal
     export = client.get(f"/dossiers/{STAGE2_TARGET}/export.html").text
     assert '"prior_claims":[{' in export.replace(" ", "") and "independent recovery and vetting of" in export
+
+
+def test_the_validated_class_is_not_named_and_withdrawn_in_one_breath(seeded_dossier):
+    """Addendum to Task 8: medians inside Giacalone et al.'s validation lines read in the pack's words, without the
+    bold label, on the page and in the standalone script; "the paper's", never "its", for the paper."""
+    import html
+
+    from skysift import crosscheck as cc
+    from tests.unit.test_crosscheck import fake_result
+    client, app, _ids, data = seeded_dossier
+    app.state.store.set_cross_check(STAGE2_TARGET, fake_result(cc.inputs_fingerprint(data), fpp=0.012, nfpp=1e-4))
+    checks = client.get(f"/dossiers/{STAGE2_TARGET}").text.split('id="checks"')[1].split('id="pixels"')[0]
+    words = ("the medians fall inside the paper's validation lines (FPP < 0.015 and NFPP < 0.001), which the paper "
+             "could not set at 30-minute cadence, so it is not called validated here")
+    assert words in html.unescape(checks)
+    assert 'class="crosscheck-class">validated' not in checks and "read as" not in checks
+    assert "its section 4.2" not in checks
+    export = client.get(f"/dossiers/{STAGE2_TARGET}/export.html").text
+    assert "fall inside the paper's validation lines (FPP < 0.015 and NFPP < 0.001)" in export
+    assert "its section 4.2" not in export and "read as ${CC.class}" in export
+
+
+def test_section_03_carries_the_tess_statement(seeded_dossier):
+    """Task 8: the TESS block under the cross-check, its sentence in both modes, the per-sector table and the
+    dilution numbers for the expert, the block's own caveats; a dossier without the inputs says it was not assessed,
+    and the standalone script draws the same block from its JSON."""
+    import html
+    from pathlib import Path
+    client, app, _ids, data = seeded_dossier
+    block = data["tess"]
+    assert block["available"] is True
+    for mode in ("simple", "expert"):
+        client.cookies.set("skysift_mode", mode)
+        checks = html.unescape(client.get(f"/dossiers/{STAGE2_TARGET}").text.split('id="checks"')[1]
+                               .split('id="pixels"')[0])
+        assert "<h3>TESS</h3>" in checks and block["sentence"] in checks
+        assert "TESS sectors on the Kepler ephemeris" in checks and "the hard 42 arcsec cut" in checks
+        assert "no TESS light curve was examined" in checks and chr(0x2014) not in checks
+        assert checks.index("Cross-check") < checks.index("<h3>TESS</h3>")
+    path = Path(app.state.store.dossier(STAGE2_TARGET)["data_path"])
+    path.write_text(json.dumps({**data, "tess": {"available": False, "caveats": ["TESS inputs not fetched"]}}),
+                    encoding="utf-8")
+    checks = client.get(f"/dossiers/{STAGE2_TARGET}").text.split('id="checks"')[1].split('id="pixels"')[0]
+    assert "TESS coverage was not assessed (TESS inputs not fetched)." in checks
+    assert f"tools/tess_inputs.py --target {STAGE2_TARGET}" in checks
+    old = {k: v for k, v in data.items() if k != "tess"}                      # a version 3 dossier has no block
+    path.write_text(json.dumps(old), encoding="utf-8")
+    checks = client.get(f"/dossiers/{STAGE2_TARGET}").text.split('id="checks"')[1].split('id="pixels"')[0]
+    assert "TESS coverage was not assessed." in checks
+    path.write_text(json.dumps(data), encoding="utf-8")
+    export = client.get(f"/dossiers/{STAGE2_TARGET}/export.html").text
+    blob = export.split('<script id="dossier-data" type="application/json">')[1].split("</script>")[0]
+    assert json.loads(blob)["tess"] == block
+    assert 'h("h3", null, "TESS")' in export and "TESS coverage was not assessed${why}." in export

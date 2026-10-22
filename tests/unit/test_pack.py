@@ -1676,3 +1676,69 @@ def test_one_precision_rule_on_the_page_and_in_the_pack():
     assert page_digits(0.016) == pack_text.pm_digits(0.016) == 3 and page_digits(None) == 2
     js = (Path(pack_module.__file__).parent / "ui" / "static" / "dossier.js").read_text(encoding="utf-8")
     assert "Math.min(Math.max(0, 1 - Math.floor(Math.log10(err))), places(err))" in js
+
+
+# ---------------------------------------------------------------------------------------------------- Task 8: TESS
+
+def _with_tess(data: dict) -> dict:
+    from skysift import tess
+    from tests.unit.ui_seed import SEED_TESS
+    return {**data, "tess": tess.statement(SEED_TESS, data["ephemeris"])}
+
+
+def _cites(tex: str) -> tuple[set, set]:
+    cited = {k.strip() for c in re.findall(r"\\cite[pt]?\{([^}]+)\}", tex) for k in c.split(",")}
+    return cited, set(re.findall(r"\\bibitem\[[^\]]*\]\{([^}]+)\}", tex))
+
+
+def test_without_tess_inputs_the_texts_say_it_was_not_assessed_and_the_gate_does_not_block(env_with_dossier):
+    env, data = env_with_dossier, env_with_dossier.data
+    assert data["tess"] == {"available": False, "caveats": ["TESS inputs not fetched"]}
+    tex = render_note(data)
+    section = tex.split(r"\section{How likely is a false positive}")[1].split(r"\section{")[0]
+    assert "TESS coverage was not assessed." in section
+    cited, items = _cites(tex)
+    assert cited == items and not {"christ2019", "stassun2018", "battley2021"} & items
+    assert "| TESS | not assessed (TESS inputs not fetched) |" in render_readme(data, {})
+    assert "TESS:" not in pack_module._render_plain("exofop_note.txt.j2", data, {})
+    assert not [p for p in pack_module.gate_problems(_stored_with_cross_check(env)) if "TESS" in p]
+
+
+def test_the_texts_carry_the_tess_statement(env_with_dossier):
+    from skysift import tess
+    data = _with_tess(env_with_dossier.data)
+    block = data["tess"]
+    assert block["verdict"] in tess.VERDICTS
+    tex = render_note(data)
+    section = tex.split(r"\section{How likely is a false positive}")[1].split(r"\section{")[0]
+    assert tess_text_plain(block) in section.replace("\n", " ")
+    assert r"\citet{christ2019}" in section and r"\citep{stassun2018,stassun2019}" in section
+    cited, items = _cites(tex)
+    assert cited == items                                                     # every citation listed, none unused
+    assert {key for key, _w in tess.METHOD_CITES} <= items
+    words = note_words(tex)
+    assert words["total"] <= NOTE_LIMITS["total"] and note_problems(words, tex) == []
+    readme = render_readme(data, {})
+    row = next(line for line in readme.splitlines() if line.startswith("| TESS | "))
+    assert row == f"| TESS | {tess.readme_row(block)} |" and block["verdict"] in row
+    exofop_note = pack_module._render_plain("exofop_note.txt.j2", data, {})
+    assert tess.exofop_line(block) in exofop_note.splitlines()
+    archive = pack_module.archive_paragraph(data, "10.5281/zenodo.1", None)
+    assert "TESS observed" not in archive and "TESS coverage" not in archive   # the archive email does not change
+    for text in (tex, readme, exofop_note):
+        assert EM_DASH not in text and not IZE.search(text) and "discover" not in text.lower()
+
+
+def tess_text_plain(block: dict) -> str:
+    from skysift import tess
+    return str(tess.note_sentence(block, tex=True))
+
+
+def test_the_golden_note_with_a_tess_statement_stays_inside_the_word_limit():
+    """The live KIC 6146676 dossier (the version 3 golden) with the statement its own inputs give: the note with the
+    sentence, the methods sentence and the nine references stays inside the RNAAS 1,500 words."""
+    golden = json.loads((Path(__file__).resolve().parents[1] / "golden" / "kic-006146676-generated.json")
+                        .read_text(encoding="utf-8"))
+    before = note_words(render_note(golden))["total"]
+    words = note_words(render_note(_with_tess(golden)))
+    assert words["total"] <= NOTE_LIMITS["total"] and words["total"] - before < 250

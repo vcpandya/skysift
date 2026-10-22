@@ -545,10 +545,10 @@ def test_an_unchanged_dossier_reports_its_stored_fap_and_a_version_bump_regenera
     rep = generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch)
     assert not rep.generated and rep.fap.words() == "1 in 1,700" == seeded["fap"]["words"]
     assert rep.fpp.value == pytest.approx(compute(FppInputs(**seeded["fpp"]["inputs"])).value)
-    monkeypatch.setattr(dossier_module, "DOSSIER_VERSION", "4")
+    monkeypatch.setattr(dossier_module, "DOSSIER_VERSION", "5")
     again = generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch)
     assert again.generated and "format changed" in again.stale_reason
-    assert env.store.dossier(STAGE2_TARGET)["dossier_version"] == "4"
+    assert env.store.dossier(STAGE2_TARGET)["dossier_version"] == "5"
 
 
 def test_rank_key_orders_stage_two_approved_stage_one_and_rejected_last():
@@ -672,7 +672,8 @@ def test_hand_built_values_agree_within_errors():
     assert abs(planet["a_au"]["median"] - pb["a_AU"]["median"]) <= pb["a_AU"]["plus"]
     assert abs(planet["teq_k"]["median"] - teq["median"]) <= teq["plus"]
     assert planet["in_habitable_zone"] is False and planet["in_optimistic_habitable_zone"] is True
-    assert gen["dossier_version"] == dossier_module.DOSSIER_VERSION == "3"
+    # the golden is the version 3 run; version 4 (the TESS block) re-writes it at the end of the branch (spec 10.8)
+    assert gen["dossier_version"] == "3" and dossier_module.DOSSIER_VERSION == "4"
     eph = gen["ephemeris"]
     assert eph["duration_source"] == "fitted T14" and eph["period_source"] == "linear fit of 32 transit times"
     assert eph["period_err_days"] > 0 and eph["t_ref_err_days"] > 0 and eph["epoch_ref"] == 19
@@ -970,7 +971,7 @@ def test_generate_writes_the_timing_shape_parity_and_secondary_blocks(env):
     rep = generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch, n_boot=20, force=True)
     d = _data(rep)
     e, timing, shape = d["ephemeris"], d["timing"], d["shape"]
-    assert d["dossier_version"] == "3" == DOSSIER_VERSION and timing["ok"] and e["period_err_days"] > 0
+    assert d["dossier_version"] == "4" == DOSSIER_VERSION and timing["ok"] and e["period_err_days"] > 0
     # the quoted period and T0 are the linear fit's, beside their own errors; the search values stay in signal
     assert e["period_days"] == timing["period"] and e["t0_bkjd"] == timing["t0"]
     assert e["t0_bkjd_err"] == timing["t0_err"] and e["period_err_days"] == timing["period_err"]
@@ -1094,7 +1095,7 @@ def test_a_version_2_dossier_renders_and_regenerates(env):
     r = client.get(f"/dossiers/{STAGE2_TARGET}")
     assert r.status_code == 200 and "Shape with errors" not in r.text and "T_ref" not in r.text
     again = generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch)     # no --force
-    assert again.generated and again.stale_reason == "the dossier format changed (2 to 3)"
+    assert again.generated and again.stale_reason == "the dossier format changed (2 to 4)"
     assert _data(again)["timing"] is not None
 
 
@@ -1245,7 +1246,7 @@ def test_generate_stores_the_prior_claims(env):
     data = json.loads(generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch, force=True)
                       .data_path.read_text(encoding="utf-8"))
     stored = {k: v for k, v in PRIOR_CLAIM.items() if k != "status"}    # the owner's file keeps the status
-    assert data["prior_claims"] == [stored] and data["dossier_version"] == "3"
+    assert data["prior_claims"] == [stored] and data["dossier_version"] == "4"
     assert "prior_claims_unchecked" not in [c.get("key") for c in data["caveats"]]
 
 
@@ -1306,3 +1307,42 @@ def test_an_untracked_file_under_src_makes_the_commit_dirty(tmp_path):
     (tmp_path / "src" / "b" / "__init__.py").write_text("", encoding="utf-8")
     assert dossier_module.git_commit_at(tmp_path) == f"{clean}-dirty"
     assert dossier_module.git_commit_at(tmp_path / "src" / "b" / "nowhere") == "unknown"
+
+
+# ---------------------------------------------------------------------------------------------------- Task 8: TESS
+
+def test_without_tess_inputs_the_block_says_so_and_nothing_is_fetched(env):
+    """Version 4: the ``tess`` block comes from ``targets.meta["tess"]`` only; without it the block is unavailable,
+    with no verdict, and the dossier asks no TESS service."""
+    calls = []
+
+    def fetch(url, **kw):
+        calls.append(url)
+        return env.fetch(url, **kw)
+    d = _data(generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=fetch))
+    assert d["dossier_version"] == "4" and d["tess"] == {"available": False, "caveats": ["TESS inputs not fetched"]}
+    assert not [u for u in calls if "mast.stsci.edu" in u]
+
+
+def test_the_tess_block_reads_the_stored_inputs_and_the_fitted_ephemeris(env):
+    from skysift import tess
+    from skysift.models import Target
+    from skysift.store.db import TargetRow
+    from tests.unit.ui_seed import SEED_TESS
+    with env.store.session() as s:
+        t = s.get(TargetRow, STAGE2_TARGET)
+        row = {c.name: getattr(t, c.name) for c in TargetRow.__table__.columns}
+    env.store.upsert_target(Target(**{k: row[k] for k in ("source", "target_id", "ra", "dec", "gaia_id", "kic",
+                                                            "gmag")}, meta={**(row["meta"] or {}), "tess": SEED_TESS}))
+    d = _data(generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch, force=True))
+    block, e = d["tess"], d["ephemeris"]
+    assert block["available"] is True and block["tic"] == 169822650 and block["verdict"] in tess.VERDICTS
+    used = block["ephemeris_used"]
+    assert used["period_days"] == pytest.approx(e["period_days"]) and used["depth_ppm"] == pytest.approx(e["depth_ppm"])
+    assert used["t0_btjd"] == pytest.approx(e["t0_bjd"] - tess.BTJD_OFFSET)
+    assert used["period_err_days"] == pytest.approx(e["period_err_days"])
+    expected = tess.statement(SEED_TESS, e)
+    assert block["n_transits"] == expected["n_transits"] and block["sentence"] == expected["sentence"]
+    assert block["dilution"]["depth_tess_ppm"] == pytest.approx(expected["dilution"]["depth_tess_ppm"], rel=1e-6)
+    keys = [c.get("key") for c in d["caveats"]]
+    assert not [k for k in keys if k and "tess" in k]          # the block keeps its own caveats

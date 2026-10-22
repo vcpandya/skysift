@@ -56,6 +56,7 @@ from skysift import crosscheck as cc
 from skysift import dossier as ds
 from skysift import fpp as fpp_model
 from skysift import jsonutil
+from skysift import tess as tess_module
 from skysift.exofop import (
     EXOFOP_PLANET_TEMPLATE,
     EXOFOP_STELLAR_TEMPLATE,
@@ -274,27 +275,32 @@ def references(data: dict) -> dict[str, bool]:
     star_ok = star_characterized(data)
     cls = _fpp_class(data)
     notes = json.dumps((data.get("fpp") or {}).get("scenarios") or [])
+    tess = tess_module.methods_sentence(data.get("tess")) is not None       # the TESS statement cites spec 10.9
     return {"kbonus": True, "kbonushlsp": True, "morton2012": True,
             "dressing2015": cls == "M", "fressin2013": cls != "M" or "Fressin" in notes,
             "pecaut2013": star_ok and route in ("mann", "mamajek") and value_text(star.get("teff")) is not None,
             "mann2015": star_ok and route == "mann",
             "mann2019": star_ok and route == "mann" and value_text(star.get("mass")) is not None,
             "lindegren2021": star_ok and star.get("distance_pc") is not None,
-            "giacalone2021": cross_check_sentence(data) is not None,
+            "giacalone2021": cross_check_sentence(data) is not None or tess,
+            **{key: tess for key, _words in tess_module.METHOD_CITES if key != "giacalone2021"},
             "bryson2013": self_referenced(offset_block(data)),
             "deeg2015": _timed(data), "holczer2016": _timed(data), "schmitt2014": _bootstrapped(data),
             "kopparapu2013": star_ok and _hz_where(planet) is not None}
 
 
 BIBLIOGRAPHY = (
+    ("battley2021", r"{Battley} et~al.(2021)", r"Battley, M.~P., et~al. 2021, MNRAS, 503, 4092"),
     ("bryson2013", r"{Bryson} et~al.(2013)",
      r"Bryson, S.~T., Jenkins, J.~M., Gilliland, R.~L., et~al. 2013, PASP, 125, 889"),
+    ("christ2019", r"{Christ} et~al.(2019)", r"Christ, C.~N., Montet, B.~T., \& Fabrycky, D.~C. 2019, AJ, 157, 235"),
     ("deeg2015", r"{Deeg}(2015)", r"Deeg, H.~J. 2015, arXiv:1503.05368"),
     ("dressing2015", r"{Dressing} \& {Charbonneau}(2015)",
      r"Dressing, C.~D., \& Charbonneau, D. 2015, ApJ, 807, 45"),
     ("fressin2013", r"{Fressin} et~al.(2013)", r"Fressin, F., Torres, G., Charbonneau, D., et~al. 2013, ApJ, 766, 81"),
     ("giacalone2021", r"{Giacalone} et~al.(2021)",
      r"Giacalone, S., Dressing, C.~D., Jensen, E.~L.~N., et~al. 2021, AJ, 161, 24"),
+    ("guerrero2021", r"{Guerrero} et~al.(2021)", r"Guerrero, N.~M., et~al. 2021, ApJS, 254, 39"),
     ("holczer2016", r"{Holczer} et~al.(2016)", r"Holczer, T., et~al. 2016, ApJS, 225, 9"),
     ("kbonus", r"{Mart{\'\i}nez-Palomera} et~al.(2023a)",
      r"Mart{\'\i}nez-Palomera, J., Hedges, C., \& Dotson, J. 2023a, AJ, 166, 265, doi:10.3847/1538-3881/ad0727"),
@@ -310,7 +316,12 @@ BIBLIOGRAPHY = (
     ("mann2019", r"{Mann} et~al.(2019)", r"Mann, A.~W., Dupuy, T., Kraus, A.~L., et~al. 2019, ApJ, 871, 63"),
     ("morton2012", r"{Morton}(2012)", r"Morton, T.~D. 2012, ApJ, 761, 6"),
     ("pecaut2013", r"{Pecaut} \& {Mamajek}(2013)", r"Pecaut, M.~J., \& Mamajek, E.~E. 2013, ApJS, 208, 9"),
+    ("ricker2015", r"{Ricker} et~al.(2015)", r"Ricker, G.~R., et~al. 2015, JATIS, 1, 014003"),
     ("schmitt2014", r"{Schmitt} et~al.(2014)", r"Schmitt, J.~R., et~al. 2014, AJ, 148, 28"),
+    ("stassun2018", r"{Stassun} et~al.(2018)", r"Stassun, K.~G., et~al. 2018, AJ, 156, 102"),
+    ("stassun2019", r"{Stassun} et~al.(2019)", r"Stassun, K.~G., et~al. 2019, AJ, 158, 138"),
+    ("sullivan2015", r"{Sullivan} et~al.(2015)", r"Sullivan, P.~W., et~al. 2015, ApJ, 809, 77"),
+    ("twicken2025", r"{Twicken} et~al.(2025)", r"Twicken, J.~D., et~al. 2025, arXiv:2506.04136"),
 )
 
 
@@ -442,6 +453,18 @@ def cross_check_sentence(data: dict, tex: bool = False) -> str | None:
     """The TRICERATOPS cross-check beside SkySift's own estimate (``crosscheck.comparison_sentence``), for the four
     texts; None without a cross-check made for this dossier's inputs, which the texts then leave out."""
     return cc.comparison_sentence(data, tex=tex)
+
+
+def tess_text(data: dict, tex: bool = False) -> str:
+    """The TESS statement for the note, after the cross-check sentence (spec 10.8): ``tess.note_sentence`` and, with
+    ``tex`` and a verdict, ``tess.methods_sentence`` citing the works of spec 10.9; "TESS coverage was not
+    assessed." without the inputs. The README and the ExoFOP note print the sentence alone."""
+    block = data.get("tess")
+    sentence = tess_module.note_sentence(block, tex)
+    method = tess_module.methods_sentence(block, tex) if tex else None
+    if method is None:
+        return sentence
+    return Raw(f"{sentence} {method}")
 
 
 def shape_sentence(data: dict, tex: bool = False) -> str | None:
@@ -848,6 +871,8 @@ def numbers(data: dict, tex: bool = False, after_bjd: float | None = None) -> di
         "cross_check_sentence": cross_check_sentence(data, tex),
         "cross_check_block": cc.verdict(data.get("cross_check"))[1],
         "cross_check_flag": cc.owner_flag(data),
+        "tess_text": tess_text(data, tex), "tess_row": tess_module.readme_row(data.get("tess")),
+        "tess_exofop": tess_module.exofop_line(data.get("tess")),
         "abstract": abstract_text(data),
         "prior_text": prior_claim_sentence(data, tex), "prior_plain": prior_claim_sentence(data),
         "priority_text": priority_sentence(data),

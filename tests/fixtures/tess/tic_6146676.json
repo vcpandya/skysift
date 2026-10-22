@@ -1,0 +1,85 @@
+{
+ "_fixture_note": "Mast.Catalogs.Filtered.Tic, KIC 6146676, GET of 22 October 2026, columns trimmed",
+ "status": "COMPLETE",
+ "msg": "",
+ "data": [
+  {
+   "ID": 169822650,
+   "ra": 297.86875936733,
+   "dec": 41.4556456852551,
+   "Tmag": 15.1926,
+   "GAIAmag": 16.2554,
+   "gaiabp": 17.3092,
+   "gaiarp": 15.2165,
+   "dstArcSec": null,
+   "objType": "STAR",
+   "disposition": null,
+   "duplicate_id": null,
+   "KIC": 6146676,
+   "contratio": 3.086655,
+   "version": "20190415"
+  }
+ ],
+ "fields": [
+  {
+   "name": "ID",
+   "type": "string"
+  },
+  {
+   "name": "version",
+   "type": "string"
+  },
+  {
+   "name": "KIC",
+   "type": "int"
+  },
+  {
+   "name": "objType",
+   "type": "string"
+  },
+  {
+   "name": "ra",
+   "type": "float"
+  },
+  {
+   "name": "dec",
+   "type": "float"
+  },
+  {
+   "name": "GAIAmag",
+   "type": "float"
+  },
+  {
+   "name": "Tmag",
+   "type": "float"
+  },
+  {
+   "name": "contratio",
+   "type": "float"
+  },
+  {
+   "name": "disposition",
+   "type": "string"
+  },
+  {
+   "name": "duplicate_id",
+   "type": "string"
+  },
+  {
+   "name": "gaiabp",
+   "type": "float"
+  },
+  {
+   "name": "gaiarp",
+   "type": "float"
+  }
+ ],
+ "paging": {
+  "page": 1,
+  "pageSize": 1,
+  "pagesFiltered": 1,
+  "rows": 1,
+  "rowsFiltered": 1,
+  "rowsTotal": 1
+ }
+}

@@ -1,0 +1,393 @@
+{
+ "_fixture_note": "Mast.Catalogs.Tic.Cone r=0.03 deg around TIC 169822650, GET of 22 October 2026: the rows within 30 arcsec and one SPLIT/DUPLICATE pair at 98 arcsec, columns trimmed; TIC 508690015 has its Tmag set to null here (the archive gives 19.2941) so the Gaia fallback without BP and RP is exercised",
+ "status": "COMPLETE",
+ "msg": "",
+ "data": [
+  {
+   "ID": 169822650,
+   "ra": 297.86875936733,
+   "dec": 41.4556456852551,
+   "Tmag": 15.1926,
+   "GAIAmag": 16.2554,
+   "gaiabp": 17.3092,
+   "gaiarp": 15.2165,
+   "dstArcSec": 0,
+   "objType": "STAR",
+   "disposition": null,
+   "duplicate_id": null,
+   "KIC": 6146676,
+   "contratio": 3.086655,
+   "version": "20190415"
+  },
+  {
+   "ID": 1879962333,
+   "ra": 297.870378446262,
+   "dec": 41.4571429820438,
+   "Tmag": 19.0349,
+   "GAIAmag": 19.8185,
+   "gaiabp": 20.3652,
+   "gaiarp": 18.7431,
+   "dstArcSec": 6.938126682556253,
+   "objType": "STAR",
+   "disposition": null,
+   "duplicate_id": null,
+   "KIC": null,
+   "contratio": null,
+   "version": "20190415"
+  },
+  {
+   "ID": 169822636,
+   "ra": 297.869670906925,
+   "dec": 41.4585622015912,
+   "Tmag": 17.086,
+   "GAIAmag": 17.9177,
+   "gaiabp": 18.6599,
+   "gaiarp": 17.0255,
+   "dstArcSec": 10.78364843923729,
+   "objType": "STAR",
+   "disposition": null,
+   "duplicate_id": null,
+   "KIC": 6146682,
+   "contratio": null,
+   "version": "20190415"
+  },
+  {
+   "ID": 169822655,
+   "ra": 297.864528919651,
+   "dec": 41.4549442554354,
+   "Tmag": 12.3923,
+   "GAIAmag": 12.815,
+   "gaiabp": 13.1428,
+   "gaiarp": 12.332,
+   "dstArcSec": 11.690156685519963,
+   "objType": "STAR",
+   "disposition": null,
+   "duplicate_id": null,
+   "KIC": 6146666,
+   "contratio": 0.442515224,
+   "version": "20190415"
+  },
+  {
+   "ID": 508690015,
+   "ra": 297.864075501362,
+   "dec": 41.456656388221,
+   "Tmag": null,
+   "GAIAmag": 19.7241,
+   "gaiabp": null,
+   "gaiarp": null,
+   "dstArcSec": 13.150748843135851,
+   "objType": "STAR",
+   "disposition": null,
+   "duplicate_id": 169822646,
+   "KIC": null,
+   "contratio": null,
+   "version": "20190415"
+  },
+  {
+   "ID": 169822646,
+   "ra": 297.86383645516,
+   "dec": 41.4564359585377,
+   "Tmag": 18.6024,
+   "GAIAmag": 19.3799,
+   "gaiabp": 19.4024,
+   "gaiarp": 17.7962,
+   "dstArcSec": 13.583632106179689,
+   "objType": "STAR",
+   "disposition": "SPLIT",
+   "duplicate_id": null,
+   "KIC": 6146662,
+   "contratio": null,
+   "version": "20190415"
+  },
+  {
+   "ID": 169822657,
+   "ra": 297.875329710257,
+   "dec": 41.4543085288824,
+   "Tmag": 17.6263,
+   "GAIAmag": 18.9236,
+   "gaiabp": 20.128,
+   "gaiarp": 17.6768,
+   "dstArcSec": 18.36948113012704,
+   "objType": "STAR",
+   "disposition": null,
+   "duplicate_id": null,
+   "KIC": 6146700,
+   "contratio": null,
+   "version": "20190415"
+  },
+  {
+   "ID": 1879962327,
+   "ra": 297.876132828297,
+   "dec": 41.457412045046,
+   "Tmag": 19.7381,
+   "GAIAmag": 20.5462,
+   "gaiabp": 20.9821,
+   "gaiarp": 19.296,
+   "dstArcSec": 20.885529734407008,
+   "objType": "STAR",
+   "disposition": null,
+   "duplicate_id": null,
+   "KIC": null,
+   "contratio": null,
+   "version": "20190415"
+  },
+  {
+   "ID": 1879962326,
+   "ra": 297.871805478081,
+   "dec": 41.4614476174233,
+   "Tmag": 19.518,
+   "GAIAmag": 20.3416,
+   "gaiabp": 20.9525,
+   "gaiarp": 19.225,
+   "dstArcSec": 22.445610213936444,
+   "objType": "STAR",
+   "disposition": null,
+   "duplicate_id": null,
+   "KIC": null,
+   "contratio": null,
+   "version": "20190415"
+  },
+  {
+   "ID": 169822666,
+   "ra": 297.863257988611,
+   "dec": 41.4505561825577,
+   "Tmag": 17.3777,
+   "GAIAmag": 18.4499,
+   "gaiabp": 19.4425,
+   "gaiarp": 17.3235,
+   "dstArcSec": 23.58052373618548,
+   "objType": "STAR",
+   "disposition": null,
+   "duplicate_id": null,
+   "KIC": 6146659,
+   "contratio": null,
+   "version": "20190415"
+  },
+  {
+   "ID": 1879962328,
+   "ra": 297.877209037433,
+   "dec": 41.4579336064203,
+   "Tmag": 19.7274,
+   "GAIAmag": 20.5093,
+   "gaiabp": 20.7366,
+   "gaiarp": 19.1189,
+   "dstArcSec": 24.23980074081722,
+   "objType": "STAR",
+   "disposition": null,
+   "duplicate_id": null,
+   "KIC": null,
+   "contratio": null,
+   "version": "20190415"
+  },
+  {
+   "ID": 169822637,
+   "ra": 297.860191901207,
+   "dec": 41.4585078650701,
+   "Tmag": 14.0876,
+   "GAIAmag": 15.1188,
+   "gaiabp": 16.1541,
+   "gaiarp": 14.1006,
+   "dstArcSec": 25.30779000538954,
+   "objType": "STAR",
+   "disposition": null,
+   "duplicate_id": null,
+   "KIC": 6146651,
+   "contratio": null,
+   "version": "20190415"
+  },
+  {
+   "ID": 1879962299,
+   "ra": 297.860581023845,
+   "dec": 41.4591728492919,
+   "Tmag": 19.8641,
+   "GAIAmag": 20.5089,
+   "gaiabp": 19.7375,
+   "gaiarp": 18.4553,
+   "dstArcSec": 25.458011608921115,
+   "objType": "STAR",
+   "disposition": null,
+   "duplicate_id": null,
+   "KIC": null,
+   "contratio": null,
+   "version": "20190415"
+  },
+  {
+   "ID": 169822620,
+   "ra": 297.866093115861,
+   "dec": 41.4624921582248,
+   "Tmag": 18.0032,
+   "GAIAmag": 18.8373,
+   "gaiabp": 19.5366,
+   "gaiarp": 17.8969,
+   "dstArcSec": 25.675562174413525,
+   "objType": "STAR",
+   "disposition": null,
+   "duplicate_id": null,
+   "KIC": 6146670,
+   "contratio": null,
+   "version": "20190415"
+  },
+  {
+   "ID": 1879962332,
+   "ra": 297.876390081656,
+   "dec": 41.4602127165888,
+   "Tmag": 18.8815,
+   "GAIAmag": 19.7203,
+   "gaiabp": 20.4027,
+   "gaiarp": 18.7523,
+   "dstArcSec": 26.347032382263507,
+   "objType": "STAR",
+   "disposition": null,
+   "duplicate_id": null,
+   "KIC": null,
+   "contratio": null,
+   "version": "20190415"
+  },
+  {
+   "ID": 1879962325,
+   "ra": 297.870391414461,
+   "dec": 41.4629964060998,
+   "Tmag": 19.5795,
+   "GAIAmag": 20.2002,
+   "gaiabp": 20.4858,
+   "gaiarp": 19.259,
+   "dstArcSec": 26.826418085467452,
+   "objType": "STAR",
+   "disposition": null,
+   "duplicate_id": null,
+   "KIC": null,
+   "contratio": null,
+   "version": "20190415"
+  },
+  {
+   "ID": 1879962306,
+   "ra": 297.878723847981,
+   "dec": 41.4546588634879,
+   "Tmag": 19.1793,
+   "GAIAmag": 19.9851,
+   "gaiabp": 20.5992,
+   "gaiarp": 18.9191,
+   "dstArcSec": 27.118932506582507,
+   "objType": "STAR",
+   "disposition": null,
+   "duplicate_id": null,
+   "KIC": null,
+   "contratio": null,
+   "version": "20190415"
+  },
+  {
+   "ID": 1879962323,
+   "ra": 297.863935482432,
+   "dec": 41.4629667040613,
+   "Tmag": 19.7251,
+   "GAIAmag": 20.5563,
+   "gaiabp": 21.0711,
+   "gaiarp": 19.323,
+   "dstArcSec": 29.393860728492836,
+   "objType": "STAR",
+   "disposition": null,
+   "duplicate_id": null,
+   "KIC": null,
+   "contratio": null,
+   "version": "20190415"
+  },
+  {
+   "ID": 169822633,
+   "ra": 297.832766441402,
+   "dec": 41.459160003359,
+   "Tmag": 17.3103,
+   "GAIAmag": 18.1483,
+   "gaiabp": 18.7839,
+   "gaiarp": 17.0175,
+   "dstArcSec": 97.57514300668453,
+   "objType": "STAR",
+   "disposition": "SPLIT",
+   "duplicate_id": null,
+   "KIC": 6146563,
+   "contratio": null,
+   "version": "20190415"
+  },
+  {
+   "ID": 1879962382,
+   "ra": 297.832766441402,
+   "dec": 41.459160003359,
+   "Tmag": 17.3103,
+   "GAIAmag": 18.1483,
+   "gaiabp": 18.7839,
+   "gaiarp": 17.0175,
+   "dstArcSec": 97.9300556604226,
+   "objType": "STAR",
+   "disposition": "DUPLICATE",
+   "duplicate_id": 169822633,
+   "KIC": null,
+   "contratio": null,
+   "version": "20190415"
+  }
+ ],
+ "fields": [
+  {
+   "name": "ID",
+   "type": "string"
+  },
+  {
+   "name": "ra",
+   "type": "float"
+  },
+  {
+   "name": "dec",
+   "type": "float"
+  },
+  {
+   "name": "Tmag",
+   "type": "float"
+  },
+  {
+   "name": "objType",
+   "type": "string"
+  },
+  {
+   "name": "version",
+   "type": "string"
+  },
+  {
+   "name": "KIC",
+   "type": "string"
+  },
+  {
+   "name": "GAIAmag",
+   "type": "float"
+  },
+  {
+   "name": "contratio",
+   "type": "float"
+  },
+  {
+   "name": "disposition",
+   "type": "string"
+  },
+  {
+   "name": "duplicate_id",
+   "type": "string"
+  },
+  {
+   "name": "gaiabp",
+   "type": "float"
+  },
+  {
+   "name": "gaiarp",
+   "type": "float"
+  },
+  {
+   "name": "dstArcSec",
+   "type": "float"
+  }
+ ],
+ "paging": {
+  "page": 1,
+  "pageSize": 20,
+  "pagesFiltered": 1,
+  "rows": 20,
+  "rowsFiltered": 20,
+  "rowsTotal": 20
+ }
+}

@@ -519,10 +519,11 @@
     const spread = (m) => `${g3(CC[m])} (16th to 84th percentile ${g3(CC[`${m}_p16`])} to ${g3(CC[`${m}_p84`])})`;
     sec(2).appendChild(h("h3", null, "Cross-check"));
     if (CC && Array.isArray(CC.runs)) {
+      // the validated class is never named and withdrawn in one breath (the pack's phrase)
       const cls = CC.class === "validated"
-        ? "validated, a region the paper could not set at the 30-minute cadence of these data (its section 4.2), so it is not called validated here"
-        : CC.class;
-      para(2, `An independent estimate with TRICERATOPS ${CC.tool_version} (Giacalone et al. 2021) over ${CC.n_runs} runs${CC.n_degenerate ? `, ${CC.n_degenerate} degenerate and left out` : ""}: median false-positive probability ${spread("fpp")}, ${spread("fpp_no_stp")} without a planet transiting an unresolved bound companion (STP), which SkySift's model leaves out, and nearby false-positive probability ${spread("nfpp")}. On Giacalone et al.'s scale the medians read as ${cls}; the classes are labels and never block the live draft. ${CC.current
+        ? "fall inside the paper's validation lines (FPP < 0.015 and NFPP < 0.001), which the paper could not set at 30-minute cadence, so it is not called validated here"
+        : `read as ${CC.class}`;
+      para(2, `An independent estimate with TRICERATOPS ${CC.tool_version} (Giacalone et al. 2021) over ${CC.n_runs} runs${CC.n_degenerate ? `, ${CC.n_degenerate} degenerate and left out` : ""}: median false-positive probability ${spread("fpp")}, ${spread("fpp_no_stp")} without a planet transiting an unresolved bound companion (STP), which SkySift's model leaves out, and nearby false-positive probability ${spread("nfpp")}. On Giacalone et al.'s scale the medians ${cls}; the classes are labels and never block the live draft. ${CC.current
         ? "It was made for this dossier's period, depth and neighbours."
         : "It was made for an earlier dossier (the period, the depth or the neighbours have changed since), so it does not count until it is run again."}`);
       if ((CC.caveats || []).length) {
@@ -534,6 +535,25 @@
       para(2, "This cross-check was stored by an earlier version of the tool, before its median and range and the FPP without STP; run it again.");
     } else {
       para(2, "No independent cross-check is stored yet.");
+    }
+    // the TESS statement, as the dashboard's section 03 draws it (referee pack spec 10)
+    const TS = D.tess;
+    sec(2).appendChild(h("h3", null, "TESS"));
+    if (TS && TS.available) {
+      para(2, TS.sentence || "");
+      const dil = TS.dilution || {}, noise = TS.noise || {}, sg = TS.significance || {};
+      const cad = (m) => (Math.abs(m - Math.round(m)) < 1e-9 ? `${Math.round(m)} min` : `${Math.round(m * 60)} s`);
+      list(2, (TS.sectors || []).map((s) => [`Sector ${s.sector} (cycle ${s.cycle}, ${cad(s.cadence_min)}):`,
+        `${s.n_transits} transit${s.n_transits === 1 ? "" : "s"} in the windows, timing error ${isNum(s.timing_error_days) ? `${fmt(s.timing_error_days * 24, 2)} h` : "not known"}, ${s.uncertain ? "uncertain" : "firm"}.`]), "only-expert");
+      para(2, `TIC ${TS.tic} · Tmag ${fmt(TS.tmag, 2)} (${TS.tmag_source || "source not stored"}) · contamination c = ${fmt(dil.c, 2)} over ${dil.aperture_pixels} pixels, ${fmt(dil.c_hard42, 2)} with the hard 42 arcsec cut · blended T = ${fmt(dil.t_total, 2)} · diluted depth ${fmt(dil.depth_tess_ppm)} ppm, ${fmt(dil.depth_tess_hard42_ppm)} ppm at the hard cut · noise over the transit ${fmt(noise.nominal_t14_ppm)} to ${fmt(noise.conservative_t14_ppm)} ppm · per-transit S/N ${fmt(sg.per_transit_conservative, 2)} to ${fmt(sg.per_transit_nominal, 2)} · about ${fmt(TS.n_expected, 1)} transits expected from phase coverage · inputs queried ${TS.queried || "on an unknown date"}`, "only-expert mono dossier-small");
+      if ((TS.caveats || []).length) {
+        const ul = h("ul", "dossier-small");
+        TS.caveats.forEach((c) => ul.appendChild(h("li", null, c)));
+        sec(2).appendChild(ul);
+      }
+    } else {
+      const why = TS && (TS.caveats || []).length ? ` (${TS.caveats.join("; ")})` : "";
+      para(2, `TESS coverage was not assessed${why}.`);
     }
     const kinds = Object.keys(fap.k_by_kind || {}).sort();
     if (kinds.length) para(2, kinds.map((kind, i) => `${kind}${i ? "" : " nulls"} ${fmt(fap.k_by_kind[kind])} of ${fmt((fap.n_by_kind || {})[kind])}`).join(", "), "prob-split");

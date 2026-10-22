@@ -1,0 +1,58 @@
+{
+ "results": [
+  {
+   "sectorName": "tess-s0014-1-1",
+   "sector": "0014",
+   "camera": "1",
+   "ccd": "1"
+  },
+  {
+   "sectorName": "tess-s0015-2-3",
+   "sector": "0015",
+   "camera": "2",
+   "ccd": "3"
+  },
+  {
+   "sectorName": "tess-s0041-1-1",
+   "sector": "0041",
+   "camera": "1",
+   "ccd": "1"
+  },
+  {
+   "sectorName": "tess-s0054-3-2",
+   "sector": "0054",
+   "camera": "3",
+   "ccd": "2"
+  },
+  {
+   "sectorName": "tess-s0055-3-1",
+   "sector": "0055",
+   "camera": "3",
+   "ccd": "1"
+  },
+  {
+   "sectorName": "tess-s0074-4-1",
+   "sector": "0074",
+   "camera": "4",
+   "ccd": "1"
+  },
+  {
+   "sectorName": "tess-s0075-4-2",
+   "sector": "0075",
+   "camera": "4",
+   "ccd": "2"
+  },
+  {
+   "sectorName": "tess-s0081-3-2",
+   "sector": "0081",
+   "camera": "3",
+   "ccd": "2"
+  },
+  {
+   "sectorName": "tess-s0082-3-1",
+   "sector": "0082",
+   "camera": "3",
+   "ccd": "1"
+  }
+ ]
+}

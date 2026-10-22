@@ -10,7 +10,9 @@ engine's loader and whitens it as the sweep did, thins the plot arrays to the si
 the star and its neighbours (``stars``), and computes the two probabilities (``calibrate.false_alarm``,
 ``fpp.compute``). It never changes a signal's status, and it reaches the network only through the injected ``fetch``.
 The TRICERATOPS cross-check stored on the row (``crosscheck``) is carried into ``cross_check`` with ``current``
-recomputed; it is never computed here.
+recomputed; it is never computed here. Since version 4 the ``tess`` block states whether TESS should have seen the
+transit (``skysift.tess.statement``, referee pack spec 10), from the inputs ``tools/tess_inputs.py`` stored in
+``targets.meta["tess"]``, so the dossier stays offline.
 ``export_html`` renders the JSON as one standalone file with its own level toggle and no external URL.
 
 Every sentence here is built from stored numbers by a rule (spec 5.7); the hand-written narrative of the KIC 6146676
@@ -41,7 +43,7 @@ from sqlalchemy import select
 from skysift import calibrate as cal
 from skysift import crosscheck as cc
 from skysift import ephemeris as eph
-from skysift import jsonutil, net, stars
+from skysift import jsonutil, net, stars, tess
 from skysift.calibrate import FalseAlarm
 from skysift.detectors.base import get_detector
 from skysift.detectors.periodogram import PeriodogramSummary
@@ -75,7 +77,7 @@ from skysift.vetting.rung5_pixels import PIXEL_RULE_VERSION
 
 log = logging.getLogger(__name__)
 
-DOSSIER_VERSION = "3"      # 3: ephemeris, timing, shape, parity and secondary blocks (22 October 2026)
+DOSSIER_VERSION = "4"      # 3: ephemeris, timing, shape, parity and secondary blocks; 4: the TESS block (22 Oct 2026)
 N_BOOT_DEFAULT = eph.N_BOOT     # the shape bootstrap's resamples; ``generate`` reads it at call time
 # best first; an undetermined signal (the pixel stage could not decide) outranks every closed one, so a target's
 # tile and its dossier name the same signal when a superseded parent or a rejected sibling has the higher SDE
@@ -1431,6 +1433,9 @@ def _assemble(store, signal, target, tests, decisions, plots, pixels, star, plan
     star_d = {**dataclasses.asdict(star), "gaia_errors": list(gaia_errors)}
     period, t0, dur = float(signal["period"]), float(signal["t0"]), float(signal["duration"])
     blocks = blocks or {}
+    ephemeris = {"period_days": period, "t0_bkjd": t0, "t0_bjd": t0 + BKJD_OFFSET, "duration_h": dur * 24,
+                 "depth_ppm": float(signal["depth_ppm"]), "sde": float(signal["sde"]), "snr": float(signal["snr"]),
+                 "n_events": int(signal["n_events"]), **(blocks.get("ephemeris_extra") or {})}
     return {
         "dossier_version": DOSSIER_VERSION, "generated": utcnow().isoformat(),
         "sections": [{"number": f"{i:02d}", "title": t} for i, t in enumerate(SECTIONS, 1)],
@@ -1441,10 +1446,7 @@ def _assemble(store, signal, target, tests, decisions, plots, pixels, star, plan
                    "label_text": label_text, "headline": verdict.headline,
                    "reviewer": verdict.reviewer},
         "summary": explain.summary_sentence(signal, target, tests),
-        "ephemeris": {"period_days": period, "t0_bkjd": t0, "t0_bjd": t0 + BKJD_OFFSET, "duration_h": dur * 24,
-                      "depth_ppm": float(signal["depth_ppm"]), "sde": float(signal["sde"]),
-                      "snr": float(signal["snr"]), "n_events": int(signal["n_events"]),
-                      **(blocks.get("ephemeris_extra") or {})},
+        "ephemeris": ephemeris,
         **{key: blocks.get(key) for key in ("timing", "shape", "parity", "secondary")},
         "plots": plots, "tests": test_rows, "why": [dataclasses.asdict(w) for w in explain.why(tests)],
         "rechecks": store.rechecks(signal["id"]), "children": store.children(signal["id"]),
@@ -1456,6 +1458,8 @@ def _assemble(store, signal, target, tests, decisions, plots, pixels, star, plan
         "pixels": pixels, "centroid_offset": centroid_offset(_metrics(tests, "rung5_pixels")),
         "star": star_d, "planet": with_k_error(dataclasses.asdict(planet), blocks.get("shape")),
         "look": look_numbers(star, planet),
+        # the TESS non-detection statement (referee pack spec 10) from the stored inputs and the fitted ephemeris
+        "tess": tess.statement((target.get("meta") or {}).get("tess"), ephemeris),
         "caveats": [], "provenance": _provenance(store, signal, target, calibration, data_dir),
     }
 

@@ -409,6 +409,13 @@ def _seed_pixels() -> list[dict]:
              "depth_target_ppm": [2213, 78], "depth_neighbour_ppm": [-21, 25]} for season in (0, 1)]
 
 
+# the TESS inputs ``tools/tess_inputs.py`` would store (``targets.meta["tess"]``): one bright neighbour half a pixel away
+SEED_TESS = {"queried": "2026-10-22", "tic": 169822650, "tmag": 15.1926, "tmag_source": "TIC", "ra": 297.86876,
+             "dec": 41.45565, "sectors": [14, 15, 41, 54, 55, 74, 75, 81, 82],
+             "neighbours": [{"tic": 169822655, "dst_arcsec": 11.7, "dra_pix": 0.40, "ddec_pix": -0.39,
+                             "tmag": 12.3923, "tmag_source": "TIC"}]}
+
+
 def seed_dossier(store: Store, data_dir, target_id: str = STAGE2_TARGET) -> dict:
     """A hand-made ``dossier_data.json`` for ``target_id``'s best signal (small arrays, every key ``generate`` writes,
     the star and planet of a cool dwarf, FPP 0.03, FAP 1 in 1,700, the version-3 error blocks of ``_seed_errors``)
@@ -419,6 +426,7 @@ def seed_dossier(store: Store, data_dir, target_id: str = STAGE2_TARGET) -> dict
     from pathlib import Path
 
     from skysift import dossier as ds
+    from skysift import tess
     from skysift.jsonutil import dumps
     from skysift.store.db import TargetRow
     from skysift.ui import explain
@@ -466,6 +474,7 @@ def seed_dossier(store: Store, data_dir, target_id: str = STAGE2_TARGET) -> dict
                                     "skysift calibrate --source kbonus_bkg",
                                     f"skysift dossier --target {target_id} --signal {sid} --force"]},
     }
+    data["tess"] = tess.statement(SEED_TESS, data["ephemeris"])
     data["caveats"] = ds.caveats(data)
     text = dumps(data)
     path = Path(data_dir) / "dossiers" / target_id / "dossier_data.json"
