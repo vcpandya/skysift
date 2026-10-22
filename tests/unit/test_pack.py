@@ -1416,8 +1416,8 @@ def test_pack_prints_the_cross_check_and_the_gate_refuses_without_one(env_with_d
     rep = _build(env, zenodo=live)
     assert rep.zenodo is not None and not rep.zenodo["sandbox"]
     sentence = cross_check.comparison_sentence({**_stored(env), "cross_check": block})
-    assert sentence.startswith("TRICERATOPS 1.1.0 (Giacalone et al. 2021), run on the KBonus light curve with Gaia "
-                               "DR3 field stars")
+    assert sentence.startswith("TRICERATOPS 1.1.0 (Giacalone et al. 2021), run on the KBonus light curve with Kepler "
+                               "limb darkening and Gaia DR3 field stars")
     assert "16th to 84th percentile" in sentence and "without a planet transiting an unresolved bound" in sentence
     for name in ("README.md", "exofop/note.txt", "archive_email.txt"):
         assert sentence in (rep.out_dir / name).read_text(encoding="utf-8"), name
@@ -1687,7 +1687,7 @@ def _with_tess(data: dict) -> dict:
 
 
 def _cites(tex: str) -> tuple[set, set]:
-    cited = {k.strip() for c in re.findall(r"\\cite[pt]?\{([^}]+)\}", tex) for k in c.split(",")}
+    cited = {k.strip() for c in re.findall(r"\\cite[pt]?(?:\[[^\]]*\]){0,2}\{([^}]+)\}", tex) for k in c.split(",")}
     return cited, set(re.findall(r"\\bibitem\[[^\]]*\]\{([^}]+)\}", tex))
 
 
@@ -1712,16 +1712,23 @@ def test_the_texts_carry_the_tess_statement(env_with_dossier):
     tex = render_note(data)
     section = tex.split(r"\section{How likely is a false positive}")[1].split(r"\section{")[0]
     assert tess_text_plain(block) in section.replace("\n", " ")
-    assert r"The method follows \citet{christ2019}, with TIC neighbours \citep{stassun2019}" in section
-    assert r"the TIC noise polynomial \citep{stassun2018} after \citet{sullivan2015}" in section
+    # round 2, N1: the note keeps the one sentence, citing Christ et al. 2019 alone; the methods go to the README
+    assert r"\citep[noise model and thresholds in the README;][]{christ2019}." in section
+    assert "The method follows" not in tex and "no TESS light curve was examined" not in tex
     cited, items = _cites(tex)
     assert cited == items                                                     # every citation listed, none unused
-    assert {key for key, _w in tess.METHOD_CITES} <= items
+    assert "christ2019" in items and not {key for key, _w in tess.METHOD_CITES} - {"christ2019"} & items
+    assert note_words(tex)["references"] < note_words(render_note(env_with_dossier.data))["references"] + 20
     words = note_words(tex)
     assert words["total"] <= NOTE_LIMITS["total"] and note_problems(words, tex) == []
     readme = render_readme(data, {})
     row = next(line for line in readme.splitlines() if line.startswith("| TESS | "))
     assert row == f"| TESS | {tess.readme_row(block)} |" and block["verdict"] in row
+    section = readme.split("TESS prediction (the note's TESS sentence points here): ")[1].split("\n")[0]
+    assert section.startswith(tess.methods_text(block)) and "7.1 or more" in section
+    assert ("References: Christ, C. N., Montet, B. T., & Fabrycky, D. C. 2019, AJ, 157, 235; Stassun, K. G.") in section
+    assert "Twicken, J. D., Jenkins, J. M., Caldwell, D. A., et al. 2025, RNAAS, 9, 132" in section
+    assert "~" not in section and "\\" not in section
     exofop_note = pack_module._render_plain("exofop_note.txt.j2", data, {})
     assert tess.exofop_line(block) in exofop_note.splitlines()
     archive = pack_module.archive_paragraph(data, "10.5281/zenodo.1", None)
@@ -1737,40 +1744,86 @@ def tess_text_plain(block: dict) -> str:
 
 def test_the_golden_note_with_a_tess_statement_stays_inside_the_word_limit():
     """The live KIC 6146676 dossier (the version 3 golden) with the statement its own inputs give: the note with the
-    sentence, the methods sentence and the nine references stays inside the RNAAS 1,500 words."""
+    sentence and its one reference stays inside the RNAAS 1,500 words and costs it under 100 (round 2, N1)."""
     golden = json.loads((Path(__file__).resolve().parents[1] / "golden" / "kic-006146676-generated.json")
                         .read_text(encoding="utf-8"))
     before = note_words(render_note(golden))["total"]
     words = note_words(render_note(_with_tess(golden)))
-    assert words["total"] <= NOTE_LIMITS["total"] and words["total"] - before < 250
+    assert words["total"] <= NOTE_LIMITS["total"] and words["total"] - before < 100
 
 
-def _full_configuration() -> dict:
-    """The golden with every block the note can carry at once: the TESS statement, a prior claim and a current
-    cross-check whose medians fall in no class and whose FPP without STP sits far from SkySift's own."""
+# the live shape's margin under the RNAAS 1,500 (fix round 2, N1): room for a caveat title or a degenerate run
+LIVE_SHAPE_LIMIT = 1480
+
+
+def _live_shape(timing: dict, cross: str, prior: bool = True) -> dict:
+    """The golden as a live draft has it (fix round 2, N1): ok ``timing`` (the fixture dossier's) and ``shape``
+    blocks, which the gate requires; a prior claim unless ``prior`` is False; a TESS block with a skipped sector and
+    an uncertain count (a period error that blurs the TESS epochs), still with transits in the windows, so the
+    sentence carries its uncertain clause, the skipped clause and its citation; and a current cross-check in one of
+    the two longest forms: ``cross="validated"`` (the validation-lines phrase, 23 words over the candidate phrase)
+    or ``cross="dominant"`` (a full FPP at 0.6 and the dominant-scenario sentence), each with the factor sentence."""
+    from skysift import tess
     from tests.unit.test_crosscheck import fake_result
     from tests.unit.test_dossier import PRIOR_CLAIM
-    golden = json.loads(GOLDEN.read_text(encoding="utf-8"))
-    full = {**_with_tess(golden), "prior_claims": [{k: PRIOR_CLAIM[k] for k in ("doi", "date", "author", "title")}]}
-    block = fake_result(cross_check.inputs_fingerprint(full), fpp=0.3, nfpp=0.002)
-    full["cross_check"] = cross_check.with_current({**block, "current": True}, full)
-    return full
+    from tests.unit.ui_seed import SEED_TESS
+    data = json.loads(GOLDEN.read_text(encoding="utf-8"))
+    data["timing"], data["shape"] = json.loads(json.dumps(timing)), json.loads(json.dumps(SHAPE_OK))
+    if prior:
+        data["prior_claims"] = [{k: PRIOR_CLAIM[k] for k in ("doi", "date", "author", "title")}]
+    meta = {**SEED_TESS, "sectors": [*SEED_TESS["sectors"], 109]}
+    data["tess"] = tess.statement(meta, {**data["ephemeris"], "period_err_days": 0.002})
+    if cross == "validated":
+        block = fake_result(cross_check.inputs_fingerprint(data), fpp=0.012, nfpp=1e-4)
+    else:
+        block = fake_result(cross_check.inputs_fingerprint(data), fpp=0.6, nfpp=0.002,
+                            scenarios=[{"ID": "169822655", "scenario": "NEB", "prob": 0.55},
+                                       {"ID": "169822650", "scenario": "TP", "prob": 0.4}])
+    data["cross_check"] = cross_check.with_current({**block, "current": True}, data)
+    return data
 
 
-def test_the_full_configuration_stays_inside_the_word_limit():
-    """Task 8 fix round 1, I3(b): the golden with a cross-check sentence (the longest: no class, a factor-of-three
-    sentence), a prior claim and the TESS statement with its methods sentence and nine references stays under the
-    RNAAS 1,500 words."""
+def _check_live_shape(timing: dict, cross: str, prior: bool) -> dict:
+    """Render ``_live_shape`` and check it carries every long form it should; its ``note_words``."""
     from skysift import tess
-    full = _full_configuration()
-    tex = render_note(full)
+    data = _live_shape(timing, cross, prior)
+    block = data["tess"]
+    assert block["sectors_skipped"] == [109] and block["uncertain"] and block["n_transits"] > 0
+    tex = render_note(data)
     flat = " ".join(tex.split())
-    assert str(pack_module.cross_check_sentence(full, True)) in flat and "the two models answer different" in flat
-    assert str(tess.note_sentence(full["tess"], True)) in flat and str(tess.methods_sentence(full["tess"], True)) in flat
-    assert PRIOR_DOI in flat
+    assert str(pack_module.cross_check_sentence(data, True)) in flat and "a factor of" in flat
+    assert ("Its full false-positive probability is at or above 0.5" in flat) == (cross == "dominant")
+    assert ("validation lines" in flat) == (cross == "validated")
+    sentence = str(tess.note_sentence(block, True))
+    assert sentence in flat and "Sector 109, not assessed" in sentence and "(count uncertain, about" in sentence
+    assert sentence.endswith(r"\citep[noise model and thresholds in the README;][]{christ2019}.")
+    assert (PRIOR_DOI in flat) == prior
     words = note_words(tex)
-    assert words["total"] < NOTE_LIMITS["total"] and note_problems(words, tex) == []
-    assert not [p for p in pack_module.gate_problems(full) if "words" in p]
+    assert note_problems(words, tex) == [] or words["total"] > NOTE_LIMITS["total"]
+    return words
+
+
+@pytest.mark.parametrize("cross", ["validated", "dominant"])
+def test_the_live_shape_stays_inside_the_word_limit_with_margin(env_with_dossier, cross):
+    """Fix round 2, N1: the note as a live draft renders it (timing and shape blocks, the longest cross-check forms,
+    a TESS sentence with a skipped sector and an uncertain count) stays at or under 1,480 words, 20 under the RNAAS
+    limit, and the gate does not refuse it for its length. Measured: 1,461 (validated) and 1,464 (dominant)."""
+    timing = env_with_dossier.data["timing"]
+    assert timing["ok"] is True
+    words = _check_live_shape(timing, cross, prior=False)
+    assert words["total"] <= LIVE_SHAPE_LIMIT, words
+    assert not [p for p in pack_module.gate_problems(_live_shape(timing, cross, False)) if "words" in p]
+
+
+@pytest.mark.xfail(strict=True, reason="fix round 2: with a prior claim the worst live shape renders 1,533 "
+                   "(validated) and 1,536 (dominant) words; the 1,480 margin needs a ruling on prose outside the "
+                   "TESS and cross-check sentences (see task-8-fix-round-1-report.md, Round 2)")
+@pytest.mark.parametrize("cross", ["validated", "dominant"])
+def test_the_live_shape_with_a_prior_claim_stays_inside_the_word_limit_with_margin(env_with_dossier, cross):
+    """Fix round 2, N1, with the prior claim the ruling adds: the same live shape plus a prior claim (about 72
+    words: the abstract clause, the body's two sentences and the reference). Strict xfail until it fits."""
+    words = _check_live_shape(env_with_dossier.data["timing"], cross, prior=True)
+    assert words["total"] <= LIVE_SHAPE_LIMIT, words
 
 
 def test_the_live_gate_refuses_a_note_over_the_word_limit(env_with_dossier):

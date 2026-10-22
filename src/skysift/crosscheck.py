@@ -645,21 +645,21 @@ def owner_flag(data: dict) -> str | None:
 
 
 def comparison_sentence(data: dict, tex: bool = False) -> str | None:
-    """For the pack's texts: the method (the TRICERATOPS version, the KBonus light curve, the package's Gaia DR3
-    field-star population; ruling u, the Kepler limb darkening left to the cross-check's caveats since fix round 1), the medians of the full FPP, the FPP without STP and the
+    """For the pack's texts: the method (the TRICERATOPS version, the KBonus light curve, Kepler limb darkening,
+    the package's Gaia DR3 field-star population; ruling u), the medians of the full FPP, the FPP without STP and the
     NFPP each with its 16th to 84th percentile range and the run count (ruling s), the class of the medians on
     Giacalone et al.'s scale (ruling t), the dominant scenario when the full FPP is at or above 0.5, and SkySift's own
     FPP set beside the FPP without STP, the like-for-like number (ruling o), with one sentence on why when the two
     differ by more than a factor of three. None without a current cross-check of the present format. With ``tex`` a
     LaTeX ``Raw`` citing ``giacalone2021``. Trimmed in Task 8 fix round 1 so the note keeps inside the RNAAS limit
-    with the TESS statement: both FPPs, their ranges and the class stay."""
+    with the TESS statement: both FPPs, their ranges, the class and the limb darkening (round 2) stay."""
     block = data.get("cross_check")
     if not complete(block) or block.get("current") is not True:
         return None
     n, deg = block["n_runs"], block["n_degenerate"]
     left_out = f", {deg} degenerate run{'s' if deg != 1 else ''} left out" if deg else ""
     head = f"TRICERATOPS {block['tool_version']} "
-    rest = (", run on the KBonus light curve with Gaia DR3 field stars, gives "
+    rest = (", run on the KBonus light curve with Kepler limb darkening and Gaia DR3 field stars, gives "
             f"a median false-positive probability of {_p(block['fpp'])} (16th to 84th percentile "
             f"{range_text(block, 'fpp')}), {_p(block['fpp_no_stp'])} ({range_text(block, 'fpp_no_stp')}) without a "
             "planet transiting an unresolved bound companion (STP), absent from SkySift's model, and a nearby "

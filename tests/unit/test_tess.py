@@ -229,7 +229,8 @@ def test_the_statement_for_kic_6146676():
         24 * max(s["timing_error_days"] for s in b["sectors"]))
     assert any("no TESS light curve was examined" in c for c in b["caveats"])
     assert any("1 neighbour without a TESS magnitude" in c for c in b["caveats"])
-    assert b["sentence"] == tess.note_sentence(b) and "—" not in b["sentence"]
+    assert b["sentence"] == tess.note_sentence(b, readme=False) and "—" not in b["sentence"]
+    assert b["methods"] == tess.methods_text(b) and b["methods"].startswith("The method follows Christ et al. 2019")
     json.dumps(b, allow_nan=False)
 
 
@@ -237,23 +238,30 @@ def test_the_note_sentence_is_one_short_sentence_with_every_number():
     b = tess.statement(META, EPHEMERIS)
     text = tess.note_sentence(b)
     sig, noise = b["significance"], b["noise"]
-    assert text == (f"TESS observed the star in 9 sectors (14 to 82, 30 min to 200 s); {b['n_transits']} ephemeris "
-                    f"transits fall in its windows at a diluted {b['dilution']['depth_tess_ppm']:,.0f} ppm against "
-                    f"{noise['nominal_1h_ppm']:,.0f} to {noise['conservative_1h_ppm']:,.0f} ppm per hour at a "
-                    f"blended T = {b['dilution']['t_total']:.1f}, a folded {sig['folded_conservative']:.2f} to "
-                    f"{sig['folded_nominal']:.2f} sigma, so {tess.VERDICT_PHRASES[b['verdict']]}.")
-    assert len(text.split()) < 60 and text.count("; ") == 1                # one short sentence
+    body = (f"TESS observed the star in 9 sectors (14 to 82, 30 min to 200 s); {b['n_transits']} ephemeris "
+            f"transits fall in its windows at a diluted {b['dilution']['depth_tess_ppm']:,.0f} ppm against a 1-hour "
+            f"noise of {noise['nominal_1h_ppm']:,.0f} to {noise['conservative_1h_ppm']:,.0f} ppm at a blended "
+            f"T = {b['dilution']['t_total']:.1f}, a folded {sig['folded_conservative']:.2f} to "
+            f"{sig['folded_nominal']:.2f} sigma, so {tess.VERDICT_PHRASES[b['verdict']]}")
+    # round 2, N1 and N4: the note's sentence points to the README and cites Christ et al. 2019 alone
+    assert text == f"{body} (noise model and thresholds in the README; Christ et al. 2019)."
+    assert b["sentence"] == f"{body}." and tess.note_sentence(b, readme=False) == f"{body}."
+    assert "per hour" not in text and len(text.split()) < 72 and text.count("; ") == 2   # one short sentence
     alone = tess.statement({**META, "neighbours": []}, EPHEMERIS)
     assert "at T = 15.2, a folded" in tess.note_sentence(alone)          # no blend, no "blended"
-    tex = tess.note_sentence(b, tex=True)
+    tex = str(tess.note_sentence(b, tex=True))
     assert "ephemeris transits" in tex and "\\%" not in tex
+    assert tex.endswith(r"the transit \citep[noise model and thresholds in the README;][]{christ2019}.")
+    assert set(re.findall(r"\{([a-z]+[0-9]{4})\}", tex)) == {"christ2019"} and tess.note_cites(b) == ("christ2019",)
 
 
 @pytest.mark.parametrize("verdict", ["should have detected", "marginal", "not expected"])
 def test_each_verdict_gets_its_phrase_and_an_exofop_line(verdict, monkeypatch):
     monkeypatch.setattr(tess, "verdict", lambda *_a: verdict)
     b = tess.statement(META, EPHEMERIS)
-    assert b["verdict"] == verdict and tess.note_sentence(b).endswith(f"so {tess.VERDICT_PHRASES[verdict]}.")
+    assert b["verdict"] == verdict and b["sentence"].endswith(f"so {tess.VERDICT_PHRASES[verdict]}.")
+    assert tess.note_sentence(b).endswith(f"so {tess.VERDICT_PHRASES[verdict]} (noise model and thresholds in the "
+                                          "README; Christ et al. 2019).")
     line = tess.exofop_line(b)
     assert line.startswith(f"TESS: {verdict}; {b['n_transits']} transits in sectors 14, 15, 41")
     assert "; folded S/N " in line and "-" in line.split("folded S/N ")[1]
@@ -265,6 +273,8 @@ def test_no_transit_in_a_window_is_a_statement_about_coverage():
     assert b["n_transits"] == 0 and b["verdict"] == "not observed in transit" and b["uncertain"] is False
     text = tess.note_sentence(b)
     assert "no transit fell in a TESS window" in text and "folded" not in text and "uncertain" not in text
+    assert "README" not in text and tess.note_cites(b) == ()           # no prediction, no citation
+    assert tess.methods_sentence(b) is not None                         # the README still says how it was counted
     assert tess.exofop_line(b) == "TESS: not observed in transit; 0 transits in sectors 14 and 15"
 
 
@@ -302,11 +312,24 @@ def test_a_sector_outside_the_table_is_named_as_not_assessed_in_every_text():
     assert "in sectors 14 and 15, and Sector 109, not assessed" in tess.exofop_line(b)
     two = tess.statement({**META, "sectors": [14, 109, 110]}, EPHEMERIS)
     assert ", and Sectors 109 and 110, not assessed" in tess.note_sentence(two)
+    assert tess.note_sentence(b).endswith("(noise model and thresholds in the README; Christ et al. 2019).")
+
+
+def test_a_star_seen_only_in_sectors_outside_the_table_is_not_assessed():
+    """Round 2, N3: the fifth verdict; every text says "not assessed", and neither the methods nor a citation is
+    printed, since no coverage was counted."""
     only = tess.statement({**META, "sectors": [109]}, EPHEMERIS)
+    assert only["verdict"] == "not assessed" and "not assessed" in tess.VERDICTS and len(tess.VERDICTS) == 5
+    assert only["sectors"] == [] and only["sectors_skipped"] == [109] and only["n_transits"] == 0
     assert tess.note_sentence(only) == ("TESS observed the star only in Sector 109, not assessed here, so no transit "
                                         "is counted in a TESS window.")
+    assert str(tess.note_sentence(only, tex=True)) == tess.note_sentence(only)    # no citation in the tex either
     assert tess.readme_row(only) == "not assessed: TESS observed the star only in Sector 109"
     assert tess.exofop_line(only).startswith("TESS: not assessed; observed only in Sector 109")
+    assert tess.methods_sentence(only) is None and tess.methods_text(only) is None and only["methods"] is None
+    assert tess.note_cites(only) == ()
+    two = tess.statement({**META, "sectors": [109, 110]}, EPHEMERIS)
+    assert two["verdict"] == "not assessed" and "only in Sectors 109 and 110" in two["sentence"]
 
 
 def test_an_ephemeris_without_errors_marks_the_count_uncertain():
@@ -314,7 +337,8 @@ def test_an_ephemeris_without_errors_marks_the_count_uncertain():
     b = tess.statement(META, eph)
     assert b["timing_error_hours_at_tess"] is None and b["uncertain"] is True
     assert all(s["uncertain"] for s in b["sectors"])
-    assert f"(no ephemeris error; about {b['n_expected']:.1f} expected)" in tess.note_sentence(b)
+    assert f"(count uncertain, about {b['n_expected']:.1f} expected)" in tess.note_sentence(b)
+    assert f"(no ephemeris error; about {b['n_expected']:.1f} expected)" in tess.readme_row(b)   # the README keeps why
     assert any("no error" in c for c in b["caveats"])
 
 
@@ -323,6 +347,7 @@ def test_no_sector_at_all():
     assert b["verdict"] == "not observed in transit" and b["sectors"] == []
     assert tess.note_sentence(b) == ("No TESS sector up to 108 observed the star, so no transit fell in a TESS "
                                      "window.")
+    assert tess.methods_sentence(b) is None and tess.note_cites(b) == ()
 
 
 def test_the_methods_sentence_credits_each_choice_to_its_source():
@@ -335,6 +360,8 @@ def test_the_methods_sentence_credits_each_choice_to_its_source():
     tex = str(tess.methods_sentence(b, tex=True))
     assert {key for key, _w in tess.METHOD_CITES} == set(re.findall(r"\\cite[pt]\{([^}]+)\}", tex))
     assert tess.methods_sentence({"available": False}) is None
+    full = tess.methods_text(b)
+    assert full.startswith(plain) and "7.1 or more" in full and "below a nominal 3" in full and "marginal" in full
 
 
 def test_the_two_pixel_radius_sum_is_named_for_comparison_not_as_a_bound():

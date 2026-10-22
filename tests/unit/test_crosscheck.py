@@ -415,8 +415,8 @@ def test_comparison_sentence_prints_both_fpps_with_their_ranges_and_the_class():
     block = {**fake_result(sha), "runs": runs, **cc.summarise(runs), "current": True}
     data = {"fpp": {"value": 0.0035}, "cross_check": block}
     text = cc.comparison_sentence(data)
-    assert text.startswith("TRICERATOPS 1.1.0 (Giacalone et al. 2021), run on the KBonus light curve with Gaia DR3 "
-                           "field stars, gives a median false-positive probability of 0.046 "
+    assert text.startswith("TRICERATOPS 1.1.0 (Giacalone et al. 2021), run on the KBonus light curve with Kepler limb "
+                           "darkening and Gaia DR3 field stars, gives a median false-positive probability of 0.046 "
                            "(16th to 84th percentile 0.046 to 0.046)")
     assert "1 in 1,900 (1 in 1,900 to 1 in 1,900) without a planet transiting an unresolved bound companion (STP)" in text
     assert "nearby false-positive probability of 1 in 10,000" in text and "over 20 runs;" in text

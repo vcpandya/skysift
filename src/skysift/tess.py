@@ -91,13 +91,18 @@ SHOULD_DETECT_DOC = ("A conservative folded significance at or above 7.1: the Ke
 NOT_EXPECTED_S = 3.0
 NOT_EXPECTED_DOC = ("A nominal folded significance below 3: the floor Christ, Montet and Fabrycky 2019 (AJ 157, "
                     "235) report as adequate for characterising known planets.")
-VERDICTS = ("should have detected", "marginal", "not expected", "not observed in transit")
+# "not assessed" (fix round 2, N3): TESScut lists sectors for the star but none of them is in the table, so no
+# coverage was counted and no prediction made
+VERDICTS = ("should have detected", "marginal", "not expected", "not observed in transit", "not assessed")
 VERDICT_PHRASES = {
     "should have detected": "TESS should have detected the transit and a TESS search is the natural follow-up",
     "marginal": "a TESS detection would be marginal",
     "not expected": "TESS is not expected to have detected the transit",
     "not observed in transit": "no transit fell in a TESS window",
+    "not assessed": "TESS coverage was not assessed",
 }
+# the note's sentence ends with this pointer and its one citation when a prediction was made (fix round 2, N1)
+README_POINTER = "noise model and thresholds in the README;"
 NOT_FETCHED = "TESS inputs not fetched"
 NOT_ASSESSED = "TESS coverage was not assessed."
 PREDICTION_CAVEAT = ("This is a prediction of detectability: no TESS light curve was examined. A fold of the TESScut "
@@ -319,7 +324,7 @@ def statement(meta: dict | None, ephemeris: dict | None) -> dict:
     con_t = max(nom_t, scale_to_duration(con_1h, t14, empirical=True))     # the conservative model never the lower
     s1_nom, s_nom = significance(depth_tess, nom_t, n_transits)
     s1_con, s_con = significance(depth_tess, con_t, n_transits)
-    word = verdict(n_transits, s_nom, s_con)
+    word = "not assessed" if not rows and skipped else verdict(n_transits, s_nom, s_con)
     if meta.get("tmag_source") and meta.get("tmag_source") != TMAG_TIC:
         caveats.append(f"The star's TESS magnitude comes from {meta['tmag_source']}: the TIC gives none.")
     if dil["n_without_tmag"]:
@@ -359,7 +364,8 @@ def statement(meta: dict | None, ephemeris: dict | None) -> dict:
                          "folded_nominal": s_nom, "folded_conservative": s_con},
         "verdict": word, "caveats": caveats,
     }
-    block["sentence"] = note_sentence(block)
+    block["sentence"] = note_sentence(block, readme=False)     # the page's copy: the method follows it there
+    block["methods"] = methods_text(block)
     return block
 
 
@@ -410,22 +416,42 @@ def _magnitude(b: dict) -> str:
     return f"T = {b['tmag']:.1f}"
 
 
-def _uncertain_clause(b: dict) -> str:
+def _uncertain_clause(b: dict, short: bool = False) -> str:
+    """Why the count is uncertain and how many transits phase coverage expects; ``short`` for the note's sentence
+    (fix round 2: the README row keeps the timing error)."""
     if not b.get("uncertain"):
         return ""
+    if short:
+        return f" (count uncertain, about {b['n_expected']:.1f} expected)"
     if b.get("timing_error_hours_at_tess") is None:
         return f" (no ephemeris error; about {b['n_expected']:.1f} expected)"
     return (f" (timing error {b['timing_error_hours_at_tess']:.1f} h, above half the duration; about "
             f"{b['n_expected']:.1f} expected)")
 
 
-def note_sentence(block: dict | None, tex: bool = False) -> str:
+def note_cites(block: dict | None) -> tuple[str, ...]:
+    """The citation keys the note's TESS sentence carries: Christ et al. 2019 alone (the detectability threshold
+    precedent) when a prediction was made, that is a transit fell in a counted window; none otherwise. The works of
+    the method are cited in the README (fix round 2, N1)."""
+    if isinstance(block, dict) and block.get("available") and block.get("sectors") and block.get("n_transits"):
+        return ("christ2019",)
+    return ()
+
+
+def note_sentence(block: dict | None, tex: bool = False, readme: bool = True) -> str:
     """The note's sentence (spec 10.8), one short sentence per candidate: the sectors as a span with the cadences,
     any sector TESScut lists that is not assessed, the transits in the windows, the diluted depth, the nominal and
-    conservative noise per hour at the (blended) magnitude, the folded significance under both and the verdict
-    phrase; "TESS coverage was not assessed." without the inputs. With ``tex`` a LaTeX ``Raw``."""
+    conservative 1-hour noise at the (blended) magnitude, the folded significance under both and the verdict
+    phrase, ending "(noise model and thresholds in the README; Christ et al. 2019)" when a prediction was made;
+    "TESS coverage was not assessed." without the inputs. ``readme=False`` leaves the pointer out (the dossier
+    page prints the method under it). With ``tex`` a LaTeX ``Raw``."""
     text = _plain_sentence(block)
-    return Raw(tex_escape(text)) if tex else text
+    if not (readme and note_cites(block)):
+        return Raw(tex_escape(text)) if tex else text
+    body = text[:-1]
+    if tex:
+        return Raw(tex_escape(body) + rf" \citep[{tex_escape(README_POINTER)}][]{{christ2019}}.")
+    return f"{body} ({README_POINTER} Christ et al. 2019)."
 
 
 def _plain_sentence(b: dict | None) -> str:
@@ -445,15 +471,16 @@ def _plain_sentence(b: dict | None) -> str:
         unc = "; count uncertain" if b.get("uncertain") else ""
         return (f"{head}, but {VERDICT_PHRASES['not observed in transit']} on the Kepler ephemeris (about "
                 f"{b['n_expected']:.1f} expected{unc}), so the coverage says nothing about the signal.")
-    noise, sig = b["noise"], b["significance"]
-    return (f"{head}; {n} ephemeris transit{'s fall' if n != 1 else ' falls'} in its windows{_uncertain_clause(b)} "
-            f"at a diluted {_ppm(b['dilution']['depth_tess_ppm'])} ppm against {_ppm(noise['nominal_1h_ppm'])} to "
-            f"{_ppm(noise['conservative_1h_ppm'])} ppm per hour at {_magnitude(b)}, a folded "
+    noise, sig, unc = b["noise"], b["significance"], _uncertain_clause(b, short=True)
+    return (f"{head}; {n} ephemeris transit{'s fall' if n != 1 else ' falls'} in its windows{unc} "
+            f"at a diluted {_ppm(b['dilution']['depth_tess_ppm'])} ppm against a 1-hour noise of "
+            f"{_ppm(noise['nominal_1h_ppm'])} to {_ppm(noise['conservative_1h_ppm'])} ppm at {_magnitude(b)}, a folded "
             f"{_s(sig['folded_conservative'])} to {_s(sig['folded_nominal'])} sigma, so "
             f"{VERDICT_PHRASES[b['verdict']]}.")
 
 
-# the works the note's methods sentence cites, as (key, plain citation)
+# the works the methods sentence cites, as (key, plain citation); since fix round 2 (N1) it is printed in the
+# README's TESS section and on the dossier page, and the note cites Christ et al. 2019 alone
 METHOD_CITES = (("christ2019", "Christ et al. 2019"), ("stassun2019", "Stassun et al. 2019"),
                 ("ricker2015", "Ricker et al. 2015"), ("giacalone2021", "Giacalone et al. 2021"),
                 ("guerrero2021", "Guerrero et al. 2021"), ("stassun2018", "Stassun et al. 2018"),
@@ -462,9 +489,11 @@ METHOD_CITES = (("christ2019", "Christ et al. 2019"), ("stassun2019", "Stassun e
 
 
 def methods_sentence(block: dict | None, tex: bool = False) -> str | None:
-    """How the TESS prediction was made, each choice credited to its source (spec 10.9), for the note after
-    ``note_sentence``; None without a verdict. With ``tex`` a LaTeX ``Raw`` with ``\\citep`` and ``\\citet``."""
-    if not isinstance(block, dict) or not block.get("verdict"):
+    """How the TESS prediction was made, each choice credited to its source (spec 10.9), for the README's TESS
+    section and the dossier page; None without a counted sector (no inputs, no sector, or only sectors not in the
+    table). With ``tex`` a LaTeX ``Raw`` with ``\\citep`` and ``\\citet``."""
+    if (not isinstance(block, dict) or not block.get("verdict") or block.get("verdict") == "not assessed"
+            or not block.get("sectors")):
         return None
     words = dict(METHOD_CITES)
 
@@ -481,6 +510,25 @@ def methods_sentence(block: dict | None, tex: bool = False) -> str | None:
     if not tex:
         return "".join(parts)
     return Raw("".join(x if isinstance(x, Raw) else tex_escape(x) for x in parts))
+
+
+def thresholds_sentence() -> str:
+    """The verdict's thresholds and the two noise models in words, for the README and the page beside
+    ``methods_sentence`` (the note points to them)."""
+    return (f"The verdict is \"should have detected\" at a conservative folded S/N of {SHOULD_DETECT_S} or more, the "
+            "Kepler threshold on which Christ et al. 2019 centre their TESS recovery (Sullivan et al. 2015 use 7.3), "
+            f"\"not expected\" below a nominal {NOT_EXPECTED_S:.0f}, the floor Christ et al. 2019 report as adequate "
+            "for characterising known planets, and \"marginal\" between. The nominal 1-hour noise is the TIC "
+            "polynomial at the blended magnitude, scaled to the transit duration as white noise; the conservative one "
+            "is the SPOC CDPP median at that magnitude (beyond the table's 12 to 16, the polynomial times the "
+            "table's excess at its nearer end), scaled by the SPOC's measured duration ratios and never below the "
+            "nominal.")
+
+
+def methods_text(block: dict | None) -> str | None:
+    """``methods_sentence`` and ``thresholds_sentence`` as one plain paragraph, or None without a method."""
+    method = methods_sentence(block)
+    return None if method is None else f"{method} {thresholds_sentence()}"
 
 
 def readme_row(block: dict | None) -> str:

@@ -243,6 +243,9 @@
     {%- if ts and ts.available %}
     {%- set dil, noise, sig = ts.dilution, ts.noise, ts.significance %}
     <p>{{ ts.sentence }}</p>
+    {%- if ts.methods %}
+    <p class="dossier-small">{{ ts.methods }}</p>
+    {%- endif %}
     <div class="only-expert dossier-expert">
       <div class="table-wrap"><table class="dossier-table">
         <caption>TESS sectors on the Kepler ephemeris</caption>

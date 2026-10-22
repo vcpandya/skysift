@@ -898,6 +898,8 @@ def test_section_03_carries_the_tess_statement(seeded_dossier):
         checks = html.unescape(client.get(f"/dossiers/{STAGE2_TARGET}").text.split('id="checks"')[1]
                                .split('id="pixels"')[0])
         assert "<h3>TESS</h3>" in checks and block["sentence"] in checks
+        assert block["methods"] and block["methods"] in checks             # round 2, N1: the method beside it
+        assert "README" not in block["sentence"]
         assert "TESS sectors on the Kepler ephemeris" in checks
         assert "as the two-pixel-radius sum, for comparison" in checks
         assert "no TESS light curve was examined" in checks and chr(0x2014) not in checks
@@ -917,4 +919,5 @@ def test_section_03_carries_the_tess_statement(seeded_dossier):
     export = client.get(f"/dossiers/{STAGE2_TARGET}/export.html").text
     blob = export.split('<script id="dossier-data" type="application/json">')[1].split("</script>")[0]
     assert json.loads(blob)["tess"] == block
+    assert 'if (TS.methods) para(2, TS.methods, "dossier-small");' in export
     assert 'h("h3", null, "TESS")' in export and "TESS coverage was not assessed${why}." in export

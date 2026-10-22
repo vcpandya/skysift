@@ -541,6 +541,7 @@
     sec(2).appendChild(h("h3", null, "TESS"));
     if (TS && TS.available) {
       para(2, TS.sentence || "");
+      if (TS.methods) para(2, TS.methods, "dossier-small");
       const dil = TS.dilution || {}, noise = TS.noise || {}, sg = TS.significance || {};
       const cad = (m) => (Math.abs(m - Math.round(m)) < 1e-9 ? `${Math.round(m)} min` : `${Math.round(m * 60)} s`);
       list(2, (TS.sectors || []).map((s) => [`Sector ${s.sector} (cycle ${s.cycle}, ${cad(s.cadence_min)}):`,
