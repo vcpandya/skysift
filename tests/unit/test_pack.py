@@ -1328,13 +1328,13 @@ def test_note_has_software_facilities_and_the_model_clause_within_the_limits(env
     for data in (env_with_dossier.data, golden):
         tex = render_note(data)
         version = data["signal"]["detector_version"]
-        # the commit the dossier was generated at (the golden's efd8e0b, not the checkout's HEAD), and triceratops
+        # the commit the dossier was generated at (the golden's ae13ec2, not the checkout's HEAD), and triceratops
         # only with a stored cross-check (M10), which the golden has (fix round 4)
         commit = data["provenance"]["git_commit"]
         tools = "numpy, scipy, astropy, matplotlib" + (", triceratops" if data.get("cross_check") else "")
         assert (rf"\software{{SkySift {md.version('skysift')} (search version {tex_safe(version)}, commit "
                 rf"{tex_safe(commit)}), {tools}}}") in tex
-        assert (data is golden) == bool(data.get("cross_check")) and (data is not golden or commit == "efd8e0b")
+        assert (data is golden) == bool(data.get("cross_check")) and (data is not golden or commit == "ae13ec2")
         crossed = render_note({**data, "cross_check": {"fpp": 0.01, "nfpp": 0.001, "current": False}})
         assert "matplotlib, triceratops}" in crossed
         assert r"\facilities{Kepler, Gaia, MAST, Exoplanet Archive}" in tex

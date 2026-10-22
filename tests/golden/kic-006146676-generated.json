@@ -1,6 +1,6 @@
 {
  "dossier_version": "5",
- "generated": "2026-10-22T22:06:46.937689+00:00",
+ "generated": "2026-10-22T23:23:38.813542+00:00",
  "target": {
   "target_id": "kic-006146676",
   "source": "kbonus_bkg",
@@ -4341,7 +4341,9 @@
   "level_arcsec": 0.2,
   "sigma_level": 3.0,
   "rule": "Bryson et al. 2013: an offset counts when above 3 sigma and above 0.2 arcsec",
-  "n_seasons": 4
+  "n_seasons": 4,
+  "exclusion_radius_arcsec": 0.83480394,
+  "exclusion_rule": "max(3 sigma, 0.5 arcsec) about the Gaia-referenced difference centroid (spec 11.5)"
  },
  "prior_claims": [],
  "hand_built_localisation": {
@@ -4385,6 +4387,16 @@
    "aperture_z": -3.9007213,
    "aperture_ratio": 0.69595868
   }
+ },
+ "calibration": {
+  "sweep_size": 1579,
+  "sweep_source": "kbonus_bkg",
+  "sweep_detector": "box_dip",
+  "sweep_detector_version": "5+6cfe4cf4",
+  "sweep_query": "distinct target_id of runs with status done, the signal's detector and detector version, a job key not starting 'recheck:', on targets of the signal's source",
+  "null_stars": 999,
+  "null_searches": 1998,
+  "expected_by_chance": 9.4787394
  },
  "signal": {
   "id": 1032,
@@ -4832,6 +4844,6 @@
    "rung4_novelty": "4",
    "rung5_pixels": "4"
   },
-  "git_commit": "efd8e0b"
+  "git_commit": "ae13ec2"
  }
 }
