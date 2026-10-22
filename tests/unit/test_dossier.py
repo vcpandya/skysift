@@ -1024,3 +1024,19 @@ def test_a_version_2_dossier_renders_and_regenerates(env):
     again = generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch)     # no --force
     assert again.generated and again.stale_reason == "the dossier format changed (2 to 3)"
     assert _data(again)["timing"] is not None
+
+
+# ---------------------------------------------------------------------------------------------------- the cross-check
+
+def test_generate_merges_the_stored_cross_check_and_a_regeneration_keeps_it(env):
+    from skysift import crosscheck as cc
+    from tests.unit.test_crosscheck import fake_result
+    first = _data(generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch))
+    assert first["cross_check"] is None
+    block = {**fake_result(cc.inputs_fingerprint(first)), "current": True}
+    env.store.set_cross_check(STAGE2_TARGET, block)
+    again = _data(generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch, force=True))
+    assert again["cross_check"] == block and env.store.dossier(STAGE2_TARGET)["cross_check"] == block
+    env.store.set_cross_check(STAGE2_TARGET, {**block, "inputs_sha256": "0" * 64})     # made for other inputs
+    stale = _data(generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch, force=True))
+    assert stale["cross_check"]["current"] is False and stale["cross_check"]["fpp"] == 0.012

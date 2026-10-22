@@ -261,7 +261,8 @@ class DossierRow(Base):
     """One generated dossier per target (dossiers spec 5.4, 5.6): where its ``dossier_data.json`` is, the signal and
     versions it was built from, the two probabilities with their detail, and the fingerprint of the test rows, status
     and decision it saw (the dossier is stale when the signal's fingerprint today differs). The pack columns are
-    filled by ``skysift pack``."""
+    filled by ``skysift pack``; ``cross_check`` by ``skysift crosscheck --import`` only (the TRICERATOPS result with
+    the inputs fingerprint it was made for), and a regeneration leaves it as it is."""
     __tablename__ = "dossiers"
     target_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     signal_id: Mapped[int] = mapped_column(ForeignKey("signals.id"), index=True)
@@ -280,6 +281,7 @@ class DossierRow(Base):
     pack_path: Mapped[str] = mapped_column(Text, default="")
     pack_steps: Mapped[dict] = mapped_column(JSON, default=dict)      # {"1": true, ...}
     pack_built: Mapped[datetime | None] = mapped_column(DateTime)
+    cross_check: Mapped[dict | None] = mapped_column(JSON)         # crosscheck.import_result's block, or None
 
 
 DOSSIER_FIELDS = tuple(c.name for c in DossierRow.__table__.columns)
@@ -670,6 +672,16 @@ class Store:
             return None if a is None else {"sha256": a.sha256, "local_path": a.local_path, "nbytes": a.nbytes,
                                            "kind": a.kind, "pinned": a.pinned}
 
+    def kept_artifacts(self, kind: str, url_prefix: str) -> dict[str, str]:
+        """{url: local_path} of the undeleted ``kind`` artifacts whose url starts with ``url_prefix``, whichever target
+        they were kept for, the latest row per url (by ``created``)."""
+        with self.session() as s:
+            rows = s.execute(select(ArtifactRow.url, ArtifactRow.local_path)
+                             .where(ArtifactRow.kind == kind, ArtifactRow.deleted_at.is_(None),
+                                    ArtifactRow.url.startswith(url_prefix, autoescape=True))
+                             .order_by(ArtifactRow.url, ArtifactRow.created)).all()
+        return {url: path for url, path in rows}       # ordered by created: the last row per url wins
+
     def touch_artifact(self, sha256: str) -> None:
         with self.session() as s:
             row = s.get(ArtifactRow, sha256)
@@ -746,6 +758,14 @@ class Store:
             if row is None:
                 raise KeyError(target_id)
             row.pack_path, row.pack_built = pack_path, built
+
+    def set_cross_check(self, target_id: str, block: dict | None) -> None:
+        """Store the cross-check block on the target's dossier row (None clears it). Raises KeyError without a row."""
+        with self.session() as s:
+            row = s.get(DossierRow, target_id)
+            if row is None:
+                raise KeyError(target_id)
+            row.cross_check = None if block is None else dict(block)
 
     def set_pack_steps(self, target_id: str, steps: dict) -> None:
         with self.session() as s:

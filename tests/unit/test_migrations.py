@@ -37,7 +37,7 @@ def test_migrate_milestone1_database_in_place(tmp_path):
     with s.engine.connect() as c:
         assert c.execute(text("select kind from artifacts")).scalar() == "raw"       # existing rows get the default
         steps = [r[0] for r in c.execute(text("select step from schema_version"))]
-        assert steps == ["001_dashboard", "002_recheck", "003_dossiers"]
+        assert steps == ["001_dashboard", "002_recheck", "003_dossiers", "004_cross_check"]
 
 
 def test_migrate_is_idempotent(tmp_path):
@@ -93,7 +93,8 @@ def test_step_002_adds_recheck_columns_to_an_old_database(old_schema_engine):
 
 
 def test_step_002_keeps_old_rows_indexes_the_parent_and_serves_the_store(old_schema_engine):
-    assert migrate(old_schema_engine) == ["002_recheck", "003_dossiers"] and migrate(old_schema_engine) == []
+    assert migrate(old_schema_engine) == ["002_recheck", "003_dossiers", "004_cross_check"]
+    assert migrate(old_schema_engine) == []
     insp = inspect(old_schema_engine)
     assert "ix_signals_parent_signal_id" in {i["name"] for i in insp.get_indexes("signals")}
     store = Store(str(old_schema_engine.url)); store.init_schema()        # create_all and migrate leave it alone
@@ -118,3 +119,38 @@ def test_step_003_creates_the_dossiers_table_on_an_old_database(old_schema_engin
                          search_version="v", ladder_version="4", dossier_version="1", fap=None, fpp=0.1,
                          fap_detail={}, fpp_detail={}, tests_fingerprint="f" * 64, status_at_generation="undetermined")
     assert store.dossier("kic-1")["fpp"] == 0.1 and migrate(old_schema_engine) == []
+
+
+def _version3_engine(tmp_path):
+    """A database as the dossiers milestone left it: steps 001 to 003 recorded and a dossiers table (with one row)
+    that has no cross_check column."""
+    old = MetaData()
+    for t in Base.metadata.sorted_tables:
+        Table(t.name, old, *[_plain_copy(c) for c in t.columns if not (t.name == "dossiers" and c.name == "cross_check")])
+    engine = Store(f"sqlite:///{tmp_path.as_posix()}/v3.db").engine
+    old.create_all(engine)
+    with engine.begin() as c:
+        c.execute(text("CREATE TABLE schema_version (step VARCHAR(64) PRIMARY KEY, applied TIMESTAMP)"))
+        for step in ("001_dashboard", "002_recheck", "003_dossiers"):
+            c.execute(text(f"INSERT INTO schema_version VALUES ('{step}', '2026-10-21 00:00:00')"))
+        c.execute(text("INSERT INTO dossiers (target_id, signal_id, generated, data_path, search_version, "
+                       "dossier_version, fap_detail, fpp_detail, tests_fingerprint, status_at_generation, "
+                       "export_path, pack_path, pack_steps) VALUES ('kic-1', 1, '2026-10-21 00:00:00', 'd.json', "
+                       "'v', '3', '{}', '{}', 'f', 'candidate_stage2', '', '', '{}')"))
+    return engine
+
+
+def test_migration_004_adds_the_column(tmp_path):
+    fresh = Store(f"sqlite:///{tmp_path.as_posix()}/fresh.db"); fresh.init_schema()
+    assert "cross_check" in {c["name"] for c in inspect(fresh.engine).get_columns("dossiers")}
+    with fresh.engine.connect() as c:
+        assert "004_cross_check" in {r[0] for r in c.execute(text("select step from schema_version"))}
+    engine = _version3_engine(tmp_path)
+    assert "cross_check" not in {c["name"] for c in inspect(engine).get_columns("dossiers")}
+    assert migrate(engine) == ["004_cross_check"] and migrate(engine) == []
+    col = next(c for c in inspect(engine).get_columns("dossiers") if c["name"] == "cross_check")
+    assert col["nullable"]
+    store = Store(str(engine.url)); store.init_schema()
+    assert store.dossier("kic-1")["cross_check"] is None                       # the old row reads as no block
+    store.set_cross_check("kic-1", {"tool": "triceratops", "fpp": 0.01})
+    assert store.dossier("kic-1")["cross_check"] == {"tool": "triceratops", "fpp": 0.01}

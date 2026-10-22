@@ -9,6 +9,8 @@ engine's loader and whitens it as the sweep did, thins the plot arrays to the si
 (``docs/candidates/kic-006146676/prep_data.py``), reads rung 5's ``pixels.npz`` artifact when present, asks Gaia for
 the star and its neighbours (``stars``), and computes the two probabilities (``calibrate.false_alarm``,
 ``fpp.compute``). It never changes a signal's status, and it reaches the network only through the injected ``fetch``.
+The TRICERATOPS cross-check stored on the row (``crosscheck``) is carried into ``cross_check`` with ``current``
+recomputed; it is never computed here.
 ``export_html`` renders the JSON as one standalone file with its own level toggle and no external URL.
 
 Every sentence here is built from stored numbers by a rule (spec 5.7); the hand-written narrative of the KIC 6146676
@@ -37,6 +39,7 @@ import numpy as np
 from sqlalchemy import select
 
 from skysift import calibrate as cal
+from skysift import crosscheck as cc
 from skysift import ephemeris as eph
 from skysift import jsonutil, net, stars
 from skysift.calibrate import FalseAlarm
@@ -1127,6 +1130,9 @@ def generate(store: Store, blob, settings, target_id: str, *, signal_id: int | N
     data["section_errors"] = errors
     data["caveats"] = caveats(data)
     data = _tidy(data)
+    # the cross-check is only ever stored by ``skysift crosscheck --import``; here it is carried over, with
+    # ``current`` recomputed against this dossier's inputs
+    data["cross_check"] = cc.with_current((old or {}).get("cross_check"), data)
     text = jsonutil.dumps(data, separators=(",", ":"))
     _write_atomic(data_path, text)
     _record_artifact(store, DOSSIER_URL.format(target_id=target_id), data_path, text, target_id)

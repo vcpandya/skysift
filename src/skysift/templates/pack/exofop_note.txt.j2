@@ -17,6 +17,9 @@ Pixels: {{ n.pixel_plain }}
 
 {{ n.fap_text }}
 {{ n.fpp_text }}
+{% if n.cross_check_sentence %}
+{{ n.cross_check_sentence }}
+{% endif %}
 
 Files: the detrended light curve (CSV: time BKJD, relative flux and error in ppm, quarter), the ephemeris and parameters with errors (CSV), {% if f.exofop_stellar %}the stellar parameters in ExoFOP's template{% else %}no stellar parameter file (the star could not be characterized from Gaia photometry){% endif %}, the folded, odd and even, periodogram{% if f.pixels_figure %} and centroid{% endif %} figures, and the standalone dossier (HTML, all vetting numbers).
 

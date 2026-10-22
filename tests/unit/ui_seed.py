@@ -451,7 +451,7 @@ def seed_dossier(store: Store, data_dir, target_id: str = STAGE2_TARGET) -> dict
         "why": [dataclasses.asdict(w) for w in explain.why(tests)],
         "rechecks": store.rechecks(sid), "children": store.children(sid), "fap": fap, "fpp": fpp,
         "pixels": _seed_pixels(), "star": star, "planet": planet, "look": look, "caveats": [],
-        "section_errors": {},
+        "section_errors": {}, "cross_check": None,
         "provenance": {"search_version": sig["detector_version"], "ladder_version": ladder,
                        "ladder_versions": per_rung, "git_commit": "seed", "queries": [], "files": [],
                        "calibration_file": "calibration/kbonus_bkg.jsonl",

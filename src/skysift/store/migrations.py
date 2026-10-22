@@ -44,13 +44,18 @@ def _step_003_dossiers(conn: Connection) -> None:
     DossierRow.__table__.create(conn, checkfirst=True)
 
 
+def _step_004_cross_check(conn: Connection) -> None:
+    # the TRICERATOPS cross-check block (referee pack spec 4.2); nullable, so every existing row reads as "none yet"
+    _add_column(conn, "dossiers", "cross_check", "JSON")
+
+
 # a typed table so the driver gets a bound DateTime (sqlite3's default datetime adapter is deprecated); the stored
 # value is naive UTC, like every ORM DateTime column in db.py
 _SCHEMA_VERSION = Table("schema_version", MetaData(), Column("step", String(64), primary_key=True),
                         Column("applied", DateTime))
 
 STEPS = [("001_dashboard", _step_001_dashboard), ("002_recheck", _step_002_recheck),
-         ("003_dossiers", _step_003_dossiers)]
+         ("003_dossiers", _step_003_dossiers), ("004_cross_check", _step_004_cross_check)]
 
 
 def migrate(engine: Engine) -> list[str]:

@@ -13,8 +13,9 @@ from the target's stored dossier (``dossier_data.json``) and the light curve the
 - ``data/``: the whitened light curve, the ephemeris, parameters and dilution numbers with errors
   (``ephemeris_rows``, ``param_rows``, ``dilution_rows``), the per-transit times (``timing_rows``), the transit shape
   with its bootstrap errors (``shape_rows``), the stellar provenance (``provenance_rows``), the per-event depths, the
-  periodogram summary and the rung metrics; ``note/figure1_data.csv`` is the data behind the note's figure. The
-  row builders live in ``skysift.pack_rows``.
+  periodogram summary, the rung metrics and the stored TRICERATOPS cross-check (``cross_check.json``, when there is
+  one); ``note/figure1_data.csv`` is the data behind the note's figure. The row builders live in
+  ``skysift.pack_rows``.
   ``figures/``: fold, odd and even, periodogram and one centroid panel per season, as SVG, plus PNG when matplotlib
   imports. ``dossier.html``: the standalone export. ``provenance/``: versions, the query log, the calibration counts
   and the SHA-256 of every file. ``exofop/``: copies named ``<target>_<yyyymmdd>_<content>``, the upload note and
@@ -51,6 +52,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 
 from skysift import calibrate as cal
+from skysift import crosscheck as cc
 from skysift import dossier as ds
 from skysift import fpp as fpp_model
 from skysift import jsonutil
@@ -275,6 +277,7 @@ def references(data: dict) -> dict[str, bool]:
             "mann2015": star_ok and route == "mann",
             "mann2019": star_ok and route == "mann" and value_text(star.get("mass")) is not None,
             "lindegren2021": star_ok and star.get("distance_pc") is not None,
+            "giacalone2021": cross_check_sentence(data) is not None,
             "kopparapu2013": star_ok and _hz_where(planet) is not None}
 
 
@@ -282,6 +285,8 @@ BIBLIOGRAPHY = (
     ("dressing2015", r"{Dressing} \& {Charbonneau}(2015)",
      r"Dressing, C.~D., \& Charbonneau, D. 2015, ApJ, 807, 45"),
     ("fressin2013", r"{Fressin} et~al.(2013)", r"Fressin, F., Torres, G., Charbonneau, D., et~al. 2013, ApJ, 766, 81"),
+    ("giacalone2021", r"{Giacalone} et~al.(2021)",
+     r"Giacalone, S., Dressing, C.~D., Jensen, E.~L.~N., et~al. 2021, AJ, 161, 24"),
     ("kbonus", r"{Mart{\'\i}nez-Palomera} et~al.(2023a)",
      r"Mart{\'\i}nez-Palomera, J., Hedges, C., \& Dotson, J. 2023a, AJ, 166, 265, doi:10.3847/1538-3881/ad0727"),
     ("kbonushlsp", r"{Mart{\'\i}nez-Palomera} et~al.(2023b)",
@@ -297,6 +302,12 @@ BIBLIOGRAPHY = (
     ("morton2012", r"{Morton}(2012)", r"Morton, T.~D. 2012, ApJ, 761, 6"),
     ("pecaut2013", r"{Pecaut} \& {Mamajek}(2013)", r"Pecaut, M.~J., \& Mamajek, E.~E. 2013, ApJS, 208, 9"),
 )
+
+
+def cross_check_sentence(data: dict, tex: bool = False) -> str | None:
+    """The TRICERATOPS cross-check beside SkySift's own estimate (``crosscheck.comparison_sentence``), for the four
+    texts; None without a cross-check made for this dossier's inputs, which the texts then leave out."""
+    return cc.comparison_sentence(data, tex=tex)
 
 
 def shape_sentence(data: dict, tex: bool = False) -> str | None:
@@ -627,6 +638,8 @@ def numbers(data: dict, tex: bool = False, after_bjd: float | None = None) -> di
         "stellar parameters", "hz_where": _hz_where(planet), "hz_inner": _f(planet.get("hz_inner_au"), 3),
         "hz_outer": _f(planet.get("hz_outer_au"), 3),
         "fap_text": fap_text, "fpp_text": fpp_text, "caveats": caveats,
+        "cross_check_sentence": cross_check_sentence(data, tex),
+        "cross_check_block": cc.verdict(data.get("cross_check"))[1],
         "abstract": abstract_text(data),
         "caveat_text": " ".join(f"{c['title'].rstrip('.')}." for c in caveats) or "No caveat is recorded.",
         "window_h": _f(plots.get("window_h"), 1), "bin_minutes": _f(duration * 60 / 8, 0) if duration else None,
@@ -681,11 +694,12 @@ def archive_paragraph(data: dict, doi: str, tic: str | None) -> str:
     where = f" (Gaia DR3 {n['gaia_id']}, RA {n['ra']} deg, Dec {n['dec']} deg)" if n["gaia_id"] else ""
     rp = f", which gives a planet radius of {n['rp_text']} Earth radii" if n["rp_text"] else ""
     exofop = f"under TIC {tic}" if tic else f"on the {n['name']} page"
+    cross = f" {n['cross_check_sentence']}" if n["cross_check_sentence"] else ""
     return (f"I write about a transit candidate on {n['name']}{where}, now in an accepted refereed paper "
             f"(doi:{PAPER_DOI_PLACEHOLDER}), since the archive takes parameters from such a paper and not from the "
             f"Research Note of the AAS that first reported it (doi:{RNAAS_DOI_PLACEHOLDER}). SkySift (search version "
             f"{n['search_version']}, commit {n['commit']}) found it in the KBonus Kepler Background light curves. "
-            f"The ephemeris is {n['ephemeris_text']}{rp}. {n['fap_text']} {n['fpp_text']} The light curve, "
+            f"The ephemeris is {n['ephemeris_text']}{rp}. {n['fap_text']} {n['fpp_text']}{cross} The light curve, "
             f"ephemeris, transit times, vetting metrics and figures are frozen on Zenodo (doi:{doi}) and uploaded to "
             f"ExoFOP-TESS {exofop}. I would be glad to see it considered for the archive's tables, and I can send "
             "anything else you need.")
@@ -758,6 +772,9 @@ FILE_NOTES = {
     "data/events.csv": "every transit: epoch, mid-time, quarter, depth, error, coverage, single-event statistic",
     "data/periodogram.json": "the periodogram envelope, its peaks and the alias and systematic periods",
     "data/rung_metrics.json": "every vetting rung's status, reason and metrics",
+    "data/cross_check.json": "the independent TRICERATOPS cross-check: the median and every run's false-positive and "
+                             "nearby false-positive probability, the scenario table, the stars, the inputs it was "
+                             "made for and the caveats",
     "dossier.html": "the standalone dossier (opens offline in any browser)",
     "archive_email.txt": "the paragraph for the NASA Exoplanet Archive help desk (step 4)",
     "zenodo_metadata.json": "the Zenodo metadata, for a deposit made by hand (step 1)",
@@ -818,9 +835,11 @@ def _exofop_list(target_id, date, png: bool, pixels_figure: bool) -> list[tuple[
 
 
 def gate_problems(raw: dict) -> list[str]:
-    """Why a live Zenodo draft is refused on the stored dossier JSON, one sentence per problem: the ephemeris carries
-    no error (no timing block, or its fit is not ok) and the transit shape carries no error (no shape block, or it
-    is not ok). Empty when the dossier may go to zenodo.org."""
+    """Why a live Zenodo draft is refused on the stored dossier JSON (with its stored cross-check merged in as
+    ``cross_check``), one sentence per problem: the ephemeris carries no error (no timing block, or its fit is not
+    ok), the transit shape carries no error (no shape block, or it is not ok), and ``crosscheck.verdict``'s reason
+    (no cross-check, one made for an earlier dossier, or a likely false positive on its own scale). Empty when the
+    dossier may go to zenodo.org."""
     out = []
     for key, what in (("timing", "the ephemeris"), ("shape", "the transit shape")):
         block = raw.get(key)
@@ -828,6 +847,9 @@ def gate_problems(raw: dict) -> list[str]:
             out.append(f"{what} carries no error (no {key} block)")
         elif block.get("ok") is not True:
             out.append(f"{what} carries no error ({block.get('reason') or 'no reason stored'})")
+    blocked, reason = cc.verdict(raw.get("cross_check"))
+    if blocked:
+        out.append(reason)
     return out
 
 
@@ -1490,7 +1512,8 @@ def build_pack(store, blob, settings, target_id: str, *, out_dir: Path | None = 
     written into the texts (a sandbox DOI with the words that it must be replaced), the metadata filled and the zip
     uploaded. The draft is never published, and a live draft is refused for a candidate no reviewer has approved,
     while the FPP is provisional (``fpp.SIGNED_OFF`` False), for a stale dossier and for one whose ephemeris or
-    shape carries no error (``gate_problems``), so a provisional number never reaches a live record. The README names
+    shape carries no error or whose TRICERATOPS cross-check is missing, made for an earlier dossier or a likely false
+    positive (``gate_problems``), so a provisional number never reaches a live record. The README names
     the target's other stage 2 signals whose periods are independent of this one (``independent_periods``).
     Records the folder on the dossiers row and the candidate row.
 
@@ -1505,6 +1528,7 @@ def build_pack(store, blob, settings, target_id: str, *, out_dir: Path | None = 
     if row is None or not row.get("data_path") or not Path(row["data_path"]).is_file():
         raise NoDossier(f"no dossier for {target_id}; run skysift dossier --target {target_id} first")
     raw = json.loads(Path(row["data_path"]).read_text(encoding="utf-8"))
+    raw["cross_check"] = cc.with_current(row.get("cross_check"), raw)      # imported after the JSON was written
     sid = int(row["signal_id"])
     now = datetime.now(UTC)
     date = now.strftime("%Y%m%d")
@@ -1612,6 +1636,8 @@ def _write_pack(out_dir: Path, data: dict, raw: dict, row: dict, lc, fnorm, targ
                                                    "lines": plots.get("spectrum_lines"),
                                                    "columns": ["period_days", "sde"]}, indent=1))
     _write(d / "rung_metrics.json", jsonutil.dumps(data.get("tests") or [], indent=1))
+    if data.get("cross_check"):
+        _write(d / "cross_check.json", jsonutil.dumps(data["cross_check"], indent=1))
     # figures
     _write(figures / "fold.svg", fold_svg(data))
     _write(figures / "oddeven.svg", oddeven_svg(data))

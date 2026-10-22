@@ -432,6 +432,42 @@ def test_dossier_rows_round_trip_and_join_status(store_with_signals):
         store.set_pack("kic-9", "p", datetime(2026, 10, 22))
 
 
+def test_cross_check_is_set_apart_and_kept_by_a_dossier_update(store_with_signals):
+    from datetime import datetime
+    store, ids = store_with_signals
+    store.upsert_dossier(target_id="kic-4", signal_id=ids["approved"], generated=datetime(2026, 10, 22),
+                         data_path="d.json", search_version=VERSION, ladder_version="3", dossier_version="3",
+                         fap=None, fpp=0.03, fap_detail={}, fpp_detail={}, tests_fingerprint="a" * 64,
+                         status_at_generation="candidate_stage1")
+    assert store.dossier("kic-4")["cross_check"] is None
+    block = {"tool": "triceratops", "fpp": 0.012, "nfpp": 1e-4, "current": True}
+    store.set_cross_check("kic-4", block)
+    store.upsert_dossier(target_id="kic-4", fpp=0.04, export_path="")             # a regeneration keeps the block
+    assert store.dossier("kic-4")["cross_check"] == block and store.dossier("kic-4")["fpp"] == 0.04
+    store.set_cross_check("kic-4", None)
+    assert store.dossier("kic-4")["cross_check"] is None
+    with pytest.raises(KeyError):
+        store.set_cross_check("kic-9", block)
+
+
+def test_kept_artifacts_name_the_latest_undeleted_file_per_url(tmp_path):
+    s = make_store(tmp_path)
+    base = "https://archive.stsci.edu/missions/kepler/target_pixel_files/0061/006146666/"
+    s.add_artifact("a" * 64, 1, base + "q1.fits.gz", "old/q1", target_id="kic-1", kind="tpf")
+    s.add_artifact("b" * 64, 1, base + "q1.fits.gz", "new/q1", target_id="kic-2", kind="tpf")
+    s.add_artifact("c" * 64, 1, base + "q2.fits.gz", "gone/q2", target_id="kic-1", kind="tpf")
+    s.add_artifact("d" * 64, 1, base + "q3.fits", "raw/q3", target_id="kic-1", kind="raw")
+    s.add_artifact("e" * 64, 1, base.replace("6666/", "6667/") + "q1.fits.gz", "other", target_id="kic-1",
+                   kind="tpf")
+    s.mark_artifact_deleted("c" * 64)
+    from datetime import timedelta
+
+    from skysift.store.db import ArtifactRow
+    with s.session() as ses:
+        ses.get(ArtifactRow, "a" * 64).created -= timedelta(hours=1)               # the older copy of q1
+    assert s.kept_artifacts("tpf", base) == {base + "q1.fits.gz": "new/q1"}
+
+
 def test_error_capped_targets_add_up_attempts_across_compatible_ladders(tmp_path):
     """The dashboard's give-up count follows the sweep's selection: failed attempts and pool breaks under ladder 3
     and ladder 4 (LADDER_COMPATIBLE) add up for the same search, and a done run under either clears the target."""

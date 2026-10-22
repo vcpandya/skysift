@@ -364,6 +364,42 @@ def pack_command(target: str = typer.Option(..., "--target", help="The target id
         raise typer.Exit(2)
 
 
+@app.command("crosscheck")
+def crosscheck_command(target: str = typer.Option(..., "--target", help="The target id, e.g. kic-006146676."),
+                       export: str | None = typer.Option(None, "--export", help="Write the TRICERATOPS inputs from "
+                                                         "the stored dossier into this folder."),
+                       result: str | None = typer.Option(None, "--import", help="Store this result file of "
+                                                         "tools/triceratops_check.py on the dossier.")):
+    """The independent false-positive cross-check. --export writes inputs.json, lightcurve.csv and the pixel files
+    for tools/triceratops_check.py, which runs under .venv-triceratops; --import checks its result file and stores it
+    on the dossier with whether it was made for the stored dossier's inputs. Prints JSON. Exits 1 without a dossier,
+    2 for a bad result file."""
+    from skysift import crosscheck as cc
+    from skysift import dossier as ds
+    console = _console(stderr=True)
+    if (export is None) == (result is None):
+        _plain(console, "give one of --export or --import")
+        raise typer.Exit(2)
+    s, store, blob = _ctx()
+    try:
+        if export is not None:
+            out = cc.export_inputs(store, blob, s, target, Path(export))
+            inputs = json.loads((out / "inputs.json").read_text(encoding="utf-8"))
+            report = {"target_id": target, "inputs": str(out), "fingerprint": inputs["fingerprint"],
+                      "quarters": inputs["quarters"], "lightcurve_points": inputs["lightcurve"]["n"]}
+        else:
+            block = cc.import_result(store, target, Path(result))
+            report = {"target_id": target, "fpp": block["fpp"], "nfpp": block["nfpp"], "n_runs": block["n_runs"],
+                      "current": block["current"], "blocks_live_gate": cc.verdict(block)[1]}
+    except cc.NoDossier as e:
+        _plain(console, str(e))
+        raise typer.Exit(1) from None
+    except (cc.BadResult, ds.LightCurveReleased) as e:
+        _plain(console, str(e))
+        raise typer.Exit(2) from None
+    _plain(_console(), jsonutil.dumps(report, indent=1))
+
+
 _SIGNAL_IDS = typer.Option(None, "--signal-id", help="Recheck only this signal (repeat for several).")
 BELOW_NORMAL_PRIORITY_CLASS = 0x00004000          # Windows priority class of a background job
 RECHECK_NICE = 10                                 # the POSIX stand-in

@@ -402,3 +402,36 @@ def test_the_recheck_line_says_when_the_recheck_stopped():
                                             "stopped early, the next recheck takes the rest")
     assert _recheck_line({"stopped": True, "error": "interrupted"}) == "stopped, interrupted"
     assert _recheck_line({"error": "RuntimeError('x')"}) == "failed, RuntimeError('x')"
+
+
+def test_cli_crosscheck_export_and_import(settings, monkeypatch, tmp_path):
+    from skysift.dossier import generate
+    from tests.unit.test_crosscheck import fake_result
+    from tests.unit.test_dossier import _make_env
+    from tests.unit.ui_seed import STAGE2_TARGET
+    env = _make_env(settings, monkeypatch)
+    r = runner.invoke(app, ["crosscheck", "--target", STAGE2_TARGET, "--export", str(tmp_path / "cc")])
+    assert r.exit_code == 1 and "skysift dossier --target" in r.output                  # no dossier yet
+    generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch)
+    r = runner.invoke(app, ["crosscheck", "--target", STAGE2_TARGET, "--export", str(tmp_path / "cc")])
+    assert r.exit_code == 0, r.output
+    report = json.loads(r.stdout)
+    sha = json.loads((tmp_path / "cc" / "inputs.json").read_text(encoding="utf-8"))["fingerprint"]
+    assert report["fingerprint"] == sha and report["inputs"] == str(tmp_path / "cc")
+    assert report["quarters"] == []                         # the seed keeps no pixel files for this star
+    good = tmp_path / "result.json"
+    good.write_text(json.dumps(fake_result(sha)), encoding="utf-8")
+    r = runner.invoke(app, ["crosscheck", "--target", STAGE2_TARGET, "--import", str(good)])
+    assert r.exit_code == 0, r.output
+    report = json.loads(r.stdout)
+    assert report["current"] is True and report["fpp"] == 0.012 and report["blocks_live_gate"] is None
+    assert env.store.dossier(STAGE2_TARGET)["cross_check"]["fpp"] == 0.012
+    bad = tmp_path / "bad.json"
+    bad.write_text(json.dumps({**fake_result(sha), "fpp": 2.0}), encoding="utf-8")
+    r = runner.invoke(app, ["crosscheck", "--target", STAGE2_TARGET, "--import", str(bad)])
+    assert r.exit_code == 2 and "fpp" in r.output and "Traceback" not in r.output
+    r = runner.invoke(app, ["crosscheck", "--target", "kic-000000001", "--import", str(good)])
+    assert r.exit_code == 1
+    for argv in ([], ["--export", "x", "--import", str(good)]):
+        r = runner.invoke(app, ["crosscheck", "--target", STAGE2_TARGET, *argv])
+        assert r.exit_code == 2 and "one of --export or --import" in r.output

@@ -51,7 +51,7 @@ The star could not be characterized from Gaia photometry, so the planet radius, 
 
 \section{How likely is a false positive}
 
-\VAR{n.fap_text} \VAR{n.fpp_text} The estimate weighs a planet, a background eclipsing binary and an eclipsing binary on the target, after \citet{morton2012}, with planet occurrence from \BLOCK{if refs.dressing2015 and refs.fressin2013}\citet{dressing2015} and \citet{fressin2013}\BLOCK{elif refs.dressing2015}\citet{dressing2015}\BLOCK{else}\citet{fressin2013}\BLOCK{endif}. It has no radial-velocity or imaging input.
+\VAR{n.fap_text} \VAR{n.fpp_text} The estimate weighs a planet, a background eclipsing binary and an eclipsing binary on the target, after \citet{morton2012}, with planet occurrence from \BLOCK{if refs.dressing2015 and refs.fressin2013}\citet{dressing2015} and \citet{fressin2013}\BLOCK{elif refs.dressing2015}\citet{dressing2015}\BLOCK{else}\citet{fressin2013}\BLOCK{endif}. It has no radial-velocity or imaging input.\BLOCK{if n.cross_check_sentence} \VAR{n.cross_check_sentence}\BLOCK{endif}
 
 \section{What is not yet known}
 

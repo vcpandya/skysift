@@ -17,6 +17,7 @@ import numpy as np
 import pytest
 from typer.testing import CliRunner
 
+from skysift import crosscheck as cross_check
 from skysift import dossier as dossier_module
 from skysift import exofop, net, pack_rows, pack_text, zenodo
 from skysift import pack as pack_module
@@ -748,6 +749,7 @@ def test_a_live_draft_needs_an_approved_candidate_and_writes_its_doi(env_with_do
     assert fake_session.calls == [] and env.store.dossier(STAGE2_TARGET)["pack_path"] == ""
     _approve(env)
     _store_errors(env)                                           # the live gate needs the shape errors
+    _store_cross_check(env)                                      # and a current cross-check
     rep = _build(env, zenodo=live)
     tex = (rep.out_dir / "note" / "note.tex").read_text(encoding="utf-8")
     assert f"10.5281/zenodo.{DEPOSITION_ID}" in tex and SANDBOX_WORDS not in tex and "XXXXXXX" not in tex
@@ -825,6 +827,7 @@ def test_cli_pack_with_a_token_makes_a_draft_and_prints_its_url(cli_env, monkeyp
     assert refused.exit_code == 2 and "not yet approved" in refused.output and len(cli_env.session.calls) == 3
     _approve(cli_env)
     _store_errors(cli_env)
+    _store_cross_check(cli_env)
     live = runner.invoke(app, ["pack", "--target", STAGE2_TARGET, "--zenodo-live"])
     assert live.exit_code == 0, live.output
     assert cli_env.session.calls[3][1] == "https://zenodo.org/api/deposit/depositions"
@@ -938,6 +941,20 @@ def _stored(env) -> dict:
 
 def _store_errors(env) -> None:
     _store(env, _with_errors(_stored(env)))
+
+
+def _store_cross_check(env, **changes) -> dict:
+    """A cross-check made for the stored dossier, as ``skysift crosscheck --import`` stores it."""
+    from tests.unit.test_crosscheck import fake_result
+    block = {**fake_result(cross_check.inputs_fingerprint(_stored(env))), "current": True, **changes}
+    env.store.set_cross_check(STAGE2_TARGET, block)
+    return block
+
+
+def _stored_with_cross_check(env) -> dict:
+    """The stored dossier with the stored cross-check merged in, as ``build_pack`` reads it."""
+    data = _stored(env)
+    return {**data, "cross_check": cross_check.with_current(env.store.dossier(STAGE2_TARGET)["cross_check"], data)}
 
 
 def _unquoted(readme: str) -> str:
@@ -1292,9 +1309,10 @@ def test_a_live_draft_refuses_a_dossier_without_ephemeris_errors(env_with_dossie
     assert f"the transit shape carries no error ({NO_BOOT})" in str(e.value)
     assert fake_session.calls == [] and env.store.dossier(STAGE2_TARGET)["pack_path"] == ""
     assert pack_module.gate_problems({}) == ["the ephemeris carries no error (no timing block)",
-                                             "the transit shape carries no error (no shape block)"]
+                                             "the transit shape carries no error (no shape block)",
+                                             "no independent cross-check"]
     assert pack_module.gate_problems(_with_errors(_stored(env))) == [
-        "the ephemeris carries no error (fewer than 3 transits timed)"]
+        "the ephemeris carries no error (fewer than 3 transits timed)", "no independent cross-check"]
     monkeypatch.setattr(net, "fetch", env.fetch)
     monkeypatch.setattr(zenodo, "new_session", lambda: fake_session)
     monkeypatch.setenv("SKYSIFT_ZENODO_TOKEN", "a-secret")
@@ -1302,7 +1320,9 @@ def test_a_live_draft_refuses_a_dossier_without_ephemeris_errors(env_with_dossie
     assert r.exit_code == 2 and "the ephemeris carries no error" in r.output and fake_session.calls == []
     assert _build(env, zenodo=ZenodoClient("t", session=fake_session)).zenodo is not None    # the sandbox builds
     _store(env, _with_errors(env.data))
-    assert pack_module.gate_problems(_stored(env)) == []
+    assert pack_module.gate_problems(_stored(env)) == ["no independent cross-check"]
+    _store_cross_check(env)
+    assert pack_module.gate_problems(_stored_with_cross_check(env)) == []
 
 
 def test_figure_data_csv_matches_the_fold_bins(env_with_dossier):
@@ -1321,3 +1341,39 @@ def test_figure_data_csv_matches_the_fold_bins(env_with_dossier):
         assert f"- `{name}`: " in readme and pack_module.FILE_NOTES[name] in readme
     assert all(not k.startswith("exofop/") or k == "exofop/note.txt" or "params_stellar" in k
                for k in pack_module.FILE_NOTES)                              # no entry the README never shows
+
+
+def test_pack_prints_the_cross_check_and_the_gate_refuses_without_one(env_with_dossier, fake_session, monkeypatch):
+    from skysift import fpp
+    monkeypatch.setattr(fpp, "SIGNED_OFF", True)
+    env = env_with_dossier
+    _approve(env)
+    _store_errors(env)
+    live = ZenodoClient("t", sandbox=False, session=fake_session)
+    with pytest.raises(PackError, match="no independent cross-check"):
+        _build(env, zenodo=live)
+    assert fake_session.calls == []
+    rep = _build(env)                                                        # without one: no sentence, no file
+    readme = (rep.out_dir / "README.md").read_text(encoding="utf-8")
+    assert "TRICERATOPS" not in (rep.out_dir / "exofop" / "note.txt").read_text(encoding="utf-8")
+    assert "The live Zenodo draft waits on the cross-check: no independent cross-check" in readme
+    assert "data/cross_check.json" not in rep.files
+    _store_cross_check(env, fpp=0.6, fpp_runs=[0.6] * 10)                   # a likely false positive blocks
+    with pytest.raises(PackError, match="the cross-check calls it a likely false positive"):
+        _build(env, zenodo=live)
+    block = _store_cross_check(env)                                          # 0.012 against SkySift's FPP
+    rep = _build(env, zenodo=live)
+    assert rep.zenodo is not None and not rep.zenodo["sandbox"]
+    sentence = cross_check.comparison_sentence({**_stored(env), "cross_check": block})
+    assert sentence.startswith("An independent estimate with TRICERATOPS (Giacalone et al. 2021)")
+    for name in ("README.md", "exofop/note.txt", "archive_email.txt"):
+        assert sentence in (rep.out_dir / name).read_text(encoding="utf-8"), name
+    readme = (rep.out_dir / "README.md").read_text(encoding="utf-8")
+    assert "waits on the cross-check" not in readme
+    tex = (rep.out_dir / "note" / "note.tex").read_text(encoding="utf-8")
+    fp_section = tex.split(r"\section{How likely is a false positive}")[1].split(r"\section")[0]
+    assert r"TRICERATOPS \citep{giacalone2021}" in fp_section
+    assert "{Giacalone} et~al.(2021)" in tex.split(r"\begin{thebibliography}")[1]
+    assert note_problems(note_words(tex), tex) == []
+    stored = json.loads((rep.out_dir / "data" / "cross_check.json").read_text(encoding="utf-8"))
+    assert stored == block and "data/cross_check.json" in rep.files and "data/cross_check.json" in readme

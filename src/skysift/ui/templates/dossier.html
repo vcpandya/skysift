@@ -218,6 +218,18 @@
   {{ section_head("03", "checks", "The checks", (status.headline or "") ~ ". Most repeating dips are not planets: they are eclipsing binaries, blended neighbours or instrument effects. Each check below looks for one of them.") }}
   {% with rows = why_rows, show_numbers = True, recheck_history = [] %}{% include "partials/why.html" %}{% endwith %}
   {% with link = False, block_id = "probabilities", heading_id = "probabilities-page" %}{% include "partials/probabilities.html" %}{% endwith %}
+  {%- set cc = data.cross_check %}
+  <div class="dossier-crosscheck">
+    <h3>Cross-check</h3>
+    {%- if cc %}
+    <p>An independent estimate with TRICERATOPS {{ cc.tool_version }} (Giacalone et al. 2021): median false-positive probability <span class="mono">{{ "%.3g" | format(cc.fpp) }}</span> and nearby false-positive probability <span class="mono">{{ "%.3g" | format(cc.nfpp) }}</span>; the false-positive probability ran from <span class="mono">{{ "%.3g" | format(cc.fpp_runs | min) }} to {{ "%.3g" | format(cc.fpp_runs | max) }} over {{ cc.n_runs }} runs</span>. {% if cc.current %}It was made for this dossier's period, depth and neighbours.{% else %}It was made for an earlier dossier (the period, the depth or the neighbours have changed since), so it does not count until it is run again.{% endif %}</p>
+    {%- if cc.caveats %}
+    <ul class="dossier-small">{% for c in cc.caveats %}<li>{{ c }}</li>{% endfor %}</ul>
+    {%- endif %}
+    {%- else %}
+    <p>No independent cross-check is stored yet. <span class="mono">skysift crosscheck --target {{ target_id }} --export</span> writes the inputs for TRICERATOPS; its result comes back with <span class="mono">--import</span>.</p>
+    {%- endif %}
+  </div>
   <div class="only-expert dossier-expert">
     <h3>The false-alarm counts</h3>
     {%- if fap.n is not none and fap.n is defined %}

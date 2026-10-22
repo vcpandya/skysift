@@ -759,3 +759,25 @@ def test_dossier_export_carries_the_same_errors(seeded_dossier):
     for words in ("T_ref (BJD_TDB)", "Odd and even", "3-sigma limit", "Shape with errors", "Secondary eclipse",
                   " ± "):
         assert words in export, words                    # dossier.js writes them into the standalone page
+
+
+def test_dossier_page_shows_the_cross_check_block(seeded_dossier):
+    from skysift import crosscheck as cc
+    from tests.unit.test_crosscheck import fake_result
+    client, app, _ids, data = seeded_dossier
+    html = client.get(f"/dossiers/{STAGE2_TARGET}").text
+    checks = html.split('id="checks"')[1].split('id="pixels"')[0]
+    assert "Cross-check" in checks and "No independent cross-check is stored yet" in checks
+    result = fake_result(cc.inputs_fingerprint(data))
+    result["fpp_runs"] = [0.008, 0.012, 0.012, 0.012, 0.012, 0.012, 0.012, 0.012, 0.012, 0.03]
+    app.state.store.set_cross_check(STAGE2_TARGET, {**result, "current": False})     # current is recomputed
+    for mode in ("simple", "expert"):
+        client.cookies.set("skysift_mode", mode)
+        checks = client.get(f"/dossiers/{STAGE2_TARGET}").text.split('id="checks"')[1].split('id="pixels"')[0]
+        assert "Cross-check" in checks and "TRICERATOPS 1.1.0" in checks
+        assert "0.012" in checks and "0.0001" in checks and "0.008 to 0.03 over 10 runs" in checks
+        assert "made for this dossier" in checks and "earlier dossier" not in checks
+        assert "TESS-band limb darkening" in checks and chr(0x2014) not in checks
+    app.state.store.set_cross_check(STAGE2_TARGET, {**result, "inputs_sha256": "0" * 64, "current": True})
+    checks = client.get(f"/dossiers/{STAGE2_TARGET}").text.split('id="checks"')[1].split('id="pixels"')[0]
+    assert "made for an earlier dossier" in checks

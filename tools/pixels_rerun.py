@@ -23,14 +23,13 @@ import sys
 from pathlib import Path
 
 import numpy as np
-from sqlalchemy import select
 
 from skysift.config import Thresholds
 from skysift.lc.loader import TARGET_FIELDS
 from skysift.lc.tpf import TpfSet, parse_tpf, tpf_listing_url
 from skysift.models import LightCurve, Signal, Target
 from skysift.net import ServiceUnavailable
-from skysift.store.db import ArtifactRow, SignalRow, Store, TargetRow
+from skysift.store.db import SignalRow, Store, TargetRow
 from skysift.vetting.base import DataBundle
 from skysift.vetting.rung5_pixels import Rung5Pixels
 
@@ -57,12 +56,7 @@ def load(store: Store, signal_id: int, root: Path) -> tuple[Signal, Target, TpfS
         t = s.get(TargetRow, row.target_id)
         target = {**{k: getattr(t, k) for k in TARGET_FIELDS}, "meta": dict(t.meta or {})}
         kic = target["meta"].get("tpf_org") or target.get("kic")
-        arts = [] if not kic else s.execute(
-            select(ArtifactRow.url, ArtifactRow.local_path, ArtifactRow.created)
-            .where(ArtifactRow.kind == "tpf", ArtifactRow.deleted_at.is_(None),
-                   ArtifactRow.url.startswith(tpf_listing_url(int(kic)), autoescape=True))
-            .order_by(ArtifactRow.url, ArtifactRow.created)).all()
-    latest = {url: path for url, path, _created in arts}            # ordered by created: the last row per url wins
+    latest = store.kept_artifacts("tpf", tpf_listing_url(int(kic))) if kic else {}
     tpfs, missing = [], []
     for url, path in sorted(latest.items()):
         name = url.rsplit("/", 1)[-1]
