@@ -64,7 +64,10 @@ CAVEATS = (
     "The light in the aperture is modelled as a Gaussian PSF of 0.75 pixels over the 3 x 3 box around the target.",
     "The priors and the field-star population are the package's own, not SkySift's.",
     "The result varies from run to run, so the median of the runs is quoted and every run is kept.",
+    ("The dossier's Gaia neighbours are matched to the TIC stars by their separation from the target only, since the "
+     "dossier stores no position for them."),
 )
+OUT_OF_TRANSIT_MIN = 50             # fewer out-of-transit points: the robust scatter is taken over every point
 
 
 def _finite(x) -> float | None:
@@ -165,6 +168,29 @@ def missing_stellar(row) -> list[str]:
     return [k for k in ("mass", "rad", "Teff", "plx") if _finite(row.get(k)) is None]
 
 
+def robust_flux_err(time, flux, period: float, t0: float, duration_days: float) -> tuple[float, str]:
+    """(per-point error, which points) for ``flux_err_0``: 1.4826 times the MAD of the relative flux more than one
+    duration from mid-transit, the rule ``skysift.ephemeris`` times the transits with, or of every point when fewer
+    than ``OUT_OF_TRANSIT_MIN`` lie out of transit. The exported pipeline error is smaller than the scatter of the
+    whitened flux the tool fits, and the scenario likelihoods scale with one over its square."""
+    time, flux = np.asarray(time, float), np.asarray(flux, float)
+    ok = np.isfinite(time) & np.isfinite(flux)
+    phase = (time - t0 + period / 2) % period - period / 2
+    out = ok & (np.abs(phase) > duration_days)
+    which = "out of transit (more than one duration from mid-transit)"
+    if out.sum() < OUT_OF_TRANSIT_MIN:
+        out, which = ok, f"every point (fewer than {OUT_OF_TRANSIT_MIN} out of transit)"
+    f = flux[out]
+    return float(1.4826 * np.median(np.abs(f - np.median(f)))), which
+
+
+def flux_err_caveat(robust: float, pipeline: float, which: str) -> str:
+    """The caveat naming the per-point error handed to TRICERATOPS and the pipeline error it replaces."""
+    return (f"The per-point error given to TRICERATOPS is 1.4826 times the median absolute deviation of the whitened "
+            f"flux {which}, {robust:.6f} in relative flux, not the KBonus pipeline error ({pipeline:.6f}), which is "
+            "smaller than the scatter of the flux it fits.")
+
+
 def read_lightcurve(path: Path) -> dict[str, np.ndarray]:
     table = np.loadtxt(path, delimiter=",", skiprows=1, ndmin=2)
     return {"time": table[:, 0], "flux": table[:, 1], "err": table[:, 2], "quarter": table[:, 3].astype(int)}
@@ -222,9 +248,13 @@ def main(argv=None) -> int:
     from importlib.metadata import version
 
     inputs_dir, out = Path(a.inputs).resolve(), Path(a.out).resolve()
-    inputs = json.loads((inputs_dir / "inputs.json").read_text(encoding="utf-8"))
-    lc = read_lightcurve(inputs_dir / inputs["lightcurve"]["file"])
-    images = quarter_images([inputs_dir / f for f in inputs["tpf_files"]])
+    try:
+        inputs = json.loads((inputs_dir / "inputs.json").read_text(encoding="utf-8"))
+        lc = read_lightcurve(inputs_dir / inputs["lightcurve"]["file"])
+        images = quarter_images([inputs_dir / f for f in inputs["tpf_files"]])
+    except (OSError, ValueError, KeyError) as e:        # a missing or unreadable export file, a stamp without 1CRV4P
+        print(f"the export in {inputs_dir} cannot be read: {type(e).__name__}: {e}", file=sys.stderr)
+        return 1
     if not images:
         print("the export holds no pixel files, so there is no image to place the stars on", file=sys.stderr)
         return 2
@@ -264,10 +294,13 @@ def main(argv=None) -> int:
                   dilution_corrected=True)
     period, t0 = float(eph["period_days"]), float(eph["t0_bkjd"])
     phase = (lc["time"] - t0 + period / 2) % period - period / 2
+    flux_err, which = robust_flux_err(lc["time"], lc["flux"], period, t0, float(eph["duration_h"]) / 24.0)
+    pipeline_err = float(np.median(lc["err"]))
+    notes.append(flux_err_caveat(flux_err, pipeline_err, which))
     runs = []
     for k in range(a.runs):
         np.random.seed(a.seed + k)
-        t.calc_probs(time=phase, flux_0=lc["flux"], flux_err_0=float(np.median(lc["err"])), P_orb=period,
+        t.calc_probs(time=phase, flux_0=lc["flux"], flux_err_0=flux_err, P_orb=period,
                      N=N_DRAWS, parallel=False, exptime=EXPTIME_DAYS, dilution_corrected=True, verbose=0)
         runs.append({"seed": a.seed + k, "fpp": float(t.FPP), "nfpp": float(t.NFPP),
                      "degenerate": bool(t.FPP_degenerate),
@@ -275,7 +308,8 @@ def main(argv=None) -> int:
         print(f"run {k + 1}/{a.runs} (seed {a.seed + k}): FPP {t.FPP:.3g}, NFPP {t.NFPP:.3g}", file=sys.stderr)
     settings = {"N": N_DRAWS, "exptime_days": EXPTIME_DAYS, "search_radius_pix": SEARCH_RADIUS,
                 "aperture": "3 x 3 around the target", "dilution_corrected": True, "parallel": False,
-                "quarters": [q["quarter"] for q in images], "matched_neighbours": matched, "notes": notes}
+                "quarters": [q["quarter"] for q in images], "matched_neighbours": matched, "notes": notes,
+                "flux_err_rel_robust": flux_err, "flux_err_rel_pipeline": pipeline_err, "flux_err_source": which}
     stars = star_rows(t.stars.to_dict("records"), matched, added)
     result = assemble_result(runs, stars, settings, inputs, version("triceratops"))
     out.write_text(json.dumps(result, indent=1, allow_nan=False), encoding="utf-8")

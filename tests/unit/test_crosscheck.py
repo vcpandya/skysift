@@ -172,18 +172,25 @@ def test_verdict_blocks_a_likely_false_positive_and_passes_a_small_disagreement(
     data = {"fpp": {"value": 0.0035}, "cross_check": block}
     text = cc.comparison_sentence(data)
     assert text.startswith("An independent estimate with TRICERATOPS (Giacalone et al. 2021) gives a false-positive "
-                           "probability of 0.012 and a nearby false-positive probability of 1.0e-04")
-    assert "SkySift's own estimate is 0.0035" in text and "a factor of 3.4 apart" in text
+                           "probability of 0.012 and a nearby false-positive probability of 1 in 10,000")
+    assert "e-0" not in text and "e-0" not in cc.comparison_sentence(data, tex=True)          # never 1.0e-04 (M9)
+    # SkySift's estimate is provisional until signed off, as the other sentences say
+    assert "SkySift's own estimate (provisional until its factor tables are reviewed) is 0.0035" in text
+    assert "a factor of 3.4 apart" in text
+    signed = cc.comparison_sentence({"fpp": {"value": 0.0035, "signed_off": True}, "cross_check": block})
+    assert "SkySift's own estimate is 0.0035" in signed and "provisional" not in signed
+    assert [cc.probability_text(x) for x in (0.012, 0.0035, 1.2e-4, 1e-4, 0.0)] == [
+        "0.012", "0.0035", "1 in 8,300", "1 in 10,000", "0"]
     assert "answer different questions" in text and "marginalises over an unresolved companion population" in text
     assert chr(0x2014) not in text and "discover" not in text.lower()
     close = cc.comparison_sentence({"fpp": {"value": 0.01}, "cross_check": block})
-    assert "0.010" in close and "factor" not in close and "different questions" not in close
+    assert "0.010" in close and "a factor of" not in close and "different questions" not in close
     tex = cc.comparison_sentence(data, tex=True)
     assert r"TRICERATOPS \citep{giacalone2021} gives" in tex and "Giacalone et al." not in tex
     assert cc.comparison_sentence({"fpp": {"value": 0.0035}, "cross_check": None}) is None
     assert cc.comparison_sentence({"fpp": {"value": 0.0035}, "cross_check": {**block, "current": False}}) is None
     zeros = cc.comparison_sentence({"fpp": {"value": 0.0}, "cross_check": {**block, "fpp": 0.0, "fpp_runs": [0.0]}})
-    assert "SkySift's own estimate is 0." in zeros and "apart" not in zeros                  # both 0 agree
+    assert "estimate (provisional until its factor tables are reviewed) is 0." in zeros and "apart" not in zeros
     alone = cc.comparison_sentence({"fpp": {"value": None}, "cross_check": block})
     assert "SkySift" not in alone and alone.endswith("over 10 runs.")
 
@@ -268,6 +275,59 @@ def test_tool_refuses_a_target_row_without_stellar_parameters():
     assert tc.missing_stellar(full) == []
     assert tc.missing_stellar({**full, "plx": math.nan, "Teff": None}) == ["Teff", "plx"]
     assert tc.missing_stellar({"mass": 0.5}) == ["rad", "Teff", "plx"]
+
+
+def test_an_export_from_a_dossier_below_the_current_version_is_refused(env, tmp_path):
+    """A version-2 dossier has no ephemeris errors and other P, T0, T14 and depth keys, so a cross-check made from it
+    could never be current: the export refuses it before writing anything (I1)."""
+    path = Path(env.store.dossier(STAGE2_TARGET)["data_path"])
+    path.write_text(json.dumps({**_stored(env), "dossier_version": "2"}), encoding="utf-8")
+    with pytest.raises(cc.OldDossier, match="dossier version 2 is below 3; regenerate first"):
+        cc.export_inputs(env.store, env.blob, env.settings, STAGE2_TARGET, tmp_path / "cc")
+    assert not (tmp_path / "cc").exists()
+    from typer.testing import CliRunner
+
+    from skysift.cli import app
+    r = CliRunner().invoke(app, ["crosscheck", "--target", STAGE2_TARGET, "--export", str(tmp_path / "cc")])
+    assert r.exit_code == 2 and "regenerate first" in r.output and "Traceback" not in r.output
+
+
+def test_tool_flux_error_is_the_robust_out_of_transit_scatter():
+    """I2: 1.4826 x MAD of the flux more than one duration from mid-transit, every point when fewer than 50 lie
+    out of transit; the caveat names the choice and both numbers."""
+    from tools import triceratops_check as tc
+    rng = np.random.default_rng(1)
+    period, t0, dur = 10.0, 0.5, 0.2
+    time = np.linspace(0.0, 100.0, 20_000)
+    phase = (time - t0 + period / 2) % period - period / 2
+    flux = 1.0 + rng.normal(0.0, 0.001, time.size) - np.where(np.abs(phase) < dur / 2, 0.01, 0.0)
+    err, which = tc.robust_flux_err(time, flux, period, t0, dur)
+    assert err == pytest.approx(0.001, rel=0.05) and which.startswith("out of transit")
+    near = np.abs(phase) < 1.2 * dur                         # nearly all in or around transit: every point
+    err_all, which_all = tc.robust_flux_err(time[near][:60], flux[near][:60], period, t0, dur)
+    assert which_all.startswith("every point") and err_all > 0
+    text = tc.flux_err_caveat(0.00092, 0.00072, which)
+    assert "1.4826 times the median absolute deviation" in text and "0.000920" in text and "0.000720" in text
+    assert any("separation from the target only" in c for c in tc.CAVEATS)                    # M13
+
+
+def test_tool_reports_an_unreadable_export_without_a_traceback(tmp_path, monkeypatch, capsys):
+    from tools import triceratops_check as tc
+    monkeypatch.setattr(tc, "tr", object())                 # as if TRICERATOPS were installed
+    assert tc.main(["--inputs", str(tmp_path), "--out", str(tmp_path / "r.json")]) == 1      # no inputs.json
+    assert "cannot be read" in capsys.readouterr().err
+    (tmp_path / "inputs.json").write_text(json.dumps({"lightcurve": {"file": "lc.csv"}, "tpf_files": ["tpf/q01.fits"]}),
+                                          encoding="utf-8")
+    (tmp_path / "lc.csv").write_text("time_bkjd,flux_rel,err_rel,quarter\n1,1,0.001,1\n", encoding="utf-8")
+    hdus = fits.HDUList([fits.PrimaryHDU(header=fits.Header({"QUARTER": 1})),
+                         fits.BinTableHDU.from_columns([fits.Column(name="FLUX", format="4E", dim="(2,2)",
+                                                                    array=np.ones((3, 2, 2), np.float32))]),
+                         fits.ImageHDU(np.ones((2, 2), np.int32))])
+    (tmp_path / "tpf").mkdir()
+    hdus.writeto(tmp_path / "tpf" / "q01.fits")             # no 1CRV4P: quarter_images raises ValueError
+    assert tc.main(["--inputs", str(tmp_path), "--out", str(tmp_path / "r.json")]) == 1
+    err = capsys.readouterr().err
+    assert "ValueError" in err and "1CRV4P" in err and not (tmp_path / "r.json").exists()
 
 
 def test_an_export_without_pixel_files_is_refused(settings, monkeypatch, tmp_path):

@@ -46,6 +46,11 @@ class NoDossier(LookupError):
     """The target has no generated dossier, or its data file is gone."""
 
 
+class OldDossier(ValueError):
+    """The stored dossier is below the current ``dossier.DOSSIER_VERSION``: its ephemeris has no errors and other
+    period, epoch, duration and depth keys, so a cross-check made from it could never be current."""
+
+
 class BadResult(ValueError):
     """A result file that is not the tool's: unreadable, not JSON, or a key missing or out of range."""
 
@@ -120,11 +125,16 @@ def export_inputs(store, blob, settings, target_id: str, out_dir: Path) -> Path:
     """Write ``inputs.json``, ``lightcurve.csv`` and ``tpf/`` for the tool into ``out_dir`` from the stored dossier
     and the loader's light curve, loaded with ``pin=True`` as the pack loads it (so the raw file stays out of budget
     retention; nothing is downloaded: a released light curve raises ``dossier.LightCurveReleased``). Returns
-    ``out_dir``, the tool's ``--inputs``. Raises NoDossier, and NoPixelFiles (naming the files it could not read)
-    when no pixel file was copied; the light curve is then written, ``inputs.json`` is not."""
+    ``out_dir``, the tool's ``--inputs``. Raises NoDossier, OldDossier for a dossier below the current version (before
+    anything is written), and NoPixelFiles (naming the files it could not read) when no pixel file was copied; the
+    light curve is then written, ``inputs.json`` is not."""
     from skysift import dossier as ds
     from skysift.lc.loader import LightCurveLoader
     data = _stored(store, target_id)
+    stored = str(data.get("dossier_version") or "1")
+    if not stored.isdigit() or int(stored) < int(ds.DOSSIER_VERSION):
+        raise OldDossier(f"dossier version {stored} is below {ds.DOSSIER_VERSION}; regenerate first (skysift dossier "
+                         f"--target {target_id} --force), since a cross-check made from it could never be current")
     sid = int(data["signal"]["id"])
     target = ds._target_dict(store, target_id)
     lc = LightCurveLoader(store, blob, source_factory=ds._offline_factory(target_id, sid)).load(target, pin=True)
@@ -236,11 +246,13 @@ def verdict(block: dict | None) -> tuple[bool, str | None]:
 
 
 def probability_text(x: float) -> str:
-    """Two significant figures: 0.012, 0.0035, and 1.0e-04 below a thousandth; 0 as 0."""
+    """Two significant figures in prose: 0.012, 0.0035, and below a thousandth "1 in N" with N at two significant
+    figures (1 in 10,000), as the pack writes the false-alarm probability; 0 as 0."""
     if x == 0:
         return "0"
     if x < 1e-3:
-        return f"{x:.1e}"
+        n = 1.0 / x
+        return f"1 in {round(n, 1 - math.floor(math.log10(n))):,.0f}"
     return f"{x:.{max(0, 1 - math.floor(math.log10(x)))}f}"
 
 
@@ -255,15 +267,16 @@ def comparison_sentence(data: dict, tex: bool = False) -> str | None:
     rest = (f" gives a false-positive probability of {probability_text(block['fpp'])} and a nearby false-positive "
             f"probability of {probability_text(block['nfpp'])}, the median over {block['n_runs']} runs.")
     own = (data.get("fpp") or {}).get("value")
+    whose = ("SkySift's own estimate" if (data.get("fpp") or {}).get("signed_off")
+             else "SkySift's own estimate (provisional until its factor tables are reviewed)")
     if isinstance(own, (int, float)) and not isinstance(own, bool) and math.isfinite(own):
         hi, lo = max(own, block["fpp"]), min(own, block["fpp"])
         ratio = 1.0 if hi == 0 else hi / lo if lo > 0 else math.inf          # both 0 agree
         if ratio > RATIO_SENTENCE_ABOVE:
             apart = "far" if math.isinf(ratio) else f"a factor of {ratio:.1f}"
-            rest += (f" SkySift's own estimate is {probability_text(own)}, so the two are {apart} apart. "
-                     f"{DIFFERENT_QUESTIONS}")
+            rest += f" {whose} is {probability_text(own)}, so the two are {apart} apart. {DIFFERENT_QUESTIONS}"
         else:
-            rest += f" SkySift's own estimate is {probability_text(own)}."
+            rest += f" {whose} is {probability_text(own)}."
     if tex:
         return Raw(tex_escape(head) + r"\citep{giacalone2021}" + tex_escape(rest))
     return head + CITATION + rest
