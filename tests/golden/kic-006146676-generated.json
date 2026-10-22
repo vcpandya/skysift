@@ -1,6 +1,6 @@
 {
- "dossier_version": "2",
- "generated": "2026-10-21T16:18:24.432346+00:00",
+ "dossier_version": "3",
+ "generated": "2026-10-22T02:46:59.268577+00:00",
  "target": {
   "target_id": "kic-006146676",
   "source": "kbonus_bkg",
@@ -22,14 +22,31 @@
   "name": "KIC 6146676"
  },
  "ephemeris": {
-  "period_days": 40.291087,
-  "t0_bkjd": 135.78832,
-  "t0_bjd": 2454968.8,
-  "duration_h": 3.0,
-  "depth_ppm": 2165.2784,
+  "period_days": 40.290806,
+  "t0_bkjd": 135.79518,
+  "t0_bjd": 2454968.795182,
+  "duration_h": 3.8647124,
+  "depth_ppm": 2186.63,
   "sde": 50.501758,
   "snr": 30.039973,
-  "n_events": 33
+  "n_events": 33,
+  "period_source": "linear fit of 32 transit times",
+  "period_err_days": 0.00014775705,
+  "t0_bkjd_err": 0.0031128049,
+  "t0_bjd_err": 0.0031128049,
+  "t_ref_bkjd": 901.3205,
+  "t_ref_bjd": 2455734.320501,
+  "t_ref_err_days": 0.0014129189,
+  "epoch_ref": 19,
+  "duration_h_err": {
+   "minus": 0.19311392,
+   "plus": 0.24879937
+  },
+  "duration_source": "fitted T14",
+  "depth_ppm_err": 107.95947,
+  "depth_source": "per-event weighted mean of the box depth",
+  "ephemeris_method": "weighted linear fit of per-transit mid-times, reference epoch at the centre of the series (Deeg 2015; Holczer et al. 2016)",
+  "shape_method": "bootstrap over transits of the uniform-disc fit (Schmitt et al. 2014)"
  },
  "fap": {
   "k": 11,
@@ -75,18 +92,18 @@
     "source_id": "2073896294004902144",
     "sep_arcsec": 7.1422442,
     "gmag": 19.771944,
-    "centroid_sep_arcsec": 6.3802651,
-    "s_arcsec": 6.3802651,
+    "centroid_sep_arcsec": 6.4476718,
+    "s_arcsec": 6.4476718,
     "flux_fraction": 0.037107518,
     "bright_enough": true,
-    "exclusion": 1.3405536e-221
+    "exclusion": 2.3874732e-188
    },
    {
     "source_id": "2073896289692192128",
     "sep_arcsec": 10.941229,
     "gmag": 17.895601,
-    "centroid_sep_arcsec": 10.17925,
-    "s_arcsec": 10.17925,
+    "centroid_sep_arcsec": 10.246657,
+    "s_arcsec": 10.246657,
     "flux_fraction": 0.17829435,
     "bright_enough": true,
     "exclusion": 0.0
@@ -95,8 +112,8 @@
     "source_id": "2073896190925687296",
     "sep_arcsec": 11.452381,
     "gmag": 12.806441,
-    "centroid_sep_arcsec": 10.690402,
-    "s_arcsec": 10.690402,
+    "centroid_sep_arcsec": 10.757809,
+    "s_arcsec": 10.757809,
     "flux_fraction": 0.95927529,
     "bright_enough": true,
     "exclusion": 0.0
@@ -105,8 +122,8 @@
     "source_id": "2073896190926955520",
     "sep_arcsec": 12.965638,
     "gmag": 19.735788,
-    "centroid_sep_arcsec": 12.203659,
-    "s_arcsec": 12.203659,
+    "centroid_sep_arcsec": 12.271066,
+    "s_arcsec": 12.271066,
     "flux_fraction": 0.038315893,
     "bright_enough": true,
     "exclusion": 0.0
@@ -115,8 +132,8 @@
     "source_id": "2073896190921609600",
     "sep_arcsec": 13.513456,
     "gmag": 19.379517,
-    "centroid_sep_arcsec": 12.751477,
-    "s_arcsec": 12.751477,
+    "centroid_sep_arcsec": 12.818884,
+    "s_arcsec": 12.818884,
     "flux_fraction": 0.052417001,
     "bright_enough": true,
     "exclusion": 0.0
@@ -125,8 +142,8 @@
     "source_id": "2073896289692177024",
     "sep_arcsec": 18.624956,
     "gmag": 18.883438,
-    "centroid_sep_arcsec": 17.862977,
-    "s_arcsec": 17.862977,
+    "centroid_sep_arcsec": 17.930384,
+    "s_arcsec": 17.930384,
     "flux_fraction": 0.080336935,
     "bright_enough": true,
     "exclusion": 0.0
@@ -156,16 +173,16 @@
     "name": "BEB",
     "prior": 0.10907202,
     "geometric": 0.020218597,
-    "data": 2.234256e-222,
-    "weight": 4.9271671e-225,
+    "data": 3.9791221e-189,
+    "weight": 8.7750906e-192,
     "factors": {
      "f_bin": 0.44,
      "g_2P": 0.041315157,
      "n_bright": 6,
      "a_2P_au": 0.46001907,
-     "X_mean": 2.234256e-222,
+     "X_mean": 3.9791221e-189,
      "r_c_arcsec": 2.0,
-     "centroid_sigma_arcsec": 0.137343
+     "centroid_sigma_arcsec": 0.15131011
     }
    },
    {
@@ -231,48 +248,48 @@
      "sep_arcsec": 7.1422442,
      "gmag": 19.771944,
      "bp_rp": 1.813982,
-     "centroid_sep_arcsec": 6.3802651
+     "centroid_sep_arcsec": 6.4476718
     },
     {
      "source_id": "2073896289692192128",
      "sep_arcsec": 10.941229,
      "gmag": 17.895601,
      "bp_rp": 1.664362,
-     "centroid_sep_arcsec": 10.17925
+     "centroid_sep_arcsec": 10.246657
     },
     {
      "source_id": "2073896190925687296",
      "sep_arcsec": 11.452381,
      "gmag": 12.806441,
      "bp_rp": 0.80157375,
-     "centroid_sep_arcsec": 10.690402
+     "centroid_sep_arcsec": 10.757809
     },
     {
      "source_id": "2073896190926955520",
      "sep_arcsec": 12.965638,
      "gmag": 19.735788,
      "bp_rp": null,
-     "centroid_sep_arcsec": 12.203659
+     "centroid_sep_arcsec": 12.271066
     },
     {
      "source_id": "2073896190921609600",
      "sep_arcsec": 13.513456,
      "gmag": 19.379517,
      "bp_rp": 1.5326786,
-     "centroid_sep_arcsec": 12.751477
+     "centroid_sep_arcsec": 12.818884
     },
     {
      "source_id": "2073896289692177024",
      "sep_arcsec": 18.624956,
      "gmag": 18.883438,
      "bp_rp": 2.6226044,
-     "centroid_sep_arcsec": 17.862977
+     "centroid_sep_arcsec": 17.930384
     }
    ],
-   "centroid_sigma_arcsec": 0.137343,
+   "centroid_sigma_arcsec": 0.15131011,
    "neighbours_known": true,
-   "sigma_c_stat_arcsec": 0.137343,
-   "sigma_c_scatter_arcsec": 0.11028396,
+   "sigma_c_stat_arcsec": 0.15131011,
+   "sigma_c_scatter_arcsec": 0.074458084,
    "sigma_c_source": "statistical"
   },
   "sentence_not_covered": "This counts the common impostors with simple priors. It is not a vespa or a Kepler DR25 false-positive probability, and it has no radial-velocity or imaging input."
@@ -332,9 +349,9 @@
  "planet": {
   "rp_rearth": {
    "median": 2.63,
-   "minus": 0.08,
-   "plus": 0.08,
-   "source": "k 0.0478 from the transit fit x R*"
+   "minus": 0.1,
+   "plus": 0.11,
+   "source": "k 0.0478 from the transit fit x R*; radius-ratio error from the bootstrap"
   },
   "a_au": {
    "median": 0.1829,
@@ -507,7 +524,7 @@
   {
    "rung": "rung5_pixels",
    "status": "pass",
-   "reason": "the dip is on the target in 3/3 seasons (centroid >= 17.5 sigma nearer)",
+   "reason": "the dip is on the target in 4/4 seasons (centroid >= 12.7 sigma nearer)",
    "metrics": {
     "seasons": [
      {
@@ -523,37 +540,64 @@
        0.30390873,
        4.0308675
       ],
-      "centroid_sigma_pix": 0.046517399,
-      "centroid_sigma_axis_pix": 0.039611357,
-      "dist_target_pix": 0.21998905,
-      "dist_neighbour_pix": 3.0716897,
+      "centroid_sigma_pix": 0.063594178,
+      "centroid_sigma_axis_pix": 0.057549507,
+      "dist_target_pix": 0.19970259,
+      "dist_neighbour_pix": 3.0540327,
       "nearer": "target",
-      "separation_sigma": 40.885951,
+      "separation_sigma": 27.845078,
       "depth_target_ppm": [
-       2871.5144,
-       1199.191
+       2871.468,
+       1199.2313
       ],
       "depth_neighbour_ppm": [
-       12.053605,
-       70.771703
+       12.050532,
+       70.771241
       ],
       "max_snr": 11.715182,
       "two_source": true,
       "voting": true,
       "non_voting_reason": null,
       "pos_target": [
-       0.50768537,
-       4.1137545
+       0.4881452,
+       4.1079262
       ],
       "pos_neighbour": [
-       3.2785141,
-       3.2647079
+       3.2587867,
+       3.2589792
       ],
       "shift_pix": [
-       -0.14534369,
-       0.1094859
+       -0.12561668,
+       0.11521478
       ],
-      "psf_sigma_pix": 0.5822205
+      "psf_sigma_pix": 0.58222301,
+      "box_pixels_target": 6,
+      "box_pixels_neighbour": 9,
+      "box_missing_target": [
+       [
+        -1,
+        -1
+       ],
+       [
+        -1,
+        0
+       ],
+       [
+        -1,
+        1
+       ]
+      ],
+      "box_missing_neighbour": [],
+      "box_partial": true,
+      "edge_bias_pix": 0.04001826,
+      "edge_bias_axis_pix": 0.038262398,
+      "separation_sigma_raw": 40.455018,
+      "centroid_sigma_mc_pix": 0.046517399,
+      "floor_pix": 0.0167,
+      "registration_shift_pix": [
+       -0.019540176,
+       -0.0058283202
+      ]
      },
      {
       "season": 1,
@@ -568,37 +612,51 @@
        0.95891087,
        2.9050159
       ],
-      "centroid_sigma_pix": 0.070794761,
-      "centroid_sigma_axis_pix": 0.066647807,
-      "dist_target_pix": 0.17923154,
-      "dist_neighbour_pix": 2.8219736,
+      "centroid_sigma_pix": 0.072737804,
+      "centroid_sigma_axis_pix": 0.068707453,
+      "dist_target_pix": 0.18730524,
+      "dist_neighbour_pix": 2.8154851,
       "nearer": "target",
-      "separation_sigma": 20.52867,
+      "separation_sigma": 19.814692,
       "depth_target_ppm": [
-       2284.1047,
-       894.44236
+       2283.7611,
+       894.194
       ],
       "depth_neighbour_ppm": [
-       -36.918121,
-       41.927706
+       -36.918719,
+       41.92757
       ],
       "max_snr": 13.565012,
       "two_source": true,
       "voting": true,
       "non_voting_reason": null,
       "pos_target": [
-       0.92806373,
-       3.081573
+       0.92328348,
+       3.0889016
       ],
       "pos_neighbour": [
-       3.7002277,
-       2.2351523
+       3.6952899,
+       2.2423046
       ],
       "shift_pix": [
-       0.015488111,
-       -0.08465081
+       0.020425776,
+       -0.091804312
       ],
-      "psf_sigma_pix": 0.55310831
+      "psf_sigma_pix": 0.55311152,
+      "box_pixels_target": 9,
+      "box_pixels_neighbour": 9,
+      "box_missing_target": [],
+      "box_missing_neighbour": [],
+      "box_partial": false,
+      "edge_bias_pix": 0.0,
+      "edge_bias_axis_pix": 0.0,
+      "separation_sigma_raw": 20.427278,
+      "centroid_sigma_mc_pix": 0.070794761,
+      "floor_pix": 0.0167,
+      "registration_shift_pix": [
+       -0.0047802442,
+       0.0073286086
+      ]
      },
      {
       "season": 2,
@@ -613,37 +671,51 @@
        1.0079284,
        3.029802
       ],
-      "centroid_sigma_pix": 0.074933074,
-      "centroid_sigma_axis_pix": 0.076757659,
-      "dist_target_pix": 0.13109303,
-      "dist_neighbour_pix": 2.7937402,
+      "centroid_sigma_pix": 0.076771451,
+      "centroid_sigma_axis_pix": 0.078553466,
+      "dist_target_pix": 0.11745102,
+      "dist_neighbour_pix": 2.8191568,
       "nearer": "target",
-      "separation_sigma": 17.504576,
+      "separation_sigma": 17.424733,
       "depth_target_ppm": [
-       1813.0299,
-       605.60862
+       1813.1216,
+       605.66552
       ],
       "depth_neighbour_ppm": [
-       -22.873909,
-       55.369404
+       -22.873635,
+       55.369374
       ],
       "max_snr": 12.715573,
       "two_source": true,
       "voting": true,
       "non_voting_reason": null,
       "pos_target": [
-       0.88430161,
-       2.9861923
+       0.90604171,
+       2.9713739
       ],
       "pos_neighbour": [
-       3.6553056,
-       2.1374019
+       3.6771262,
+       2.1225931
       ],
       "shift_pix": [
-       0.079734052,
-       -0.0091868252
+       0.057912998,
+       0.0056213516
       ],
-      "psf_sigma_pix": 0.54572803
+      "psf_sigma_pix": 0.54572735,
+      "box_pixels_target": 9,
+      "box_pixels_neighbour": 9,
+      "box_missing_target": [],
+      "box_missing_neighbour": [],
+      "box_partial": false,
+      "edge_bias_pix": 0.0,
+      "edge_bias_axis_pix": 0.0,
+      "separation_sigma_raw": 17.83237,
+      "centroid_sigma_mc_pix": 0.074933074,
+      "floor_pix": 0.0167,
+      "registration_shift_pix": [
+       0.021740101,
+       -0.014818465
+      ]
      },
      {
       "season": 3,
@@ -657,37 +729,56 @@
        0.92571583,
        3.0479117
       ],
-      "centroid_sigma_pix": 0.075489439,
-      "centroid_sigma_axis_pix": 0.07755465,
-      "dist_target_pix": 0.21781932,
-      "dist_neighbour_pix": 2.6998826,
-      "nearer": "unknown",
-      "separation_sigma": 16.111562,
+      "centroid_sigma_pix": 0.10787247,
+      "centroid_sigma_axis_pix": 0.10056612,
+      "dist_target_pix": 0.18658094,
+      "dist_neighbour_pix": 2.7225796,
+      "nearer": "target",
+      "separation_sigma": 12.657602,
       "depth_target_ppm": [
-       null,
-       null
+       2421.9042,
+       961.41168
       ],
       "depth_neighbour_ppm": [
-       null,
-       null
+       -19.374954,
+       47.179844
       ],
       "max_snr": 10.840121,
-      "two_source": false,
-      "voting": false,
-      "non_voting_reason": "box incomplete: target",
+      "two_source": true,
+      "voting": true,
+      "non_voting_reason": null,
       "pos_target": [
-       0.70939962,
-       3.0223666
+       0.73929463,
+       3.0401927
       ],
       "pos_neighbour": [
-       3.4807486,
-       2.1754589
+       3.5106545,
+       2.1932004
       ],
       "shift_pix": [
-       null,
-       null
+       0.027353809,
+       0.14216572
       ],
-      "psf_sigma_pix": null
+      "psf_sigma_pix": 0.59730051,
+      "box_pixels_target": 8,
+      "box_pixels_neighbour": 9,
+      "box_missing_target": [
+       [
+        -1,
+        1
+       ]
+      ],
+      "box_missing_neighbour": [],
+      "box_partial": true,
+      "edge_bias_pix": 0.075225828,
+      "edge_bias_axis_pix": 0.06180482,
+      "separation_sigma_raw": 16.413148,
+      "centroid_sigma_mc_pix": 0.075489439,
+      "floor_pix": 0.0167,
+      "registration_shift_pix": [
+       0.029895007,
+       0.017826118
+      ]
      }
     ],
     "n_events_used": 34,
@@ -698,8 +789,8 @@
      17
     ],
     "verdict": "pass",
-    "reason": "pixels: the dip is on the target in 3/3 seasons (centroid >= 17.5 sigma nearer)",
-    "centroid_sigma_pix_mean": 0.064081745,
+    "reason": "pixels: the dip is on the target in 4/4 seasons (centroid >= 12.7 sigma nearer)",
+    "centroid_sigma_pix_mean": 0.080243977,
     "leak_depth_ppm": [
      -9.48671,
      12.335534
@@ -729,13 +820,13 @@
     "tpf_missing": [],
     "neighbour_position": "tpf header",
     "n_seasons": 4,
-    "n_seasons_voting": 3,
-    "seasons_silenced": {
-     "box incomplete: target": 1
-    },
-    "pixels_sha256": "7e207f54a1316c90af324ad533ec99fc2420a35d52ea299691b9cb1c80ca219e"
+    "n_seasons_voting": 4,
+    "n_seasons_partial_box": 2,
+    "seasons_silenced": {},
+    "rule_version": 3,
+    "pixels_sha256": "4ad6c2bdb72630b268f0e48406db9f0c59347073640bf8cc8368c3ad5a7c350e"
    },
-   "created": "2026-10-21T15:16:48.861048"
+   "created": "2026-10-22T02:39:26.325294"
   }
  ],
  "provenance": {
@@ -749,6 +840,6 @@
    "rung4_novelty": "4",
    "rung5_pixels": "4"
   },
-  "git_commit": "9c97dfa-dirty"
+  "git_commit": "8f9b249"
  }
 }

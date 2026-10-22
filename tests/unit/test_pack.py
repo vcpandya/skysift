@@ -697,16 +697,23 @@ def test_an_earlier_pack_that_cannot_be_deleted_is_left_behind_with_a_warning(en
 
 
 def test_build_pack_on_the_real_kic_6146676_dossier(env_with_dossier):
-    """The dossier the real-data run generated (tests/golden, Task 7): season 3 did not vote and its depths are
-    null. The light curve is the fixture's; every number in the texts comes from the real dossier."""
+    """The dossier the live run regenerated at dossier version 3 (tests/golden): all four seasons vote, seasons 0 and
+    3 have a 3 x 3 box cut by the stamp edge, and the centroid error carries the measured floor. The light curve is
+    the fixture's; every number in the texts comes from the real dossier."""
     golden = json.loads((Path(__file__).parents[1] / "golden" / "kic-006146676-generated.json").read_text(
         encoding="utf-8"))
     env = env_with_dossier
     Path(env.store.dossier(STAGE2_TARGET)["data_path"]).write_text(json.dumps(golden), encoding="utf-8")
     rep = _build(env)
     note = (rep.out_dir / "exofop" / "note.txt").read_text(encoding="utf-8")
-    assert "nearer this star than its brightest neighbour in 3 of 3 seasons that voted" in note
-    assert "Season 3 did not vote (box incomplete: target)." in note
+    assert "the dip is nearer this star than its brightest neighbour in 4 of 4 observing seasons." in note
+    assert "seasons that voted" not in note and "did not vote" not in note        # season 3 votes now
+    assert ("The centroid sits a median 0.19 pixels from this star and 2.82 pixels from the neighbour, its error "
+            "carrying a measured systematic floor of 0.017 px.") in note
+    assert ("In seasons 0 and 3 this star's 3 x 3 box is cut by the stamp edge; the centroid there is measured on "
+            "the pixels present and the shift the cut would give a point source (0.08 px at most) is added to its "
+            "error.") in note
+    assert "Averaged over the seasons it is 0.69 ± 0.15 arcsec from the star." in note
     tex = (rep.out_dir / "note" / "note.tex").read_text(encoding="utf-8")
     assert note_problems(rep.note_words, tex) == [] and rep.zip_path.is_file()
     import xml.etree.ElementTree as ET

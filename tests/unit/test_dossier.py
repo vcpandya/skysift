@@ -644,9 +644,11 @@ GENERATED = REPO / "tests" / "golden" / "kic-006146676-generated.json"     # too
 
 
 def test_hand_built_values_agree_within_errors():
-    """The real run of 21 October 2026 (docs/superpowers/notes/2026-10-21-dossier-comparison.md) against the hand-built
-    KIC 6146676 study: Rp, a and Teq within the study's quoted errors, the per-season centroid within 0.1 pixel of the
-    study's, the habitable-zone flags, and the stored FPP reproduced from its stored inputs."""
+    """The live run of 22 October 2026 at dossier version 3 (first compared in
+    docs/superpowers/notes/2026-10-21-dossier-comparison.md) against the hand-built KIC 6146676 study: Rp, a and Teq
+    within the study's quoted errors, the fitted T14 within the study's, the per-season centroid within 0.1 pixel of
+    the study's, the rung 5 rows at rule version 3 (a measured floor and a registration shift in every season, all four
+    seasons voting), the habitable-zone flags, and the stored FPP reproduced from its stored inputs."""
     ref = json.loads(HAND_BUILT.read_text(encoding="utf-8"))
     gen = json.loads(GENERATED.read_text(encoding="utf-8"))
     pb = ref["context"]["summary"]["planet_baseline"]
@@ -655,11 +657,30 @@ def test_hand_built_values_agree_within_errors():
     assert abs(planet["a_au"]["median"] - pb["a_AU"]["median"]) <= pb["a_AU"]["plus"]
     assert abs(planet["teq_k"]["median"] - teq["median"]) <= teq["plus"]
     assert planet["in_habitable_zone"] is False and planet["in_optimistic_habitable_zone"] is True
+    assert gen["dossier_version"] == dossier_module.DOSSIER_VERSION == "3"
+    eph = gen["ephemeris"]
+    assert eph["duration_source"] == "fitted T14" and eph["period_source"] == "linear fit of 32 transit times"
+    assert eph["period_err_days"] > 0 and eph["t_ref_err_days"] > 0 and eph["epoch_ref"] == 19
+    err = eph["duration_h_err"]
+    assert err["minus"] > 0 and err["plus"] > 0
+    assert abs(eph["duration_h"] - ref["fit"]["t14_h"]) <= err["plus"]       # 3.865 h against the study's 3.918 h
     to_candidate = ref["pixels"]["summary"]["seasons_snrbox_centroid_dist_to_candidate_pix"]
     rung5 = next(t for t in gen["tests"] if t["rung"] == "rung5_pixels")
     assert rung5["status"] == "pass" and rung5["metrics"]["tpf_missing"] == []
-    for s in rung5["metrics"]["seasons"]:
+    m5 = rung5["metrics"]
+    assert m5["rule_version"] == 3 and m5["n_seasons"] == m5["n_seasons_voting"] == 4
+    assert m5["seasons_silenced"] == {} and m5["n_seasons_partial_box"] == 2
+    assert [s["season"] for s in m5["seasons"]] == [0, 1, 2, 3] and all(s["voting"] for s in m5["seasons"])
+    for s in m5["seasons"]:
         assert abs(s["dist_target_pix"] - to_candidate[str(s["season"])]) <= 0.1
+        assert s["floor_pix"] == 0.0167 and s["nearer"] == "target" and s["non_voting_reason"] is None
+        assert len(s["registration_shift_pix"]) == 2 and all(abs(x) < 0.05 for x in s["registration_shift_pix"])
+        # the reported error is the Monte Carlo centroid error with the floor and any edge allowance added
+        assert s["centroid_sigma_mc_pix"] > 0 and s["centroid_sigma_pix"] >= s["centroid_sigma_mc_pix"]
+        assert s["centroid_sigma_pix"] >= s["floor_pix"]
+    # seasons 0 and 3 have a cut 3 x 3 box on the target star, and only those two carry an edge allowance
+    assert [s["season"] for s in m5["seasons"] if s["box_partial"]] == [0, 3]
+    assert [s["season"] for s in m5["seasons"] if s["edge_bias_pix"] > 0] == [0, 3]
     # the FPP band of spec 4.2 (1 to 60 percent) did not survive Task 2: with the spec's priors the localized BEB term
     # vanishes and the on-target EB term is killed by the secondary and odd/even limits, so KIC 6146676 reads
     # "under 1 percent"; the number is a sign-off item (ledger), and this test pins reproducibility, not the band
