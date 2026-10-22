@@ -1445,13 +1445,23 @@ def test_the_note_names_its_methods_and_cites_them(env_with_dossier):
                                           "text": "quote the bootstrap median beside it."}]
     tex = render_note(data)
     signal = tex.split(r"\section{The signal}")[1].split(r"\section{")[0]
-    assert r"weighted linear fit of the per-transit mid-times" in signal and r"\citep{deeg2015}" in signal
-    assert r"\citep{holczer2016}" in signal and r"bootstrap over transits \citep{schmitt2014}" in signal
-    assert "16th to 84th percentile spread of the resamples about their median" in signal
-    assert "use the search period and epoch; the quoted ephemeris is the linear fit." in signal
-    for item in (r"Deeg, H.~J. 2015, arXiv:1503.05368", r"Holczer, T., et~al. 2016, ApJS, 225, 9",
-                 r"Schmitt, J.~R., et~al. 2014, AJ, 148, 28"):
-        assert item in tex
+    # Task 8 fix round 3: the note keeps a pointer without citations, the sentence and its works are in the README
+    assert ("The ephemeris and transit-parameter errors come from per-transit fits, a weighted linear fit and a "
+            "bootstrap over transits (methods in the README).") in " ".join(signal.split())
+    assert len(pack_module.errors_pointer(data).split()) <= 25
+    assert "deeg2015" not in tex and "holczer2016" not in tex and "schmitt2014" not in tex
+    assert "It remains a candidate until independent follow-up confirms it." not in signal   # the abstract says it
+    readme = render_readme(data, {})
+    errors = readme.split("Ephemeris and transit-parameter errors (the note's signal section points here): ")[1]
+    errors = errors.split("\n")[0]
+    assert "weighted linear fit of the per-transit mid-times" in errors and "(Deeg 2015)" in errors
+    assert "(Holczer et al. 2016)" in errors and "bootstrap over transits (Schmitt et al. 2014)" in errors
+    assert "16th to 84th percentile spread of the resamples about their median" in errors
+    assert "use the search period and epoch; the quoted ephemeris is the linear fit." in errors
+    for item in ("Deeg, H. J. 2015, arXiv:1503.05368", "Holczer, T., et al. 2016, ApJS, 225, 9",
+                 "Schmitt, J. R., et al. 2014, AJ, 148, 28"):
+        assert item in errors
+    assert readme.index("| TESS | ") < readme.index("Ephemeris and transit-parameter errors (the note")
     assert "0.0470$^{+0.0012}_{-0.0011}$ (bootstrap median 0.0469)" in tex
     items = set(re.findall(r"\\bibitem\[[^\]]*\]\{([^}]+)\}", tex))
     keys = {k.strip() for c in re.findall(r"\\cite[pt]?\{([^}]+)\}", tex) for k in c.split(",")}
@@ -1459,7 +1469,12 @@ def test_the_note_names_its_methods_and_cites_them(env_with_dossier):
     # no bootstrap median without the caveat; no method sentence without either block
     assert "bootstrap median" not in render_note(_with_errors(_stored(env_with_dossier)))
     bare = {**data, "timing": {"ok": False, "reason": "x"}, "shape": {"ok": False, "reason": "y"}}
-    assert pack_module.methods_sentence(bare) is None and "deeg2015" not in render_note(bare)
+    assert pack_module.methods_sentence(bare) is None and pack_module.errors_pointer(bare) is None
+    assert "(methods in the README)" not in render_note(bare) and "transit-parameter errors (the" not in \
+        render_readme(bare, {})
+    timed_only = {**data, "shape": {"ok": False, "reason": "y"}}
+    assert pack_module.errors_pointer(timed_only).endswith("a weighted linear fit (method in the README).")
+    assert "Schmitt" not in pack_module.errors_methods_text(timed_only)
 
 
 def test_the_caption_quotes_the_stored_fold_bin(env_with_dossier):
@@ -1573,6 +1588,13 @@ def test_a_prior_claim_makes_every_text_an_independent_recovery(env_prior):
     assert (r"\bibitem[{Mehta}(2026)]{mehta2026} Mehta, K. 2026, Planethunt: archival evidence for the KIC "
             "5689121") in note
     assert "This note reports a transit candidate" not in note and "not a new candidate" in note
+    # Task 8 fix round 3: the claim's date and DOI once, in the body beside the citation, not again in the abstract
+    abstract = note.split(r"\begin{abstract}")[1].split(r"\end{abstract}")[0]
+    body = note.split(r"\end{abstract}")[1].split(r"\begin{thebibliography}")[0]
+    assert "reported the signal first." in abstract and PRIOR_DOI not in abstract and "13 October" not in abstract
+    assert body.count(PRIOR_DOI) == 1 and body.count("13 October 2026") == 1
+    assert "It remains a candidate until independent follow-up confirms it." in abstract
+    assert "It remains a candidate until independent follow-up confirms it." not in body
     assert note.index("]{mann2019}") < note.index("]{mehta2026}") < note.index("]{morton2012}")   # alphabetical
     assert note_problems(note_words(note), note) == []
     step2 = texts["README.md"].split("## Step 2.")[1].split("## Step 3.")[0]
@@ -1726,6 +1748,7 @@ def test_the_texts_carry_the_tess_statement(env_with_dossier):
     assert row == f"| TESS | {tess.readme_row(block)} |" and block["verdict"] in row
     section = readme.split("TESS prediction (the note's TESS sentence points here): ")[1].split("\n")[0]
     assert section.startswith(tess.methods_text(block)) and "7.1 or more" in section
+    assert section.count("Christ et al. 2019") == 1 and section.count("Christ, C. N.") == 1   # round 3: named once
     assert ("References: Christ, C. N., Montet, B. T., & Fabrycky, D. C. 2019, AJ, 157, 235; Stassun, K. G.") in section
     assert "Twicken, J. D., Jenkins, J. M., Caldwell, D. A., et al. 2025, RNAAS, 9, 132" in section
     assert "~" not in section and "\\" not in section
@@ -1803,27 +1826,18 @@ def _check_live_shape(timing: dict, cross: str, prior: bool) -> dict:
     return words
 
 
+@pytest.mark.parametrize("prior", [False, True], ids=["no-prior-claim", "prior-claim"])
 @pytest.mark.parametrize("cross", ["validated", "dominant"])
-def test_the_live_shape_stays_inside_the_word_limit_with_margin(env_with_dossier, cross):
-    """Fix round 2, N1: the note as a live draft renders it (timing and shape blocks, the longest cross-check forms,
-    a TESS sentence with a skipped sector and an uncertain count) stays at or under 1,480 words, 20 under the RNAAS
-    limit, and the gate does not refuse it for its length. Measured: 1,461 (validated) and 1,464 (dominant)."""
+def test_the_live_shape_stays_inside_the_word_limit_with_margin(env_with_dossier, cross, prior):
+    """Fix rounds 2 and 3, N1: the note as a live draft renders it (timing and shape blocks, the longest
+    cross-check forms, a TESS sentence with a skipped sector and an uncertain count, with and without a prior claim)
+    stays at or under 1,480 words, 20 under the RNAAS limit, and the gate does not refuse it for its length.
+    Measured in round 3: 1,364 and 1,367 without a prior claim, 1,431 and 1,434 with one (validated, dominant)."""
     timing = env_with_dossier.data["timing"]
     assert timing["ok"] is True
-    words = _check_live_shape(timing, cross, prior=False)
+    words = _check_live_shape(timing, cross, prior)
     assert words["total"] <= LIVE_SHAPE_LIMIT, words
-    assert not [p for p in pack_module.gate_problems(_live_shape(timing, cross, False)) if "words" in p]
-
-
-@pytest.mark.xfail(strict=True, reason="fix round 2: with a prior claim the worst live shape renders 1,533 "
-                   "(validated) and 1,536 (dominant) words; the 1,480 margin needs a ruling on prose outside the "
-                   "TESS and cross-check sentences (see task-8-fix-round-1-report.md, Round 2)")
-@pytest.mark.parametrize("cross", ["validated", "dominant"])
-def test_the_live_shape_with_a_prior_claim_stays_inside_the_word_limit_with_margin(env_with_dossier, cross):
-    """Fix round 2, N1, with the prior claim the ruling adds: the same live shape plus a prior claim (about 72
-    words: the abstract clause, the body's two sentences and the reference). Strict xfail until it fits."""
-    words = _check_live_shape(env_with_dossier.data["timing"], cross, prior=True)
-    assert words["total"] <= LIVE_SHAPE_LIMIT, words
+    assert not [p for p in pack_module.gate_problems(_live_shape(timing, cross, prior)) if "words" in p]
 
 
 def test_the_live_gate_refuses_a_note_over_the_word_limit(env_with_dossier):

@@ -47,6 +47,10 @@ This pack was built on {{ f.built_words }} by SkySift (pack format {{ f.pack_ver
 | {{ row.parameter }} | {{ row.text }} |
 {% endfor %}
 | TESS | {{ n.tess_row }} |
+{% if n.errors_methods %}
+
+Ephemeris and transit-parameter errors (the note's signal section points here): {{ n.errors_methods }}
+{% endif %}
 {% if n.tess_methods %}
 
 TESS prediction (the note's TESS sentence points here): {{ n.tess_methods }}

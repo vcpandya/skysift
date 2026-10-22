@@ -291,7 +291,8 @@ def references(data: dict) -> dict[str, bool]:
             "giacalone2021": cross_check_sentence(data) is not None,
             **{key: key in tess for key, _words in tess_module.METHOD_CITES if key != "giacalone2021"},
             "bryson2013": self_referenced(offset_block(data)),
-            "deeg2015": _timed(data), "holczer2016": _timed(data), "schmitt2014": _bootstrapped(data),
+            # the errors method and its three works are in the README since fix round 3; the note points there
+            "deeg2015": False, "holczer2016": False, "schmitt2014": False,
             "kopparapu2013": star_ok and _hz_where(planet) is not None}
 
 
@@ -441,7 +442,8 @@ def _bootstrapped(data: dict) -> bool:
 
 
 def methods_sentence(data: dict, tex: bool = False) -> str | None:
-    """How the errors were made, in one sentence for the note's signal section (ruling h): the linear fit of the
+    """How the errors were made, in one sentence for the README's ephemeris section (ruling h, moved out of the
+    note in Task 8 fix round 3; the note keeps ``errors_pointer``): the linear fit of the
     per-transit mid-times with the reference epoch at the centre of the series (Deeg 2015), the per-transit times by
     template fit (Holczer et al. 2016), the shape errors from a bootstrap over transits quoted as the 16th to 84th
     percentile spread about the bootstrap median (Schmitt et al. 2014), and that the fold, the per-event depths and
@@ -464,6 +466,35 @@ def methods_sentence(data: dict, tex: bool = False) -> str | None:
     parts.append(". The fold, the per-event depths and the bootstrap use the search period and epoch"
                  + ("; the quoted ephemeris is the linear fit." if timed else "."))
     return _joined(tex, *parts)
+
+
+# the works ``methods_sentence`` cites, in its order
+ERRORS_CITES = (("deeg2015", "timed"), ("holczer2016", "timed"), ("schmitt2014", "boot"))
+
+
+def errors_pointer(data: dict) -> str | None:
+    """The note's stand-in for ``methods_sentence`` (Task 8 fix round 3, under 25 words, no citation): where the
+    ephemeris and shape errors come from, and that the method is in the README. None when neither block is ok."""
+    timed, boot = _timed(data), _bootstrapped(data)
+    if timed and boot:
+        return ("The ephemeris and transit-parameter errors come from per-transit fits, a weighted linear fit and a "
+                "bootstrap over transits (methods in the README).")
+    if timed:
+        return "The ephemeris errors come from per-transit fits and a weighted linear fit (method in the README)."
+    if boot:
+        return "The transit-parameter errors come from a bootstrap over transits (method in the README)."
+    return None
+
+
+def errors_methods_text(data: dict) -> str | None:
+    """The README's ephemeris section: ``methods_sentence`` in plain text with the full references of the works it
+    cites; None when neither block is ok."""
+    method = methods_sentence(data)
+    if method is None:
+        return None
+    used = {"timed": _timed(data), "boot": _bootstrapped(data)}
+    refs = "; ".join(plain_reference(key) for key, needs in ERRORS_CITES if used[needs])
+    return f"{method} References: {refs}."
 
 
 def cross_check_sentence(data: dict, tex: bool = False) -> str | None:
@@ -866,7 +897,7 @@ def numbers(data: dict, tex: bool = False, after_bjd: float | None = None) -> di
         "ladder_version": prov.get("ladder_version") or sig.get("ladder_version"),
         **q, "period_title": _f(eph.get("period_days"), 3), "t0_err": q["t0_bjd_err"], "t_ref_err": q["t_ref_bjd_err"],
         "ephemeris_text": ephemeris_sentence(data),
-        "timed": timed, "methods_text": methods_sentence(data, tex),
+        "timed": timed, "methods_text": errors_pointer(data), "errors_methods": errors_methods_text(data),
         "rms_min": _f(timing.get("rms_min"), 1) if timed else None,
         "n_used": timing.get("n_used") if timed else None, "n_measured": timing.get("n_measured") if timed else None,
         "next_transits": next_transits(data, julian_date(datetime.now(UTC)) if after_bjd is None else after_bjd),
@@ -928,8 +959,8 @@ def abstract_text(data: dict) -> str:
     target, eph = data.get("target") or {}, data.get("ephemeris") or {}
     name = target.get("name") or target.get("target_id")
     claims = prior_claims(data)
-    first = (f"; {claims[0]['author']} reported the signal first on {date_words(claims[0]['date'])} "
-             f"(doi:{claims[0]['doi']})") if claims else ""
+    # the claim's date and DOI are printed once, in the body beside its citation (Task 8 fix round 3)
+    first = f"; {claims[0]['author']} reported the signal first" if claims else ""
     what = "an independent recovery of a transit candidate" if claims else "a transit candidate"
     parts = [(f"This note reports {what} on {name}, a star that Kepler recorded only in the background "
               f"of other targets' pixels{first}."),

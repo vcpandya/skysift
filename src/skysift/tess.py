@@ -513,12 +513,12 @@ def methods_sentence(block: dict | None, tex: bool = False) -> str | None:
 
 
 def thresholds_sentence() -> str:
-    """The verdict's thresholds and the two noise models in words, for the README and the page beside
-    ``methods_sentence`` (the note points to them)."""
+    """The verdict's thresholds and the two noise models in words, for the README and the page after
+    ``methods_sentence``, whose first words name Christ et al. 2019 ("that work"; fix round 3: named once)."""
     return (f"The verdict is \"should have detected\" at a conservative folded S/N of {SHOULD_DETECT_S} or more, the "
-            "Kepler threshold on which Christ et al. 2019 centre their TESS recovery (Sullivan et al. 2015 use 7.3), "
-            f"\"not expected\" below a nominal {NOT_EXPECTED_S:.0f}, the floor Christ et al. 2019 report as adequate "
-            "for characterising known planets, and \"marginal\" between. The nominal 1-hour noise is the TIC "
+            "Kepler threshold on which that work centres its TESS recovery (Sullivan et al. 2015 use 7.3), "
+            f"\"not expected\" below a nominal {NOT_EXPECTED_S:.0f}, the floor it reports as adequate for "
+            "characterising known planets, and \"marginal\" between. The nominal 1-hour noise is the TIC "
             "polynomial at the blended magnitude, scaled to the transit duration as white noise; the conservative one "
             "is the SPOC CDPP median at that magnitude (beyond the table's 12 to 16, the polynomial times the "
             "table's excess at its nearer end), scaled by the SPOC's measured duration ratios and never below the "
