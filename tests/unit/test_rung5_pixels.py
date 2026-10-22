@@ -18,7 +18,7 @@ from skysift.pipeline import build_ladder
 from skysift.store.blob import LocalBlob
 from skysift.store.db import PIXELS_URL, ArtifactRow, Store
 from skysift.vetting.base import DataBundle
-from skysift.vetting.rung5_pixels import Rung5Pixels
+from skysift.vetting.rung5_pixels import PIXEL_RULE_VERSION, Rung5Pixels
 from tests.unit.synthetic_tpf import (
     CORNER_TARGET,
     EDGE_TARGET,
@@ -94,7 +94,7 @@ def test_rung5_passes_when_the_dip_is_on_the_target(bundle_with_tpfs):
     assert all(s["nearer"] == "target" and s["voting"] for s in m["seasons"])
     assert {"two_source", "pos_target", "pos_neighbour", "non_voting_reason", "centroid_sigma_axis_pix", "shift_pix",
             "psf_sigma_pix"} <= set(m["seasons"][0])
-    assert r.metrics["n_seasons_partial_box"] == 0 and r.metrics["rule_version"] == 3
+    assert r.metrics["n_seasons_partial_box"] == 0 and r.metrics["rule_version"] == PIXEL_RULE_VERSION
     assert all(s["floor_pix"] > 0 and s["centroid_sigma_mc_pix"] < s["centroid_sigma_pix"]
                and s["registration_shift_pix"] == [0.0, 0.0] for s in m["seasons"])
     _strict(m)

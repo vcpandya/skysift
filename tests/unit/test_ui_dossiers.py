@@ -828,12 +828,21 @@ def test_the_pixel_section_quotes_the_offset_against_the_rule(seeded_dossier):
              "sigma_level": 3.0, "rule": "Bryson et al. 2013", "n_seasons": 4}
     path = Path(app.state.store.dossier(STAGE2_TARGET)["data_path"])
     path.write_text(json.dumps({**data, "centroid_offset": block}), encoding="utf-8")
+    import html
+    pixels = html.unescape(client.get(f"/dossiers/{STAGE2_TARGET}").text.split('id="pixels"')[1].split('id="star"')[0])
+    # the fit's fallback reference is named and not judged by Bryson's rule (round 1, item 3)
+    assert ("Against the catalogue position plus the two-source fit's common shift (the star's direct-image "
+            "centroid is not stored for every season)") in pixels
+    assert "offset by 0.39 ± 0.15 arcsec (2.6 sigma), not assessed from the star's own image" in pixels
+    assert "the distance from the Gaia position (0.25 ± 0.28 arcsec) carries the WCS zero point" in pixels
+    own = {**block, "reference": "the star's own direct-image centroid"}
+    path.write_text(json.dumps({**data, "centroid_offset": own}), encoding="utf-8")
     pixels = client.get(f"/dossiers/{STAGE2_TARGET}").text.split('id="pixels"')[1].split('id="star"')[0]
     assert ("offset by 0.39 ± 0.15 arcsec (2.6 sigma), not an offset by the rule of Bryson et al. (2013), which asks "
             "for more than 3 sigma and more than 0.2 arcsec") in pixels
-    assert "the distance from the Gaia position (0.25 ± 0.28 arcsec) carries the WCS zero point" in pixels
     export = client.get(f"/dossiers/{STAGE2_TARGET}/export.html").text
     assert '"centroid_offset":{' in export.replace(" ", "") and "Against the star's own out-of-transit" in export
+    assert "not assessed from the star's own image" in export          # the script's twin of the fallback
 
 
 def test_section_01_presents_a_prior_claim_as_an_independent_recovery(seeded_dossier):
@@ -849,6 +858,7 @@ def test_section_01_presents_a_prior_claim_as_an_independent_recovery(seeded_dos
     path.write_text(json.dumps({**data, "prior_claims": [PRIOR_CLAIM]}), encoding="utf-8")
     signal = client.get(f"/dossiers/{STAGE2_TARGET}").text.split('id="signal"')[1].split('id="repeat"')[0]
     assert "Kuber Mehta reported this signal first" in signal and "doi:10.5281/zenodo.23325261" in signal
-    assert "13 October 2026" in signal and "independent recovery and vetting of that claim, not a new candidate" in signal
+    assert "13 October 2026" in signal
+    assert "independent recovery and vetting of that claim, not a new candidate" in signal
     export = client.get(f"/dossiers/{STAGE2_TARGET}/export.html").text
     assert '"prior_claims":[{' in export.replace(" ", "") and "independent recovery and vetting of" in export

@@ -71,6 +71,7 @@ from skysift.ui import explain
 from skysift.ui.planet_svg import star_word
 from skysift.ui.plots import whitened_fnorm
 from skysift.vetting.rung1_detection import SYSTEMATIC_PERIODS
+from skysift.vetting.rung5_pixels import PIXEL_RULE_VERSION
 
 log = logging.getLogger(__name__)
 
@@ -206,17 +207,34 @@ def _metrics(tests: list[dict], rung: str) -> dict:
     return (_rung(tests, rung) or {}).get("metrics") or {}
 
 
-@functools.lru_cache(maxsize=1)
-def git_commit() -> str:
-    """The short commit of the code that built the dossier, with "-dirty" when the tree has uncommitted changes to
-    tracked files (``git describe --always --dirty``); "unknown" outside a checkout. Cached: one call per process."""
+DIRTY_PATHS = ("src", "docs/candidates")     # an untracked file here changes the code or the texts a dossier runs
+
+
+def git_commit_at(root: Path) -> str:
+    """The short commit of the checkout at ``root``, with "-dirty" when a tracked file has uncommitted changes
+    (``git describe --always --dirty``) or when ``git status`` lists any file, untracked ones included, under
+    ``DIRTY_PATHS`` (an untracked package beside a module, or a claims file the commit does not hold, would otherwise
+    pass as the stated commit); "unknown" outside a checkout."""
     try:
         out = subprocess.run(["git", "describe", "--always", "--dirty", "--abbrev=7", "--match=NO-TAGS"],
-                             capture_output=True, text=True, timeout=10, cwd=Path(__file__).resolve().parents[2],
-                             check=False).stdout.strip()
-        return out or "unknown"
+                             capture_output=True, text=True, timeout=10, cwd=root, check=False).stdout.strip()
+        if not out:
+            return "unknown"
+        listed = subprocess.run(["git", "status", "--porcelain", "--untracked-files=all", "--", *DIRTY_PATHS],
+                                capture_output=True, text=True, timeout=10, cwd=root, check=False)
+        if listed.returncode != 0:
+            return "unknown"
+        if listed.stdout.strip() and not out.endswith("-dirty"):
+            out += "-dirty"
+        return out
     except (OSError, subprocess.SubprocessError):
         return "unknown"
+
+
+@functools.lru_cache(maxsize=1)
+def git_commit() -> str:
+    """``git_commit_at`` for the checkout this module sits in. Cached: one call per process."""
+    return git_commit_at(Path(__file__).resolve().parents[2])
 
 
 def _write_atomic(path: Path, text: str) -> None:
@@ -655,8 +673,10 @@ def centroid_offset(rung5_metrics: dict) -> dict | None:
     centroid less the star's own position (``_self_reference``), with ``self_referenced_err_arcsec`` (the seasons'
     errors combined for a mean, per axis) and ``sigma`` (the one over the other); ``catalogue_referenced_arcsec`` and
     its error, the vector mean against the projected Gaia position (``centroid_estimate``); ``level_arcsec`` and
-    ``sigma_level``, the rule's two thresholds, ``counts`` (both exceeded), ``rule``, ``reference`` (what the star's
-    own position was) and ``n_seasons``. The self-referenced keys are None when a voting season has no position."""
+    ``sigma_level``, the rule's two thresholds, ``counts`` (both exceeded; None unless every season's reference is
+    the star's own direct-image centroid, since the fit's common shift is not Bryson's estimator), ``rule``,
+    ``reference`` (what the star's own position was) and ``n_seasons``. Both errors are the larger of the seasons'
+    combined error and their scatter. The self-referenced keys are None when a voting season has no position."""
     est = centroid_estimate(rung5_metrics)
     if est is None:
         return None
@@ -674,11 +694,13 @@ def centroid_offset(rung5_metrics: dict) -> dict | None:
              "catalogue_referenced_err_arcsec": est.sigma, "level_arcsec": OFFSET_LEVEL_ARCSEC,
              "sigma_level": OFFSET_SIGMA, "rule": OFFSET_RULE, "n_seasons": est.n_seasons}
     if rows:
-        mean, err, _scatter = _vector_mean(rows)
-        off, err = float(np.hypot(*mean)) * PIXEL_ARCSEC, err * PIXEL_ARCSEC
+        mean, stat, scatter = _vector_mean(rows)
+        # the larger of the combined error and the scatter, the rule of the catalogue-referenced error
+        off, err = float(np.hypot(*mean)) * PIXEL_ARCSEC, max(stat, scatter) * PIXEL_ARCSEC
         sigma = off / err
-        block.update(self_referenced_arcsec=off, self_referenced_err_arcsec=err, sigma=sigma,
-                     counts=bool(sigma > OFFSET_SIGMA and off > OFFSET_LEVEL_ARCSEC),
+        # Bryson's rule is judged only against the star's own image; the fit's common shift is not that estimator
+        counts = bool(sigma > OFFSET_SIGMA and off > OFFSET_LEVEL_ARCSEC) if kinds == {"direct"} else None
+        block.update(self_referenced_arcsec=off, self_referenced_err_arcsec=err, sigma=sigma, counts=counts,
                      reference=" and ".join(SELF_REFERENCES[k] for k in sorted(kinds)))
     return block
 
@@ -951,6 +973,33 @@ def partial_box_clause(seasons: list[dict]) -> str:
     return f", {n} of them with a box cut by the stamp edge" if n else ""
 
 
+PIXEL_RULE_STATUSES = ("candidate_stage2", "undetermined")     # the settled statuses a stale pixel rule matters for
+
+
+def pixel_rule_stale(data: dict) -> str | None:
+    """"the pixel verdict predates pixel rule version N" when a stage 2 or undetermined signal's latest rung 5 row
+    localised (its metrics hold the seasons) under a rule version below ``PIXEL_RULE_VERSION`` (1 when none is
+    stored): the recheck reruns such a row, and until it has, the pack's live draft is refused (``gate_problems``)."""
+    if (data.get("status") or {}).get("final_status") not in PIXEL_RULE_STATUSES:
+        return None
+    metrics = _metrics(data.get("tests") or [], "rung5_pixels")
+    if not isinstance(metrics.get("seasons"), list):
+        return None
+    try:
+        version = int(metrics.get("rule_version") or 1)
+    except (TypeError, ValueError):
+        version = 1
+    if version >= PIXEL_RULE_VERSION:
+        return None
+    return f"the pixel verdict predates pixel rule version {PIXEL_RULE_VERSION}"
+
+
+def prior_claims_unchecked(data: dict) -> bool:
+    """The dossier was built where the candidates folder was absent (``prior_claims`` stored as None), so no prior
+    claim on the signal was looked for. A dossier from before the key existed reads as checked with none."""
+    return "prior_claims" in data and data["prior_claims"] is None
+
+
 def caveats(data: dict) -> list[dict]:
     """The section 07 list, [{"title", "text"}], by the rules of the plan in their order, each sentence built from
     the stored numbers."""
@@ -983,6 +1032,16 @@ def caveats(data: dict) -> list[dict]:
                             f"({NO_PIXEL_CONFUSION_ARCSEC:g} arcsec) counts in full towards the background binary "
                             f"term, with a fall-off of one pixel ({NO_PIXEL_FALLOFF_ARCSEC:g} arcsec) beyond, so the "
                             "estimate is labelled \"no pixel data yet\"."})
+    stale = pixel_rule_stale(data)
+    if stale:
+        out.append({"key": "pixel_rule_stale", "title": stale.capitalize(),
+                    "text": f"The rung 5 row was made under an older pixel rule, so {stale}. The recheck reruns it "
+                            "under the current rule, and the live Zenodo draft waits for that."})
+    if prior_claims_unchecked(data):
+        out.append({"key": "prior_claims_unchecked", "title": "Prior claims on this signal were not checked",
+                    "text": "The engine ran without the docs/candidates folder of a source checkout, so it could not "
+                            "read whether someone reported this signal first. The live Zenodo draft waits for a "
+                            "dossier built from a checkout."})
     out.extend(_error_caveats(data))
     if fpp.get("neighbours_known") is False:
         out.append({"key": "no_neighbours", "title": "The false-positive probability is not computed",
@@ -1239,25 +1298,34 @@ def prior_claims(target_id: str, root: Path | None = None) -> list[dict]:
 def hand_built_localisation(target_id: str, rung5_metrics: dict, root: Path | None = None) -> dict | None:
     """How far, season by season, the rung 5 centroid's distance from the star sits from the hand-built study's
     (``docs/candidates/<target>/localisation/results.json``, its S/N-box centroid distance to the candidate per
-    season, quarter mod 4 as rung 5's seasons): {"max_diff_pix", "n_seasons", "source"} over the seasons that voted
-    and that the study lists, or None without the file or a common season."""
+    season, quarter mod 4 as rung 5's seasons): {"max_diff_pix", "n_seasons", "agrees", "combined_err_pix",
+    "source"} over the seasons that voted and that the study lists, ``agrees`` when every season's difference is below
+    its combined error (rung 5's centroid error and the study's Monte Carlo error in quadrature), or None without the
+    file or a common season."""
     base = Path(CANDIDATES_DIR if root is None else root)
     path = base / target_id / "localisation" / "results.json"
     if not path.is_file():
         return None
     try:
-        hand = (json.loads(path.read_text(encoding="utf-8")).get("summary") or {}).get(
-            "seasons_snrbox_centroid_dist_to_candidate_pix") or {}
+        study = json.loads(path.read_text(encoding="utf-8"))
+        hand = (study.get("summary") or {}).get("seasons_snrbox_centroid_dist_to_candidate_pix") or {}
+        seasons = study.get("seasons") if isinstance(study.get("seasons"), dict) else {}
     except (OSError, ValueError, AttributeError):
         return None
-    diffs = []
+    diffs = []          # (difference, combined error) per common season
     for s in (rung5_metrics or {}).get("seasons") or []:
         ours, theirs = s.get("dist_target_pix"), hand.get(str(s.get("season")))
         if s.get("voting") and isinstance(ours, int | float) and isinstance(theirs, int | float):
-            diffs.append(abs(float(ours) - float(theirs)))
+            err = _num(s, "centroid_sigma_pix") or 0.0
+            mc = (seasons.get(str(s.get("season"))) or {}).get("snrbox_diff_centroid_sigma_mc_colrow")
+            if isinstance(mc, list) and len(mc) == 2 and all(isinstance(x, int | float) for x in mc):
+                err = math.hypot(err, math.sqrt((mc[0] ** 2 + mc[1] ** 2) / 2))
+            diffs.append((abs(float(ours) - float(theirs)), err))
     if not diffs:
         return None
-    return {"max_diff_pix": round(max(diffs), 4), "n_seasons": len(diffs),
+    worst = max(diffs)
+    return {"max_diff_pix": round(worst[0], 4), "n_seasons": len(diffs),
+            "agrees": all(d < e for d, e in diffs), "combined_err_pix": round(worst[1], 4),
             "source": f"docs/candidates/{target_id}/localisation/results.json"}
 
 
@@ -1284,7 +1352,11 @@ def generate(store: Store, blob, settings, target_id: str, *, signal_id: int | N
         say(f"dossier for {target_id} is current (signal {sid}); nothing to do")
         return _stored_report(data_path, sid, target_id)
     stale = _stale_reason(old, signal, force, fp)
-    claims = prior_claims(target_id)            # read first: a malformed file stops the run before any work
+    # read first: a malformed file stops the run before any work. Without the candidates folder (an installed
+    # package, not a checkout) nothing was checked: None, a caveat and a gate problem, never a silent empty list.
+    # The claim's status stays in the owner's file: the dossier JSON travels with the public pack.
+    claims = ([{k: v for k, v in c.items() if k != "status"} for c in prior_claims(target_id)]
+              if Path(CANDIDATES_DIR).is_dir() else None)
     target = _target_dict(store, target_id)
     say(f"signal {sid} ({signal['final_status']}, SDE {signal['sde']:.1f}); loading the light curve")
     lc = LightCurveLoader(store, blob, source_factory=_offline_factory(target_id, sid)).load(target, pin=True)

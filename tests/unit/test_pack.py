@@ -714,11 +714,14 @@ def test_build_pack_on_the_real_kic_6146676_dossier(env_with_dossier):
     assert ("In seasons 0 and 3 this star's 3 x 3 box is cut by the stamp edge; the centroid there is measured on "
             "the pixels present and the shift the cut would give a point source (0.08 px at most) is added to its "
             "error.") in note
-    # the offset of ruling e (the golden of 22 October 2026 holds no direct-image centroid: the fit's own position)
-    assert ("Against the star's own out-of-transit image the difference-image centroid is offset by 0.39 ± 0.15 "
-            "arcsec (2.6 sigma), not an offset by the rule of Bryson et al. (2013), which asks for more than 3 sigma "
-            "and more than 0.2 arcsec; the distance from the Gaia position (0.25 ± 0.28 arcsec) carries the WCS zero "
-            "point and the registration.") in note
+    # the offset of ruling e (the golden of 22 October 2026 holds no direct-image centroid: the fit's own position,
+    # named as such and not judged by Bryson's rule, round 1 item 3; the golden holds no block, so it is computed
+    # from the stored seasons, its error now the seasons' scatter, round 1 item 10)
+    assert ("Against the catalogue position plus the two-source fit's common shift (the star's direct-image centroid "
+            "is not stored for every season) the difference-image centroid is offset by 0.39 ± 0.20 arcsec (2.0 "
+            "sigma), not assessed from the star's own image; the distance from the Gaia position (0.25 ± 0.28 "
+            "arcsec) carries the WCS zero point and the registration.") in note
+    assert "Bryson" not in note
     tex = (rep.out_dir / "note" / "note.tex").read_text(encoding="utf-8")
     assert note_problems(rep.note_words, tex) == [] and rep.zip_path.is_file()
     import xml.etree.ElementTree as ET
@@ -935,7 +938,8 @@ STELLAR_COLUMNS = ["target", "tel", "telsize", "inst", "sp_type", "teff", "teff_
                    "tag", "group", "prop_period", "notes"]
 DEGENERATE = "ingress shorter than the cadence: b and a/R* are degenerate with k, errors not quoted"
 SHAPE_OK = {"ok": True, "reason": None,
-            "method": "bootstrap over transits of the uniform-disc fit (Schmitt et al. 2014)", "n_boot": 200, "n_converged": 196, "seed": 20261022,
+            "method": "bootstrap over transits of the uniform-disc fit (Schmitt et al. 2014)", "n_boot": 200,
+            "n_converged": 196, "seed": 20261022,
             "k": {"median": 0.047, "minus": 0.0011, "plus": 0.0012, "boot_median": 0.0469},
             "b": {"median": 0.31, "minus": None, "plus": None, "boot_median": 0.33},
             "a_over_r": {"median": 74.0, "minus": None, "plus": None, "boot_median": 73.0},
@@ -1400,7 +1404,8 @@ def test_pack_prints_the_cross_check_and_the_gate_refuses_without_one(env_with_d
     assert pack_module.gate_problems(_stored_with_cross_check(env)) == []
     rep = _build(env)
     readme = (rep.out_dir / "README.md").read_text(encoding="utf-8")
-    assert "For the owner: TRICERATOPS puts the median full false-positive probability at 0.60." in readme
+    assert ("For the owner: TRICERATOPS puts the median full false-positive probability at 0.60 (16th to 84th "
+            "percentile ") in readme
     assert "mainly through a planet transiting an unresolved bound companion, the STP scenario" in readme
     old = {"tool": cross_check.TOOL, "fpp": 0.01, "nfpp": 1e-4, "fpp_runs": [0.01] * 10,
            "inputs_sha256": cross_check.inputs_fingerprint(_stored(env))}
@@ -1512,7 +1517,7 @@ def test_one_precision_rule_for_the_pack_and_the_page():
     assert [routes.err_digits(x) for x in (9.1263e-05, 0.016, 73.0, None, "x")] == [
         pack_text.err_digits(x) for x in (9.1263e-05, 0.016, 73.0, None, None)] == [6, 3, 0, 2, 2]
     js = (Path(pack_module.__file__).parent / "ui" / "static" / "dossier.js").read_text(encoding="utf-8")
-    assert "skysift.pack_text.err_digits" in js and "Math.max(0, 1 - Math.floor(Math.log10(err)))" in js
+    assert "skysift.pack_text.pm_digits" in js and "Math.max(0, 1 - Math.floor(Math.log10(err)))" in js
 
 
 def test_the_readme_says_where_to_find_the_tic(env_with_dossier):
@@ -1565,13 +1570,14 @@ def test_a_prior_claim_makes_every_text_an_independent_recovery(env_prior):
         assert "discovery" not in text.lower() and EM_DASH not in text and not IZE.search(text), name
     note = texts["note/note.tex"]
     assert r"\title{An independent recovery of the" in note and r"\citet{mehta2026}" in note
-    assert r"\bibitem[{Mehta}(2026)]{mehta2026} Mehta, K. 2026, Planethunt: archival evidence for the KIC 5689121" in note
+    assert (r"\bibitem[{Mehta}(2026)]{mehta2026} Mehta, K. 2026, Planethunt: archival evidence for the KIC "
+            "5689121") in note
     assert "This note reports a transit candidate" not in note and "not a new candidate" in note
     assert note.index("]{mann2019}") < note.index("]{mehta2026}") < note.index("]{morton2012}")   # alphabetical
     assert note_problems(note_words(note), note) == []
     step2 = texts["README.md"].split("## Step 2.")[1].split("## Step 3.")[0]
     assert "record of priority" in step2 and PRIOR_DOI in step2
-    assert "same host assignment; SkySift's sweep a week later" in texts["README.md"]
+    assert "same host assignment" not in texts["README.md"]          # round 1: the texts cite the record only
     assert "SkySift independent recovery of the transit candidate on " in texts["exofop/note.txt"]
     assert "first reported" in texts["archive_email.txt"]
     # the pixel section says how far the dossier's centroid sits from the hand-built localisation
@@ -1585,7 +1591,8 @@ def test_a_prior_claim_makes_every_text_an_independent_recovery(env_prior):
     description = json.loads((rep.out_dir / "zenodo_metadata.json").read_text(encoding="utf-8"))["description"]
     prior = pack_module.prior_claim_sentence(env.data)
     assert f"Prior claim: {prior}" in texts["README.md"] and f"<p>Prior claim: {zenodo._html(prior)}</p>" in description
-    assert PRIOR_DOI in description and "13 October 2026" in description and "found again in a blind sweep" in description
+    assert PRIOR_DOI in description and "13 October 2026" in description
+    assert "found it again in a blind sweep" in description
 
 
 def test_without_a_prior_claim_nothing_speaks_of_a_recovery(env_with_dossier):
@@ -1603,3 +1610,69 @@ def test_a_version_3_dossier_without_the_key_reads_as_no_claim(env_with_dossier)
     data = {k: v for k, v in env_with_dossier.data.items() if k not in ("prior_claims", "hand_built_localisation")}
     assert pack_module.prior_claim_sentence(data) is None and RECOVERY not in render_note(data)
     assert "record of priority" not in render_readme(data, {})
+
+
+# ---------------------------------------------------------------------------------------------------- fix round 1
+
+def test_no_text_states_the_status_of_the_prior_claim(env_prior):
+    """Round 1, item 4: the public texts cite the claim's author, title, DOI and date only, never the status of the
+    claimant's submission; the dossier JSON, which travels with the pack, does not carry it either."""
+    env = env_prior
+    assert all("status" not in c for c in env.data["prior_claims"])
+    rep = _build(env, tic="169822650")
+    texts = {**_texts(rep), "zenodo_metadata.json": (rep.out_dir / "zenodo_metadata.json").read_text(encoding="utf-8")}
+    planet = next(rep.out_dir.glob("exofop/params_planet_*.txt"))
+    texts["planet"] = planet.read_text(encoding="utf-8")
+    for name, text in texts.items():
+        assert "reported not accepted" not in text and "Research Note submitted" not in text, name
+        assert "submitted" not in text, name
+    assert PRIOR_DOI in texts["zenodo_metadata.json"]
+    # a dossier stored before the status was dropped prints none of it either
+    old = {**env.data, "prior_claims": [{**env.data["prior_claims"][0], "status": "submitted, not accepted"}]}
+    for text in (render_note(old), render_readme(old, {}), pack_module.prior_claim_sentence(old),
+                 pack_module.archive_paragraph(old, "10.5281/zenodo.1", None)):
+        assert "submitted, not accepted" not in text
+
+
+def test_the_hand_built_sentence_says_differs_beyond_the_combined_error():
+    """Round 1, item 8."""
+    block = {"max_diff_pix": 0.12, "n_seasons": 4, "agrees": False, "combined_err_pix": 0.05, "source": "x.json"}
+    words = pack_module.hand_built_sentence({"hand_built_localisation": block})
+    assert "differs from the hand-built localisation of the same pixels by up to 0.12 px" in words
+    assert "agrees" not in words
+    words = pack_module.hand_built_sentence({"hand_built_localisation": {**block, "max_diff_pix": 0.03,
+                                                                          "agrees": True}})
+    assert "agrees with the hand-built localisation of the same pixels within 0.03 px over 4 seasons" in words
+
+
+OFFSET_FIT = {"self_referenced_arcsec": 0.39, "self_referenced_err_arcsec": 0.15, "sigma": 2.6, "counts": None,
+              "reference": "the catalogue position plus the two-source fit's common shift",
+              "catalogue_referenced_arcsec": 0.25, "catalogue_referenced_err_arcsec": 0.28, "level_arcsec": 0.2,
+              "sigma_level": 3.0, "rule": "Bryson et al. 2013", "n_seasons": 4}
+
+
+def test_the_offset_sentence_names_its_reference():
+    """Round 1, item 3b: only a direct-image reference is described as the star's own image and judged by Bryson's
+    rule (and cited); the fit's fallback is named and not assessed. Both say the errors share one rule."""
+    fit = pack_module.offset_sentence({"centroid_offset": OFFSET_FIT})
+    assert fit.startswith("Against the catalogue position plus the two-source fit's common shift (the star's "
+                          "direct-image centroid is not stored for every season)")
+    assert "not assessed from the star's own image" in fit and "Bryson" not in fit
+    assert fit.endswith("Both errors are the larger of the seasons' combined error and their scatter.")
+    assert pack_module.references({"centroid_offset": OFFSET_FIT})["bryson2013"] is False
+    own = {**OFFSET_FIT, "reference": "the star's own direct-image centroid", "counts": False}
+    direct = pack_module.offset_sentence({"centroid_offset": own})
+    assert direct.startswith("Against the star's own out-of-transit image the difference-image centroid is offset by "
+                             "0.39 ± 0.15 arcsec (2.6 sigma), not an offset by the rule of Bryson et al. (2013)")
+    assert pack_module.references({"centroid_offset": own})["bryson2013"] is True
+    assert r"\citet{bryson2013}" in str(pack_module.offset_sentence({"centroid_offset": own}, tex=True))
+
+
+def test_one_precision_rule_on_the_page_and_in_the_pack():
+    """Round 1, item 6: a stored error of 0.1 prints as 0.1 and one of 5.0 as 5, in the pack and on the page."""
+    from skysift.ui.routes.dossiers import err_digits as page_digits
+    assert pack_text.pm_digits(0.1) == page_digits(0.1) == 1 and pack_text.pm_digits(5.0) == page_digits(5.0) == 0
+    assert pack_text.pm_text(2.3, 0.1, 0.1) == "2.3 ± 0.1" and pack_text.pm_text(73.0, 5.0, 5.0) == "73 ± 5"
+    assert page_digits(0.016) == pack_text.pm_digits(0.016) == 3 and page_digits(None) == 2
+    js = (Path(pack_module.__file__).parent / "ui" / "static" / "dossier.js").read_text(encoding="utf-8")
+    assert "Math.min(Math.max(0, 1 - Math.floor(Math.log10(err))), places(err))" in js

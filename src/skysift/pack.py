@@ -89,7 +89,7 @@ from skysift.pack_text import (
     _num,
     date_words,
     ephemeris_sentence,
-    err_digits,
+    pm_digits,
     pm_text,
     prior_claims,
     quantities,
@@ -281,7 +281,7 @@ def references(data: dict) -> dict[str, bool]:
             "mann2019": star_ok and route == "mann" and value_text(star.get("mass")) is not None,
             "lindegren2021": star_ok and star.get("distance_pc") is not None,
             "giacalone2021": cross_check_sentence(data) is not None,
-            "bryson2013": _num((offset_block(data) or {}).get("sigma")) is not None,
+            "bryson2013": self_referenced(offset_block(data)),
             "deeg2015": _timed(data), "holczer2016": _timed(data), "schmitt2014": _bootstrapped(data),
             "kopparapu2013": star_ok and _hz_where(planet) is not None}
 
@@ -361,8 +361,6 @@ def prior_claim_sentence(data: dict, tex: bool = False) -> str | None:
     parts: list = []
     for i, (claim, key) in enumerate(pairs):
         record = f"Zenodo, {date_words(claim['date'])}, doi:{claim['doi']}"
-        if claim.get("status"):
-            record += f"; {claim['status']}"
         if i:
             parts.append(", and ")
         parts.append(Raw(rf"\citet{{{key}}}") if tex else claim["author"])
@@ -384,16 +382,22 @@ def priority_sentence(data: dict) -> str | None:
 
 
 def hand_built_sentence(data: dict) -> str | None:
-    """The pixel section's one sentence on the hand-built study of the same pixels (``dossier.hand_built_localisation``):
-    the largest season-by-season difference in the centroid's distance from this star, and where the study is."""
+    """The pixel section's one sentence on the hand-built study of the same pixels
+    (``dossier.hand_built_localisation``): the largest season-by-season difference in the centroid's distance from
+    this star, and where the study is. It says "agrees" only when every season's difference is below its combined
+    error, else "differs ... by up to"."""
     block = data.get("hand_built_localisation")
     diff = _num(block.get("max_diff_pix")) if isinstance(block, dict) else None
     if diff is None:
         return None
     n = block.get("n_seasons")
     seasons = f"{n} season{'s' if n != 1 else ''}" if isinstance(n, int) else "the seasons that voted"
-    return (f"Season by season the centroid's distance from this star agrees with the hand-built localisation of the "
-            f"same pixels within {max(diff, 0.01):.2f} px over {seasons} ({block.get('source')}).")
+    if block.get("agrees") is True:
+        return (f"Season by season the centroid's distance from this star agrees with the hand-built localisation of "
+                f"the same pixels within {max(diff, 0.01):.2f} px over {seasons} ({block.get('source')}).")
+    return (f"Season by season the centroid's distance from this star differs from the hand-built localisation of the "
+            f"same pixels by up to {diff:.2f} px over {seasons}, more than the seasons' combined error "
+            f"({block.get('source')}).")
 
 
 def _timed(data: dict) -> bool:
@@ -461,7 +465,7 @@ def shape_sentence(data: dict, tex: bool = False) -> str | None:
         text = pm_text(r["value"], r["minus"], r["plus"], nd=r["nd"], tex=tex)
         boot = _num(r.get("boot_median"))
         if offset and key == "k" and boot is not None and r["minus"] is not None:
-            nd = err_digits(min(e for e in (r["minus"], r["plus"]) if e))
+            nd = pm_digits(r["minus"], r["plus"])
             return _joined(tex, text, f" (bootstrap median {boot:.{nd}f})")
         return text
     if (data.get("shape") or {}).get("ok") is not True:
@@ -632,6 +636,17 @@ def offset_block(data: dict) -> dict | None:
     return ds.centroid_offset(row.get("metrics") or {}) if row else None
 
 
+def self_referenced(block: dict | None) -> bool:
+    """The offset block measured every voting season against the star's own direct-image centroid (its
+    ``reference``), so Bryson et al.'s rule applies; the catalogue position plus the fit's common shift is not their
+    estimator, and a block from before ``reference`` was read is judged by that string too."""
+    return (isinstance(block, dict) and _num(block.get("sigma")) is not None
+            and block.get("reference") == ds.SELF_REFERENCES["direct"])
+
+
+SAME_ERROR_RULE = "Both errors are the larger of the seasons' combined error and their scatter."
+
+
 def offset_sentence(data: dict, tex: bool = False) -> str | None:
     """The pixel offset as Bryson et al. 2013 quote it (ruling e): the difference-image centroid against the star's own
     out-of-transit image, with its error and sigma, judged by their rule (above 3 sigma and above 0.2 arcsec), and the
@@ -648,12 +663,18 @@ def offset_sentence(data: dict, tex: bool = False) -> str | None:
         return _joined(tex, "Averaged over the seasons that voted, the centroid sits ",
                        pm_text(cat, cat_err, cat_err, tex=tex), " arcsec from the Gaia position projected through each "
                        "stamp's WCS, a distance that carries the WCS zero point and the registration.")
+    if not self_referenced(block):
+        return _joined(tex, f"Against {block.get('reference') or 'the fitted position of the star'} (the star's "
+                       "direct-image centroid is not stored for every season) the difference-image centroid is "
+                       "offset by ", pm_text(off, err, err, tex=tex), f" arcsec ({sigma:.1f} sigma), not assessed "
+                       "from the star's own image; ", *gaia, " ", SAME_ERROR_RULE)
     cite = Raw(r"\citet{bryson2013}") if tex else "Bryson et al. (2013)"
     level, k = _num(block.get("level_arcsec")) or 0.2, _num(block.get("sigma_level")) or 3.0
     verdict = "an offset" if block.get("counts") else "not an offset"
     return _joined(tex, "Against the star's own out-of-transit image the difference-image centroid is offset by ",
                    pm_text(off, err, err, tex=tex), f" arcsec ({sigma:.1f} sigma), {verdict} by the rule of ", cite,
-                   f", which asks for more than {k:g} sigma and more than {level:g} arcsec; ", *gaia)
+                   f", which asks for more than {k:g} sigma and more than {level:g} arcsec; ", *gaia, " ",
+                   SAME_ERROR_RULE)
 
 
 def pixel_sentence(data: dict, tex: bool = False) -> str:
@@ -829,7 +850,6 @@ def numbers(data: dict, tex: bool = False, after_bjd: float | None = None) -> di
         "cross_check_flag": cc.owner_flag(data),
         "abstract": abstract_text(data),
         "prior_text": prior_claim_sentence(data, tex), "prior_plain": prior_claim_sentence(data),
-        "prior_notes": "; ".join(c["note"] for c in prior_claims(data) if c.get("note")) or None,
         "priority_text": priority_sentence(data),
         "caveat_text": " ".join(f"{c['title'].rstrip('.')}." for c in caveats) or "No caveat is recorded.",
         "window_h": _f(plots.get("window_h"), 1), "bin_minutes": bin_minutes(data),
@@ -1058,8 +1078,9 @@ def gate_problems(raw: dict) -> list[str]:
     ok), the transit shape carries no error (no shape block, or it is not ok), and ``crosscheck.verdict``'s reason
     (no cross-check, one stored by an earlier version of the tool or one made for an earlier dossier; its numbers
     never block, ruling t), and a stored
-    commit that is dirty or unknown (the software statement could not name archived code; ruling g). Empty when the
-    dossier may go to zenodo.org."""
+    commit that is dirty or unknown (the software statement could not name archived code; ruling g), a pixel verdict
+    made under an older pixel rule (``dossier.pixel_rule_stale``) and prior claims that were not checked
+    (``dossier.prior_claims_unchecked``). Empty when the dossier may go to zenodo.org."""
     out = []
     for key, what in (("timing", "the ephemeris"), ("shape", "the transit shape")):
         block = raw.get(key)
@@ -1073,6 +1094,11 @@ def gate_problems(raw: dict) -> list[str]:
     commit = str((raw.get("provenance") or {}).get("git_commit") or "unknown")
     if commit == "unknown" or commit.endswith("-dirty"):
         out.append("the stored commit is dirty or unknown")
+    stale = ds.pixel_rule_stale(raw)
+    if stale:
+        out.append(f"{stale}; the recheck reruns the pixel step first")
+    if ds.prior_claims_unchecked(raw):
+        out.append("prior claims on the signal were not checked (no docs/candidates folder)")
     return out
 
 

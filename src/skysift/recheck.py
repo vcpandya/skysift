@@ -176,22 +176,28 @@ def _crashes(store: Store, signal_id: int, rung: str) -> int:
 REOPEN_CRASHES_MAX = 2      # crash skips in a row after which a reopened settled signal stays for a person
 
 
-def _reopen_crashes(store: Store, signal_id: int) -> int:
+def _reopen_tag(version: int | None = None) -> str:
+    return f"on reopen at pixel rule {PIXEL_RULE_VERSION if version is None else version})"
+
+
+def _reopen_crashes(store: Store, signal_id: int, version: int | None = None) -> int:
     """How many of the signal's latest pixel-step recheck rows, in a row, are crash skips (outcome "skipped", reason
-    "exception: ..."): the reopen of a settled signal writes no rung 5 row when it crashes, so these count its
-    attempts."""
+    "exception: ...") of a reopen at pixel rule ``version``: the reopen of a settled signal writes no rung 5 row when
+    it crashes, so these count its attempts, and the cap applies per rule version (a later rule reopens it again)."""
     n = 0
     for row in reversed([r for r in store.rechecks(signal_id) if r["step"] == "pixels"]):
-        if row["outcome"] != "skipped" or not str(row["reason"] or "").startswith("exception:"):
+        reason = str(row["reason"] or "")
+        if row["outcome"] != "skipped" or not reason.startswith("exception:") or not reason.endswith(
+                _reopen_tag(version)):
             break
         n += 1
     return n
 
 
 def _reopen_crash_reason(store: Store, signal_id: int, reason: str) -> str:
-    """A crash skip's reason on a reopened settled signal, numbered ("exception: X (crash 1 of 2 on reopen)") so that
-    the second is written beside the first and counted (``_reopen_crashes``)."""
-    return f"{reason} (crash {_reopen_crashes(store, signal_id) + 1} of {REOPEN_CRASHES_MAX} on reopen)"
+    """A crash skip's reason on a reopened settled signal, numbered and naming the rule version it attempted
+    ("exception: X (crash 1 of 2 on reopen at pixel rule 4)") so that the second is counted (``_reopen_crashes``)."""
+    return f"{reason} (crash {_reopen_crashes(store, signal_id) + 1} of {REOPEN_CRASHES_MAX} {_reopen_tag()}"
 
 
 def floor_reopens(rung5: dict) -> bool:

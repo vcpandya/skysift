@@ -155,6 +155,7 @@ def _make_env(settings, monkeypatch, responses=None, calibration=True, calibrati
     monkeypatch.setattr(dossier_module, "git_commit", lambda: "abc1234")
     # the seed target shares its id with docs/candidates/kic-006146676: a fixture reads its own empty folder instead
     monkeypatch.setattr(dossier_module, "CANDIDATES_DIR", Path(settings.data_dir) / "candidates")
+    dossier_module.CANDIDATES_DIR.mkdir(parents=True, exist_ok=True)
     path = cal.default_path(settings.data_dir, "kbonus_bkg")
     if calibration:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -991,7 +992,7 @@ def test_generate_writes_the_timing_shape_parity_and_secondary_blocks(env):
     # the limit times (a/R* / k)^2 is about 520, and the fit is degenerate besides: no constraint (ruling k)
     assert sec["limit_3sigma_ppm"] * 1e-6 * (A_OVER_R / K) ** 2 > 1 and shape["degenerate"] is True
     assert sec["albedo_limit"] is None and sec["albedo_note"] == "no constraint"
-    assert sec["albedo_reason"] == "the fit's a/R* is degenerate with k"
+    assert sec["albedo_reason"] == "degenerate shape"
     # the k error is folded into the planet radius in quadrature with the stellar term
     rp, k = d["planet"]["rp_rearth"], shape["k"]
     assert rp["plus"] >= stellar["plus"] and rp["minus"] >= stellar["minus"]
@@ -1146,7 +1147,8 @@ def test_the_offset_block_is_self_referenced_against_the_star_and_names_the_rule
     assert block["catalogue_referenced_arcsec"] == pytest.approx(0.2 * PIXEL_ARCSEC)
     assert block["self_referenced_arcsec"] == pytest.approx(0.0, abs=1e-9) and block["sigma"] == pytest.approx(0.0)
     assert block["self_referenced_err_arcsec"] == pytest.approx(0.05 / math.sqrt(3) * PIXEL_ARCSEC)
-    assert block["level_arcsec"] == 0.2 and block["sigma_level"] == 3.0 and block["counts"] is False
+    assert block["level_arcsec"] == 0.2 and block["sigma_level"] == 3.0
+    assert block["counts"] is None                          # the fit's common shift is not Bryson's estimator
     assert block["rule"].startswith("Bryson et al. 2013") and "common shift" in block["reference"]
     # a stored direct-image centroid wins over the catalogue position plus the shift
     direct = [_offset_season(s, (4.3, 4.0), shift=(0.2, 0.0), direct=(4.0, 4.0)) for s in range(3)]
@@ -1154,6 +1156,21 @@ def test_the_offset_block_is_self_referenced_against_the_star_and_names_the_rule
     assert block["self_referenced_arcsec"] == pytest.approx(0.3 * PIXEL_ARCSEC) and block["counts"] is True
     assert block["sigma"] == pytest.approx(0.3 / (0.05 / math.sqrt(3))) and block["reference"].startswith("the star's")
     assert dossier_module.centroid_offset({"seasons": [{**direct[0], "voting": False}]}) is None
+
+
+def test_the_self_referenced_error_takes_the_scatter_when_the_seasons_disagree():
+    """Round 1, item 10: seasons that disagree beyond their errors give the self-referenced offset the scatter as its
+    error, the rule of the catalogue-referenced one, so the scatter alone never declares an offset."""
+    seasons = [_offset_season(0, (4.6, 4.0), direct=(4.0, 4.0), sigma=0.01),
+               _offset_season(1, (4.0, 4.0), direct=(4.0, 4.0), sigma=0.01)]
+    block = dossier_module.centroid_offset({"seasons": seasons})
+    stat = 0.01 / math.sqrt(2)
+    scatter = math.sqrt((0.3 ** 2 * 2) / 2) / math.sqrt(2)          # per axis, ddof 1, over sqrt(n)
+    assert scatter > stat
+    assert block["self_referenced_err_arcsec"] == pytest.approx(scatter * PIXEL_ARCSEC)
+    assert block["sigma"] == pytest.approx(0.3 / scatter) and block["counts"] is False
+    est = centroid_estimate({"seasons": seasons})
+    assert est.sigma == pytest.approx(block["catalogue_referenced_err_arcsec"]) and est.source == "scatter"
 
 
 def test_a_stamp_wcs_shifted_by_a_fifth_of_a_pixel_moves_only_the_catalogue_offset():
@@ -1207,9 +1224,14 @@ def test_the_hand_built_localisation_is_compared_season_by_season(tmp_path):
                          {"season": 1, "dist_target_pix": 0.170, "voting": True},
                          {"season": 2, "dist_target_pix": 0.150, "voting": True},
                          {"season": 3, "dist_target_pix": 0.9, "voting": False}]}       # a silent season is left out
+    for s in rung5["seasons"]:
+        s["centroid_sigma_pix"] = 0.05
     block = dossier_module.hand_built_localisation("kic-005689121", rung5, root=tmp_path)
-    assert block == {"max_diff_pix": pytest.approx(0.024), "n_seasons": 3,
+    assert block == {"max_diff_pix": pytest.approx(0.024), "n_seasons": 3, "agrees": True,
+                     "combined_err_pix": pytest.approx(0.05),
                      "source": "docs/candidates/kic-005689121/localisation/results.json"}
+    rung5["seasons"][0]["centroid_sigma_pix"] = 0.01             # 0.024 px against an error of 0.01 px
+    assert dossier_module.hand_built_localisation("kic-005689121", rung5, root=tmp_path)["agrees"] is False
     assert dossier_module.hand_built_localisation("kic-006146676", rung5, root=tmp_path) is None
     assert dossier_module.hand_built_localisation("kic-005689121", {}, root=tmp_path) is None
 
@@ -1222,4 +1244,65 @@ def test_generate_stores_the_prior_claims(env):
     (folder / "prior_claims.json").write_text(json.dumps([PRIOR_CLAIM]), encoding="utf-8")
     data = json.loads(generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch, force=True)
                       .data_path.read_text(encoding="utf-8"))
-    assert data["prior_claims"] == [PRIOR_CLAIM] and data["dossier_version"] == "3"
+    stored = {k: v for k, v in PRIOR_CLAIM.items() if k != "status"}    # the owner's file keeps the status
+    assert data["prior_claims"] == [stored] and data["dossier_version"] == "3"
+    assert "prior_claims_unchecked" not in [c.get("key") for c in data["caveats"]]
+
+
+def test_without_the_candidates_folder_the_claims_are_unchecked(env, monkeypatch, tmp_path):
+    """Round 1, item 9: an engine run without docs/candidates (an installed package) stores None, a caveat and a
+    gate problem, never a silent empty list."""
+    from skysift.pack import gate_problems
+    monkeypatch.setattr(dossier_module, "CANDIDATES_DIR", tmp_path / "no-such-folder")
+    data = _data(generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch))
+    assert data["prior_claims"] is None
+    assert "prior_claims_unchecked" in [c.get("key") for c in data["caveats"]]
+    assert any("prior claims on the signal were not checked" in p for p in gate_problems(data))
+
+
+def test_a_settled_pixel_verdict_under_an_older_rule_is_stale():
+    """Round 1, item 2a: a stage 2 or undetermined signal whose rung 5 row localised under an older pixel rule gets
+    the pixel_rule_stale caveat and a gate problem; the current rule, a row that never localised and a rejected signal
+    do not."""
+    from skysift.pack import gate_problems
+    from skysift.vetting.rung5_pixels import PIXEL_RULE_VERSION
+
+    def data(status, metrics):
+        return {"status": {"final_status": status}, "tests": [{"rung": "rung5_pixels", "metrics": metrics}]}
+    old = {"seasons": [], "rule_version": PIXEL_RULE_VERSION - 1}
+    words = f"the pixel verdict predates pixel rule version {PIXEL_RULE_VERSION}"
+    for status in ("candidate_stage2", "undetermined"):
+        assert dossier_module.pixel_rule_stale(data(status, old)) == words
+        assert "pixel_rule_stale" in [c.get("key") for c in caveats(data(status, old))]
+        assert any(p.startswith(words) for p in gate_problems(data(status, old)))
+    assert dossier_module.pixel_rule_stale(data("candidate_stage2", {"seasons": []})) == words     # no key: 1
+    current = {**old, "rule_version": PIXEL_RULE_VERSION}
+    assert dossier_module.pixel_rule_stale(data("candidate_stage2", current)) is None
+    assert dossier_module.pixel_rule_stale(data("candidate_stage2", {"n_tpf": 0})) is None
+    assert dossier_module.pixel_rule_stale(data("rejected", old)) is None
+
+
+def test_an_untracked_file_under_src_makes_the_commit_dirty(tmp_path):
+    """Round 1, item 7: git describe --dirty misses untracked files, so the status of src and docs/candidates is read
+    too; an untracked file elsewhere does not count."""
+    import shutil
+    import subprocess
+    if shutil.which("git") is None:
+        pytest.skip("git is not installed")
+
+    def git(*args):
+        subprocess.run(["git", "-c", "user.email=t@example.com", "-c", "user.name=t", "-c", "commit.gpgsign=false",
+                        *args], cwd=tmp_path, check=True, capture_output=True)
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "a.py").write_text("x = 1\n", encoding="utf-8")
+    git("init", "-q")
+    git("add", "src/a.py")
+    git("commit", "-q", "-m", "first")
+    clean = dossier_module.git_commit_at(tmp_path)
+    assert clean != "unknown" and not clean.endswith("-dirty")
+    (tmp_path / "notes.txt").write_text("not code", encoding="utf-8")
+    assert dossier_module.git_commit_at(tmp_path) == clean
+    (tmp_path / "src" / "b").mkdir()
+    (tmp_path / "src" / "b" / "__init__.py").write_text("", encoding="utf-8")
+    assert dossier_module.git_commit_at(tmp_path) == f"{clean}-dirty"
+    assert dossier_module.git_commit_at(tmp_path / "src" / "b" / "nowhere") == "unknown"

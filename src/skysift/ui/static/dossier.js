@@ -43,11 +43,17 @@
     const p = fmt(err.plus, d), m = fmt(err.minus, d);
     return p === m ? ` ± ${p}` : ` +${p} −${m}`;
   };
-  // the decimals that print an error to two significant figures: skysift.pack_text.err_digits, the one precision
-  // rule of the page (its Jinja helper err_digits) and the pack
+  // the decimals that print an error to two significant figures, never more than it carries:
+  // skysift.pack_text.pm_digits, the one precision rule of the page (its Jinja helper err_digits) and the pack
   // what the shape table's columns mean (the dashboard prints the same words)
   const SHAPE_WORDS = "For the fitted rows (k, b, a/R*, T14 and the model depth) the value is the fit to the whole light curve and minus and plus are the spread of the resamples (16th to 50th and 50th to 84th percentile) about their own median. The box depth carries the per-event scaled error, and the box duration's value is the median of the resamples.";
-  const errDigits = (err) => (isNum(err) && err > 0 ? Math.max(0, 1 - Math.floor(Math.log10(err))) : 2);
+  // the decimals a stored number carries (0.1 has 1, 9.1e-05 has 6, 5 has none): Python's _places
+  const places = (x) => {
+    const [mant, exp] = String(x).toLowerCase().split("e");
+    const dec = mant.includes(".") ? mant.split(".")[1].length : 0;
+    return Math.max(0, dec - (exp ? parseInt(exp, 10) : 0));
+  };
+  const errDigits = (err) => (isNum(err) && err > 0 ? Math.min(Math.max(0, 1 - Math.floor(Math.log10(err))), places(err)) : 2);
   const el = (tag, attrs, parent) => {
     const n = document.createElementNS(NS, tag);
     for (const k in attrs || {}) n.setAttribute(k, attrs[k]);
@@ -451,7 +457,7 @@
       const months = ["January", "February", "March", "April", "May", "June", "July", "August", "September",
         "October", "November", "December"];
       const day = (iso) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso || ""); return m ? `${+m[3]} ${months[+m[2] - 1]} ${m[1]}` : (iso || ""); };
-      const said = claims.map((c, i) => `${c.author} ${i ? "reported it again" : "reported this signal first"}, in "${c.title}" (Zenodo, ${day(c.date)}, doi:${c.doi}${c.status ? `; ${c.status}` : ""})`);
+      const said = claims.map((c, i) => `${c.author} ${i ? "reported it again" : "reported this signal first"}, in "${c.title}" (Zenodo, ${day(c.date)}, doi:${c.doi})`);
       para(0, `${said.join(", and ")}. SkySift found it again in a blind sweep, so this is an independent recovery and vetting of ${claims.length === 1 ? "that claim" : "those claims"}, not a new candidate.`, "prior-claim");
     }
     fig(0, "fold", "The folded light curve: single cadences, their bins and the model.");
@@ -494,7 +500,7 @@
     }
     if (SEC) {
       const none = SEC.albedo_note || (isNum(SEC.albedo_limit) && (SEC.albedo_limit > 1 || (D.shape && D.shape.degenerate)));
-      const albedo = none ? `no constraint on the geometric albedo${SEC.albedo_reason ? ` (${SEC.albedo_reason})` : ""}`
+      const albedo = none ? `no constraint on the geometric albedo${SEC.albedo_reason ? `: ${SEC.albedo_reason}` : ""}`
         : isNum(SEC.albedo_limit) ? `below ${fmt(SEC.albedo_limit, 2)}` : "not known without a transit fit";
       sec(1).appendChild(h("h3", null, "Secondary eclipse"));
       list(1, [["Depth at phase 0.5:", `${fmt(SEC.depth_ppm)}${pmErr(SEC.err_ppm, 0)} ppm`], ["3-sigma limit:", `${fmt(SEC.limit_3sigma_ppm)} ppm`],
@@ -560,8 +566,12 @@
     if (OFF && isNum(OFF.catalogue_referenced_arcsec)) {
       const pmA = (x, e) => (isNum(e) && e > 0 ? `${fmt(x, errDigits(e))} ± ${fmt(e, errDigits(e))}` : fmt(x, 2));
       const gaia = `the distance from the Gaia position (${pmA(OFF.catalogue_referenced_arcsec, OFF.catalogue_referenced_err_arcsec)} arcsec) carries the WCS zero point and the registration.`;
+      const same = "Both errors are the larger of the seasons' combined error and their scatter.";
+      const own = OFF.reference === "the star's own direct-image centroid";
+      const off = `${pmA(OFF.self_referenced_arcsec, OFF.self_referenced_err_arcsec)} arcsec (${fmt(OFF.sigma, 1)} sigma)`;
       para(3, isNum(OFF.self_referenced_arcsec) && isNum(OFF.sigma)
-        ? `Against the star's own out-of-transit image the difference-image centroid is offset by ${pmA(OFF.self_referenced_arcsec, OFF.self_referenced_err_arcsec)} arcsec (${fmt(OFF.sigma, 1)} sigma), ${OFF.counts ? "an offset" : "not an offset"} by the rule of Bryson et al. (2013), which asks for more than ${OFF.sigma_level} sigma and more than ${OFF.level_arcsec} arcsec; ${gaia}`
+        ? (own ? `Against the star's own out-of-transit image the difference-image centroid is offset by ${off}, ${OFF.counts ? "an offset" : "not an offset"} by the rule of Bryson et al. (2013), which asks for more than ${OFF.sigma_level} sigma and more than ${OFF.level_arcsec} arcsec; ${gaia} ${same}`
+          : `Against ${OFF.reference || "the fitted position of the star"} (the star's direct-image centroid is not stored for every season) the difference-image centroid is offset by ${off}, not assessed from the star's own image; ${gaia} ${same}`)
         : `Averaged over the seasons that voted, the centroid sits ${pmA(OFF.catalogue_referenced_arcsec, OFF.catalogue_referenced_err_arcsec)} arcsec from the Gaia position projected through each stamp's WCS, a distance that carries the WCS zero point and the registration.`, "pixel-offset");
     }
     const close = (D.caveats || []).find((c) => c && c.key === "close_call");

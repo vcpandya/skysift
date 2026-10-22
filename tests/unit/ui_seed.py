@@ -8,6 +8,7 @@ import json
 
 from skysift.models import Signal, Target, TestResult, TestStatus
 from skysift.store.db import SignalRow, Store, make_job_key
+from skysift.vetting.rung5_pixels import PIXEL_RULE_VERSION
 
 VERSION = "1+abcdef01"
 STAGE1_TARGET = "kic-005689121"      # the candidate role: stage 1, no pixel rung
@@ -152,7 +153,7 @@ def stage2_pixel_metrics(quarters: bool = False) -> dict:
                                                              for q in range(18)],
             "n_tpf": 18, "neighbour_kic": 6146666, "neighbour_position": "catalogue", "n_seasons": 4,
             "n_seasons_voting": 3, "seasons_silenced": {"box incomplete: target": 1}, "pixels_sha256": None,
-            "tpf_missing": []}
+            "tpf_missing": [], "rule_version": PIXEL_RULE_VERSION}
 
 
 def _stage2_tests() -> list[TestResult]:

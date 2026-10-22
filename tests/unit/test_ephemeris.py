@@ -1,5 +1,6 @@
 import dataclasses
 import json
+import math
 
 import numpy as np
 import pytest
@@ -245,16 +246,29 @@ def test_secondary_limit_from_rung2_metrics():
     sl = secondary_limit(RUNG2)
     assert sl.limit_3sigma_ppm == pytest.approx(95.4 + 3 * 128.2)
     # 480 ppm x (43.6 / 0.0478)^2 is about 400, above 1: no constraint on the geometric albedo (ruling k)
-    assert sl.albedo_limit is None and sl.albedo_note == ALBEDO_NO_CONSTRAINT and "above 1" in sl.albedo_reason
+    assert sl.albedo_limit is None and sl.albedo_note == ALBEDO_NO_CONSTRAINT
+    assert sl.albedo_reason == "the limit exceeds 1 (A_g < 400)"
     close = secondary_limit({**RUNG2, "fit_a_over_r": 1.0})        # 480e-6 x (1 / 0.0478)^2 = 0.21
     assert close.albedo_limit == pytest.approx(480e-6 * (1.0 / 0.0478) ** 2, rel=1e-2) and close.albedo_note is None
     # a degenerate fit's a/R* constrains nothing, whatever the number
     flat = secondary_limit({**RUNG2, "fit_a_over_r": 1.0}, degenerate=True)
-    assert flat.albedo_limit is None and flat.albedo_note == ALBEDO_NO_CONSTRAINT and "degenerate" in flat.albedo_reason
+    assert flat.albedo_limit is None and flat.albedo_note == ALBEDO_NO_CONSTRAINT
+    assert flat.albedo_reason == "degenerate shape"
     assert (sl.strongest_ppm, sl.strongest_phase, sl.strongest_sigma) == (341.7, 0.379, 3.8)
     assert secondary_limit({}) is None
     assert secondary_limit({**RUNG2, "secondary_ppm": -50.0}).limit_3sigma_ppm == pytest.approx(3 * 128.2)
     assert secondary_limit({**RUNG2, "fit_ok": False}).albedo_limit is None
+
+
+def test_the_albedo_reason_never_prints_a_number_that_contradicts_it():
+    """Round 1, item 1: a limit just above 1 keeps the digits that show it above 1, at two significant figures
+    otherwise."""
+    def reason(albedo: float) -> str:
+        a_over_r = 0.0478 * math.sqrt(albedo / ((95.4 + 3 * 128.2) * 1e-6))
+        return secondary_limit({**RUNG2, "fit_a_over_r": a_over_r}).albedo_reason
+    assert reason(1.3) == "the limit exceeds 1 (A_g < 1.3)"
+    assert reason(1.04) == "the limit exceeds 1 (A_g < 1.04)"
+    assert reason(12_345.0) == "the limit exceeds 1 (A_g < 12,000)"
 
 
 def test_every_block_is_strict_json(scene, eph):

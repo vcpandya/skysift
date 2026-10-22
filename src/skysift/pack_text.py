@@ -48,6 +48,17 @@ def _places(x: float) -> int:
     return max(0, -int(Decimal(repr(float(x))).normalize().as_tuple().exponent))
 
 
+def pm_digits(*errs) -> int:
+    """The decimals ``_pm_parts`` prints a value and its errors at: two significant figures of the smaller error
+    (``err_digits``), never more decimals than the stored errors carry (``_places``), so 0.1 prints as 0.1 and 5.0
+    as 5. The page's Jinja ``err_digits`` and ``dossier.js`` ``errDigits`` take this rule for one error. 2 without a
+    positive error."""
+    good = [float(e) for e in errs if e is not None and not isinstance(e, bool) and math.isfinite(e) and e > 0]
+    if not good:
+        return 2
+    return min(err_digits(min(good)), max(_places(e) for e in good))
+
+
 def _pm_parts(value, minus=None, plus=None, nd: int = 2,
               comma: bool = False) -> tuple[str, str | None, str | None] | None:
     """(value, minus, plus) as text, all at the decimals of the smaller error (``err_digits``: two significant
@@ -64,7 +75,7 @@ def _pm_parts(value, minus=None, plus=None, nd: int = 2,
         return f"{x:,.{d}f}" if comma else f"{x:.{d}f}"
     if not errs:
         return fmt(m, nd), None, None
-    d = min(err_digits(min(errs)), max(_places(e) for e in errs))
+    d = pm_digits(*errs)
     return fmt(m, d), fmt(lo or 0.0, d), fmt(hi or 0.0, d)
 
 
@@ -202,10 +213,16 @@ def ephemeris_sentence(data: dict) -> str:
     return ", ".join(p for p in parts if p)
 
 
+PRIOR_CLAIM_PUBLIC = ("doi", "date", "author", "title")     # what the public texts may say about a prior claim
+
+
 def prior_claims(data: dict) -> list[dict]:
     """The dossier's ``prior_claims`` (``dossier.prior_claims``: earlier public claims on the same signal, earliest
-    first), each with a DOI; an empty list for a dossier without the key, which a version-3 reader allows."""
+    first), each with a DOI, cut to ``PRIOR_CLAIM_PUBLIC``: the texts cite the record, never the status of someone
+    else's submission, even from a dossier stored before the status was dropped. An empty list for a dossier
+    without the key (a version-3 reader allows it) or with None (the claims were not checked)."""
     claims = data.get("prior_claims")
     if not isinstance(claims, list):
         return []
-    return [c for c in claims if isinstance(c, dict) and str(c.get("doi") or "").strip()]
+    return [{k: str(c.get(k) or "").strip() for k in PRIOR_CLAIM_PUBLIC} for c in claims
+            if isinstance(c, dict) and str(c.get("doi") or "").strip()]

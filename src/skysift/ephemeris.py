@@ -523,6 +523,25 @@ class SecondaryLimit:
                 "albedo_reason": self.albedo_reason}
 
 
+ALBEDO_DEGENERATE = "degenerate shape"
+
+
+def albedo_above_one(albedo: float) -> str:
+    """Why a geometric-albedo limit above 1 constrains nothing, with the limit at two significant figures, or with
+    as many decimals as keep it visibly above 1 ("A_g < 1.04", never "A_g < 1.0")."""
+    if not math.isfinite(albedo) or albedo <= 1:
+        return "the limit exceeds 1"
+    if albedo >= 10:
+        digits = 1 - math.floor(math.log10(albedo))
+        return f"the limit exceeds 1 (A_g < {round(albedo, digits):,.0f})"
+    decimals = 1
+    while round(albedo, decimals) <= 1 and decimals < 6:
+        decimals += 1
+    if round(albedo, decimals) <= 1:
+        return "the limit exceeds 1"
+    return f"the limit exceeds 1 (A_g < {albedo:.{decimals}f})"
+
+
 def secondary_limit(shape_metrics: dict, degenerate: bool = False) -> SecondaryLimit | None:
     """The secondary block from the rung 2 metrics; None when ``secondary_ppm`` or ``control_rms_ppm`` is missing.
     The albedo limit scales with (a/R*)^2, so a ``degenerate`` fit (the shape block's flag) or a limit above 1 gives
@@ -536,9 +555,9 @@ def secondary_limit(shape_metrics: dict, degenerate: bool = False) -> SecondaryL
     if shape_metrics.get("fit_ok") is True and k is not None and a is not None and k > 0 and a > 0:
         albedo = limit * 1e-6 * (a / k) ** 2
         if degenerate:
-            albedo, note, why = None, ALBEDO_NO_CONSTRAINT, "the fit's a/R* is degenerate with k"
+            albedo, note, why = None, ALBEDO_NO_CONSTRAINT, ALBEDO_DEGENERATE
         elif albedo > 1:
-            albedo, note, why = None, ALBEDO_NO_CONSTRAINT, f"the limit is {albedo:,.0f}, above 1"
+            albedo, note, why = None, ALBEDO_NO_CONSTRAINT, albedo_above_one(albedo)
     return SecondaryLimit(depth, err, limit, _f(shape_metrics.get("free_secondary_ppm")),
                           _f(shape_metrics.get("free_secondary_phase")), _f(shape_metrics.get("free_secondary_sigma")),
                           albedo, note, why)

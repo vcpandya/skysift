@@ -36,7 +36,8 @@ log = logging.getLogger(__name__)
 NO_FILES = "pixels: no pixel files for this star"
 NO_NEIGHBOUR = "pixels: no neighbour to test against"
 # 2: a 3 x 3 box cut by the stamp edge votes when decisive; rows without the key read as 1
-PIXEL_RULE_VERSION = 3      # 3: a measured systematic floor in the centroid error
+PIXEL_RULE_VERSION = 4      # 3: a measured systematic floor in the centroid error; 4: the direct-image centroid
+#                             stored per season (direct_centroid_colrow), the star's own reference for the offset
 _ZIP_EPOCH = (1980, 1, 1, 0, 0, 0)      # fixed member times: the same arrays give the same file and sha256
 
 

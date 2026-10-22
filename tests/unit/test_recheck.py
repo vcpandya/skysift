@@ -532,21 +532,22 @@ def _wants(env, status, reason, metrics):
     return recheck_mod.wants_pixels(env.store, SimpleNamespace(id=sid), env.store.latest_tests(sid))
 
 
-def test_wants_pixels_reopens_any_rung5_row_below_rule_version_3(env):
+def test_wants_pixels_reopens_any_rung5_row_below_the_rule_version(env):
     """Spec 2026-10-22 referee pack, section 5.2: the measured floor changes every season's error, so every rung 5
     row that localised (seasons in its metrics) under an older rule version reopens, whatever its status: a pass, a
     fail, an undetermined row (the box rule's among them). A row at the current version stays settled, and a row that
     never localised (no neighbour, an outage, a crash) is not reopened by the version."""
-    assert recheck_mod.PIXEL_RULE_VERSION == 3
+    assert recheck_mod.PIXEL_RULE_VERSION == 4
     v2 = {"seasons": SEASONS, "rule_version": 2}
     assert _wants(env, "pass", PASSED, v2) is True
-    assert _wants(env, "pass", PASSED, {**v2, "rule_version": 3}) is False
+    assert _wants(env, "pass", PASSED, {**v2, "rule_version": recheck_mod.PIXEL_RULE_VERSION}) is False
     assert _wants(env, "pass", PASSED, {"seasons": SEASONS}) is True                 # no key: version 1
     assert _wants(env, "fail", FAILED, v2) is True
-    assert _wants(env, "fail", FAILED, {**v2, "rule_version": 3}) is False
+    assert _wants(env, "fail", FAILED, {**v2, "rule_version": recheck_mod.PIXEL_RULE_VERSION}) is False
     assert _wants(env, "undetermined", "pixels: season 2 ambiguous (1.0 sigma)", v2) is True
     assert _wants(env, "undetermined", ONE_SEASON, SILENCED) is True
-    assert _wants(env, "undetermined", ONE_SEASON, {**SILENCED, "rule_version": 3}) is False
+    current = recheck_mod.PIXEL_RULE_VERSION
+    assert _wants(env, "undetermined", ONE_SEASON, {**SILENCED, "rule_version": current}) is False
     assert _wants(env, "undetermined", "pixels: no neighbour to test against", {}) is False
     # a signal another rung rejects is not reopened by its pixel row
     sid = env.seed_signal(tests=[("rung2_shape", "fail", "v-shaped"), ("rung5_pixels", "pass", PASSED)],
@@ -556,7 +557,7 @@ def test_wants_pixels_reopens_any_rung5_row_below_rule_version_3(env):
     row = {"status": "pass", "reason": PASSED}
     assert recheck_mod.floor_reopens({**row, "metrics": v2}) is True
     assert recheck_mod.floor_reopens({**row, "status": "fail", "metrics": v2}) is True
-    assert recheck_mod.floor_reopens({**row, "metrics": {**v2, "rule_version": 3}}) is False
+    assert recheck_mod.floor_reopens({**row, "metrics": {**v2, "rule_version": current}}) is False
     assert recheck_mod.floor_reopens({**row, "metrics": {}}) is False
     assert recheck_mod.floor_reopens({**row, "metrics": None}) is False
     assert recheck_mod.floor_reopens({**row, "metrics": "not a dict"}) is False
@@ -579,7 +580,7 @@ def test_the_recheck_reruns_a_settled_pixel_row_below_the_rule_version_once(env)
     for sid, status in ((passed, "pass"), (failed, "fail")):
         rung5 = env.store.latest_tests(sid)[-1]
         assert rung5["rung"] == "rung5_pixels" and rung5["status"] == status and rung5["recheck_id"] is not None
-        assert rung5["metrics"]["rule_version"] == 3
+        assert rung5["metrics"]["rule_version"] == recheck_mod.PIXEL_RULE_VERSION
         assert all(x["floor_pix"] > 0 for x in rung5["metrics"]["seasons"])
         assert [r["step"] for r in env.store.rechecks(sid)] == ["pixels"]
     assert env.store.signal_status(passed) == "candidate_stage2" and env.store.signal_status(failed) == "rejected"
@@ -598,7 +599,7 @@ def test_the_recheck_reruns_a_silenced_pixel_row_once_end_to_end(env):
     rep = recheck(env.store, env.blob, env.settings, fetch=fake_fetch.fetch, tpf_loader=env.tpf_loader)
     assert rep.steps["pixels"] == 1 and len(env.tpf_calls) == 1
     rung5 = env.store.latest_tests(sid)[-1]
-    assert rung5["rung"] == "rung5_pixels" and rung5["metrics"]["rule_version"] == 3
+    assert rung5["rung"] == "rung5_pixels" and rung5["metrics"]["rule_version"] == recheck_mod.PIXEL_RULE_VERSION
     assert not rung5["reason"].startswith("exception:") and rung5["recheck_id"] is not None
     before, rows = env.store.counts(), env.store.rechecks(sid)
     rep = recheck(env.store, env.blob, env.settings, fetch=fake_fetch.fetch, tpf_loader=env.tpf_loader)
@@ -623,7 +624,7 @@ def test_an_outage_on_a_reopened_settled_row_keeps_its_verdict(env):
     assert (row["step"], row["outcome"]) == ("pixels", "skipped") and row["reason"].startswith("outage:mast: ")
     rep = recheck(env.store, env.blob, env.settings, fetch=fake_fetch.fetch, tpf_loader=env.tpf_loader)
     assert rep.steps["pixels"] == 1 and env.store.signal_status(sid) == "candidate_stage2"
-    assert env.store.latest_tests(sid)[-1]["metrics"]["rule_version"] == 3
+    assert env.store.latest_tests(sid)[-1]["metrics"]["rule_version"] == recheck_mod.PIXEL_RULE_VERSION
 
 
 def test_a_crash_on_a_reopened_settled_row_keeps_its_verdict_and_stops_after_two(env):
@@ -643,8 +644,29 @@ def test_a_crash_on_a_reopened_settled_row_keeps_its_verdict_and_stops_after_two
     assert env.store.latest_tests(sid) == before and len(calls) == 2        # the third recheck leaves it alone
     rows = env.store.rechecks(sid)
     assert [(r["step"], r["outcome"]) for r in rows] == [("pixels", "skipped")] * 2
-    assert rows[0]["reason"].startswith("exception: ") and rows[0]["reason"].endswith("(crash 1 of 2 on reopen)")
-    assert rows[1]["reason"].endswith("(crash 2 of 2 on reopen)")
+    version = recheck_mod.PIXEL_RULE_VERSION
+    assert rows[0]["reason"].startswith("exception: ")
+    assert rows[0]["reason"].endswith(f"(crash 1 of 2 on reopen at pixel rule {version})")
+    assert rows[1]["reason"].endswith(f"(crash 2 of 2 on reopen at pixel rule {version})")
+
+
+def test_the_crash_cap_applies_per_pixel_rule_version(env, monkeypatch):
+    """Round 1, item 2b: two crash skips at one rule version leave the signal for a person under that version only;
+    a later rule version reopens it again, and its crashes are counted afresh."""
+    v2 = {"seasons": SEASONS, "rule_version": 2}
+    sid = env.seed_signal(tpfs="target", tests=[("rung5_pixels", "pass", PASSED)], metrics={"rung5_pixels": v2})
+
+    def broken(kic, **_kw):
+        raise RuntimeError("bad header")
+    for _ in range(2):
+        recheck(env.store, env.blob, env.settings, fetch=fake_fetch.fetch, tpf_loader=broken)
+    assert recheck_mod._reopen_crashes(env.store, sid) == 2
+    tests = env.store.latest_tests(sid)
+    assert recheck_mod.wants_pixels(env.store, SimpleNamespace(id=sid), tests) is False
+    later = recheck_mod.PIXEL_RULE_VERSION + 1
+    monkeypatch.setattr(recheck_mod, "PIXEL_RULE_VERSION", later)
+    assert recheck_mod._reopen_crashes(env.store, sid, later) == 0
+    assert recheck_mod.wants_pixels(env.store, SimpleNamespace(id=sid), tests) is True
 
 
 def test_a_pixel_archive_outage_is_retried_by_the_next_recheck(env):
