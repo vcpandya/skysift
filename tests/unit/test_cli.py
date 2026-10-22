@@ -406,7 +406,7 @@ def test_the_recheck_line_says_when_the_recheck_stopped():
 
 def test_cli_crosscheck_export_and_import(settings, monkeypatch, tmp_path):
     from skysift.dossier import generate
-    from tests.unit.test_crosscheck import fake_result
+    from tests.unit.test_crosscheck import fake_result, store_pixel_files
     from tests.unit.test_dossier import _make_env
     from tests.unit.ui_seed import STAGE2_TARGET
     env = _make_env(settings, monkeypatch)
@@ -414,17 +414,22 @@ def test_cli_crosscheck_export_and_import(settings, monkeypatch, tmp_path):
     assert r.exit_code == 1 and "skysift dossier --target" in r.output                  # no dossier yet
     generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch)
     r = runner.invoke(app, ["crosscheck", "--target", STAGE2_TARGET, "--export", str(tmp_path / "cc")])
+    assert r.exit_code == 2 and "tpf_missing" in r.output and "Traceback" not in r.output     # no pixel file kept
+    store_pixel_files(env)
+    generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch, force=True)
+    r = runner.invoke(app, ["crosscheck", "--target", STAGE2_TARGET, "--export", str(tmp_path / "cc")])
     assert r.exit_code == 0, r.output
     report = json.loads(r.stdout)
     sha = json.loads((tmp_path / "cc" / "inputs.json").read_text(encoding="utf-8"))["fingerprint"]
     assert report["fingerprint"] == sha and report["inputs"] == str(tmp_path / "cc")
-    assert report["quarters"] == []                         # the seed keeps no pixel files for this star
+    assert report["quarters"] == [1, 2, 3, 4, 5]
     good = tmp_path / "result.json"
     good.write_text(json.dumps(fake_result(sha)), encoding="utf-8")
     r = runner.invoke(app, ["crosscheck", "--target", STAGE2_TARGET, "--import", str(good)])
     assert r.exit_code == 0, r.output
     report = json.loads(r.stdout)
-    assert report["current"] is True and report["fpp"] == 0.012 and report["blocks_live_gate"] is None
+    assert report["current"] is True and report["fpp"] == 0.012
+    assert report["blocks_live_gate"] is False and report["live_gate_reason"] is None
     assert env.store.dossier(STAGE2_TARGET)["cross_check"]["fpp"] == 0.012
     bad = tmp_path / "bad.json"
     bad.write_text(json.dumps({**fake_result(sha), "fpp": 2.0}), encoding="utf-8")

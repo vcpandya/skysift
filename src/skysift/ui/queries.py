@@ -702,7 +702,8 @@ def final_set(store: Store, version: str | None, target_id: str | None = None) -
 def dossier_for(store: Store, target_id: str, with_data: bool = True) -> dict | None:
     """The target's dossier row with ``stale`` and ``stale_reason``, its signal's ``detail`` (as ``signal_detail``),
     ``signal`` and latest ``decision``, and with ``with_data`` the parsed JSON as ``data`` (None, with
-    ``data_error``, when it cannot be read), its ``cross_check`` the row's block with ``current`` recomputed. None when the target has no dossier."""
+    ``data_error``, when it cannot be read), its ``cross_check`` the row's block with ``current`` recomputed.
+    None when the target has no dossier."""
     row = store.dossier(target_id)
     if row is None:
         return None

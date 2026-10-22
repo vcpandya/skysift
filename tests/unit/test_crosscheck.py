@@ -15,7 +15,7 @@ from skysift import crosscheck as cc
 from skysift.dossier import generate
 from skysift.lc.tpf import tpf_listing_url
 from skysift.store.db import TargetRow
-from tests.unit.synthetic_tpf import NEIGHBOUR_KIC, tpf_name, tpf_quarters
+from tests.unit.synthetic_tpf import CCD_ORIGIN, NEIGHBOUR_KIC, tpf_fits, tpf_name, tpf_quarters
 from tests.unit.test_dossier import _make_env
 from tests.unit.ui_seed import STAGE2_TARGET
 
@@ -31,7 +31,8 @@ def fake_result(sha: str, fpp: float = 0.012, nfpp: float = 1e-4, n: int = cc.N_
             "fpp": fpp, "nfpp": nfpp, "fpp_runs": [fpp] * n, "nfpp_runs": [nfpp] * n,
             "scenarios": [{"ID": "169822650", "scenario": "TP", "prob": 1 - fpp}],
             "stars": [{"id": "169822650", "tmag": 15.19, "sep_arcsec": 0.0, "flux_ratio": 0.98, "tdepth": 0.0022}],
-            "inputs_sha256": sha, "caveats": ["TESS-band limb darkening is used for a Kepler light curve."],
+            "inputs_sha256": sha,
+            "caveats": ["TRICERATOPS shares the light in the aperture by TIC TESS magnitudes (Tmag), not Kepler magnitudes; its limb darkening comes from its Kepler table."],
             "settings": {"N": 1_000_000, "exptime_days": 0.0204}}
 
 
@@ -40,11 +41,9 @@ def _write(path: Path, obj) -> Path:
     return path
 
 
-@pytest.fixture
-def env(settings, monkeypatch):
-    """The seed's stage-2 dossier, its target extracted from the pixels of KIC 6146666 (``meta.tpf_org``), with
-    five synthetic pixel files of that star kept in the blob as ``kind="tpf"`` artifacts."""
-    env = _make_env(settings, monkeypatch)
+def store_pixel_files(env) -> None:
+    """Make the seed's stage-2 target a star extracted from the pixels of KIC 6146666 (``meta.tpf_org``) and keep
+    five synthetic pixel files of that star in the blob as ``kind="tpf"`` artifacts (``env.tpfs``)."""
     with env.store.session() as s:
         t = s.get(TargetRow, STAGE2_TARGET)
         t.meta = {**(t.meta or {}), "tpf_org": NEIGHBOUR_KIC}
@@ -54,6 +53,13 @@ def env(settings, monkeypatch):
         sha, loc = env.blob.put(bytes(b), name)
         env.store.add_artifact(sha, len(b), tpf_listing_url(NEIGHBOUR_KIC) + name, loc, target_id=STAGE2_TARGET,
                                kind="tpf")
+
+
+@pytest.fixture
+def env(settings, monkeypatch):
+    """The seed's stage-2 dossier with the pixel files of ``store_pixel_files``."""
+    env = _make_env(settings, monkeypatch)
+    store_pixel_files(env)
     env.report = generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch)
     return env
 
@@ -176,6 +182,8 @@ def test_verdict_blocks_a_likely_false_positive_and_passes_a_small_disagreement(
     assert r"TRICERATOPS \citep{giacalone2021} gives" in tex and "Giacalone et al." not in tex
     assert cc.comparison_sentence({"fpp": {"value": 0.0035}, "cross_check": None}) is None
     assert cc.comparison_sentence({"fpp": {"value": 0.0035}, "cross_check": {**block, "current": False}}) is None
+    zeros = cc.comparison_sentence({"fpp": {"value": 0.0}, "cross_check": {**block, "fpp": 0.0, "fpp_runs": [0.0]}})
+    assert "SkySift's own estimate is 0." in zeros and "apart" not in zeros                  # both 0 agree
     alone = cc.comparison_sentence({"fpp": {"value": None}, "cross_check": block})
     assert "SkySift" not in alone and alone.endswith("over 10 runs.")
 
@@ -194,6 +202,13 @@ def test_tool_helpers_match_neighbours_and_estimate_tmag(tmp_path):
     assert tc.match_neighbours(tic, gaia, arcsec=0.01) == ([], gaia)
     assert tc.tmag_from_g(19.77, 1.8) == pytest.approx(19.27) and tc.tmag_from_g(18.0, None) == pytest.approx(17.7)
     assert tc.tmag_from_g(16.0, 1.5) == pytest.approx(15.7)
+    # a TIC star without a G ranks last; a dossier neighbour without a separation or G is left out and named
+    nan_g = [{"ID": "9", "sep (arcsec)": 7.2, "GAIAmag": math.nan}, *tic]
+    assert tc.match_neighbours(nan_g, gaia[:1])[0][0]["tic_id"] == "1879962333"
+    broken = [{"source_id": "23", "sep_arcsec": None, "gmag": 17.0, "bp_rp": None},
+              {"source_id": "24", "sep_arcsec": 9.0, "gmag": math.nan, "bp_rp": None}]
+    assert tc.match_neighbours(tic, [*gaia, *broken]) == (matched, missing)
+    assert tc.usable_neighbours([*gaia, *broken]) == (gaia, broken)
     # the quarter images of the synthetic pixel files: padded to 22 x 22, the stars placed through each quarter's WCS
     tpfs = tpf_quarters(n_quarters=2)
     paths = []
@@ -206,18 +221,27 @@ def test_tool_helpers_match_neighbours_and_estimate_tmag(tmp_path):
     for q, b in zip(images, tpfs, strict=True):
         assert q["image"].shape == (22, 22) and np.isnan(q["image"][0, 0])
         pc, pr = q["pad"]
-        assert (q["col0"], q["row0"]) == (-pc, -pr)                    # no 1CRV4P in the synthetic files: origin 0
+        assert (q["col0"], q["row0"]) == (CCD_ORIGIN[0] - pc, CCD_ORIGIN[1] - pr)     # 1CRV4P, 2CRV4P less the pad
         ra, dec = zip(b.target_radec, b.neighbour_radec, strict=True)
         coords = tc.pixel_coords(q, [*ra, math.nan], [*dec, math.nan])
-        np.testing.assert_allclose(coords[0], b.pos_target, atol=1e-6)
-        np.testing.assert_allclose(coords[1], b.pos_neighbour, atol=1e-6)
+        np.testing.assert_allclose(coords[0], np.add(CCD_ORIGIN, b.pos_target), atol=1e-6)     # 1CRV4P + WCS
+        np.testing.assert_allclose(coords[1], np.add(CCD_ORIGIN, b.pos_neighbour), atol=1e-6)
         np.testing.assert_allclose(coords[2], coords[0])              # a star without a position sits on the target
         with fits.open(paths[q["quarter"] - 1]) as h:
             mean = np.asarray(h[1].data["FLUX"], float).mean(axis=0)
         np.testing.assert_allclose(q["image"][pr:pr + 9, pc:pc + 9], mean, rtol=1e-6)    # the stamp, unmoved
-        c, r = round(b.pos_target[0]), round(b.pos_target[1])
+        c, r = round(CCD_ORIGIN[0] + b.pos_target[0]), round(CCD_ORIGIN[1] + b.pos_target[1])
         ap = tc.aperture_3x3(coords[0])
         assert ap.shape == (9, 2) and {tuple(x) for x in ap} == {(c + i, r + j) for i in (-1, 0, 1) for j in (-1, 0, 1)}
+    b = tpfs[0]          # a file without the FLUX column's physical WCS cannot place the stars on the CCD grid
+    bare = tmp_path / "bare.fits"
+    from astropy.wcs import WCS
+    with fits.open(paths[0]) as h:
+        cube, wcs = np.asarray(h[1].data["FLUX"], float), WCS(h[2].header, naxis=2)
+        bare.write_bytes(tpf_fits(1, h[1].data["TIME"], h[1].data["QUALITY"], cube, wcs, h[2].data, NEIGHBOUR_KIC,
+                                  b.neighbour_radec, gz=False, ccd_origin=None))
+    with pytest.raises(ValueError, match="no 1CRV4P or 2CRV4P"):
+        tc.quarter_images([bare])
     runs = [{"seed": 7 + k, "fpp": f, "nfpp": f / 10, "degenerate": False,
              "scenarios": [{"ID": "1", "scenario": "TP", "prob": 1 - f}]} for k, f in enumerate((0.03, 0.01, 0.02))]
     result = tc.assemble_result(runs, [{"id": "1", "tmag": 15.2}], {"N": 10}, {"fingerprint": "b" * 64}, "1.1.0")
@@ -225,7 +249,8 @@ def test_tool_helpers_match_neighbours_and_estimate_tmag(tmp_path):
     assert result["fpp"] == pytest.approx(0.02) and result["nfpp"] == pytest.approx(0.002)
     assert result["fpp_runs"] == [0.03, 0.01, 0.02] and result["scenarios"] == runs[2]["scenarios"]
     assert result["settings"]["seeds"] == [7, 8, 9] and result["settings"]["median_run_seed"] == 9
-    assert any("TESS" in c for c in result["caveats"]) and result["inputs_sha256"] == "b" * 64
+    assert any("Tmag" in c and "Kepler table" in c for c in result["caveats"]) and result["inputs_sha256"] == "b" * 64
+    assert not any("TESS-band limb darkening" in c for c in result["caveats"])
     cc.validate_result(result)                                         # the tool's file passes the import's checks
 
 
@@ -235,3 +260,19 @@ def test_tool_module_imports_without_triceratops(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(tc, "tr", None)
     assert tc.main(["--inputs", str(tmp_path), "--out", str(tmp_path / "r.json")]) == 2
     assert ".venv-triceratops" in capsys.readouterr().err and not (tmp_path / "r.json").exists()
+
+
+def test_tool_refuses_a_target_row_without_stellar_parameters():
+    from tools import triceratops_check as tc
+    full = {"mass": 0.49, "rad": 0.49, "Teff": 3694.0, "plx": 3.33}
+    assert tc.missing_stellar(full) == []
+    assert tc.missing_stellar({**full, "plx": math.nan, "Teff": None}) == ["Teff", "plx"]
+    assert tc.missing_stellar({"mass": 0.5}) == ["rad", "Teff", "plx"]
+
+
+def test_an_export_without_pixel_files_is_refused(settings, monkeypatch, tmp_path):
+    env = _make_env(settings, monkeypatch)                  # the seed keeps no pixel file for this star
+    generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch)
+    with pytest.raises(cc.NoPixelFiles, match="tpf_missing: none is kept.*the folder the command runs in"):
+        cc.export_inputs(env.store, env.blob, env.settings, STAGE2_TARGET, tmp_path / "cc")
+    assert not (tmp_path / "cc" / "inputs.json").exists()

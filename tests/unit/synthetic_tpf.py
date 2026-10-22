@@ -45,6 +45,7 @@ Q0_DAYS = (109.0, 131.5)            # BKJD span of the synthetic Q0: two transit
 CADENCE = 29.4 / 1440
 EDGE_TARGET = ((9, 5), (4, 0))      # columns 4 to 8: the target on the stamp's first column, as the KBonus stars sit
 CORNER_TARGET = ((5, 5), (4, 4))    # columns and rows 4 to 8: the target on the stamp's corner pixel
+CCD_ORIGIN = (612, 345)             # 1CRV4P, 2CRV4P: the CCD column and row of the stamp's first pixel
 
 
 def archive_season(quarter: int) -> int:
@@ -85,9 +86,10 @@ def neighbour_radec(target_radec=TARGET_RADEC) -> tuple[float, float]:
 
 
 def tpf_fits(quarter: int, time, quality, cube, wcs: WCS, aperture, kic: int, obj_radec, gz: bool = True,
-             season: int | None | str = "archive") -> bytes:
+             season: int | None | str = "archive", ccd_origin: tuple[int, int] | None = CCD_ORIGIN) -> bytes:
     """One TPF as bytes, the archive's layout (gzipped unless ``gz`` is False). ``season`` is the header SEASON:
-    the archive's by default, None to leave the keyword out."""
+    the archive's by default, None to leave the keyword out. ``ccd_origin`` is written as the FLUX column's physical
+    WCS reference (1CRV4P, 2CRV4P), None to leave it out."""
     nrow, ncol = cube.shape[1:]
     prim = fits.PrimaryHDU()
     season = archive_season(quarter) if season == "archive" else season
@@ -100,6 +102,8 @@ def tpf_fits(quarter: int, time, quality, cube, wcs: WCS, aperture, kic: int, ob
         fits.Column(name="QUALITY", format="J", array=np.asarray(quality, np.int32)),
         fits.Column(name="FLUX", format=f"{nrow * ncol}E", dim=f"({ncol},{nrow})",
                     array=np.asarray(cube, np.float32))], name="TARGETTABLES")
+    if ccd_origin is not None:
+        table.header["1CRV4P"], table.header["2CRV4P"] = int(ccd_origin[0]), int(ccd_origin[1])
     ap = fits.ImageHDU(data=np.asarray(aperture, np.int32), header=wcs.to_header(), name="APERTURE")
     buf = io.BytesIO()
     fits.HDUList([prim, table, ap]).writeto(buf)

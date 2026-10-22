@@ -1284,9 +1284,11 @@ def export_html(data: dict, static_dir: Path = STATIC_DIR, data_dir: Path | None
 
 
 def write_export(store: Store, report: DossierReport, path: Path, static_dir: Path = STATIC_DIR) -> Path:
-    """Render the report's JSON to ``path`` (atomically), record it as a pinned ``dossier`` artifact and on the row."""
+    """Render the report's JSON to ``path`` (atomically), record it as a pinned ``dossier`` artifact and on the row.
+    The row's cross-check replaces the JSON's copy (it may have been imported since), ``current`` recomputed."""
     path = Path(path)
     data = json.loads(report.data_path.read_text(encoding="utf-8"))
+    data["cross_check"] = cc.with_current((store.dossier(report.target_id) or {}).get("cross_check"), data)
     text = export_html(data, static_dir, data_dir_of(report.data_path))
     _write_atomic(path, text)
     _record_artifact(store, EXPORT_URL.format(target_id=report.target_id), path, text, report.target_id)

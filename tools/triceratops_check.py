@@ -59,30 +59,50 @@ N_PIX = 2 * SEARCH_RADIUS + 2       # the padded image side, as the package buil
 EXPTIME_DAYS = 0.0204               # Kepler long cadence
 N_DRAWS = 1_000_000
 CAVEATS = (
-    "TRICERATOPS uses TESS-band limb darkening and TIC Tmag magnitudes for a Kepler light curve.",
+    ("TRICERATOPS shares the light in the aperture by TIC TESS magnitudes (Tmag), not Kepler magnitudes; its limb "
+     "darkening comes from its Kepler table."),
     "The light in the aperture is modelled as a Gaussian PSF of 0.75 pixels over the 3 x 3 box around the target.",
     "The priors and the field-star population are the package's own, not SkySift's.",
     "The result varies from run to run, so the median of the runs is quoted and every run is kept.",
 )
 
 
+def _finite(x) -> float | None:
+    try:
+        x = float(x)
+    except (TypeError, ValueError):
+        return None
+    return x if math.isfinite(x) else None
+
+
+def usable_neighbours(gaia_neighbours) -> tuple[list[dict], list[dict]]:
+    """(the neighbours with a finite separation and G, the others), so a neighbour the dossier stores without
+    either is left out of the match and named in the caveats instead."""
+    usable = [n for n in gaia_neighbours if _finite(n.get("sep_arcsec")) is not None and _finite(n.get("gmag"))
+              is not None]
+    return usable, [n for n in gaia_neighbours if n not in usable]
+
+
 def match_neighbours(tic_rows, gaia_neighbours, arcsec: float = 1.0) -> tuple[list[dict], list[dict]]:
     """Pair each Gaia neighbour of the dossier ({"source_id", "sep_arcsec", "gmag", "bp_rp"}) with the TIC star
     (TRICERATOPS's ``stars`` rows other than the target: "ID", "sep (arcsec)", "GAIAmag") whose separation from the
-    target is within ``arcsec`` of its own, the nearest in separation and then in G, each TIC star used once.
-    Returns (matched: {"source_id", "tic_id", "dsep_arcsec"}, the Gaia neighbours left unmatched)."""
-    free = list(tic_rows)
+    target is within ``arcsec`` of its own, the nearest in separation and then in G (a TIC star without a G ranks
+    last), each TIC star used once. A neighbour without a finite separation or G is skipped (``usable_neighbours``
+    names it). Returns (matched: {"source_id", "tic_id", "dsep_arcsec"}, the usable neighbours left unmatched)."""
+    free = [r for r in tic_rows if _finite(r.get("sep (arcsec)")) is not None]
     matched, missing = [], []
-    for n in sorted(gaia_neighbours, key=lambda n: n["sep_arcsec"]):
-        near = [r for r in free if abs(float(r["sep (arcsec)"]) - n["sep_arcsec"]) <= arcsec]
+    for n in sorted(usable_neighbours(gaia_neighbours)[0], key=lambda n: float(n["sep_arcsec"])):
+        sep, g = float(n["sep_arcsec"]), float(n["gmag"])
+        near = [r for r in free if abs(float(r["sep (arcsec)"]) - sep) <= arcsec]
         if not near:
             missing.append(n)
             continue
-        best = min(near, key=lambda r: (abs(float(r["sep (arcsec)"]) - n["sep_arcsec"]),
-                                        abs(float(r.get("GAIAmag") or math.inf) - n["gmag"])))
+        best = min(near, key=lambda r: (abs(float(r["sep (arcsec)"]) - sep),
+                                        abs(_finite(r.get("GAIAmag")) - g) if _finite(r.get("GAIAmag")) is not None
+                                        else math.inf))
         free.remove(best)
         matched.append({"source_id": str(n["source_id"]), "tic_id": str(best["ID"]),
-                        "dsep_arcsec": abs(float(best["sep (arcsec)"]) - n["sep_arcsec"])})
+                        "dsep_arcsec": abs(float(best["sep (arcsec)"]) - sep)})
     return matched, missing
 
 
@@ -95,8 +115,8 @@ def tmag_from_g(g: float, bp_rp: float | None) -> float:
 def quarter_images(tpf_paths) -> list[dict]:
     """One dict per pixel file, by quarter, as TRICERATOPS builds them for a Kepler target: "quarter", "image" (the
     time-mean FLUX padded with NaN to ``N_PIX`` square), "col0" and "row0" (the CCD column and row of the padded
-    image's first pixel, ``1CRV4P`` / ``2CRV4P`` less the padding; a file without them, as the synthetic test files,
-    sits at 0), "pad" (columns and rows of padding before the stamp) and "wcs" (from the APERTURE header)."""
+    image's first pixel, ``1CRV4P`` / ``2CRV4P`` of the TARGETTABLES header less the padding; a file without them
+    raises ValueError, since the stars could not be placed), "pad" (columns and rows of padding before the stamp) and "wcs" (from the APERTURE header)."""
     out = []
     for path in tpf_paths:
         with fits.open(path, memmap=False) as h:
@@ -104,7 +124,10 @@ def quarter_images(tpf_paths) -> list[dict]:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", RuntimeWarning)         # an all-NaN pixel: its mean is NaN
                 image = np.nanmean(np.asarray(h[1].data["FLUX"], float), axis=0)
-            col_ref, row_ref = float(h[1].header.get("1CRV4P", 0)), float(h[1].header.get("2CRV4P", 0))
+            lacking = [k for k in ("1CRV4P", "2CRV4P") if k not in h[1].header]
+            if lacking:
+                raise ValueError(f"{Path(path).name}: no {' or '.join(lacking)} in the TARGETTABLES header")
+            col_ref, row_ref = float(h[1].header["1CRV4P"]), float(h[1].header["2CRV4P"])
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", FITSFixedWarning)
                 wcs = WCS(h[2].header, naxis=2)
@@ -134,6 +157,12 @@ def aperture_3x3(target_pix) -> np.ndarray:
     """The 3 x 3 box of (column, row) pixels around the target's rounded position, in the package's layout."""
     c, r = np.round(np.asarray(target_pix, float))
     return np.array([np.repeat(np.arange(c - 1, c + 2), 3), np.tile(np.arange(r - 1, r + 2), 3)]).T
+
+
+def missing_stellar(row) -> list[str]:
+    """The columns among mass, rad, Teff and plx that the target's ``stars`` row lacks (None or not finite). Without
+    them ``calc_probs`` stops at the target and leaves every scenario equally likely, a result that means nothing."""
+    return [k for k in ("mass", "rad", "Teff", "plx") if _finite(row.get(k)) is None]
 
 
 def read_lightcurve(path: Path) -> dict[str, np.ndarray]:
@@ -210,8 +239,16 @@ def main(argv=None) -> int:
         print(f"the TIC star nearest the target is {offset * 3600:.1f} arcsec away; not the same star",
               file=sys.stderr)
         return 1
+    lacking = missing_stellar(first)
+    if lacking:
+        print(f"the TIC row of the target has no {', '.join(lacking)}; TRICERATOPS cannot weigh the scenarios "
+              "without them, so no result is written", file=sys.stderr)
+        return 1
     matched, missing = match_neighbours(t.stars.iloc[1:].to_dict("records"), inputs["neighbours"])
     added, notes = {}, []
+    for n in usable_neighbours(inputs["neighbours"])[1]:
+        notes.append(f"Gaia DR3 {n.get('source_id')} is stored without a separation or G, so it was left out of the "
+                     "match with the TIC list.")
     for n in missing:
         added[str(n["source_id"])] = tmag_from_g(n["gmag"], n.get("bp_rp"))
         t.add_star(ID=str(n["source_id"]), Tmag=added[str(n["source_id"])], bound=False)

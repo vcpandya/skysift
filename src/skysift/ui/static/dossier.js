@@ -493,6 +493,23 @@
     const fap = D.fap || {}, fpp = D.fpp || {};
     list(2, [[`False alarm: ${fap.words || "not yet calibrated"}.`, fap.sentence_not_covered],
       [`${fpp.label || "False positive"}: ${fpp.words || "not computed"}${fpp.signed_off ? "" : " (provisional)"}.`, fpp.sentence_not_covered]]);
+    // the cross-check, as the dashboard's section 03 draws it
+    const CC = D.cross_check;
+    const g3 = (x) => (isNum(x) ? String(Number(x.toPrecision(3))) : "–");
+    const spread = (xs) => (Array.isArray(xs) && xs.length ? `${g3(Math.min(...xs))} to ${g3(Math.max(...xs))}` : "–");
+    sec(2).appendChild(h("h3", null, "Cross-check"));
+    if (CC) {
+      para(2, `An independent estimate with TRICERATOPS ${CC.tool_version} (Giacalone et al. 2021): median false-positive probability ${g3(CC.fpp)} and nearby false-positive probability ${g3(CC.nfpp)}; over ${CC.n_runs} runs the false-positive probability ran from ${spread(CC.fpp_runs)} and the nearby false-positive probability from ${spread(CC.nfpp_runs)}. ${CC.current
+        ? "It was made for this dossier's period, depth and neighbours."
+        : "It was made for an earlier dossier (the period, the depth or the neighbours have changed since), so it does not count until it is run again."}`);
+      if ((CC.caveats || []).length) {
+        const ul = h("ul", "dossier-small");
+        CC.caveats.forEach((c) => ul.appendChild(h("li", null, c)));
+        sec(2).appendChild(ul);
+      }
+    } else {
+      para(2, "No independent cross-check is stored yet.");
+    }
     const kinds = Object.keys(fap.k_by_kind || {}).sort();
     if (kinds.length) para(2, kinds.map((kind, i) => `${kind}${i ? "" : " nulls"} ${fmt(fap.k_by_kind[kind])} of ${fmt((fap.n_by_kind || {})[kind])}`).join(", "), "prob-split");
     if (isNum(fap.n)) para(2, `${fmt(fap.k)} of ${fmt(fap.n)} null searches reached SDE ${fmt(fap.sde, 1)}.`, "only-expert mono");

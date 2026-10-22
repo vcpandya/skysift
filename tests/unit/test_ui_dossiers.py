@@ -775,9 +775,30 @@ def test_dossier_page_shows_the_cross_check_block(seeded_dossier):
         client.cookies.set("skysift_mode", mode)
         checks = client.get(f"/dossiers/{STAGE2_TARGET}").text.split('id="checks"')[1].split('id="pixels"')[0]
         assert "Cross-check" in checks and "TRICERATOPS 1.1.0" in checks
-        assert "0.012" in checks and "0.0001" in checks and "0.008 to 0.03 over 10 runs" in checks
+        assert "0.012" in checks and "0.0001" in checks
+        assert "over 10 runs the false-positive probability ran from" in checks and "0.008 to 0.03" in checks
+        assert "the nearby false-positive probability from" in checks and "0.0001 to 0.0001" in checks
         assert "made for this dossier" in checks and "earlier dossier" not in checks
-        assert "TESS-band limb darkening" in checks and chr(0x2014) not in checks
+        assert "Kepler table" in checks and chr(0x2014) not in checks
     app.state.store.set_cross_check(STAGE2_TARGET, {**result, "inputs_sha256": "0" * 64, "current": True})
     checks = client.get(f"/dossiers/{STAGE2_TARGET}").text.split('id="checks"')[1].split('id="pixels"')[0]
     assert "made for an earlier dossier" in checks
+
+
+
+def test_the_standalone_page_carries_a_cross_check_imported_after_its_export(seeded_dossier, tmp_path):
+    from skysift import crosscheck as cc
+    from tests.unit.test_crosscheck import fake_result
+    client, app, _ids, data = seeded_dossier
+    before = client.get(f"/dossiers/{STAGE2_TARGET}/export.html").text
+    assert '"cross_check":null' in before.replace(" ", "")
+    assert "Cross-check" in before and "No independent cross-check is stored yet." in before     # dossier.js draws it
+    result = tmp_path / "result.json"
+    result.write_text(json.dumps(fake_result(cc.inputs_fingerprint(data), fpp=0.0234, nfpp=0.0012)), encoding="utf-8")
+    cc.import_result(app.state.store, STAGE2_TARGET, result)
+    assert app.state.store.dossier(STAGE2_TARGET)["export_path"] == ""          # the kept page is drawn again
+    after = client.get(f"/dossiers/{STAGE2_TARGET}/export.html").text
+    blob = after.split('<script id="dossier-data" type="application/json">')[1].split("</script>")[0]
+    block = json.loads(blob)["cross_check"]
+    assert block["fpp"] == 0.0234 and block["nfpp"] == 0.0012 and block["current"] is True
+    assert "over ${CC.n_runs} runs the false-positive probability ran from" in after

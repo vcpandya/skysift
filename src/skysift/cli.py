@@ -373,7 +373,7 @@ def crosscheck_command(target: str = typer.Option(..., "--target", help="The tar
     """The independent false-positive cross-check. --export writes inputs.json, lightcurve.csv and the pixel files
     for tools/triceratops_check.py, which runs under .venv-triceratops; --import checks its result file and stores it
     on the dossier with whether it was made for the stored dossier's inputs. Prints JSON. Exits 1 without a dossier,
-    2 for a bad result file."""
+    2 for a bad result file or an export that found no pixel file."""
     from skysift import crosscheck as cc
     from skysift import dossier as ds
     console = _console(stderr=True)
@@ -390,11 +390,12 @@ def crosscheck_command(target: str = typer.Option(..., "--target", help="The tar
         else:
             block = cc.import_result(store, target, Path(result))
             report = {"target_id": target, "fpp": block["fpp"], "nfpp": block["nfpp"], "n_runs": block["n_runs"],
-                      "current": block["current"], "blocks_live_gate": cc.verdict(block)[1]}
+                      "current": block["current"], "blocks_live_gate": cc.verdict(block)[0],
+                      "live_gate_reason": cc.verdict(block)[1]}
     except cc.NoDossier as e:
         _plain(console, str(e))
         raise typer.Exit(1) from None
-    except (cc.BadResult, ds.LightCurveReleased) as e:
+    except (cc.BadResult, cc.NoPixelFiles, ds.LightCurveReleased) as e:
         _plain(console, str(e))
         raise typer.Exit(2) from None
     _plain(_console(), jsonutil.dumps(report, indent=1))

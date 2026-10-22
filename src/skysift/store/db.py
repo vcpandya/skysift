@@ -760,12 +760,14 @@ class Store:
             row.pack_path, row.pack_built = pack_path, built
 
     def set_cross_check(self, target_id: str, block: dict | None) -> None:
-        """Store the cross-check block on the target's dossier row (None clears it). Raises KeyError without a row."""
+        """Store the cross-check block on the target's dossier row (None clears it) and clear ``export_path``: a
+        kept standalone page was drawn without this block. Raises KeyError without a row."""
         with self.session() as s:
             row = s.get(DossierRow, target_id)
             if row is None:
                 raise KeyError(target_id)
             row.cross_check = None if block is None else dict(block)
+            row.export_path = ""
 
     def set_pack_steps(self, target_id: str, steps: dict) -> None:
         with self.session() as s:

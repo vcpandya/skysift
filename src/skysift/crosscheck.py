@@ -50,6 +50,10 @@ class BadResult(ValueError):
     """A result file that is not the tool's: unreadable, not JSON, or a key missing or out of range."""
 
 
+class NoPixelFiles(ValueError):
+    """The export found no readable kept pixel file of the neighbour KIC: the tool has no image to place stars on."""
+
+
 def _round(x):
     return None if x is None else float(f"{float(x):.{_FINGERPRINT_DIGITS}g}")
 
@@ -114,8 +118,10 @@ def _copy_pixel_files(store, blob, kic: int | None, tpf_dir: Path) -> tuple[list
 
 def export_inputs(store, blob, settings, target_id: str, out_dir: Path) -> Path:
     """Write ``inputs.json``, ``lightcurve.csv`` and ``tpf/`` for the tool into ``out_dir`` from the stored dossier
-    and the loader's light curve (nothing is downloaded: a released light curve raises
-    ``dossier.LightCurveReleased``). Returns ``out_dir``, the tool's ``--inputs``. Raises NoDossier."""
+    and the loader's light curve, loaded with ``pin=True`` as the pack loads it (so the raw file stays out of budget
+    retention; nothing is downloaded: a released light curve raises ``dossier.LightCurveReleased``). Returns
+    ``out_dir``, the tool's ``--inputs``. Raises NoDossier, and NoPixelFiles (naming the files it could not read)
+    when no pixel file was copied; the light curve is then written, ``inputs.json`` is not."""
     from skysift import dossier as ds
     from skysift.lc.loader import LightCurveLoader
     data = _stored(store, target_id)
@@ -133,6 +139,11 @@ def export_inputs(store, blob, settings, target_id: str, out_dir: Path) -> Path:
     kic = (t.get("meta") or {}).get("tpf_org") or t.get("kic")
     kic = int(kic) if kic else None
     quarters, files, missing = _copy_pixel_files(store, blob, kic, out_dir / "tpf")
+    if not quarters:
+        unread = "; ".join(f"{m['name']}: {m['cause']}" for m in missing) or "none is kept"
+        raise NoPixelFiles(f"no pixel file of KIC {kic} could be copied for {target_id} (tpf_missing: {unread}); a "
+                           "kept file is read from its stored path, and a relative path is read from the folder the "
+                           "command runs in, so run it from the folder the engine's data paths start at")
     neighbours = [{k: n.get(k) for k in ("source_id", "sep_arcsec", "gmag", "bp_rp")}
                   for n in ((data.get("fpp") or {}).get("inputs") or {}).get("neighbours") or []]
     inputs = {"target": {k: t.get(k) for k in ("target_id", "gaia_id", "kic", "ra", "dec", "gmag")},
@@ -246,7 +257,7 @@ def comparison_sentence(data: dict, tex: bool = False) -> str | None:
     own = (data.get("fpp") or {}).get("value")
     if isinstance(own, (int, float)) and not isinstance(own, bool) and math.isfinite(own):
         hi, lo = max(own, block["fpp"]), min(own, block["fpp"])
-        ratio = hi / lo if lo > 0 else math.inf
+        ratio = 1.0 if hi == 0 else hi / lo if lo > 0 else math.inf          # both 0 agree
         if ratio > RATIO_SENTENCE_ABOVE:
             apart = "far" if math.isinf(ratio) else f"a factor of {ratio:.1f}"
             rest += (f" SkySift's own estimate is {probability_text(own)}, so the two are {apart} apart. "
