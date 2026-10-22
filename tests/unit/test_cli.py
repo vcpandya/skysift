@@ -394,6 +394,16 @@ def test_the_standalone_recheck_lowers_its_own_priority(monkeypatch):
     assert cli._lower_own_priority(platform="linux") is False
 
 
+def test_the_recheck_line_counts_the_decided_pixel_verdicts_that_changed():
+    from skysift.cli import _recheck_line
+    from skysift.recheck import RecheckReport
+    rep = RecheckReport(considered=2, decided_pixel_changed=1)
+    rep.steps["pixels"] += 2
+    assert _recheck_line(rep.as_dict()) == ("considered 2; steps: pixels 2; outcomes: none; decided pixel verdicts "
+                                            "changed: 1 (each dossier flags it for a reviewer)")
+    assert "decided" not in _recheck_line(RecheckReport(considered=1).as_dict())
+
+
 def test_the_recheck_line_says_when_the_recheck_stopped():
     from skysift.cli import _recheck_line
     from skysift.recheck import RecheckReport

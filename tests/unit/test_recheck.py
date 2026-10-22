@@ -813,6 +813,30 @@ def test_stream_retention_releases_the_pixel_files_after_the_pixel_step(env, mod
         assert released == [mode == "stream"] * 5
 
 
+def test_stream_retention_releases_the_pixel_files_after_a_decided_rerun(env, caplog):
+    """Round 3: the pixel rerun of a decided signal under a newer rule releases its target's pixel files in stream
+    mode, as the ordinary pixel step does, and the final log line counts the changed verdicts."""
+    import logging
+
+    from skysift.lc.tpf import tpf_listing_url
+    from skysift.store.retention import Retention, RetentionPolicy
+    v2 = {"seasons": SEASONS, "rule_version": 2}
+    sid = env.seed_signal(tpfs="target", tests=[("rung5_pixels", "pass", PASSED)], metrics={"rung5_pixels": v2})
+    env.store.decide(sid, "approve")
+    kic, (scene, radec) = next(iter(env.tpfs.items()))
+    files = {tpf_name(kic, b.quarter): b for b in tpf_quarters(scene, target_radec=radec, kic=kic)}
+    mast = FakeMast({tpf_listing_url(kic): listing_html(kic, sorted(files)), **files}, other=fake_fetch.fetch)
+    retention = Retention(RetentionPolicy.parse("stream"), env.store, env.blob)
+    with caplog.at_level(logging.INFO, logger="skysift.recheck"):
+        rep = recheck(env.store, env.blob, env.settings, fetch=mast, retention=retention)
+    assert rep.steps["pixels"] == 1 and env.store.latest_tests(sid)[-1]["metrics"]["rule_version"] == \
+        recheck_mod.PIXEL_RULE_VERSION
+    with env.store.session() as s:
+        tpfs = s.scalars(select(ArtifactRow).where(ArtifactRow.kind == "tpf")).all()
+        assert tpfs and all(a.deleted_at is not None and not env.blob.exists(a.local_path) for a in tpfs)
+    assert any("decided pixel verdicts changed 0" in r.getMessage() for r in caplog.records)
+
+
 def test_the_p2_child_does_not_inherit_the_parents_alias_note():
     parent = Signal(target_id="t", detector="box_dip", detector_version="v", period=16.0, t0=140.0, duration=0.1,
                     depth_ppm=2500, snr=30, sde=20, n_events=80,

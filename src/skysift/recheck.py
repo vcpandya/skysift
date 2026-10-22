@@ -644,6 +644,18 @@ def recheck(store: Store, blob, settings: Settings, *, fetch=net.fetch, signal_i
     loader = LightCurveLoader(store, blob)
     cache: dict = {}
     settled: set[str] = set()               # targets whose pixel step settled, waiting for their files to go
+
+    def release() -> None:
+        """Stream retention: the pixel files of every settled target no signal left in the work list needs."""
+        if retention is None:
+            return
+        pending = {t for _i, t in work}
+        for tid in sorted(settled - pending):
+            freed = retention.release_pixel_files(tid)
+            if freed:
+                say(f"recheck: released {freed} bytes of pixel files of {tid}")
+            settled.discard(tid)
+
     while work:
         if stop_requested is not None and stop_requested():
             report.stopped = True
@@ -658,6 +670,7 @@ def recheck(store: Store, blob, settings: Settings, *, fetch=net.fetch, signal_i
                 _recheck_decided(store, blob, settings, loader, sig, target, fetch=fetch, tpf_loader=tpf_loader,
                                  say=say, report=report, cache=cache)
                 settled.add(target_id)
+                release()
             continue
         report.considered += 1
         sig, target = _stored(store, signal_id)
@@ -669,13 +682,8 @@ def recheck(store: Store, blob, settings: Settings, *, fetch=net.fetch, signal_i
                 work.appendleft((child_id, target_id))
         if done.pixels_settled:
             settled.add(target_id)
-        if retention is not None:
-            pending = {t for _i, t in work}
-            for tid in sorted(settled - pending):
-                freed = retention.release_pixel_files(tid)
-                if freed:
-                    say(f"recheck: released {freed} bytes of pixel files of {tid}")
-                settled.discard(tid)
+        release()
     report.seconds = time.time() - started
-    say(f"recheck: {report.considered} signals, steps {report.steps}, outcomes {report.outcomes}")
+    say(f"recheck: {report.considered} signals, steps {report.steps}, outcomes {report.outcomes}, "
+        f"decided pixel verdicts changed {report.decided_pixel_changed}")
     return report

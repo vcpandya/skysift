@@ -191,13 +191,17 @@ def run(source: str = typer.Option(...), gmag_max: float = 19.0,
 
 
 def _recheck_line(report: dict) -> str:
-    """One line for a recheck report: signals considered, the steps that ran and the outcomes that occurred."""
+    """One line for a recheck report: signals considered, the steps that ran, the outcomes that occurred and the
+    decided signals whose pixel rerun disagrees with the decision (``decided_pixel_changed``, when any)."""
     if "error" in report:
         return f"{'stopped' if report.get('stopped') else 'failed'}, {report['error']}"
     steps = ", ".join(f"{k} {v}" for k, v in report.get("steps", {}).items() if v) or "no step ran"
     outcomes = ", ".join(f"{k} {v}" for k, v in report.get("outcomes", {}).items() if v) or "none"
     stopped = "; stopped early, the next recheck takes the rest" if report.get("stopped") else ""
-    return f"considered {report.get('considered', 0)}; steps: {steps}; outcomes: {outcomes}{stopped}"
+    changed = report.get("decided_pixel_changed") or 0
+    flagged = (f"; decided pixel verdicts changed: {changed} (each dossier flags it for a reviewer)"
+               if changed else "")
+    return f"considered {report.get('considered', 0)}; steps: {steps}; outcomes: {outcomes}{flagged}{stopped}"
 
 
 @app.command()
