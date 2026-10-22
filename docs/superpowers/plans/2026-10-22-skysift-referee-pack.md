@@ -381,3 +381,16 @@ def floor_reopens(rung5_row: dict) -> bool      # rule_version below RULE_VERSIO
 - [ ] **Step 3:** regenerate every stored dossier (`--force`), rebuild the packs of KIC 6146676 and KIC 5689121 (no Zenodo), re-import the cross-checks if the fingerprints changed (rerun Task 5's tool when the inputs changed).
 - [ ] **Step 4:** update `tests/golden/kic-006146676-generated.json` and the golden assertions with the new numbers; commit.
 - [ ] **Step 5:** final whole-branch review (`269ad97..HEAD`, fresh reviewer), fix wave, re-review; the full gate `pytest tests -p no:cacheprovider -q -m "not slow and not golden"` detached, hidden, BelowNormal on the branch tip in its own worktree; the report with the checklist summary, the numbers before and after, and every scientific call with its precedent.
+
+
+### Task 8: The TESS non-detection statement (added 22 October, spec section 10)
+
+**Files:**
+- Create: `src/skysift/tess.py` (pure: `SECTORS` table, `tmag_from_gaia`, `aperture_fraction`, `dilution`, `sigma_1h_nominal`, `sigma_1h_conservative`, `scale_to_duration`, `count_transits`, `significance`, `verdict`, `statement`), `tools/tess_inputs.py`, `tests/unit/test_tess.py`
+- Modify: `src/skysift/dossier.py` (the `tess` block, `DOSSIER_VERSION = "4"`), `src/skysift/pack.py` / `pack_text.py` / templates (sentence, row, line), `src/skysift/ui/templates/dossier.html` + `dossier.js` (the block), `docs/superpowers/notes/2026-10-22-referee-checklist.md` (one row), `tests/unit/test_dossier.py`, `test_pack.py`, `test_ui_dossiers.py`
+
+**Interfaces:**
+- Consumes: `targets.meta["tess"]` written by the tool: `{"queried": date, "tic": int, "tmag": float, "tmag_source": "TIC"|"Gaia (Stassun 2019 eq. 1)", "ra", "dec", "sectors": [int], "neighbours": [{"tic", "dst_arcsec", "dra_pix", "ddec_pix", "tmag", "tmag_source"}]}`; the dossier's `ephemeris` block (P, T0 BJD, T14 hours, depth ppm and their errors).
+- Produces: `data["tess"]` with keys `tic, tmag, tmag_source, sectors: [{sector, cadence_min, n_transits, uncertain}], n_transits, n_expected, timing_error_hours_at_tess, dilution: {c, c_hard42, depth_tess_ppm, t_total, aperture_pixels}, noise: {nominal_1h_ppm, conservative_1h_ppm, nominal_t14_ppm, conservative_t14_ppm}, significance: {per_transit_nominal, per_transit_conservative, folded_nominal, folded_conservative}, verdict, caveats: [str], queried`.
+
+Steps: tests first for every pure helper (the Gaussian aperture fraction at zero offset against a numerical integral; dilution for one equal-magnitude neighbour at one pixel; the polynomial at T = 15 gives 5190 ppm within 1 per cent; the conservative value at T = 15 gives 8804; the transit count on a hand-made window; the four verdicts), then the module, then the dossier block and version bump, the texts, the page, the tool with a mocked `net.fetch`, the checklist row, commit.
