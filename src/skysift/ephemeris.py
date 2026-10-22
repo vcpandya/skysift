@@ -46,7 +46,9 @@ EPHEMERIS_METHOD = ("weighted linear fit of per-transit mid-times, reference epo
                     "(Deeg 2015; Holczer et al. 2016)")
 SHAPE_METHOD = "bootstrap over transits of the uniform-disc fit (Schmitt et al. 2014)"
 CADENCE_MIN = 29.4             # Kepler long cadence, minutes: a shorter ingress leaves b and a/R* degenerate with k
-DEGENERACY_REASON = "ingress shorter than the cadence: b and a/R* are degenerate with k, errors not quoted"
+DEGENERACY_REASON = "ingress shorter than the cadence: b and a/R* are degenerate with k"
+GRAZING_REASON = "grazing point solution: b and a/R* are degenerate with k"
+ALBEDO_NO_CONSTRAINT = "no constraint"
 
 WINDOW_DURATIONS = 3.0         # an event's window: the points within this many durations of the predicted mid-time
 BOX_DURATION_STEPS = 40
@@ -395,10 +397,10 @@ def bootstrap_shape(time, fnorm, period, t0, duration_days, point: dict | None, 
     to twice ``duration_days`` is kept per resample. The box depth always comes from ``event_depths`` over the same
     epochs, with its scaled error. Fewer than ``BOOT_MIN_CONVERGED`` converged resamples give no shape errors.
 
-    When the ingress of the rung 2 geometry is shorter than ``CADENCE_MIN`` the fit is degenerate between k, b and
-    a/R* (spec 3.4, ruling of 22 October 2026): the block is marked ``degenerate`` and b and a/R* keep their point
-    values with no errors, while k, T14 and the model depth, which the depth and the box width constrain, keep
-    theirs."""
+    When the rung 2 geometry is degenerate between k, b and a/R* (``point_degeneracy``: an ingress shorter than
+    ``CADENCE_MIN``, spec 3.4, ruling of 22 October 2026, or a grazing point solution) the block is marked
+    ``degenerate`` with the reason, and b and a/R* keep their point values with no errors, while k, T14 and the model
+    depth, which the depth and the box width constrain, keep theirs."""
     time, fnorm = np.asarray(time, float), np.asarray(fnorm, float)
     good = np.isfinite(time) & np.isfinite(fnorm)
     t, f = time[good], fnorm[good]
@@ -417,8 +419,9 @@ def bootstrap_shape(time, fnorm, period, t0, duration_days, point: dict | None, 
     ingress = None
     if point is not None and _finite(point.get("k"), point.get("b"), point.get("a_over_r")):
         ingress = ingress_minutes(period, float(point["k"]), float(point["b"]), float(point["a_over_r"]))
-    degenerate = ingress is not None and ingress < CADENCE_MIN
-    flags = (ingress, degenerate, DEGENERACY_REASON if degenerate else None)
+    reason = point_degeneracy(point, ingress)
+    degenerate = reason is not None
+    flags = (ingress, degenerate, reason)
     rng = np.random.default_rng(seed)
     durations = np.geomspace(BOX_DURATION_FACTORS[0] * duration_days, BOX_DURATION_FACTORS[1] * duration_days,
                              BOX_DURATION_STEPS)
@@ -488,6 +491,17 @@ def parity_depths(events) -> ParityDepths:
     return ParityDepths(odd, even, sigma)
 
 
+def point_degeneracy(point: dict | None, ingress: float | None) -> str | None:
+    """Why the rung 2 point geometry leaves b and a/R* degenerate with k, None when it does not: a grazing solution
+    (b at or above 1 - k, where the ingress is long but k and b trade against each other most), ``GRAZING_REASON``,
+    else an ingress shorter than the cadence, ``DEGENERACY_REASON``. None without a point."""
+    if point is None or not _finite(point.get("k"), point.get("b")):
+        return None
+    if float(point["b"]) >= 1.0 - float(point["k"]):
+        return GRAZING_REASON
+    return DEGENERACY_REASON if ingress is not None and ingress < CADENCE_MIN else None
+
+
 @dataclass(frozen=True)
 class SecondaryLimit:
     depth_ppm: float | None             # rung 2's depth at phase 0.5
@@ -497,24 +511,34 @@ class SecondaryLimit:
     strongest_phase: float | None
     strongest_sigma: float | None
     albedo_limit: float | None          # limit x (a/R* / k)^2, an occultation of A_g (Rp / a)^2; None without a fit
+    #                                     and None (with ``albedo_note``) when it constrains nothing
+    albedo_note: str | None = None      # ALBEDO_NO_CONSTRAINT for a degenerate fit or a limit above 1
+    albedo_reason: str | None = None    # why there is no constraint
 
     def as_dict(self) -> dict:
         return {"depth_ppm": _f(self.depth_ppm), "err_ppm": _f(self.err_ppm),
                 "limit_3sigma_ppm": _f(self.limit_3sigma_ppm), "strongest_ppm": _f(self.strongest_ppm),
                 "strongest_phase": _f(self.strongest_phase), "strongest_sigma": _f(self.strongest_sigma),
-                "albedo_limit": _f(self.albedo_limit)}
+                "albedo_limit": _f(self.albedo_limit), "albedo_note": self.albedo_note,
+                "albedo_reason": self.albedo_reason}
 
 
-def secondary_limit(shape_metrics: dict) -> SecondaryLimit | None:
-    """The secondary block from the rung 2 metrics; None when ``secondary_ppm`` or ``control_rms_ppm`` is missing."""
+def secondary_limit(shape_metrics: dict, degenerate: bool = False) -> SecondaryLimit | None:
+    """The secondary block from the rung 2 metrics; None when ``secondary_ppm`` or ``control_rms_ppm`` is missing.
+    The albedo limit scales with (a/R*)^2, so a ``degenerate`` fit (the shape block's flag) or a limit above 1 gives
+    no limit but ``albedo_note`` ``ALBEDO_NO_CONSTRAINT`` with the reason (referee pack ruling k)."""
     depth, err = _f(shape_metrics.get("secondary_ppm")), _f(shape_metrics.get("control_rms_ppm"))
     if depth is None or err is None:
         return None
     limit = max(depth, 0.0) + 3.0 * err
     k, a = _f(shape_metrics.get("fit_k")), _f(shape_metrics.get("fit_a_over_r"))
-    albedo = None
+    albedo, note, why = None, None, None
     if shape_metrics.get("fit_ok") is True and k is not None and a is not None and k > 0 and a > 0:
         albedo = limit * 1e-6 * (a / k) ** 2
+        if degenerate:
+            albedo, note, why = None, ALBEDO_NO_CONSTRAINT, "the fit's a/R* is degenerate with k"
+        elif albedo > 1:
+            albedo, note, why = None, ALBEDO_NO_CONSTRAINT, f"the limit is {albedo:,.0f}, above 1"
     return SecondaryLimit(depth, err, limit, _f(shape_metrics.get("free_secondary_ppm")),
                           _f(shape_metrics.get("free_secondary_phase")), _f(shape_metrics.get("free_secondary_sigma")),
-                          albedo)
+                          albedo, note, why)

@@ -481,8 +481,9 @@
       }
     }
     if (SEC) {
-      const albedo = !isNum(SEC.albedo_limit) ? "not known without a transit fit"
-        : SEC.albedo_limit > 1 ? `${fmt(SEC.albedo_limit, 1)}, above 1, so no constraint` : `below ${fmt(SEC.albedo_limit, 2)}`;
+      const none = SEC.albedo_note || (isNum(SEC.albedo_limit) && (SEC.albedo_limit > 1 || (D.shape && D.shape.degenerate)));
+      const albedo = none ? `no constraint on the geometric albedo${SEC.albedo_reason ? ` (${SEC.albedo_reason})` : ""}`
+        : isNum(SEC.albedo_limit) ? `below ${fmt(SEC.albedo_limit, 2)}` : "not known without a transit fit";
       sec(1).appendChild(h("h3", null, "Secondary eclipse"));
       list(1, [["Depth at phase 0.5:", `${fmt(SEC.depth_ppm)}${pmErr(SEC.err_ppm, 0)} ppm`], ["3-sigma limit:", `${fmt(SEC.limit_3sigma_ppm)} ppm`],
         ["Strongest secondary:", isNum(SEC.strongest_ppm) ? `${fmt(SEC.strongest_ppm)} ppm at phase ${fmt(SEC.strongest_phase, 2)} (${fmt(SEC.strongest_sigma, 1)} sigma)` : "not searched"],
@@ -536,6 +537,15 @@
     list(3, seasons.map((s) => [`Season ${s.season}:`,
       s.voting === true ? `voting, ${where(s)}` : s.voting === false ? `not voting, ${s.non_voting_reason || "no reason stored"}.` : `vote not recorded, ${where(s)}`,
       s.voting === true ? null : "is-muted"]));
+    // the pixel offset as skysift.pack.offset_sentence words it (Bryson et al. 2013; ruling e)
+    const OFF = D.centroid_offset;
+    if (OFF && isNum(OFF.catalogue_referenced_arcsec)) {
+      const pmA = (x, e) => (isNum(e) && e > 0 ? `${fmt(x, errDigits(e))} ± ${fmt(e, errDigits(e))}` : fmt(x, 2));
+      const gaia = `the distance from the Gaia position (${pmA(OFF.catalogue_referenced_arcsec, OFF.catalogue_referenced_err_arcsec)} arcsec) carries the WCS zero point and the registration.`;
+      para(3, isNum(OFF.self_referenced_arcsec) && isNum(OFF.sigma)
+        ? `Against the star's own out-of-transit image the difference-image centroid is offset by ${pmA(OFF.self_referenced_arcsec, OFF.self_referenced_err_arcsec)} arcsec (${fmt(OFF.sigma, 1)} sigma), ${OFF.counts ? "an offset" : "not an offset"} by the rule of Bryson et al. (2013), which asks for more than ${OFF.sigma_level} sigma and more than ${OFF.level_arcsec} arcsec; ${gaia}`
+        : `Averaged over the seasons that voted, the centroid sits ${pmA(OFF.catalogue_referenced_arcsec, OFF.catalogue_referenced_err_arcsec)} arcsec from the Gaia position projected through each stamp's WCS, a distance that carries the WCS zero point and the registration.`, "pixel-offset");
+    }
     const close = (D.caveats || []).find((c) => c && c.key === "close_call");
     if (close) para(3, close.text, "dossier-caveat");
     const S = D.star || {}, PL = D.planet || {};

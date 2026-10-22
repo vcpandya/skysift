@@ -278,10 +278,13 @@ def references(data: dict) -> dict[str, bool]:
             "mann2019": star_ok and route == "mann" and value_text(star.get("mass")) is not None,
             "lindegren2021": star_ok and star.get("distance_pc") is not None,
             "giacalone2021": cross_check_sentence(data) is not None,
+            "bryson2013": _num((offset_block(data) or {}).get("sigma")) is not None,
             "kopparapu2013": star_ok and _hz_where(planet) is not None}
 
 
 BIBLIOGRAPHY = (
+    ("bryson2013", r"{Bryson} et~al.(2013)",
+     r"Bryson, S.~T., Jenkins, J.~M., Gilliland, R.~L., et~al. 2013, PASP, 125, 889"),
     ("dressing2015", r"{Dressing} \& {Charbonneau}(2015)",
      r"Dressing, C.~D., \& Charbonneau, D. 2015, ApJ, 807, 45"),
     ("fressin2013", r"{Fressin} et~al.(2013)", r"Fressin, F., Torres, G., Charbonneau, D., et~al. 2013, ApJ, 766, 81"),
@@ -378,14 +381,19 @@ def parity_sentence(data: dict, tex: bool = False) -> str | None:
     return _joined(tex, *parts, ".")
 
 
+ALBEDO_NONE = "no constraint on the geometric albedo"
+
+
 def albedo_text(data: dict) -> str:
-    """What the secondary limit says about the geometric albedo, as a clause; "" without the limit."""
-    a = _num((data.get("secondary") or {}).get("albedo_limit"))
-    if a is None:
-        return ""
-    if a <= 1:
-        return f", which keeps the geometric albedo below {a:.2f}"
-    return f", too weak to bound the geometric albedo (the limit is {a:,.0f})"
+    """What the secondary limit says about the geometric albedo, as a clause; "" without a transit fit. A limit above
+    1, or one from a degenerate fit, constrains nothing (ruling k): the block's ``albedo_note``, or for a dossier made
+    before the note the stored limit and the shape block's flag."""
+    sec = data.get("secondary") or {}
+    a = _num(sec.get("albedo_limit"))
+    degenerate = (data.get("shape") or {}).get("degenerate") is True
+    if sec.get("albedo_note") or (a is not None and (a > 1 or degenerate)):
+        return f", {ALBEDO_NONE}"
+    return "" if a is None else f", which keeps the geometric albedo below {a:.2f}"
 
 
 def secondary_sentence(data: dict, tex: bool = False) -> str | None:
@@ -480,9 +488,43 @@ def _first(value) -> float | None:
     return _num(value[0]) if isinstance(value, list) and value else None
 
 
-def pixel_sentence(data: dict) -> str:
+def offset_block(data: dict) -> dict | None:
+    """The dossier's ``centroid_offset`` block, or for a dossier made before it the block the stored rung 5 seasons
+    give (``dossier.centroid_offset``); None without a voting season."""
+    block = data.get("centroid_offset")
+    if isinstance(block, dict):
+        return block
+    row = _test(data, "rung5_pixels")
+    return ds.centroid_offset(row.get("metrics") or {}) if row else None
+
+
+def offset_sentence(data: dict, tex: bool = False) -> str | None:
+    """The pixel offset as Bryson et al. 2013 quote it (ruling e): the difference-image centroid against the star's own
+    out-of-transit image, with its error and sigma, judged by their rule (above 3 sigma and above 0.2 arcsec), and the
+    distance from the Gaia position with the one clause that it carries the WCS zero point and the registration. None
+    without the block; with ``tex`` a ``Raw`` citing ``bryson2013``."""
+    block = offset_block(data)
+    if not block:
+        return None
+    cat, cat_err = block.get("catalogue_referenced_arcsec"), block.get("catalogue_referenced_err_arcsec")
+    gaia = ["the distance from the Gaia position (", pm_text(cat, cat_err, cat_err, tex=tex),
+            " arcsec) carries the WCS zero point and the registration."]
+    off, err, sigma = (_num(block.get(k)) for k in ("self_referenced_arcsec", "self_referenced_err_arcsec", "sigma"))
+    if off is None or err is None or sigma is None:
+        return _joined(tex, "Averaged over the seasons that voted, the centroid sits ",
+                       pm_text(cat, cat_err, cat_err, tex=tex), " arcsec from the Gaia position projected through each "
+                       "stamp's WCS, a distance that carries the WCS zero point and the registration.")
+    cite = Raw(r"\citet{bryson2013}") if tex else "Bryson et al. (2013)"
+    level, k = _num(block.get("level_arcsec")) or 0.2, _num(block.get("sigma_level")) or 3.0
+    verdict = "an offset" if block.get("counts") else "not an offset"
+    return _joined(tex, "Against the star's own out-of-transit image the difference-image centroid is offset by ",
+                   pm_text(off, err, err, tex=tex), f" arcsec ({sigma:.1f} sigma), {verdict} by the rule of ", cite,
+                   f", which asks for more than {k:g} sigma and more than {level:g} arcsec; ", *gaia)
+
+
+def pixel_sentence(data: dict, tex: bool = False) -> str:
     """Section 04 in words: whether the pixel check ran, where the difference-image centroid sits in the seasons
-    that voted, and which seasons did not vote and why."""
+    that voted (``offset_sentence``), and which seasons did not vote and why. With ``tex`` a ``Raw``."""
     row = _test(data, "rung5_pixels")
     if row is None:
         return ("The pixel check has not run for this signal, so the dip could still come from a neighbouring star "
@@ -507,9 +549,9 @@ def pixel_sentence(data: dict) -> str:
     cut = ds.partial_box_sentence(seasons)
     if cut:
         text += f" {cut}"
-    off = ds.centroid_offset(row.get("metrics") or {})
-    if off is not None:
-        text += f" Averaged over the seasons it is {off[0]:.2f} ± {off[1]:.2f} arcsec from the star."
+    offset = offset_sentence(data, tex)
+    parts: list = [text, " ", offset] if offset else [text]
+    text = ""
     pairs = [(t, n) for s in seasons
              if (t := _first(s.get("depth_target_ppm"))) is not None
              and (n := _first(s.get("depth_neighbour_ppm"))) is not None]
@@ -522,7 +564,7 @@ def pixel_sentence(data: dict) -> str:
         text += f" {_silent_sentence(silent)}"
     if row.get("status") == "fail":
         text += " The pixel check failed: the dip may sit on the neighbour."
-    return text
+    return _joined(tex, *parts, text)
 
 
 def _hz_where(planet: dict) -> str | None:
@@ -617,7 +659,8 @@ def numbers(data: dict, tex: bool = False, after_bjd: float | None = None) -> di
         "next_transits": next_transits(data, julian_date(datetime.now(UTC)) if after_bjd is None else after_bjd),
         "sde": _f(eph.get("sde"), 1), "snr": _f(eph.get("snr"), 1), "n_events": eph.get("n_events"),
         "window": f"{lo:g} to {hi:g} days" if lo is not None and hi is not None else None,
-        "vetting": _vetting_sentences(data, tex), "pixel_text": pixel_sentence(data),
+        "vetting": _vetting_sentences(data, tex), "pixel_text": pixel_sentence(data, tex),
+        "offset_text": offset_sentence(data),
         "pixel_plain": pixel_sentence(data),
         "odd_text": pair[0] if pair else None, "even_text": pair[1] if pair else None,
         "parity_sigma_text": _f((data.get("parity") or {}).get("difference_sigma"), 1) if pair else None,

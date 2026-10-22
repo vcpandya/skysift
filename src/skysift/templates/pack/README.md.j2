@@ -46,6 +46,10 @@ This pack was built on {{ f.built_words }} by SkySift (pack format {{ f.pack_ver
 
 CROWDSAP and PSFFRAC are KBonus header keywords. CROWDSAP is {{ crowdsap_definition }}; PSFFRAC is {{ psffrac_definition }}.
 {% endif %}
+{% if n.offset_text %}
+
+Pixel offset: {{ n.offset_text }}
+{% endif %}
 
 {{ n.fap_text }}
 

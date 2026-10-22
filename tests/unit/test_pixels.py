@@ -340,7 +340,7 @@ def test_metrics_carry_the_dashboard_keys_and_strict_json():
             "two_source", "pos_target", "pos_neighbour", "voting", "non_voting_reason", "centroid_sigma_axis_pix",
             "shift_pix", "psf_sigma_pix", "box_pixels_target", "box_pixels_neighbour", "box_missing_target",
             "box_missing_neighbour", "box_partial", "edge_bias_pix", "edge_bias_axis_pix", "separation_sigma_raw",
-            "centroid_sigma_mc_pix", "floor_pix", "registration_shift_pix"}
+            "centroid_sigma_mc_pix", "floor_pix", "registration_shift_pix", "direct_centroid_colrow"}
     assert all(set(s) == keys for s in m["seasons"]) and len(m["seasons"]) == 4
     assert isinstance(m["seasons"][0]["centroid_colrow"][0], float) and isinstance(m["n_events_used"], int)
     assert m["centroid_sigma_pix_mean"] == np.mean([s["centroid_sigma_pix"] for s in m["seasons"]])
@@ -625,6 +625,24 @@ def test_the_two_source_shift_is_stored_per_season():
     for s in m["seasons"]:
         assert len(s["shift_pix"]) == 2 and all(x is not None and abs(x) <= 1.0 for x in s["shift_pix"])
         assert 0.3 <= s["psf_sigma_pix"] <= 3.0
+
+
+def test_the_direct_image_centroid_is_stored_per_season_and_changes_no_vote():
+    """The target's own out-of-transit centroid, measured as the difference centroid is but with the two-source fit's
+    neighbour and background taken off, sits on the star whatever the stamp's WCS says; the votes and the existing
+    metrics are those of a run that did not compute it."""
+    cube, time, quality, quarter, eph, pt, pn = make_cube("target")
+    plain = localise(cube, time, quality, quarter, eph, pt, pn)
+    for s in plain.seasons:
+        assert np.allclose(s.direct_centroid_colrow, POS_TARGET, atol=0.02)
+    moved = localise(cube, time, quality, quarter, eph, (pt[0] + 0.2, pt[1]), (pn[0] + 0.2, pn[1]))
+    for a, b in zip(plain.seasons, moved.seasons, strict=True):
+        assert np.allclose(b.direct_centroid_colrow, POS_TARGET, atol=0.02)      # the star, not the WCS
+        assert b.centroid_colrow == a.centroid_colrow and b.voting is a.voting is True
+    off = localise(cube, time, quality, quarter, eph, pt, (60.0, 60.0))            # no two-source fit
+    assert all(math.isnan(x) for s in off.seasons for x in s.direct_centroid_colrow)
+    assert all(math.isnan(x) for x in pixels_module.direct_centroid(
+        np.ones((9, 9)), np.ones((9, 9), bool), pixels_module._nan_fit(), POS_TARGET, POS_NEIGHBOUR))
 
 
 def test_box_coverage_counts_the_pixels_on_the_frame():

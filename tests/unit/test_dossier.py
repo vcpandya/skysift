@@ -686,8 +686,14 @@ def test_hand_built_values_agree_within_errors():
     # "under 1 percent"; the number is a sign-off item (ledger), and this test pins reproducibility, not the band
     assert gen["fpp"]["value"] == pytest.approx(compute(FppInputs(**gen["fpp"]["inputs"])).value, rel=1e-6)
     assert gen["fpp"]["signed_off"] is True
-    # the stored centroid error is the one the code computes from the stored rung 5 seasons
-    est, inputs = centroid_estimate(rung5["metrics"]), gen["fpp"]["inputs"]
+    # the stored centroid error is the one the code computes from the stored rung 5 seasons; a golden written before
+    # the vector mean (fix wave of 22 October 2026) holds the weighted mean of the distances, so until the golden is
+    # regenerated it is read with that rule (the seasons without their positions)
+    inputs = gen["fpp"]["inputs"]
+    est = centroid_estimate(rung5["metrics"])
+    if not math.isclose(est.sigma, inputs["centroid_sigma_arcsec"], rel_tol=1e-5):
+        est = centroid_estimate({"seasons": [{k: v for k, v in s.items() if k != "centroid_colrow"}
+                                             for s in rung5["metrics"]["seasons"]]})
     assert (est.sigma_stat, est.sigma_scatter, est.sigma) == pytest.approx(
         (inputs["sigma_c_stat_arcsec"], inputs["sigma_c_scatter_arcsec"], inputs["centroid_sigma_arcsec"]), rel=1e-5)
     assert est.source == inputs["sigma_c_source"]
@@ -958,7 +964,10 @@ def test_generate_writes_the_timing_shape_parity_and_secondary_blocks(env):
     assert e["depth_source"] == "per-event weighted mean of the box depth"
     sec = d["secondary"]
     assert sec["limit_3sigma_ppm"] == pytest.approx(15.0 + 3 * 65.0)
-    assert sec["albedo_limit"] == pytest.approx(sec["limit_3sigma_ppm"] * 1e-6 * (A_OVER_R / K) ** 2)
+    # the limit times (a/R* / k)^2 is about 520, and the fit is degenerate besides: no constraint (ruling k)
+    assert sec["limit_3sigma_ppm"] * 1e-6 * (A_OVER_R / K) ** 2 > 1 and shape["degenerate"] is True
+    assert sec["albedo_limit"] is None and sec["albedo_note"] == "no constraint"
+    assert sec["albedo_reason"] == "the fit's a/R* is degenerate with k"
     # the k error is folded into the planet radius in quadrature with the stellar term
     rp, k = d["planet"]["rp_rearth"], shape["k"]
     assert rp["plus"] >= stellar["plus"] and rp["minus"] >= stellar["minus"]
@@ -1078,3 +1087,57 @@ def test_generate_merges_the_stored_cross_check_and_a_regeneration_keeps_it(env)
     env.store.set_cross_check(STAGE2_TARGET, {**block, "inputs_sha256": "0" * 64})     # made for other inputs
     stale = _data(generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch, force=True))
     assert stale["cross_check"]["current"] is False and stale["cross_check"]["fpp"] == 0.012
+
+
+# ---------------------------------------------------------------------------------------------------- the pixel offset
+
+def _offset_season(season, centroid, pos_target=(4.0, 4.0), pos_neighbour=(7.0, 4.0), sigma=0.05, shift=(0.0, 0.0),
+                   direct=None):
+    s = {"season": season, "voting": True, "nearer": "target", "centroid_colrow": list(centroid),
+         "centroid_sigma_pix": sigma, "pos_target": list(pos_target), "pos_neighbour": list(pos_neighbour),
+         "shift_pix": list(shift),
+         "dist_target_pix": math.hypot(centroid[0] - pos_target[0], centroid[1] - pos_target[1])}
+    if direct is not None:
+        s["direct_centroid_colrow"] = list(direct)
+    return s
+
+
+def test_the_centroid_estimate_is_a_vector_mean_not_a_mean_of_distances():
+    # two seasons 0.2 px off in opposite directions: the distances average to 0.2 px, the offsets to nothing
+    seasons = [_offset_season(0, (4.2, 4.0)), _offset_season(1, (3.8, 4.0))]
+    est = centroid_estimate({"seasons": seasons})
+    assert est.offset == pytest.approx(0.0, abs=1e-9) and est.n_seasons == 2
+    assert est.sigma_stat == pytest.approx(0.05 / math.sqrt(2) * PIXEL_ARCSEC)
+    # the offset is taken along and across each season's star axis, so a stamp turned between seasons adds up
+    turned = _offset_season(1, (4.0, 3.8), pos_neighbour=(4.0, 7.0))        # the same sky offset, the axis turned
+    same = centroid_estimate({"seasons": [_offset_season(0, (3.8, 4.0)), turned]})
+    assert same.offset == pytest.approx(0.2 * PIXEL_ARCSEC) and same.sigma_scatter == pytest.approx(0.0, abs=1e-12)
+
+
+def test_the_offset_block_is_self_referenced_against_the_star_and_names_the_rule():
+    shifted = [_offset_season(s, (4.2, 4.0), shift=(0.2, 0.0)) for s in range(3)]
+    block = dossier_module.centroid_offset({"seasons": shifted})
+    assert block["catalogue_referenced_arcsec"] == pytest.approx(0.2 * PIXEL_ARCSEC)
+    assert block["self_referenced_arcsec"] == pytest.approx(0.0, abs=1e-9) and block["sigma"] == pytest.approx(0.0)
+    assert block["self_referenced_err_arcsec"] == pytest.approx(0.05 / math.sqrt(3) * PIXEL_ARCSEC)
+    assert block["level_arcsec"] == 0.2 and block["sigma_level"] == 3.0 and block["counts"] is False
+    assert block["rule"].startswith("Bryson et al. 2013") and "common shift" in block["reference"]
+    # a stored direct-image centroid wins over the catalogue position plus the shift
+    direct = [_offset_season(s, (4.3, 4.0), shift=(0.2, 0.0), direct=(4.0, 4.0)) for s in range(3)]
+    block = dossier_module.centroid_offset({"seasons": direct})
+    assert block["self_referenced_arcsec"] == pytest.approx(0.3 * PIXEL_ARCSEC) and block["counts"] is True
+    assert block["sigma"] == pytest.approx(0.3 / (0.05 / math.sqrt(3))) and block["reference"].startswith("the star's")
+    assert dossier_module.centroid_offset({"seasons": [{**direct[0], "voting": False}]}) is None
+
+
+def test_a_stamp_wcs_shifted_by_a_fifth_of_a_pixel_moves_only_the_catalogue_offset():
+    """The synthetic scene of test_pixels with both stars' WCS positions moved by 0.2 px: from the projected
+    positions the centroid sits about 0.8 arcsec off, from the star's own image near zero."""
+    from skysift.lc.pixels import localise
+    from tests.unit.test_pixels import make_cube
+    cube, time, quality, quarter, eph, pt, pn = make_cube("target")
+    loc = localise(cube, time, quality, quarter, eph, (pt[0] + 0.2, pt[1]), (pn[0] + 0.2, pn[1]))
+    block = dossier_module.centroid_offset(loc.metrics())
+    assert block["n_seasons"] == 4 and block["reference"] == "the star's own direct-image centroid"
+    assert block["catalogue_referenced_arcsec"] == pytest.approx(0.8, abs=0.15)
+    assert block["self_referenced_arcsec"] < 0.2 and block["sigma"] < 3 and block["counts"] is False

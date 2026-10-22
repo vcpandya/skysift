@@ -802,3 +802,20 @@ def test_the_standalone_page_carries_a_cross_check_imported_after_its_export(see
     block = json.loads(blob)["cross_check"]
     assert block["fpp"] == 0.0234 and block["nfpp"] == 0.0012 and block["current"] is True
     assert "over ${CC.n_runs} runs the false-positive probability ran from" in after
+
+
+def test_the_pixel_section_quotes_the_offset_against_the_rule(seeded_dossier):
+    from pathlib import Path
+    client, app, _ids, data = seeded_dossier
+    block = {"self_referenced_arcsec": 0.39, "self_referenced_err_arcsec": 0.15, "sigma": 2.6, "counts": False,
+             "reference": "the catalogue position plus the two-source fit's common shift",
+             "catalogue_referenced_arcsec": 0.25, "catalogue_referenced_err_arcsec": 0.28, "level_arcsec": 0.2,
+             "sigma_level": 3.0, "rule": "Bryson et al. 2013", "n_seasons": 4}
+    path = Path(app.state.store.dossier(STAGE2_TARGET)["data_path"])
+    path.write_text(json.dumps({**data, "centroid_offset": block}), encoding="utf-8")
+    pixels = client.get(f"/dossiers/{STAGE2_TARGET}").text.split('id="pixels"')[1].split('id="star"')[0]
+    assert ("offset by 0.39 ± 0.15 arcsec (2.6 sigma), not an offset by the rule of Bryson et al. (2013), which asks "
+            "for more than 3 sigma and more than 0.2 arcsec") in pixels
+    assert "the distance from the Gaia position (0.25 ± 0.28 arcsec) carries the WCS zero point" in pixels
+    export = client.get(f"/dossiers/{STAGE2_TARGET}/export.html").text
+    assert '"centroid_offset":{' in export.replace(" ", "") and "Against the star's own out-of-transit" in export

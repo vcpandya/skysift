@@ -603,8 +603,9 @@ def test_pixel_sentence_without_box_keys_is_unchanged(env_with_dossier):
     assert pack_module.pixel_sentence(env_with_dossier.data) == (
         "In difference images (out of transit minus in transit) the dip is nearer this star than its brightest "
         "neighbour in 3 of 3 seasons that voted. The centroid sits a median 0.13 pixels from this star and 2.75 "
-        "pixels from the neighbour. Averaged over the seasons it is 0.54 ± 0.14 arcsec from the star. A "
-        "two-source fit gives a median depth of 2,213 ppm on this star and -21 ppm on the neighbour. Season 3 did "
+        "pixels from the neighbour. Averaged over the seasons that voted, the centroid sits 0.54 ± 0.14 arcsec from "
+        "the Gaia position projected through each stamp's WCS, a distance that carries the WCS zero point and the "
+        "registration. A two-source fit gives a median depth of 2,213 ppm on this star and -21 ppm on the neighbour. Season 3 did "
         "not vote (box incomplete: target).")
 
 
@@ -713,7 +714,11 @@ def test_build_pack_on_the_real_kic_6146676_dossier(env_with_dossier):
     assert ("In seasons 0 and 3 this star's 3 x 3 box is cut by the stamp edge; the centroid there is measured on "
             "the pixels present and the shift the cut would give a point source (0.08 px at most) is added to its "
             "error.") in note
-    assert "Averaged over the seasons it is 0.69 ± 0.15 arcsec from the star." in note
+    # the offset of ruling e (the golden of 22 October 2026 holds no direct-image centroid: the fit's own position)
+    assert ("Against the star's own out-of-transit image the difference-image centroid is offset by 0.39 ± 0.15 "
+            "arcsec (2.6 sigma), not an offset by the rule of Bryson et al. (2013), which asks for more than 3 sigma "
+            "and more than 0.2 arcsec; the distance from the Gaia position (0.25 ± 0.28 arcsec) carries the WCS zero "
+            "point and the registration.") in note
     tex = (rep.out_dir / "note" / "note.tex").read_text(encoding="utf-8")
     assert note_problems(rep.note_words, tex) == [] and rep.zip_path.is_file()
     import xml.etree.ElementTree as ET

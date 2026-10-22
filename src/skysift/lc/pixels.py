@@ -224,6 +224,7 @@ class SeasonResult:
     centroid_sigma_mc_pix: float = math.nan     # the per-axis Monte Carlo error, before the allowance and the floor
     floor_pix: float = 0.0                      # the systematic floor in the error (CENTROID_FLOOR_PIX)
     registration_shift_pix: tuple[float, float] = (0.0, 0.0)    # the season positions' move to the quarters' mean
+    direct_centroid_colrow: tuple[float, float] = _NAN2     # the target's direct-image centroid (``direct_centroid``)
 
 
 def _f(x) -> float | None:
@@ -268,6 +269,7 @@ class Localisation:
             "edge_bias_axis_pix": _f(s.edge_bias_axis_pix), "separation_sigma_raw": _f(s.separation_sigma_raw),
             "centroid_sigma_mc_pix": _f(s.centroid_sigma_mc_pix), "floor_pix": _f(s.floor_pix),
             "registration_shift_pix": [_f(x) for x in s.registration_shift_pix],
+            "direct_centroid_colrow": [_f(x) for x in s.direct_centroid_colrow],
         } for s in self.seasons]
         # the mean centroid error of the voting seasons (of all seasons with one when none votes)
         sig = [s["centroid_sigma_pix"] for s in seasons if s["centroid_sigma_pix"] is not None and s["voting"]]
@@ -561,7 +563,7 @@ def _nan_fit() -> dict:
             "direct_flux_target_err": math.nan, "direct_flux_neighbour": math.nan,
             "direct_flux_neighbour_err": math.nan, "diff_amp_target": math.nan, "diff_amp_target_err": math.nan,
             "diff_amp_neighbour": math.nan, "diff_amp_neighbour_err": math.nan, "depth_target_ppm": _NAN2,
-            "depth_neighbour_ppm": _NAN2, "chi2_two_source": math.nan, "npix": 0}
+            "depth_neighbour_ppm": _NAN2, "chi2_two_source": math.nan, "npix": 0, "background_direct": math.nan}
 
 
 def _depth(a: float, var_a: float, f: float, var_f: float) -> tuple[float, float]:
@@ -616,7 +618,30 @@ def two_source_fit(direct, diff, var, valid, pos_target, pos_neighbour) -> dict:
             "diff_amp_neighbour_err": float(math.sqrt(max(cov_diff[1, 1], 0.0))),
             "depth_target_ppm": _depth(float(amp[0]), cov_diff[0, 0], ft, cov_direct[3, 3]),
             "depth_neighbour_ppm": _depth(float(amp[1]), cov_diff[1, 1], fn, cov_direct[4, 4]),
-            "chi2_two_source": chi2, "npix": int(v.sum())}
+            "chi2_two_source": chi2, "npix": int(v.sum()), "background_direct": float(_b)}
+
+
+def direct_centroid(direct, valid, fit: dict, pos_target, pos_neighbour) -> tuple[float, float]:
+    """The target's own out-of-transit (direct-image) centroid, measured as the difference-image centroid is: the 3x3
+    flux-weighted centroid around the brightest valid pixel of the target's 3x3 box, on the direct image less the
+    two-source fit's background and its neighbour PSF (so the neighbour's light does not pull it). The difference
+    centroid less this one is the offset Bryson et al. 2013 quote, free of the WCS zero point; NaN without a two-source
+    fit. It never enters a vote."""
+    sig, (dx, dy) = float(fit["psf_sigma_pix"]), fit["shift_pix"]
+    if not (_finite2(pos_target) and _finite2(pos_neighbour) and math.isfinite(sig) and _finite2((dx, dy))
+            and math.isfinite(float(fit["background_direct"])) and math.isfinite(float(fit["direct_flux_neighbour"]))):
+        return _NAN2
+    d = np.asarray(direct, float)
+    ok = np.asarray(valid, bool) & np.isfinite(d)
+    neighbour = gauss_psf(d.shape, float(pos_neighbour[0]) + dx, float(pos_neighbour[1]) + dy, sig)
+    clean = np.where(ok, d - float(fit["background_direct"]) - float(fit["direct_flux_neighbour"]) * neighbour, 0.0)
+    c, r = round(float(pos_target[0])), round(float(pos_target[1]))
+    box = [(r + dr, c + dc) for dc, dr in _BOX_OFFSETS
+           if 0 <= r + dr < d.shape[0] and 0 <= c + dc < d.shape[1] and ok[r + dr, c + dc]]
+    if not box:
+        return _NAN2
+    r0, c0 = max(box, key=lambda rc: clean[rc])
+    return _box_centroid(clean, ok, int(r0), int(c0))
 
 
 def _phase_dt(time: np.ndarray, t0: float, period: float) -> np.ndarray:
@@ -841,7 +866,8 @@ def localise_quarters(quarters: list[QuarterData], eph: Ephemeris, *,
             shift_pix=tuple(float(x) for x in fit["shift_pix"]), psf_sigma_pix=float(fit["psf_sigma_pix"]),
             box_target=im.box_target, box_neighbour=im.box_neighbour, box_partial=box_partial,
             edge_bias_pix=bias, edge_bias_axis_pix=bias_axis, separation_sigma_raw=sep_raw,
-            centroid_sigma_mc_pix=sigma_mc, floor_pix=floor, registration_shift_pix=im.registration_shift_pix)
+            centroid_sigma_mc_pix=sigma_mc, floor_pix=floor, registration_shift_pix=im.registration_shift_pix,
+            direct_centroid_colrow=direct_centroid(im.direct, im.valid, fit, (ct, rt), (cn, rn)) if on_frame else _NAN2)
         measured = bool(on_frame and math.isfinite(sep) and im.n_events >= SEASON_EVENTS_MIN)
         abstention = partial_abstention(res) if measured and box_partial else None
         res.voting = measured and abstention is None

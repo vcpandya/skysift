@@ -189,7 +189,7 @@
         <div><dt>Depth at phase 0.5</dt><dd class="mono">{{ sec.depth_ppm | fmt(0) }}{{ pm_err(sec.err_ppm, 0) }} ppm</dd></div>
         <div><dt>3-sigma limit</dt><dd class="mono">{{ sec.limit_3sigma_ppm | fmt(0) }} ppm</dd></div>
         <div><dt>Strongest secondary</dt><dd class="mono">{% if sec.strongest_ppm is number %}{{ sec.strongest_ppm | fmt(0) }} ppm at phase {{ sec.strongest_phase | fmt(2) }} ({{ sec.strongest_sigma | fmt(1) }} sigma){% else %}not searched{% endif %}</dd></div>
-        <div><dt>Geometric albedo limit</dt><dd>{% if sec.albedo_limit is number %}{% if sec.albedo_limit > 1 %}<span class="mono">{{ sec.albedo_limit | fmt(1) }}</span>, above 1, so no constraint{% else %}below <span class="mono">{{ sec.albedo_limit | fmt(2) }}</span>{% endif %}{% else %}not known without a transit fit{% endif %}</dd></div>
+        <div><dt>Geometric albedo limit</dt><dd>{% if sec.albedo_note or (sec.albedo_limit is number and (sec.albedo_limit > 1 or (data.shape and data.shape.degenerate))) %}no constraint on the geometric albedo{% if sec.albedo_reason %} ({{ sec.albedo_reason }}){% endif %}{% elif sec.albedo_limit is number %}below <span class="mono">{{ sec.albedo_limit | fmt(2) }}</span>{% else %}not known without a transit fit{% endif %}</dd></div>
       </dl>
     </div>
     {%- endif %}
@@ -306,6 +306,9 @@
     {%- endfor %}
     </tbody>
   </table></div>
+  {%- endif %}
+  {%- if offset_text %}
+  <p class="pixel-offset">{{ offset_text }}</p>
   {%- endif %}
   {%- if close_call %}
   <p class="dossier-caveat" role="note">{{ close_call }}</p>

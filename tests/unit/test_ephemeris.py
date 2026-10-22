@@ -5,15 +5,18 @@ import numpy as np
 import pytest
 
 from skysift.ephemeris import (
+    ALBEDO_NO_CONSTRAINT,
     BKJD_OFFSET,
     CADENCE_MIN,
     DEGENERACY_REASON,
+    GRAZING_REASON,
     ParityDepths,
     Template,
     bootstrap_shape,
     ingress_minutes,
     linear_fit,
     parity_depths,
+    point_degeneracy,
     predict_from,
     secondary_limit,
     template_from,
@@ -178,6 +181,21 @@ def test_bootstrap_brackets_the_rung2_radius_ratio_and_the_injected_one_lies_wit
     assert d["degenerate"] is True and d["b"]["minus"] is None and d["ingress_min"] == se.ingress_min
 
 
+def test_a_grazing_point_solution_is_degenerate_whatever_its_ingress():
+    # b >= 1 - k: the ingress is long, but k and b trade against each other most there (M15)
+    assert point_degeneracy({"k": 0.1, "b": 0.95, "a_over_r": 20.0}, 90.0) == GRAZING_REASON
+    assert point_degeneracy({"k": 0.1, "b": 0.5, "a_over_r": 20.0}, 90.0) is None
+    assert point_degeneracy({"k": 0.1, "b": 0.5, "a_over_r": 20.0}, 10.0) == DEGENERACY_REASON
+    assert point_degeneracy(None, 10.0) is None
+    k, b, dur = 0.1, 0.93, 2.0 / 24
+    a = np.sqrt((1 + k) ** 2 - b ** 2) / np.sin(np.pi * dur / P)
+    assert ingress_minutes(P, k, b, a) > CADENCE_MIN
+    lc = inject_model(make_lightcurve(noise_ppm=600, seed=3), P, T0, k, b, a)
+    point = {"k": k, "b": b, "a_over_r": a, "t14_h": 2.0, "fit_depth_ppm": 5000.0}
+    se = bootstrap_shape(lc.time, detrend(lc), P, T0, dur, point, n_boot=20, seed=1)
+    assert se.degenerate and se.degeneracy_reason == GRAZING_REASON and se.b["minus"] is None
+
+
 def test_bootstrap_quotes_b_and_a_over_r_when_the_ingress_is_resolved():
     # a 6 h transit of k 0.1 at b 0.5 has a 43 minute ingress, longer than the 29.4 minute cadence
     k, b, dur = 0.1, 0.5, 6.0 / 24
@@ -226,7 +244,13 @@ def test_parity_depths_agree_on_a_planet_and_differ_on_an_alternating_dip(scene)
 def test_secondary_limit_from_rung2_metrics():
     sl = secondary_limit(RUNG2)
     assert sl.limit_3sigma_ppm == pytest.approx(95.4 + 3 * 128.2)
-    assert sl.albedo_limit == pytest.approx(480e-6 * (43.6 / 0.0478) ** 2, rel=1e-2)
+    # 480 ppm x (43.6 / 0.0478)^2 is about 400, above 1: no constraint on the geometric albedo (ruling k)
+    assert sl.albedo_limit is None and sl.albedo_note == ALBEDO_NO_CONSTRAINT and "above 1" in sl.albedo_reason
+    close = secondary_limit({**RUNG2, "fit_a_over_r": 1.0})        # 480e-6 x (1 / 0.0478)^2 = 0.21
+    assert close.albedo_limit == pytest.approx(480e-6 * (1.0 / 0.0478) ** 2, rel=1e-2) and close.albedo_note is None
+    # a degenerate fit's a/R* constrains nothing, whatever the number
+    flat = secondary_limit({**RUNG2, "fit_a_over_r": 1.0}, degenerate=True)
+    assert flat.albedo_limit is None and flat.albedo_note == ALBEDO_NO_CONSTRAINT and "degenerate" in flat.albedo_reason
     assert (sl.strongest_ppm, sl.strongest_phase, sl.strongest_sigma) == (341.7, 0.379, 3.8)
     assert secondary_limit({}) is None
     assert secondary_limit({**RUNG2, "secondary_ppm": -50.0}).limit_3sigma_ppm == pytest.approx(3 * 128.2)

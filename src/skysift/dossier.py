@@ -509,7 +509,7 @@ def ephemeris_blocks(lc: LightCurve, fnorm, signal: dict, tests: list[dict], *, 
     point = _fit_point(metrics) if timing["template"] == "fit" else None
     shape = eph.bootstrap_shape(time, fnorm, period, t0, dur, point, n_boot=n_boot, used_epochs=used).as_dict()
     parity = eph.parity_depths(event_depths(time, fnorm, np.asarray(lc.quarter), period, t0, dur)).as_dict()
-    secondary = eph.secondary_limit(metrics)
+    secondary = eph.secondary_limit(metrics, degenerate=shape.get("degenerate") is True)
     return {"ephemeris_extra": _ephemeris_extra(signal, metrics, timing, shape, point is not None), "timing": timing,
             "shape": shape, "parity": parity, "secondary": None if secondary is None else secondary.as_dict()}
 
@@ -537,12 +537,15 @@ def _pixel_seasons(metrics: dict) -> list[dict]:
 
 @dataclass(frozen=True)
 class CentroidEstimate:
-    """The season-averaged difference centroid of rung 5's voting seasons, in arcsec. ``offset`` is the
-    inverse-variance weighted mean of the seasons' scalar distances from the target (``dist_target_pix``; a distance,
-    not a 2-D vector, because each season's frame is rolled against the others). ``sigma`` is the larger of
-    ``sigma_stat`` (the error of that weighted mean) and ``sigma_scatter`` (the seasons' RMS scatter about it divided
-    by sqrt(n)), since the statistical error alone leaves out the systematics (star positions, WCS, the PRF of a
-    bright neighbour) that show up as season-to-season scatter; ``source`` names the one that won."""
+    """The season-averaged difference centroid of rung 5's voting seasons against the target's catalogue position (the
+    Gaia position projected through each stamp's WCS), in arcsec. ``offset`` is the length of the inverse-variance
+    weighted vector mean of the seasons' (col, row) offsets, each taken along and across the season's own
+    neighbour-to-target axis so that any turn of the stamp between seasons drops out (``_axis_offsets``); a row
+    stored before the positions falls back to the weighted mean of the scalar distances (``dist_target_pix``).
+    ``sigma`` is the larger of ``sigma_stat`` (the per-axis error of that weighted mean) and ``sigma_scatter`` (the
+    seasons' per-axis RMS scatter about it divided by sqrt(n)), since the statistical error alone leaves out the
+    systematics (star positions, WCS, the PRF of a bright neighbour) that show up as season-to-season scatter;
+    ``source`` names the one that won."""
     offset: float
     sigma: float
     sigma_stat: float
@@ -559,31 +562,121 @@ def season_votes(season: dict) -> bool:
     return season.get("nearer") in ("target", "neighbour")
 
 
-def centroid_estimate(rung5_metrics: dict) -> CentroidEstimate | None:
-    """The ``CentroidEstimate`` of the seasons that voted (``season_votes``) with a distance and a positive error, at
-    ``PIXEL_ARCSEC`` per pixel; None when no season voted, so the FPP falls back to the no-pixel rule."""
-    rows = [(d, e) for s in _pixel_seasons(rung5_metrics)
-            if season_votes(s) and (d := _num(s, "dist_target_pix")) is not None
-            and (e := _num(s, "centroid_sigma_pix")) is not None and e > 0]
-    if not rows:
+def _pair(s: dict, key: str) -> np.ndarray | None:
+    """A stored (col, row) pair as an array, None when it is missing or not finite."""
+    v = s.get(key)
+    if not isinstance(v, (list, tuple)) or len(v) != 2:
         return None
-    w = np.array([1.0 / e ** 2 for _d, e in rows])
-    d = np.array([d for d, _e in rows])
-    mean = float(np.sum(w * d) / np.sum(w))
-    stat = float(1.0 / math.sqrt(np.sum(w)))
-    # sample scatter (ddof 1) about the weighted mean, over sqrt(n); a single season has no scatter to judge by
-    n = len(rows)
-    scatter = float(math.sqrt(np.sum((d - mean) ** 2) / (n - 1)) / math.sqrt(n)) if n > 1 else 0.0
+    a = [_num({"x": x}, "x") for x in v]
+    return None if None in a else np.array(a, float)
+
+
+def _axis_offsets(s: dict, reference: np.ndarray) -> np.ndarray | None:
+    """The season's difference centroid less ``reference`` (a season-frame (col, row)), as (along, across) the unit
+    vector from the neighbour to the target in that frame; None without the centroid or the two positions. The
+    Kepler stamps keep their orientation on the sky from season to season (the stored WCS of the live stars shows
+    it), and the star axis takes out any turn between seasons, so the components of different seasons add."""
+    c, pt, pn = _pair(s, "centroid_colrow"), _pair(s, "pos_target"), _pair(s, "pos_neighbour")
+    if c is None or pt is None or pn is None:
+        return None
+    axis = pt - pn
+    n = float(np.hypot(*axis))
+    if not n > 0:
+        return None
+    u = axis / n
+    d = c - reference
+    return np.array([float(d @ u), float(d @ np.array([-u[1], u[0]]))])
+
+
+def _vector_mean(rows: list[tuple[np.ndarray, float]]) -> tuple[np.ndarray, float, float]:
+    """(weighted mean vector, its per-axis error, the per-axis RMS scatter about it over sqrt(n)) of (vector, error)
+    rows, weights 1 / error squared; a single row has no scatter."""
+    w = np.array([1.0 / e ** 2 for _v, e in rows])
+    v = np.array([v for v, _e in rows])
+    mean = (w[:, None] * v).sum(axis=0) / w.sum()
+    n, dims = v.shape
+    scatter = float(math.sqrt(np.sum((v - mean) ** 2) / (dims * (n - 1))) / math.sqrt(n)) if n > 1 else 0.0
+    return mean, float(1.0 / math.sqrt(w.sum())), scatter
+
+
+def _voting_rows(rung5_metrics: dict) -> list[dict]:
+    """The seasons that voted (``season_votes``) with a positive centroid error."""
+    return [s for s in _pixel_seasons(rung5_metrics) if season_votes(s)
+            and (e := _num(s, "centroid_sigma_pix")) is not None and e > 0]
+
+
+def centroid_estimate(rung5_metrics: dict) -> CentroidEstimate | None:
+    """The ``CentroidEstimate`` of the seasons that voted with a positive error, at ``PIXEL_ARCSEC`` per pixel; None
+    when no season voted, so the FPP falls back to the no-pixel rule."""
+    seasons = _voting_rows(rung5_metrics)
+    vectors = [(_axis_offsets(s, p), _num(s, "centroid_sigma_pix")) for s in seasons
+               if (p := _pair(s, "pos_target")) is not None]
+    if seasons and len(vectors) == len(seasons) and all(v is not None for v, _e in vectors):
+        mean, stat, scatter = _vector_mean(vectors)
+        offset, n = float(np.hypot(*mean)), len(vectors)
+    else:                           # a row stored before the positions: the weighted mean of the distances
+        rows = [(np.array([d]), _num(s, "centroid_sigma_pix")) for s in seasons
+                if (d := _num(s, "dist_target_pix")) is not None]
+        if not rows:
+            return None
+        mean, stat, scatter = _vector_mean(rows)
+        offset, n = float(mean[0]), len(rows)
     source = "scatter" if scatter > stat else "statistical"
-    return CentroidEstimate(offset=mean * PIXEL_ARCSEC, sigma=max(stat, scatter) * PIXEL_ARCSEC,
+    return CentroidEstimate(offset=offset * PIXEL_ARCSEC, sigma=max(stat, scatter) * PIXEL_ARCSEC,
                             sigma_stat=stat * PIXEL_ARCSEC, sigma_scatter=scatter * PIXEL_ARCSEC, source=source,
                             n_seasons=n)
 
 
-def centroid_offset(rung5_metrics: dict) -> tuple[float, float] | None:
-    """(offset, error) in arcsec of ``centroid_estimate``, or None without a voting season."""
+OFFSET_LEVEL_ARCSEC = 0.2       # Bryson et al. 2013: an offset counts when above 3 sigma and above 0.2 arcsec
+OFFSET_SIGMA = 3.0
+OFFSET_RULE = "Bryson et al. 2013: an offset counts when above 3 sigma and above 0.2 arcsec"
+SELF_REFERENCES = {"direct": "the star's own direct-image centroid",
+                   "fit": "the catalogue position plus the two-source fit's common shift"}
+
+
+def _self_reference(s: dict) -> tuple[np.ndarray, str] | None:
+    """The target's own position in a season frame: the stored direct-image centroid (``direct_centroid_colrow``,
+    stored by rung 5 from 22 October 2026 on), else the catalogue position plus the two-source fit's common shift
+    (``shift_pix``, where the fit puts the star on the direct image); None without either."""
+    direct = _pair(s, "direct_centroid_colrow")
+    if direct is not None:
+        return direct, "direct"
+    pt, shift = _pair(s, "pos_target"), _pair(s, "shift_pix")
+    return (pt + shift, "fit") if pt is not None and shift is not None else None
+
+
+def centroid_offset(rung5_metrics: dict) -> dict | None:
+    """The ``centroid_offset`` block of section 04 (referee pack spec 5, ruling e), or None without a voting season:
+    ``self_referenced_arcsec``, the length of the weighted vector mean over the voting seasons of the difference
+    centroid less the star's own position (``_self_reference``), with ``self_referenced_err_arcsec`` (the seasons'
+    errors combined for a mean, per axis) and ``sigma`` (the one over the other); ``catalogue_referenced_arcsec`` and
+    its error, the vector mean against the projected Gaia position (``centroid_estimate``); ``level_arcsec`` and
+    ``sigma_level``, the rule's two thresholds, ``counts`` (both exceeded), ``rule``, ``reference`` (what the star's
+    own position was) and ``n_seasons``. The self-referenced keys are None when a voting season has no position."""
     est = centroid_estimate(rung5_metrics)
-    return None if est is None else (est.offset, est.sigma)
+    if est is None:
+        return None
+    rows, kinds = [], set()
+    for s in _voting_rows(rung5_metrics):
+        ref = _self_reference(s)
+        v = _axis_offsets(s, ref[0]) if ref is not None else None
+        if v is None:
+            rows = []
+            break
+        rows.append((v, _num(s, "centroid_sigma_pix")))
+        kinds.add(ref[1])
+    block = {"self_referenced_arcsec": None, "self_referenced_err_arcsec": None, "sigma": None, "counts": None,
+             "reference": None, "catalogue_referenced_arcsec": est.offset,
+             "catalogue_referenced_err_arcsec": est.sigma, "level_arcsec": OFFSET_LEVEL_ARCSEC,
+             "sigma_level": OFFSET_SIGMA, "rule": OFFSET_RULE, "n_seasons": est.n_seasons}
+    if rows:
+        mean, err, _scatter = _vector_mean(rows)
+        off, err = float(np.hypot(*mean)) * PIXEL_ARCSEC, err * PIXEL_ARCSEC
+        sigma = off / err
+        block.update(self_referenced_arcsec=off, self_referenced_err_arcsec=err, sigma=sigma,
+                     counts=bool(sigma > OFFSET_SIGMA and off > OFFSET_LEVEL_ARCSEC),
+                     reference=" and ".join(SELF_REFERENCES[k] for k in sorted(kinds)))
+    return block
 
 
 def _grid(a: np.ndarray, valid: np.ndarray, nd: int) -> list[list]:
@@ -1219,7 +1312,8 @@ def _assemble(store, signal, target, tests, decisions, plots, pixels, star, plan
                 "min_nulls": cal.MIN_NULLS, "sentence_not_covered": FAP_NOT_COVERED},
         "fpp": {**fpp.as_dict(), "inputs": dataclasses.asdict(inputs), "words": fpp.words(), "label": fpp.label(),
                 "sentence_not_covered": FPP_NOT_COVERED},
-        "pixels": pixels, "star": star_d, "planet": with_k_error(dataclasses.asdict(planet), blocks.get("shape")),
+        "pixels": pixels, "centroid_offset": centroid_offset(_metrics(tests, "rung5_pixels")),
+        "star": star_d, "planet": with_k_error(dataclasses.asdict(planet), blocks.get("shape")),
         "look": look_numbers(star, planet),
         "caveats": [], "provenance": _provenance(store, signal, target, calibration, data_dir),
     }
