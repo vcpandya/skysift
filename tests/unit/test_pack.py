@@ -18,7 +18,7 @@ import pytest
 from typer.testing import CliRunner
 
 from skysift import dossier as dossier_module
-from skysift import net, zenodo
+from skysift import exofop, net, pack_rows, pack_text, zenodo
 from skysift import pack as pack_module
 from skysift.cli import app
 from skysift.dossier import LightCurveReleased, generate, whitened
@@ -978,7 +978,7 @@ def test_ephemeris_csv_carries_the_errors_and_the_dilution_rows(env_with_dossier
     assert duration["minus"] == duration["plus"] == "" and "fitted T14" in duration["source"]
     crowdsap, psffrac = by[("target light fraction (CROWDSAP)", "")], by[("PSF flux fraction (PSFFRAC)", "")]
     assert float(crowdsap["value"]) == 0.9 and float(psffrac["value"]) == 0.9
-    assert crowdsap["source"] == f"KBonus header keyword CROWDSAP: {pack_module.CROWDSAP_DEFINITION}"
+    assert crowdsap["source"] == f"KBonus header keyword CROWDSAP: {pack_rows.CROWDSAP_DEFINITION}"
     assert "1 means no contamination" in crowdsap["source"] and "inside the KBonus aperture" in psffrac["source"]
     leak = by[("dip in the neighbour's aperture (leak test)", "ppm")]
     assert float(leak["value"]) == 14.0 and float(leak["minus"]) == float(leak["plus"]) == 31.0
@@ -1079,12 +1079,12 @@ def test_exofop_parameter_files_follow_the_templates(env_with_dossier):
     assert stellar["notes"] == ("Teff: Mamajek dwarf table; R: Mann et al. 2015 R(M_Ks); M: Mann et al. 2019 M(M_Ks); "
                                 "dist: 1000 / Gaia DR3 parallax")
     assert len(stellar["notes"]) <= 120
-    with_tic = _parse_pipe(pack_module.render_exofop_planet(env.data, "20261022", "123", "tag"), PLANET_COLUMNS)
+    with_tic = _parse_pipe(exofop.render_exofop_planet(env.data, "20261022", "123", "tag"), PLANET_COLUMNS)
     assert with_tic["target"] == "TIC123.01" and with_tic["tag"] == "tag"
     no_kic = {**env.data, "target": {**env.data["target"], "kic": None}}
-    assert _parse_pipe(pack_module.render_exofop_stellar(no_kic, "20261022", "123", "t"),
+    assert _parse_pipe(exofop.render_exofop_stellar(no_kic, "20261022", "123", "t"),
                        STELLAR_COLUMNS)["target"] == "TIC123"
-    fitted = _parse_pipe(pack_module.render_exofop_planet(_with_errors(env.data), "20261022", None, "t"), PLANET_COLUMNS)
+    fitted = _parse_pipe(exofop.render_exofop_planet(_with_errors(env.data), "20261022", None, "t"), PLANET_COLUMNS)
     assert fitted["imp"] == fitted["imp_unc"] == fitted["ar_star"] == ""      # degenerate: b and a/R* without errors
     assert (fitted["r_planet"], fitted["r_planet_err"]) == ("0.0470", "0.0012")
     assert (fitted["duration"], fitted["duration_unc"]) == ("4.16", "0.06")
@@ -1101,11 +1101,11 @@ def test_the_stellar_file_names_the_route_it_came_from(env_with_dossier):
     table = "Mamajek dwarf table at BP-RP 2.097 +- 0.20 (Pecaut, M. J. and Mamajek, E. E. 2013, ApJS 208, 9)"
     data["star"].update(route="mamajek", radius={**data["star"]["radius"], "source": table},
                         mass={**data["star"]["mass"], "source": table})
-    stellar = _parse_pipe(pack_module.render_exofop_stellar(data, "20261022", None, "t"), STELLAR_COLUMNS)
+    stellar = _parse_pipe(exofop.render_exofop_stellar(data, "20261022", None, "t"), STELLAR_COLUMNS)
     assert stellar["notes"] == ("Teff, R, M: Mamajek dwarf table; dist: 1000 / Gaia DR3 parallax; density: M* / "
                                 "(4/3 pi R*^3) from the same draws")
     assert "Mann" not in stellar["notes"] and "2MASS" not in stellar["notes"] and len(stellar["notes"]) <= 120
-    rows = {r["parameter"]: r for r in pack_module.provenance_rows(data)}
+    rows = {r["parameter"]: r for r in pack_rows.provenance_rows(data)}
     assert rows["radius"]["method"].startswith("Mamajek dwarf table") and "Pecaut" in rows["radius"]["reference"]
 
 
@@ -1117,7 +1117,7 @@ def test_a_star_without_parameters_gets_no_stellar_file(env_with_dossier):
     _store(env, data)
     rep = _build(env)
     date = _today()
-    assert pack_module.render_exofop_stellar(data, date, None, "t") is None
+    assert exofop.render_exofop_stellar(data, date, None, "t") is None
     assert not (rep.out_dir / "exofop" / f"params_stellar_{date}_001.txt").exists()
     assert (rep.out_dir / "exofop" / f"params_planet_{date}_001.txt").exists()
     step2 = (rep.out_dir / "README.md").read_text(encoding="utf-8").split("## Step 2.")[1].split("## Step 3.")[0]
@@ -1148,7 +1148,7 @@ def test_readme_without_a_parity_difference_or_a_timing_fit(env_with_dossier):
 def test_readme_step_five_lists_the_next_transits_with_windows(env_with_dossier):
     from skysift.ephemeris import predict_from
     data, after = env_with_dossier.data, 2461335.5                       # 22 October 2026, 0 h UTC
-    rows = pack_module.next_transits(data, after)
+    rows = pack_rows.next_transits(data, after)
     assert len(rows) == 3 and [r["epoch"] for r in rows] == [rows[0]["epoch"] + i for i in range(3)]
     t, err = predict_from(data["timing"], rows[0]["epoch"])
     assert rows[0]["t_bjd"] == pytest.approx(t + BKJD) and rows[0]["window_min"] == pytest.approx(err * 1440)
@@ -1158,8 +1158,8 @@ def test_readme_step_five_lists_the_next_transits_with_windows(env_with_dossier)
     for r in rows:
         assert f"- epoch {r['epoch']}: BJD_TDB {r['t_bjd']:.4f} ± {r['window_min']:.0f} min" in step5
     assert "22 October 2026" in step5 and "no formal error" not in step5
-    assert pack_module.next_transits({**data, "timing": None}, after) == []
-    assert pack_module.next_transits({**data, "timing": {**data["timing"], "ok": False}}, after) == []
+    assert pack_rows.next_transits({**data, "timing": None}, after) == []
+    assert pack_rows.next_transits({**data, "timing": {**data["timing"], "ok": False}}, after) == []
 
 
 def test_every_text_quotes_the_period_and_epoch_with_errors(env_with_dossier):
@@ -1199,7 +1199,7 @@ def test_a_missing_ephemeris_error_is_named_once_and_never_paired_with_a_search_
 
 
 def tex_safe(text: str) -> str:
-    return pack_module.tex_escape(text)
+    return pack_text.tex_escape(text)
 
 
 def test_note_has_software_facilities_and_the_model_clause_within_the_limits(env_with_dossier):
@@ -1305,7 +1305,7 @@ def test_figure_data_csv_matches_the_fold_bins(env_with_dossier):
     for row, b in zip(rows, bins, strict=True):
         assert [float(row["phase_h"]), float(row["flux_ppm"]), float(row["err_ppm"]), int(row["n"])] == b
         assert float(row["model_ppm"]) == pytest.approx(np.interp(b[0], model[:, 0], model[:, 1]), abs=0.05)
-    assert pack_module.figure_data_rows(json.loads(GOLDEN.read_text(encoding="utf-8"))) == []
+    assert pack_rows.figure_data_rows(json.loads(GOLDEN.read_text(encoding="utf-8"))) == []
     readme = (rep.out_dir / "README.md").read_text(encoding="utf-8")
     for name in ("note/figure1_data.csv", "data/transit_times.csv", "data/shape.csv", "data/stellar_provenance.csv"):
         assert f"- `{name}`: " in readme and pack_module.FILE_NOTES[name] in readme

@@ -14,6 +14,8 @@ import re
 from pathlib import Path
 from urllib.parse import quote
 
+from skysift.pack_text import ephemeris_sentence
+
 SANDBOX = "https://sandbox.zenodo.org/api"
 LIVE = "https://zenodo.org/api"
 TOKEN_ENV = "SKYSIFT_ZENODO_TOKEN"
@@ -151,11 +153,9 @@ def probability_sentences(data: dict) -> tuple[str, str]:
 def metadata_from(data: dict, citation: dict | None) -> dict:
     """The deposition metadata from a dossier's JSON and the parsed ``CITATION.cff`` (None when there is none):
     a dataset titled "SkySift candidate <name>: ...", creators from the citation's authors, the summary, the ephemeris
-    with its errors (``pack.ephemeris_sentence``, the sentence the ExoFOP note and the archive email quote), both
+    with its errors (``pack_text.ephemeris_sentence``, the sentence the ExoFOP note and the archive email quote), both
     probabilities and the caveats as the description, keywords, open access under CC BY 4.0, and the KBonus HLSP DOI
     as the data it is derived from."""
-    from skysift.pack import ephemeris_sentence  # pack imports this module, so the import waits for the call
-
     target, eph = data.get("target") or {}, data.get("ephemeris") or {}
     name = target.get("name") or target.get("target_id") or "unknown target"
     period = eph.get("period_days")

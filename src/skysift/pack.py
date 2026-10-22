@@ -13,11 +13,12 @@ from the target's stored dossier (``dossier_data.json``) and the light curve the
 - ``data/``: the whitened light curve, the ephemeris, parameters and dilution numbers with errors
   (``ephemeris_rows``, ``param_rows``, ``dilution_rows``), the per-transit times (``timing_rows``), the transit shape
   with its bootstrap errors (``shape_rows``), the stellar provenance (``provenance_rows``), the per-event depths, the
-  periodogram summary and the rung metrics; ``note/figure1_data.csv`` is the data behind the note's figure.
+  periodogram summary and the rung metrics; ``note/figure1_data.csv`` is the data behind the note's figure. The
+  row builders live in ``skysift.pack_rows``.
   ``figures/``: fold, odd and even, periodogram and one centroid panel per season, as SVG, plus PNG when matplotlib
   imports. ``dossier.html``: the standalone export. ``provenance/``: versions, the query log, the calibration counts
   and the SHA-256 of every file. ``exofop/``: copies named ``<target>_<yyyymmdd>_<content>``, the upload note and
-  ExoFOP's two bulk parameter files (``render_exofop_planet``, ``render_exofop_stellar``). ``archive_email.txt`` and
+  ExoFOP's two bulk parameter files (``skysift.exofop``). ``archive_email.txt`` and
   ``zenodo_metadata.json`` for steps 4 and 1.
 
 Building a pack never changes a status, never regenerates the dossier and never downloads anything: a light curve
@@ -25,7 +26,7 @@ released by retention raises ``dossier.LightCurveReleased``. Local absolute path
 data folder, since the pack is meant for a public record. The only network use is the injected Zenodo client, called
 after every file is written, which makes a draft and never publishes. Both probabilities appear separately in every
 text, the false-positive one marked provisional while its factor tables are not signed off. Every value with an
-error is printed beside its own error (``quantities``, ``pm_text``), and a missing error is printed as "(no error;
+error is printed beside its own error (``skysift.pack_text``), and a missing error is printed as "(no error;
 <reason>)" once per text."""
 from __future__ import annotations
 
@@ -51,10 +52,46 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from skysift import calibrate as cal
 from skysift import dossier as ds
-from skysift import ephemeris as ephem
 from skysift import fpp as fpp_model
 from skysift import jsonutil
+from skysift.exofop import (
+    EXOFOP_PLANET_TEMPLATE,
+    EXOFOP_STELLAR_TEMPLATE,
+    data_tag,
+    render_exofop_planet,
+    render_exofop_stellar,
+)
 from skysift.lc.loader import LightCurveLoader
+from skysift.pack_rows import (
+    CROWDSAP_DEFINITION,
+    PSFFRAC_DEFINITION,
+    SHAPE_ROWS,
+    _metrics,
+    _test,
+    dilution_rows,
+    ephemeris_rows,
+    figure_data_rows,
+    julian_date,
+    next_transits,
+    param_rows,
+    provenance_rows,
+    shape_rows,
+    star_characterized,
+    timing_rows,
+)
+from skysift.pack_text import (
+    Raw,
+    _bjd,
+    _f,
+    _joined,
+    _num,
+    date_words,
+    ephemeris_sentence,
+    pm_text,
+    quantities,
+    tex_escape,
+    value_text,
+)
 from skysift.store.db import SignalRow, Store
 from skysift.zenodo import KBONUS_DOI, ZenodoClient, ZenodoError, metadata_from, probability_sentences
 
@@ -83,29 +120,6 @@ CODE_SENTENCE = (f"the SkySift code at the stated commit is archived at doi:{SOF
 # the limits of the transit model, in the words of the referee pack spec (section 6)
 MODEL_CLAUSE = ("a uniform-disc model without limb darkening on a circular orbit, averaged over the 29.4-minute "
                 "cadence")
-# ExoFOP's bulk templates (ExoFOP help, read 22 October 2026), pipe-delimited, one row per target
-EXOFOP_PLANET_TEMPLATE = "params_planet_{date}_001.txt"
-EXOFOP_STELLAR_TEMPLATE = "params_stellar_{date}_001.txt"
-# (the referee checklist, section 4: the column lists of the live template files, 22 October 2026)
-EXOFOP_PLANET_COLUMNS = ("target", "flag", "disp", "discovery", "candname", "period", "period_unc", "epoch",
-                         "epoch_unc", "depth", "depth_unc", "duration", "duration_unc", "inc", "inc_unc", "imp",
-                         "imp_unc", "r_planet", "r_planet_err", "ar_star", "ar_star_err", "radius", "radius_unc",
-                         "mass", "mass_unc", "temp", "temp_unc", "insol", "insol_unc", "dens", "dens_unc", "sma",
-                         "sma_unc", "ecc", "ecc_unc", "arg_peri", "arg_peri_err", "time_peri", "time_peri_unc", "vsa",
-                         "vsa_unc", "tag", "group", "prop_period", "paper", "notes")
-EXOFOP_STELLAR_COLUMNS = ("target", "tel", "telsize", "inst", "sp_type", "teff", "teff_unc", "logg", "logg_unc",
-                          "radius", "radius_unc", "logrhk", "logrhk_unc", "sindex", "sindex_unc", "halpha",
-                          "halpha_unc", "vsini", "vsini_unc", "rotper", "rotper_unc", "met", "met_unc", "mass",
-                          "mass_unc", "dens", "dens_unc", "lum", "lum_unc", "obs_time", "rv", "rv_unc", "dist",
-                          "dist_unc", "age", "age_unc", "snr", "fit", "tag", "group", "prop_period", "notes")
-EXOFOP_DISCOVERY = "SkySift (Kepler)"      # a blank discovery means TESS, so a Kepler candidate names its project
-EXOFOP_NOTES_MAX = 120
-# the KBonus header keywords of the dilution rows, defined once for the README and the CSV
-CROWDSAP_DEFINITION = ("the fraction of the light in the aperture that belongs to the target (Kepler's CROWDSAP "
-                       "keyword, 1 means no contamination)")
-PSFFRAC_DEFINITION = "the fraction of the target's PSF flux inside the KBonus aperture (its PSFFRAC keyword)"
-TIC_PLACEHOLDER = "<TIC-TO-FILL>"
-SOLAR_LOGG = 4.438          # log10 of the nominal solar surface gravity in cgs (IAU 2015 B3)
 SANDBOX_DOI_PREFIX = "10.5072/"             # Zenodo sandbox DOIs never resolve
 SANDBOX_DOI_NOTE = "sandbox DOI, replace before submission"
 ZIP_SUFFIX = "_skysift_pack.zip"
@@ -140,10 +154,6 @@ class PackError(ValueError):
     pack, or a live Zenodo draft for a candidate no reviewer has approved. The CLI reports it as a usage error."""
 
 
-class Raw(str):
-    """Text that is already LaTeX: the note's template prints it as it is."""
-
-
 @dataclass
 class PackReport:
     target_id: str
@@ -163,99 +173,6 @@ class PackReport:
 
 
 # ---------------------------------------------------------------------------------------------------- formatting
-
-def _num(x) -> float | None:
-    if isinstance(x, bool) or x is None:
-        return None
-    try:
-        x = float(x)
-    except (TypeError, ValueError):
-        return None
-    return x if math.isfinite(x) else None
-
-
-def _decimals(err: float | None, default: int = 2) -> int:
-    """Decimals that show an error to one significant figure, two when it starts with 1 or 2 (0.016, 0.08, 73)."""
-    if err is None or err <= 0:
-        return default
-    lead = err / 10 ** math.floor(math.log10(err))
-    return max(0, -math.floor(math.log10(err)) + (1 if lead < 3 else 0))
-
-
-def _f(x, nd: int = 2, comma: bool = False) -> str | None:
-    x = _num(x)
-    if x is None:
-        return None
-    return f"{x:,.{nd}f}" if comma else f"{x:.{nd}f}"
-
-
-def _pm_parts(value, minus=None, plus=None, nd: int = 2, comma: bool = False) -> tuple[str, str | None, str | None] | None:
-    """(value, minus, plus) as text, all at the decimals of the smaller error (``_decimals``), the value at ``nd``
-    decimals and both errors None without an error; None without a value. Every number with an error in the pack's
-    texts and files goes through here, so they all round alike."""
-    m = _num(value)
-    if m is None:
-        return None
-    lo, hi = _num(minus), _num(plus)
-    errs = [e for e in (lo, hi) if e is not None and e > 0]
-
-    def fmt(x: float, d: int) -> str:
-        return f"{x:,.{d}f}" if comma else f"{x:.{d}f}"
-    if not errs:
-        return fmt(m, nd), None, None
-    d = _decimals(min(errs))
-    return fmt(m, d), fmt(lo or 0.0, d), fmt(hi or 0.0, d)
-
-
-def pm_text(value, minus=None, plus=None, *, nd: int = 2, comma: bool = False, tex: bool = False) -> str | None:
-    """A value with its 1-sigma error: "40.28986 ± 0.00009", "4.16 +0.06/-0.05" when asymmetric, LaTeX
-    "4.16$^{+0.06}_{-0.05}$" (a ``Raw``) with ``tex``; the value alone without an error; None without a value."""
-    parts = _pm_parts(value, minus, plus, nd, comma)
-    if parts is None:
-        return None
-    mid, lo, hi = parts
-    if lo is None:
-        text = mid
-    elif lo == hi:
-        text = f"{mid} $\\pm$ {hi}" if tex else f"{mid} ± {hi}"
-    else:
-        text = f"{mid}$^{{+{hi}}}_{{-{lo}}}$" if tex else f"{mid} +{hi}/-{lo}"
-    return Raw(text) if tex else text
-
-
-def err_text(minus, plus, *, comma: bool = False) -> str | None:
-    """The error alone, as ``pm_text`` prints it: "0.00009", "+0.06/-0.05"; None without one."""
-    parts = _pm_parts(0.0, minus, plus, comma=comma)
-    if parts is None or parts[1] is None:
-        return None
-    return parts[2] if parts[1] == parts[2] else f"+{parts[2]}/-{parts[1]}"
-
-
-def value_text(v: dict | None, tex: bool = False) -> str | None:
-    """A stored ``{"median", "minus", "plus"}`` as "0.509 +0.017/-0.016" (or "2.61 ± 0.08" when symmetric), or as
-    LaTeX "0.509$^{+0.017}_{-0.016}$" with ``tex``, thousands with commas (3,653 K, as the dossier prints them);
-    None without a median."""
-    if not isinstance(v, dict) or _num(v.get("median")) is None:
-        return None
-    return pm_text(v.get("median"), v.get("minus"), v.get("plus"), comma=True, tex=tex)
-
-
-_TEX = {"\\": r"\textbackslash{}", "&": r"\&", "%": r"\%", "$": r"\$", "#": r"\#", "_": r"\_", "{": r"\{",
-        "}": r"\}", "~": r"\textasciitilde{}", "^": r"\textasciicircum{}", "±": r"$\pm$", "<": r"$<$", ">": r"$>$",
-        "≤": r"$\leq$", "≥": r"$\geq$", "×": r"$\times$", "°": r"$^\circ$", "−": "-", "–": "--", "—": ", "}
-_TEX_RE = re.compile("|".join(re.escape(k) for k in _TEX))
-
-
-def tex_escape(text: str) -> str:
-    return _TEX_RE.sub(lambda m: _TEX[m.group(0)], str(text))
-
-
-def _joined(tex: bool, *parts) -> str:
-    """Parts of one sentence as one string; with ``tex`` a ``Raw`` whose plain parts are escaped and whose ``Raw``
-    parts (values with errors) are kept, so the note prints the errors as math."""
-    if not tex:
-        return "".join(str(p) for p in parts)
-    return Raw("".join(p if isinstance(p, Raw) else tex_escape(p) for p in parts))
 
 
 def _tex_finalize(value):
@@ -278,15 +195,6 @@ def _env(tex: bool) -> Environment:
                            variable_end_string="}", comment_start_string="((#", comment_end_string="#))",
                            finalize=_tex_finalize, **common)
     return Environment(finalize=_md_finalize, **common)
-
-
-def date_words(when) -> str:
-    if isinstance(when, str):
-        try:
-            when = datetime.fromisoformat(when)
-        except ValueError:
-            return when
-    return f"{when.day} {when:%B %Y}" if isinstance(when, datetime) else "an unknown date"
 
 
 _TEX_COMMENT = re.compile(r"(?<!\\)%.*")
@@ -346,25 +254,12 @@ def note_problems(words: dict, tex: str = "") -> list[str]:
 
 # ---------------------------------------------------------------------------------------------------- the numbers
 
-def _metrics(data: dict, rung: str) -> dict:
-    return next((t.get("metrics") or {} for t in data.get("tests") or [] if t.get("rung") == rung), {})
-
-
-def _test(data: dict, rung: str) -> dict | None:
-    return next((t for t in data.get("tests") or [] if t.get("rung") == rung), None)
-
 
 def _fpp_class(data: dict) -> str | None:
     for s in (data.get("fpp") or {}).get("scenarios") or []:
         if s.get("name") == "PL":
             return (s.get("factors") or {}).get("class")
     return None
-
-
-def star_characterized(data: dict) -> bool:
-    """Whether the star block has parameters to quote: a route other than "none" and a radius."""
-    star = data.get("star") or {}
-    return star.get("route") not in (None, "none") and value_text(star.get("radius")) is not None
 
 
 def references(data: dict) -> dict[str, bool]:
@@ -627,302 +522,6 @@ def _hz_where(planet: dict) -> str | None:
     return "outside the habitable zone"
 
 
-def param_rows(data: dict) -> list[dict]:
-    """The fit, star and planet parameters as rows {parameter, value, minus, plus, unit, source, text}."""
-    rows = []
-    sh = _metrics(data, "rung2_shape")
-
-    def add(name, v, unit, source=None):
-        if isinstance(v, dict):
-            if _num(v.get("median")) is None:
-                return
-            text = value_text(v)
-            rows.append({"parameter": name, "value": _num(v.get("median")), "minus": _num(v.get("minus")),
-                         "plus": _num(v.get("plus")), "unit": unit, "source": source or v.get("source") or "",
-                         "text": f"{text} {unit}".strip()})
-        elif _num(v) is not None:
-            rows.append({"parameter": name, "value": _num(v), "minus": None, "plus": None, "unit": unit,
-                         "source": source or "", "text": f"{_num(v):g} {unit}".strip()})
-    shape = {r["key"]: r for r in shape_rows(data)}
-    if _num(sh.get("depth_ppm")) is not None and "depth_source" not in (data.get("ephemeris") or {}):
-        e = _num(sh.get("depth_err_ppm"))           # version 3 quotes rung 2's depth in the ephemeris rows
-        add("fitted depth", {"median": sh["depth_ppm"], "minus": e, "plus": e}, "ppm", "rung 2 box depth")
-    if sh.get("fit_ok") is True and shape:
-        ok = (data.get("shape") or {}).get("ok") is True
-        for key, name in (("k", "radius ratio"), ("b", "impact parameter")):
-            r = shape.get(key)
-            if r is None:
-                continue
-            text = pm_text(r["value"], r["minus"], r["plus"], nd=r["nd"])
-            if ok and r["note"]:            # a degenerate b; without a bootstrap the duration names the reason
-                text += f" ({r['note']})"
-            rows.append({"parameter": name, "value": r["value"], "minus": r["minus"], "plus": r["plus"], "unit": "",
-                         "source": (data.get("shape") or {}).get("method") if r["minus"] is not None
-                         else "rung 2 transit fit (uniform disc)", "text": text})
-    elif sh.get("fit_ok") is True:
-        add("radius ratio", sh.get("fit_k"), "", "rung 2 transit fit (uniform disc)")
-        add("impact parameter", sh.get("fit_b"), "", "rung 2 transit fit (uniform disc)")
-    star, planet = data.get("star") or {}, data.get("planet") or {}
-    if star.get("spectral_type"):
-        rows.append({"parameter": "spectral type", "value": star["spectral_type"], "minus": None, "plus": None,
-                     "unit": "", "source": (star.get("teff") or {}).get("source") or "",
-                     "text": star["spectral_type"]})
-    add("stellar effective temperature", star.get("teff"), "K")
-    add("stellar radius", star.get("radius"), "solar radii")
-    add("stellar mass", star.get("mass"), "solar masses")
-    add("stellar density", star.get("density_gcc"), "g/cm3")
-    add("distance", star.get("distance_pc"), "pc")
-    add("planet radius", planet.get("rp_rearth"), "Earth radii")
-    add("semi-major axis", planet.get("a_au"), "AU")
-    add("scaled semi-major axis a/R*", planet.get("a_over_r"), "")
-    add("equilibrium temperature", planet.get("teq_k"), "K")
-    add("insolation", planet.get("insolation_earth"), "Earth = 1")
-    add("transit probability", planet.get("transit_probability"), "")
-    for key, name in (("hz_inner_au", "habitable zone inner edge (runaway greenhouse)"),
-                      ("hz_outer_au", "habitable zone outer edge (maximum greenhouse)")):
-        add(name, planet.get(key), "AU", "Kopparapu et al. 2013, erratum coefficients")
-    return rows
-
-
-def _bjd(eph: dict, key: str) -> float | None:
-    """BJD_TDB of ``<key>_bkjd`` plus the Kepler offset (the stored ``<key>_bjd`` keeps eight significant figures,
-    tenths of a day), else the stored ``<key>_bjd``; ``key`` is "t0" or "t_ref"."""
-    bkjd = _num(eph.get(f"{key}_bkjd"))
-    return round(bkjd + ds.BKJD_OFFSET, 6) if bkjd is not None else _num(eph.get(f"{key}_bjd"))
-
-
-def missing_error_reasons(data: dict) -> dict[str, str]:
-    """Why the period and epoch (``timing``), the duration and the depth would be printed without an error, from the
-    stored blocks; a text names each once, as "(no error; <reason>)"."""
-    eph, timing, shape = data.get("ephemeris") or {}, data.get("timing"), data.get("shape")
-    timing_reason = ((timing.get("reason") or "no reason stored") if isinstance(timing, dict)
-                     else "this dossier has no per-transit timing")
-    if isinstance(shape, dict) and not shape.get("ok"):
-        duration = shape.get("reason") or "no reason stored"
-    elif eph.get("duration_source") == "search box":
-        duration = "the search box width"
-    else:
-        duration = "this dossier has no shape bootstrap"
-    depth = "the search box depth" if eph.get("depth_source") == "search box" else "this dossier has no depth error"
-    return {"timing": timing_reason, "duration": duration, "depth": depth}
-
-
-def _errors(eph: dict) -> dict:
-    """The version 3 errors of an ephemeris block as numbers: period, t0, t_ref, depth (one value each, None without
-    one) and the duration's minus and plus."""
-    dur = eph.get("duration_h_err") or {}
-    return {"period": _num(eph.get("period_err_days")), "t0": _num(eph.get("t0_bjd_err")),
-            "t_ref": _num(eph.get("t_ref_err_days")), "depth": _num(eph.get("depth_ppm_err")),
-            "duration_minus": _num(dur.get("minus")), "duration_plus": _num(dur.get("plus"))}
-
-
-def quantities(data: dict, tex: bool = False) -> dict:
-    """The ephemeris as the texts print it, each value beside its own error (never a search value beside a fitted
-    error): ``<name>`` the value at its error's decimals, ``<name>_err`` the error (None without one), ``<name>_pm``
-    both (LaTeX with ``tex``), and for the period, duration and depth ``<name>_note``, " (no error; <reason>)"
-    when the error is missing, else "". The epochs share the period's note, so a text names a missing timing error
-    once. Names: period, t0_bjd, t0_bkjd, t_ref_bjd, duration, depth; ``epoch_ref``."""
-    eph = data.get("ephemeris") or {}
-    why = missing_error_reasons(data)
-    out: dict = {"epoch_ref": eph.get("epoch_ref")}
-
-    def put(name, value, minus, plus, nd, comma=False, note=None):
-        parts = _pm_parts(value, minus, plus, nd, comma)
-        out[name] = parts[0] if parts else None
-        out[f"{name}_err"] = err_text(minus, plus, comma=comma) if parts else None
-        out[f"{name}_pm"] = pm_text(value, minus, plus, nd=nd, comma=comma, tex=tex)
-        if note is not None:
-            out[f"{name}_note"] = "" if parts is None or out[f"{name}_err"] else f" (no error; {note})"
-    e = _errors(eph)
-    put("period", eph.get("period_days"), e["period"], e["period"], 5, note=why["timing"])
-    put("t0_bjd", _bjd(eph, "t0"), e["t0"], e["t0"], 4)
-    put("t0_bkjd", eph.get("t0_bkjd"), e["t0"], e["t0"], 4)
-    put("t_ref_bjd", _bjd(eph, "t_ref"), e["t_ref"], e["t_ref"], 4)
-    put("duration", eph.get("duration_h"), e["duration_minus"], e["duration_plus"], 2, note=why["duration"])
-    put("depth", eph.get("depth_ppm"), e["depth"], e["depth"], 0, comma=True, note=why["depth"])
-    return out
-
-
-def ephemeris_sentence(data: dict) -> str:
-    """"P = ... d, T0 = BJD_TDB ..., duration ... h, depth ... ppm", each with its error or the reason it has none:
-    the ExoFOP note, the archive email and the Zenodo description quote this one sentence."""
-    q = quantities(data)
-    parts = [f"P = {q['period_pm']} d{q['period_note']}" if q["period_pm"] else None,
-             f"T0 = BJD_TDB {q['t0_bjd_pm']}" if q["t0_bjd_pm"] else None,
-             f"duration {q['duration_pm']} h{q['duration_note']}" if q["duration_pm"] else None,
-             f"depth {q['depth_pm']} ppm{q['depth_note']}" if q["depth_pm"] else None]
-    return ", ".join(p for p in parts if p)
-
-
-def ephemeris_rows(data: dict) -> list[dict]:
-    """The ephemeris as rows {parameter, value, minus, plus, unit, source, text}: each value with its own error from
-    the dossier's version 3 keys (none for a search value), the source naming the method."""
-    eph = data.get("ephemeris") or {}
-    e = _errors(eph)
-    pe, t0e, tre, de = e["period"], e["t0"], e["t_ref"], e["depth"]
-    timing = ("; ".join(x for x in (eph.get("period_source"), eph.get("ephemeris_method")) if x) if pe is not None
-              else "box search (no formal error)")
-    ref = f"{timing}; epoch {eph.get('epoch_ref')}, the centre of the series"
-    bkjd = "BKJD (BJD - 2454833)"
-    rows = (("period", eph.get("period_days"), pe, pe, "d", timing, 5),
-            ("mid-transit time", eph.get("t0_bkjd"), t0e, t0e, bkjd, f"{timing}; epoch 0", 4),
-            ("mid-transit time", _bjd(eph, "t0"), t0e, t0e, "BJD_TDB", f"{timing}; epoch 0", 4),
-            ("reference mid-transit time", eph.get("t_ref_bkjd"), tre, tre, bkjd, ref, 4),
-            ("reference mid-transit time", _bjd(eph, "t_ref"), tre, tre, "BJD_TDB", ref, 4),
-            ("duration", eph.get("duration_h"), e["duration_minus"], e["duration_plus"], "h",
-             eph.get("duration_source") or "box search", 2),
-            ("depth", eph.get("depth_ppm"), de, de, "ppm", eph.get("depth_source") or "box search", 0),
-            ("signal detection efficiency", eph.get("sde"), None, None, "", "box search", 1),
-            ("signal-to-noise ratio", eph.get("snr"), None, None, "", "box search", 1),
-            ("transits", eph.get("n_events"), None, None, "", "box search", 0))
-    return [{"parameter": p, "value": v, "minus": _num(lo), "plus": _num(hi), "unit": u, "source": s,
-             "text": f"{pm_text(v, lo, hi, nd=nd)} {u}".strip()} for p, v, lo, hi, u, s, nd in rows
-            if _num(v) is not None]
-
-
-# (parameter, shape key, unit, decimals without an error, rung 2's point value)
-SHAPE_ROWS = (("radius ratio k", "k", "", 4, "fit_k"), ("impact parameter b", "b", "", 2, "fit_b"),
-              ("a/R*", "a_over_r", "", 1, "fit_a_over_r"), ("T14", "t14_h", "h", 2, "fit_t14_h"),
-              ("model depth", "model_depth_ppm", "ppm", 0, "fit_depth_ppm"),
-              ("box depth", "box_depth_ppm", "ppm", 0, None), ("box duration", "box_duration_h", "h", 2, None))
-
-
-def shape_rows(data: dict) -> list[dict]:
-    """The shape block as rows {key, parameter, value, minus, plus, unit, boot_median, note, nd}: k, b, a/R*, T14,
-    the model depth, the box depth and the box duration with their bootstrap errors. A parameter the block has no
-    value for takes rung 2's point value when the fit is ok; a row without errors says why in ``note`` ("no error;
-    <the degeneracy reason>" for b and a/R* of a degenerate fit, else the block's reason). [] without the block."""
-    shape = data.get("shape")
-    if not isinstance(shape, dict):
-        return []
-    sh = _metrics(data, "rung2_shape")
-    fit = sh.get("fit_ok") is True
-    rows = []
-    for name, key, unit, nd, point in SHAPE_ROWS:
-        block = shape.get(key)
-        if isinstance(block, dict) and _num(block.get("median")) is not None:
-            value, lo, hi, boot = (_num(block.get(x)) for x in ("median", "minus", "plus", "boot_median"))
-        elif fit and point and _num(sh.get(point)) is not None:
-            value, lo, hi, boot = _num(sh.get(point)), None, None, None
-        else:
-            continue
-        note = ""
-        if lo is None or hi is None:
-            degenerate = shape.get("ok") and shape.get("degenerate") and key in ("b", "a_over_r")
-            note = f"no error; {(shape.get('degeneracy_reason') if degenerate else shape.get('reason')) or 'no reason stored'}"
-        rows.append({"key": key, "parameter": name, "value": value, "minus": lo, "plus": hi, "unit": unit,
-                     "boot_median": boot, "note": note, "nd": nd})
-    return rows
-
-
-def timing_rows(data: dict) -> list[dict]:
-    """One row per measured transit {epoch, t_bkjd, t_bjd, err_days, chi2_red, used, reason}, BJD_TDB from BKJD;
-    [] without a timing block."""
-    timing = data.get("timing")
-    if not isinstance(timing, dict):
-        return []
-    out = []
-    for t in timing.get("times") or []:
-        bkjd = _num(t.get("t_bkjd"))
-        out.append({"epoch": t.get("epoch"), "t_bkjd": bkjd,
-                    "t_bjd": None if bkjd is None else round(bkjd + ds.BKJD_OFFSET, 6), "err_days": t.get("err_days"),
-                    "chi2_red": t.get("chi2_red"), "used": t.get("used"), "reason": t.get("reason")})
-    return out
-
-
-_REFERENCE = re.compile(r"\(([^()]*\b(?:19|20)\d{2}\b[^()]*)\)")
-STAR_ROWS = (("effective temperature", "teff", "K"), ("radius", "radius", "solar radii"),
-             ("mass", "mass", "solar masses"), ("density", "density_gcc", "g/cm3"), ("distance", "distance_pc", "pc"))
-
-
-def _split_source(source: str | None) -> tuple[str, str, str]:
-    """(method, inputs, reference) of a stored source string such as "Mann et al. 2015 R(M_Ks) (Mann, A. W. et al.
-    2015, ApJ 804, 64), 2MASS Ks 13.030, A_Ks 0 to 0.07, Gaia parallax": the reference is the first parenthesis that
-    names a year, the method what comes before it, the inputs what follows. A source without one is all method."""
-    source = source or ""
-    m = _REFERENCE.search(source)
-    if not m:
-        return source.strip(), "", ""
-    return source[:m.start()].strip(" ,;"), source[m.end():].strip(" ,;"), m.group(1).strip()
-
-
-def logg_value(star: dict) -> dict | None:
-    """log g (cgs) from the star block's mass and radius, {"median", "minus", "plus"}: ``SOLAR_LOGG`` + log10 M -
-    2 log10 R. log g is low when the mass is low and the radius high, so the lower side is the quadrature of the
-    mass's minus and twice the radius's plus (relative), the upper side the reverse. The correlation of mass and
-    radius in the stellar draws is not stored, so it is ignored. None without both."""
-    m, r = star.get("mass"), star.get("radius")
-    if not (isinstance(m, dict) and isinstance(r, dict)):
-        return None
-    mv, rv = _num(m.get("median")), _num(r.get("median"))
-    if not mv or not rv or mv <= 0 or rv <= 0:
-        return None
-
-    def side(mass_side: str, radius_side: str) -> float | None:
-        em, er = _num(m.get(mass_side)), _num(r.get(radius_side))
-        return None if em is None or er is None else round(math.hypot(em / mv, 2 * er / rv) / math.log(10), 3)
-    return {"median": round(SOLAR_LOGG + math.log10(mv) - 2 * math.log10(rv), 3), "minus": side("minus", "plus"),
-            "plus": side("plus", "minus")}
-
-
-def provenance_rows(data: dict) -> list[dict]:
-    """The star block as rows {parameter, value, minus, plus, unit, method, inputs, reference}: each parameter with
-    the method, inputs and reference its stored source names (the Gaia DR3 id first among the inputs), the spectral
-    type with the temperature's, and log g from the mass and radius (``logg_value``)."""
-    star, gaia = data.get("star") or {}, (data.get("target") or {}).get("gaia_id")
-    rows = []
-
-    def inputs(rest: str) -> str:
-        return "; ".join(x for x in (f"Gaia DR3 {gaia}" if gaia else None, rest) if x)
-    for name, key, unit in STAR_ROWS:
-        v = star.get(key)
-        if not isinstance(v, dict) or _num(v.get("median")) is None:
-            continue
-        method, rest, ref = _split_source(v.get("source"))
-        rows.append({"parameter": name, "value": _num(v["median"]), "minus": _num(v.get("minus")),
-                     "plus": _num(v.get("plus")), "unit": unit, "method": method, "inputs": inputs(rest),
-                     "reference": ref})
-    if star.get("spectral_type"):
-        method, rest, ref = _split_source((star.get("teff") or {}).get("source"))
-        rows.append({"parameter": "spectral type", "value": star["spectral_type"], "minus": None, "plus": None,
-                     "unit": "", "method": method, "inputs": inputs(rest), "reference": ref})
-    logg = logg_value(star)
-    if logg is not None:
-        rest = _split_source((star.get("radius") or {}).get("source"))[1]
-        rows.append({"parameter": "surface gravity log g", **{k: logg[k] for k in ("minus", "plus")},
-                     "value": logg["median"], "unit": "cgs",
-                     "method": f"log10(G M / R^2) from the mass and radius above (solar {SOLAR_LOGG}), errors in "
-                               "quadrature with their correlation ignored", "inputs": inputs(rest), "reference": ""})
-    return rows
-
-
-def dilution_rows(data: dict) -> list[dict]:
-    """The dilution numbers as rows {key, parameter, value, minus, plus, unit, source, text}: the KBonus header
-    keywords CROWDSAP and PSFFRAC for this star (the target meta; the source column defines each) and rung 5's leak
-    test, the depth with its error at the ephemeris in the neighbour's own aperture flux. Each is left out when it
-    was not stored."""
-    meta = (data.get("target") or {}).get("meta") or {}
-    rows = []
-    for key, name, what in (("crowdsap", "target light fraction (CROWDSAP)", CROWDSAP_DEFINITION),
-                            ("psffrac", "PSF flux fraction (PSFFRAC)", PSFFRAC_DEFINITION)):
-        v = _num(meta.get(key))
-        if v is not None:
-            rows.append({"key": key, "parameter": name, "value": v, "minus": None, "plus": None, "unit": "",
-                         "source": f"KBonus header keyword {key.upper()}: {what}", "text": f"{v:.2f}"})
-    px = _metrics(data, "rung5_pixels")
-    leak = px.get("leak_depth_ppm")
-    if isinstance(leak, list) and leak and _num(leak[0]) is not None:
-        e = _num(leak[1]) if len(leak) > 1 else None
-        kic = meta.get("tpf_org") or px.get("neighbour_kic")
-        whose = f"KIC {kic}" if kic else "the neighbour"
-        rows.append({"key": "leak", "parameter": "dip in the neighbour's aperture (leak test)", "value": _num(leak[0]),
-                     "minus": e, "plus": e, "unit": "ppm",
-                     "source": f"rung 5 leak test: the box depth at the ephemeris in the optimal-aperture flux of "
-                               f"{whose}", "text": f"{pm_text(leak[0], e, e, nd=0, comma=True)} ppm",
-                     "kic": kic})
-    return rows
-
-
 def dilution_sentence(data: dict, tex: bool = False) -> str | None:
     """The note's dilution sentence: CROWDSAP and PSFFRAC and the leak depth with its error; None without any."""
     rows = {r["key"]: r for r in dilution_rows(data)}
@@ -937,53 +536,6 @@ def dilution_sentence(data: dict, tex: bool = False) -> str | None:
                   f" the optimal-aperture flux of the neighbour{whose} the dip at this ephemeris is ", pm_text(leak["value"], leak["minus"], leak["plus"], nd=0, comma=True, tex=tex),
                   " ppm"]
     return _joined(tex, *parts, ".") if parts else None
-
-
-def figure_data_rows(data: dict) -> list[list]:
-    """The data behind the note's figure, one row per fold bin: [phase_h, flux_ppm, err_ppm, n, model_ppm], the model
-    interpolated at the bin's phase; [] without the plots block."""
-    plots = data.get("plots") or {}
-    model = [(float(p[0]), float(p[1])) for p in plots.get("model") or []
-             if _num(p[0]) is not None and _num(p[1]) is not None]
-    xs, ys = np.array([p[0] for p in model]), np.array([p[1] for p in model])
-    out = []
-    for b in plots.get("fold_bins") or []:
-        if not isinstance(b, list) or len(b) < 4 or _num(b[0]) is None:
-            continue
-        m = round(float(np.interp(b[0], xs, ys)), 2) if model else None
-        out.append([b[0], b[1], b[2], b[3], m])
-    return out
-
-
-def julian_date(when: datetime) -> float:
-    """The Julian date of a UTC time (2440587.5 at the Unix epoch); within a few minutes of BJD_TDB, which is all
-    "the next transits after a date" needs."""
-    return 2440587.5 + when.timestamp() / 86400.0
-
-
-def _utc_of(jd: float) -> datetime:
-    return datetime.fromtimestamp((jd - 2440587.5) * 86400.0, UTC)
-
-
-def next_transits(data: dict, after_bjd: float, n: int = 3) -> list[dict]:
-    """The first ``n`` transits predicted after ``after_bjd`` by the linear ephemeris (``ephem.predict_from``),
-    each {epoch, t_bkjd, t_bjd, window_min, date, text}: the window is the 1-sigma prediction error in minutes. []
-    without a timing block or when its fit is not ok."""
-    timing = data.get("timing")
-    if not isinstance(timing, dict) or timing.get("ok") is not True:
-        return []
-    after, period = float(after_bjd) - ds.BKJD_OFFSET, float(timing["period"])
-    epoch = int(timing["epoch_ref"]) + math.floor((after - float(timing["t_ref"])) / period)
-    while ephem.predict_from(timing, epoch)[0] <= after:
-        epoch += 1
-    out = []
-    for e in range(epoch, epoch + n):
-        t, err = ephem.predict_from(timing, e)
-        bjd, window = t + ds.BKJD_OFFSET, (err or 0.0) * 1440.0
-        day = date_words(_utc_of(bjd))
-        out.append({"epoch": e, "t_bkjd": t, "t_bjd": bjd, "window_min": window, "date": day,
-                    "text": f"epoch {e}: BJD_TDB {bjd:.4f} ± {window:.0f} min ({day})"})
-    return out
 
 
 def skysift_version() -> str:
@@ -1267,111 +819,6 @@ def _exofop_list(target_id, date, png: bool, pixels_figure: bool) -> list[tuple[
     return out
 
 
-def data_tag(date: str, tag: str, target_id: str) -> str:
-    """The suggested ExoFOP Data Tag, ``YYYYMMDD_username_description``, with the username to fill in."""
-    return f"{date}_<username>_{tag}-{_safe_target(target_id)}"
-
-
-def _cell(value) -> str:
-    """One field of an ExoFOP bulk file: empty for a missing value, never a pipe or a line break."""
-    return "" if value is None else re.sub(r"[|\r\n]+", " ", str(value)).strip()
-
-
-def _pipe_file(columns: tuple[str, ...], values: dict) -> str:
-    """ExoFOP's pipe-delimited bulk layout: a comment line naming the columns, then the one row."""
-    return "# " + "|".join(columns) + "\n" + "|".join(_cell(values.get(c)) for c in columns) + "\n"
-
-
-def _plain(value, minus=None, plus=None, nd: int = 2) -> tuple[str | None, str | None]:
-    """(value, its one error) for a bulk file: no thousands separator, the larger side of an asymmetric error."""
-    lo, hi = _num(minus), _num(plus)
-    err = max(e for e in (lo, hi) if e is not None) if (lo is not None or hi is not None) else None
-    parts = _pm_parts(value, err, err, nd)
-    return (parts[0], parts[2]) if parts else (None, None)
-
-
-def _pair(values: dict, name: str, unc: str, block, nd: int, errors_only: bool = False) -> None:
-    """A stored value dict into ``values[name]`` and its larger half-width into ``values[unc]``; with
-    ``errors_only`` neither unless the block carries both errors. An error never stands without its value."""
-    if not isinstance(block, dict):
-        return
-    lo, hi = _num(block.get("minus")), _num(block.get("plus"))
-    if errors_only and (lo is None or hi is None):
-        return
-    values[name], values[unc] = _plain(block.get("median"), lo, hi, nd)
-
-
-def _candname(data: dict) -> str:
-    """The SkySift name of the signal: ``SkySift-<target id>-s<signal id>``."""
-    target, sig = data.get("target") or {}, data.get("signal") or {}
-    return f"SkySift-{target.get('target_id') or 'target'}-s{sig.get('id')}"
-
-
-def render_exofop_planet(data: dict, date: str, tic: str | None, tag: str) -> str:
-    """``exofop/params_planet_<date>_001.txt``, ExoFOP's planet template (``EXOFOP_PLANET_COLUMNS``): the target
-    ``TIC<tic>.01`` (``TIC<TIC-TO-FILL>.01`` without a TIC id), flag ``newctoi`` with its discovery and candidate
-    name, disposition ``PC``, the ephemeris with its errors (epoch in full BJD_TDB), Rp/R*, a/R* and b only when the
-    bootstrap gives them errors, the planet's radius, temperature, insolation and orbit with theirs, ``prop_period``
-    0 and the paper URL and notes as placeholders. Every uncertainty is the larger half-width; empty fields are what
-    SkySift does not have."""
-    eph, planet, shape = data.get("ephemeris") or {}, data.get("planet") or {}, data.get("shape") or {}
-    e = _errors(eph)
-    period = _plain(eph.get("period_days"), e["period"], e["period"], 5)
-    epoch = _plain(_bjd(eph, "t0"), e["t0"], e["t0"], 4)
-    depth = _plain(eph.get("depth_ppm"), e["depth"], e["depth"], 0)
-    duration = _plain(eph.get("duration_h"), e["duration_minus"], e["duration_plus"], 2)
-    values = {"target": f"TIC{tic or TIC_PLACEHOLDER}.01", "flag": "newctoi", "disp": "PC",
-              "discovery": EXOFOP_DISCOVERY, "candname": _candname(data),
-              "period": period[0], "period_unc": period[1], "epoch": epoch[0], "epoch_unc": epoch[1],
-              "depth": depth[0], "depth_unc": depth[1], "duration": duration[0], "duration_unc": duration[1],
-              "tag": tag, "prop_period": 0, "paper": "<PAPER-URL-TO-FILL>", "notes": "<NOTES-TO-FILL>"}
-    if shape.get("ok") is True:
-        for name, unc, key, nd in (("imp", "imp_unc", "b", 2), ("r_planet", "r_planet_err", "k", 4),
-                                   ("ar_star", "ar_star_err", "a_over_r", 1)):
-            _pair(values, name, unc, shape.get(key), nd, errors_only=True)
-    for name, unc, key, nd in (("radius", "radius_unc", "rp_rearth", 2), ("temp", "temp_unc", "teq_k", 0),
-                               ("insol", "insol_unc", "insolation_earth", 2), ("sma", "sma_unc", "a_au", 4)):
-        _pair(values, name, unc, planet.get(key), nd)
-    return _pipe_file(EXOFOP_PLANET_COLUMNS, values)
-
-
-def stellar_note(data: dict) -> str:
-    """The stellar file's note, at most ``EXOFOP_NOTES_MAX`` characters: each parameter's method from
-    ``provenance_rows`` (cut before its numbers), parameters with one method named together, in the order Teff,
-    radius, mass, distance, density; a method that would pass the limit is left out."""
-    short = {"effective temperature": "Teff", "radius": "R", "mass": "M", "distance": "dist", "density": "density"}
-    methods = {r["parameter"]: r["method"].split(" at ")[0].split(",")[0].strip() for r in provenance_rows(data)
-               if r["parameter"] in short and r["method"]}
-    groups: dict[str, list[str]] = {}
-    for parameter, name in short.items():
-        if parameter in methods:
-            groups.setdefault(methods[parameter], []).append(name)
-    note = ""
-    for method, names in groups.items():
-        part = f"{', '.join(names)}: {method}"
-        if len(f"{note}; {part}" if note else part) <= EXOFOP_NOTES_MAX:
-            note = f"{note}; {part}" if note else part
-    return note
-
-
-def render_exofop_stellar(data: dict, date: str, tic: str | None, tag: str) -> str | None:
-    """``exofop/params_stellar_<date>_001.txt``, ExoFOP's stellar template (``EXOFOP_STELLAR_COLUMNS``): the target
-    ``KIC<kic>`` (an accepted prefix, so no TIC is needed; ``TIC<tic>`` or the placeholder without a KIC), the
-    spectral type, Teff, log g, radius, mass, density and distance with their uncertainties (the larger half-width),
-    ``prop_period`` 0 and a note naming each parameter's method (``stellar_note``). None when the star has no
-    parameters (``star_characterized``), so no file is written."""
-    if not star_characterized(data):
-        return None
-    star, kic = data.get("star") or {}, (data.get("target") or {}).get("kic")
-    values = {"target": f"KIC{int(kic)}" if kic else f"TIC{tic or TIC_PLACEHOLDER}",
-              "sp_type": star.get("spectral_type"), "tag": tag, "prop_period": 0, "notes": stellar_note(data)}
-    for name, block, nd in (("teff", star.get("teff"), 0), ("logg", logg_value(star), 3),
-                            ("radius", star.get("radius"), 3), ("mass", star.get("mass"), 3),
-                            ("dens", star.get("density_gcc"), 2), ("dist", star.get("distance_pc"), 0)):
-        _pair(values, name, f"{name}_unc", block, nd)
-    return _pipe_file(EXOFOP_STELLAR_COLUMNS, values)
-
-
 def gate_problems(raw: dict) -> list[str]:
     """Why a live Zenodo draft is refused on the stored dossier JSON, one sentence per problem: the ephemeris carries
     no error (no timing block, or its fit is not ok) and the transit shape carries no error (no shape block, or it
@@ -1454,7 +901,7 @@ def _fields(data: dict, f: dict) -> dict:
         f["note_words"], f["note_problems"] = note_words(tex), note_problems(note_words(tex), tex)
     f.setdefault("note_problems", note_problems(f["note_words"]))
     f.setdefault("limits", NOTE_LIMITS)
-    f.setdefault("data_tag", data_tag(f["date"], f["tag"], target_id))
+    f.setdefault("data_tag", data_tag(f["date"], f["tag"], _safe_target(target_id)))
     day = datetime.strptime(f["date"], "%Y%m%d").replace(tzinfo=UTC)
     f.setdefault("after_bjd", julian_date(day))
     f.setdefault("after_words", date_words(day))
@@ -2192,7 +1639,7 @@ def _write_pack(out_dir: Path, data: dict, raw: dict, row: dict, lc, fnorm, targ
     _write(out_dir / "zenodo_metadata.json", jsonutil.dumps(metadata, indent=1))
     for name, source, _what in _exofop_list(target_id, date, png, pixels_figure):
         shutil.copyfile(out_dir / source, out_dir / "exofop" / name)
-    tag = data_tag(date, review["tag"], target_id)
+    tag = data_tag(date, review["tag"], _safe_target(target_id))
     _write(out_dir / "exofop" / EXOFOP_PLANET_TEMPLATE.format(date=date),
            render_exofop_planet(data, date, review["tic"], tag))
     stellar = render_exofop_stellar(data, date, review["tic"], tag)
