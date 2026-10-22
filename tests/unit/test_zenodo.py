@@ -166,3 +166,11 @@ def test_metadata_description_quotes_the_ephemeris_with_errors():
     text = metadata_from(fitted, None)["description"]
     assert "P = 40.289863 ± 0.000091 d, T0 = BJD_TDB 2454969.3003 ± 0.0019, duration 2.30 +0.06/-0.05 h" in text
     assert "no error" not in text and chr(0x2014) not in text
+
+
+def test_a_prior_claim_says_found_again_once():
+    prior = ('A. Author reported this signal first, in "A title" (Zenodo, 13 October 2026, doi:10.5281/zenodo.1). '
+             "SkySift found it again in a blind sweep, so this is an independent recovery and vetting of it.")
+    text = metadata_from(DATA, None, prior=prior)["description"]
+    assert text.count("again in a blind sweep") == 1       # once, in the prior claim, not again at the close
+    assert "submission pack of a transit candidate found by the SkySift engine" in text

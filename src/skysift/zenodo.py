@@ -165,10 +165,9 @@ def metadata_from(data: dict, citation: dict | None, prior: str | None = None) -
     creators = [c for a in (citation or {}).get("authors") or [] if isinstance(a, dict) and (c := _creator(a))]
     fap_text, fpp_text = probability_sentences(data)
     ephemeris = ephemeris_sentence(data)
-    found = "found again in a blind sweep" if prior else "found"
     paragraphs = [data.get("summary") or "", f"Prior claim: {prior}" if prior else "",
                   f"Ephemeris: {ephemeris}." if ephemeris else "", f"{fap_text} {fpp_text}",
-                  (f"This record is the submission pack of a transit candidate {found} by the SkySift engine in the "
+                  ("This record is the submission pack of a transit candidate found by the SkySift engine in the "
                    "KBonus Kepler Background light curves: the detrended light curve, the ephemeris and parameters "
                    "with their errors, the per-event depths, the vetting metrics, the figures, the standalone "
                    "dossier, a Research Note draft and the provenance of every query.")]

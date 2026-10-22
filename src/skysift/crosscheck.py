@@ -171,13 +171,20 @@ def _table_value(x: float, xcol: int, ycol: int) -> float:
     return float(np.interp(x, tab[order, xcol], tab[order, ycol]))
 
 
+def _table_max(col: int) -> float:
+    from skysift.stars import mamajek_table
+    return float(np.max(mamajek_table()[:, col]))
+
+
 def neighbour_params(row: dict | None, bp_rp) -> dict:
     """The Teff (K), radius and mass (solar) the tool sets on a TIC row that lacks them (ruling q), each with its
     source: Gaia DR3's GSP-Phot Teff and radius and its FLAME mass from ``row`` (the neighbour's row of the Gaia query,
     None when Gaia had none or was not reached); a mass missing beside a GSP-Phot radius from the Mamajek dwarf table's
     mass-radius relation at that radius; anything else missing from the table at the BP-RP colour (Pecaut and Mamajek
-    2013), the row's own colour first. A parameter neither Gaia nor a colour gives is None, so the package's own
-    estimate stays. Returns {"teff", "radius", "mass", "source": {"teff", "radius", "mass"}}."""
+    2013), the row's own colour first. A GSP-Phot radius above the dwarf table's largest (an evolved star) without a
+    FLAME mass leaves the mass None, its source saying "evolved; mass left to the package", since the dwarf relation
+    would give a dwarf's mass. A parameter neither Gaia nor a colour gives is None, so the package's own estimate
+    stays. Returns {"teff", "radius", "mass", "source": {"teff", "radius", "mass"}}."""
     from skysift.priors import CITATIONS
     row = row or {}
     colour = _finite(row.get("bp_rp"))
@@ -191,6 +198,10 @@ def neighbour_params(row: dict | None, bp_rp) -> dict:
         value = _finite(row.get(gaia_key))
         if value is not None and value > 0:
             out[key], out["source"][key] = value, gaia_words
+        elif key == "mass" and out["source"].get("radius") == "Gaia DR3 GSP-Phot" and out["radius"] > _table_max(2):
+            out[key] = None
+            out["source"][key] = (f"Gaia DR3 GSP-Phot radius {out['radius']:.3f} above the dwarf table's largest "
+                                  f"{_table_max(2):.2f}: evolved; mass left to the package")
         elif key == "mass" and out["source"].get("radius") == "Gaia DR3 GSP-Phot":
             out[key] = round(_table_value(out["radius"], 2, 3), 3)
             out["source"][key] = (f"Mamajek dwarf table mass-radius relation at the GSP-Phot radius "
@@ -204,18 +215,19 @@ def neighbour_params(row: dict | None, bp_rp) -> dict:
 
 
 def _query_neighbour_params(neighbours: list[dict], *, fetch, store, target_id: str) -> tuple[dict, str | None]:
-    """({source_id: Gaia row}, None) for the neighbours from one logged query, or ({}, the reason) when Gaia did not
-    answer."""
+    """({source_id: Gaia row}, None) for the neighbours from one logged query, or ({}, the reason, naming the error's
+    type and message) when the query failed in any way (an outage, a refusal of the budget, an HTTP 400 on a schema
+    change): the colour route then gives the parameters, and nothing long has started."""
     from skysift import stars
-    from skysift.net import ServiceUnavailable
     ids = [str(n.get("source_id")) for n in neighbours if re.fullmatch(r"[0-9]+", str(n.get("source_id") or ""))]
     if not ids:
         return {}, None
     try:
         rows = stars._adql(Q_NEIGHBOUR_PARAMS.format(ids=", ".join(ids)), "neighbour parameters", ("source_id",),
                            fetch=fetch, store=store, target=SimpleNamespace(target_id=target_id))
-    except ServiceUnavailable as e:
-        return {}, f"Gaia DR3 was not reached for the neighbours' parameters ({e}), so they come from the colour"
+    except Exception as e:          # noqa: BLE001  (any failure: the colour route stands, and the note names it)
+        return {}, (f"The Gaia DR3 query for the neighbours' parameters failed ({type(e).__name__}: {e}), so they "
+                    "come from the colour")
     return {str(r.get("source_id")): r for r in rows}, None
 
 
@@ -321,7 +333,12 @@ def export_inputs(store, blob, settings, target_id: str, out_dir: Path, *, fetch
     lc = LightCurveLoader(store, blob, source_factory=ds._offline_factory(target_id, sid)).load(target, pin=True)
     rows = _lightcurve_rows(lc, ds.whitened(lc, data["signal"]), data["ephemeris"])
     keep, half_width = clip_window(rows[:, 0], rows[:, 1], data["ephemeris"])
+    eph = data["ephemeris"]
+    phase = (rows[:, 0] - float(eph["t0_bkjd"]) + float(eph["period_days"]) / 2) % float(eph["period_days"]) \
+        - float(eph["period_days"]) / 2
+    in_transit = np.abs(phase) <= float(eph["duration_h"]) / 48.0     # the box model's half a duration
     clipped, rows = int((~keep).sum()), rows[keep]
+    clipped_in = int((~keep & in_transit).sum())
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     with (out_dir / "lightcurve.csv").open("w", encoding="utf-8", newline="") as fh:
@@ -358,7 +375,9 @@ def export_inputs(store, blob, settings, target_id: str, out_dir: Path, *, fetch
               "tpf_kept": [q for q in quarters if q not in fetched], "tpf_fetched": fetched, "tpf_missing": missing,
               "lightcurve": {"file": "lightcurve.csv", "window_durations": int(WINDOW_DURATIONS), "n": len(rows),
                              "columns": ["time_bkjd", "flux_rel", "err_rel", "quarter"], "clipped": clipped,
-                             "clip_mad": CLIP_MAD, "clip_half_width": half_width},
+                             "clipped_in_transit": clipped_in, "clipped_out_of_transit": clipped - clipped_in,
+                             "clip_mad": CLIP_MAD, "clip_mad_kind": "raw (5 MAD is about 3.4 sigma)",
+                             "clip_half_width": half_width},
               "fingerprint": inputs_fingerprint(data)}
     (out_dir / "inputs.json").write_text(jsonutil.dumps(inputs, indent=1), encoding="utf-8")
     return out_dir
@@ -539,11 +558,13 @@ def range_text(block: dict, metric: str) -> str:
 
 
 CLASS_PHRASES = {
-    "validated": ("inside its validation lines (FPP below 0.015, NFPP below 0.001), which the paper could not set at "
-                  "the 30-minute cadence of these data (its section 4.2), so it is not called validated here"),
-    "likely planet": "a likely planet (FPP below 0.5, NFPP below 0.001)",
-    "likely nearby false positive": "a likely nearby false positive (NFPP above 0.1)",
-    "candidate": "in none of its classes, so it stays a candidate",
+    "validated": ("the medians fall inside the paper's validation lines (FPP below 0.015, NFPP below 0.001), which "
+                  "the paper could not set at the 30-minute cadence of these data (its section 4.2), so the signal "
+                  "is not called validated here"),
+    "likely planet": "the medians fall in the paper's class 'likely planet' (FPP below 0.5, NFPP below 0.001)",
+    "likely nearby false positive": ("the medians fall in the paper's class 'likely nearby false positive' (NFPP "
+                                     "above 0.1)"),
+    "candidate": "the medians fall in none of the paper's classes, so the signal stays a candidate",
 }
 
 
@@ -572,14 +593,16 @@ def dominant_sentence(block: dict) -> str | None:
 
 def owner_flag(data: dict) -> str | None:
     """The README's line for the owner when a current cross-check's median full FPP is at or above 0.5 (ruling t):
-    the number, the dominant scenario and what to do; None otherwise."""
+    the median with its 16th to 84th percentile range (ruling s), the dominant scenario and what to do; None
+    otherwise."""
     block = data.get("cross_check")
     if not complete(block) or block.get("current") is not True:
         return None
     why = dominant_sentence(block)
     if why is None:
         return None
-    return (f"TRICERATOPS puts the median full false-positive probability at {probability_text(block['fpp'])}. "
+    return (f"TRICERATOPS puts the median full false-positive probability at {probability_text(block['fpp'])} "
+            f"(16th to 84th percentile {range_text(block, 'fpp')}). "
             f"{why} Read the cross-check (data/cross_check.json) before the upload; it does not block the draft.")
 
 
@@ -603,7 +626,7 @@ def comparison_sentence(data: dict, tex: bool = False) -> str | None:
             f"{_p(block['fpp_no_stp'])} ({range_text(block, 'fpp_no_stp')}) without a planet transiting an "
             "unresolved bound companion (STP), a scenario SkySift's model leaves out, and a nearby false-positive "
             f"probability of {_p(block['nfpp'])} ({range_text(block, 'nfpp')}), the medians of {n} runs{left_out}.")
-    rest += f" On the scale of Giacalone et al. the medians are {CLASS_PHRASES[classify(block['fpp'], block['nfpp'])]}."
+    rest += f" On the scale of Giacalone et al. {CLASS_PHRASES[classify(block['fpp'], block['nfpp'])]}."
     dominant = dominant_sentence(block)
     if dominant:
         rest += f" {dominant}"

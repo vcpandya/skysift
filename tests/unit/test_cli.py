@@ -432,6 +432,8 @@ def test_cli_crosscheck_export_and_import(settings, monkeypatch, tmp_path):
     report = json.loads(r.stdout)
     assert report["current"] is True and report["fpp"] == 0.012 and report["class"] == "validated"
     assert report["fpp_p16"] == report["fpp_p84"] == 0.012 and report["n_degenerate"] == 0
+    assert report["fpp_no_stp_p16"] == report["fpp_no_stp_p84"] == 0.012           # M5: every range, not the FPP's only
+    assert report["nfpp_p16"] == report["nfpp_p84"] == 1e-4
     assert report["blocks_live_gate"] is False and report["live_gate_reason"] is None
     assert env.store.dossier(STAGE2_TARGET)["cross_check"]["fpp"] == 0.012
     bad = tmp_path / "bad.json"

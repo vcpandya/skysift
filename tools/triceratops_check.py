@@ -34,12 +34,19 @@ it from photometry) and an added star take the Gaia DR3 or dwarf-table values th
 ``update_star`` one parameter at a time; ``params_source`` records per star which source won (``param_updates``).
 
 Flux shares (ruling n of 22 October 2026). ``calc_depths`` runs on the 3 x 3 box around the target, which gives the
-package's Gaussian-box fractions; the tool then overwrites ``fluxratio`` and ``tdepth`` (``leakage_shares``): the
-neighbours' light in the target's KBonus PSF light curve is bounded by the contamination budget B = 1 - CROWDSAP of
-the target's KBonus file, shared among them in proportion to the box fractions re-weighted into the Kepler band with
-Gaia G as the proxy (ruling r), so fluxratio_target = 1 / (1 + B), fluxratio_i = share_i / (1 + B) and the depth star
-i would need is the on-target depth over share_i (0 above 1, as the package does). Without a CROWDSAP the package's
-box stands, labelled so. No star is removed and no scenario dropped.
+package's Gaussian-box fractions; the tool then overwrites ``fluxratio`` and ``tdepth`` (``leakage_shares``).
+CROWDSAP C of the target's KBonus file is the target's fraction of the aperture light, so the neighbours' light in
+its PSF light curve over the target's own is bounded by the contamination budget B = (1 - C) / C (ruling n as amended
+after the Task 9 review), shared among them in proportion to the box fractions re-weighted into the Kepler band with
+Gaia G as the proxy (ruling r). Then fluxratio_target = 1 / (1 + B) = C, fluxratio_i = share_i / (1 + B) =
+(1 - C) g_i / sum g_j, and the depth star i would need is the on-target depth over share_i (0 above 1, as the package
+does). A neighbour the TIC lacks sits at the target's pixel, so its box fraction is weighted by the Gaussian box
+fraction at its stored separation along a pixel row (``offset_box_factor``). No star is removed and no scenario
+dropped.
+
+The export must carry what the revision added (the target's CROWDSAP in (0, 1] and PSFFRAC key, each neighbour's
+parameter sources, the clip count; ``export_problems``): the tool refuses an older export with exit 2 unless
+``--allow-old-export`` is given, and then the package's box shares stand and the result records the flag.
 
 Runs (ruling s). ``calc_probs(exptime=0.0204, N=1_000_000, parallel=True, dilution_corrected=True)`` runs ``--runs``
 times (20 by default, the import's minimum) with seeds ``--seed`` to ``--seed + runs - 1``. The package's parallel
@@ -53,10 +60,17 @@ seed-to-seed standard deviation of the parallel NFPP (``parallel_check_record``)
 tool says so and runs the rest serially. Each run stores its FPP, FPP without STP, NFPP, P(STP), P(PTP), best scenario and
 whether it was degenerate; the medians and the 16th and 84th percentiles are over the runs that are not.
 
+Checkpoint. After the check and after every run the tool writes ``<out stem>.partial.json`` (``partial_path``): the
+runs so far, the check, the parallel state and the settings that define a run (``checkpoint_key``). ``--resume``
+reads it, refuses it when the inputs fingerprint or any of those settings differ, and goes on from the next seed. The
+result file is written once at the end and the partial file removed. ``--draws`` (default 1e6) sets the draws per run,
+so ``--runs 20 --draws 2000 --check-draws 2000`` runs ``main`` end to end in minutes.
+
 The helpers above the guarded ``import triceratops`` need numpy and astropy only, so the engine's tests import them.
 
     python -I tools/triceratops_check.py --inputs <export dir> --out <result.json> [--runs 20] [--seed 1]
-        [--parallel-check | --no-parallel-check] [--check-draws 20000]
+        [--draws 1000000] [--parallel-check | --no-parallel-check] [--check-draws 20000] [--resume]
+        [--allow-old-export]
 """
 from __future__ import annotations
 
@@ -87,12 +101,16 @@ NOISE_SIGMAS = 3.0                  # an NFPP gap within this many seed-to-seed 
 METRICS = ("fpp", "fpp_no_stp", "nfpp", "p_stp", "p_ptp")          # skysift.crosscheck.METRICS
 RUN_KEYS = ("seed", "fpp", "fpp_no_stp", "nfpp", "p_stp", "p_ptp", "best_scenario", "degenerate")
 PARAMS = (("Teff", "teff"), ("rad", "radius"), ("mass", "mass"))  # the package's column, the export's key
+PIXEL_ARCSEC = 4.0                  # the package's Kepler pixel
+PSF_SIGMA_PIX = 0.75                # the package's Gaussian PSF (calc_depths)
 BUDGET, BOX = "contamination budget", "package Gaussian box"
 CAVEATS = (
     ("The light is shared in the Kepler band with Gaia G as the proxy: the package's own shares use TIC TESS "
      "magnitudes (Tmag), which understate a G-type neighbour's share beside a red target in the Kepler band. The "
-     "package's bound-companion and background-star dilution stay in the TESS band, a known approximation. The limb "
-     "darkening comes from the package's Kepler table."),
+     "package's bound-companion and background-star dilution stay in the TESS band, a known approximation with a "
+     "direction each way: a bound companion of a cool dwarf is cooler still, so the TESS band overstates its light "
+     "and the dilution it causes, while background field stars are mostly bluer than the target, so the TESS band "
+     "understates theirs. The limb darkening comes from the package's Kepler table."),
     ("No high-resolution imaging exists, so the package lets an unresolved bound companion sit anywhere within "
      "2.2 arcsec of the target; a planet transiting such a companion (STP) counts towards the full FPP and is the "
      "open false-positive channel. SkySift's model has no such scenario, so the FPP without STP, (FPP - P_STP) / "
@@ -242,21 +260,44 @@ def read_lightcurve(path: Path) -> dict[str, np.ndarray]:
 
 # ---------------------------------------------------------------------------------------------------- flux shares
 
-def leakage_shares(stars, crowdsap, gmags, tdepth: float) -> dict:
+def offset_box_factor(sep_arcsec) -> float:
+    """The package's Gaussian-box fraction of a star ``sep_arcsec`` from the target along a pixel row, over that of a
+    star on the target, both with the target at the centre of the 3 x 3 box: [Phi((1.5 - d) / s) - Phi((-1.5 - d) /
+    s)] / [Phi(1.5 / s) - Phi(-1.5 / s)] with d the separation in Kepler pixels and s the package's PSF sigma. An added
+    star is placed at the target's pixel, as ``add_star`` places it, so its box fraction is that of a star at 0 arcsec;
+    this factor puts it back at its stored separation (1 without one)."""
+    sep = _finite(sep_arcsec)
+    if sep is None:
+        return 1.0
+    d, s = abs(sep) / PIXEL_ARCSEC, PSF_SIGMA_PIX
+
+    def phi(x: float) -> float:
+        return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
+    return (phi((1.5 - d) / s) - phi((-1.5 - d) / s)) / (phi(1.5 / s) - phi(-1.5 / s))
+
+
+def leakage_shares(stars, crowdsap, gmags, tdepth: float, box_factors=None) -> dict:
     """The flux shares that replace the package's (ruling n). ``stars``: TRICERATOPS's rows after ``calc_depths``,
     the target first, each with "ID", "Tmag" and "fluxratio" (the package's Gaussian-box fraction of the box light,
     shared by Tmag); ``gmags``: Gaia G per row (None where unknown); ``tdepth``: the on-target depth (fraction).
 
-    Each box fraction is re-weighted into the Kepler band with G as the proxy (ruling r), by 10^(-0.4 ((G_i - T_i) -
-    (G_t - T_t))), a star without G keeping the target's offset, and the re-weighted fractions g_i normalised. With a
-    CROWDSAP in (0, 1] the budget B = 1 - CROWDSAP is shared among the neighbours as share_i = L_i F_i / F_t =
-    B g_i / sum_j g_j; then fluxratio_target = 1 / (1 + B), fluxratio_i = share_i / (1 + B), the target keeps
-    ``tdepth`` and star i needs tdepth / share_i, set to 0 above 1 or without a share, as the package does. Without
-    one the package's box stands: its fluxratio, the share fluxratio_i / fluxratio_target it implies and its depths.
+    ``box_factors`` (one per row, 1 where None): a multiplier on each box fraction, ``offset_box_factor`` for a star
+    the tool added at the target's pixel.
 
-    Returns {"source": "contamination budget" | "package Gaussian box", "budget": B or None, "crowdsap", "rows":
-    [{"id", "g_package", "band", "kepler_flux" (F_i / F_t from G, None without it), "g", "share" (None for the
-    target), "fluxratio", "tdepth", "source"}]}."""
+    Each box fraction is re-weighted into the Kepler band with G as the proxy (ruling r), by 10^(-0.4 ((G_i - T_i) -
+    (G_t - T_t))), a star without G keeping the target's offset, and the re-weighted fractions g_i normalised.
+    CROWDSAP C is the target's fraction of the aperture light, so with a C in (0, 1] the neighbours' light over the
+    target's is at most B = (1 - C) / C (ruling n as amended), shared as share_i = L_i F_i / F_t = B g_i / sum_j g_j
+    over the neighbours; then fluxratio_target = 1 / (1 + B) = C, fluxratio_i = share_i / (1 + B) = (1 - C) g_i /
+    sum_j g_j, the target keeps ``tdepth`` and star i needs tdepth / share_i, set to 0 above 1 or without a share, as
+    the package does. Without one the package's box stands: its fluxratio, the share fluxratio_i / fluxratio_target it
+    implies and its depths.
+
+    Returns {"source": "contamination budget" | "package Gaussian box", "budget": B = (1 - C) / C or None,
+    "contaminating_fraction": 1 - C or None (the neighbours' fraction of the aperture light), "crowdsap", "rows":
+    [{"id", "g_package", "box_factor", "band", "kepler_flux" (F_i / F_t from G, None without it), "g", "share" (None
+    for the target), "fluxratio", "tdepth", "source"}]}."""
+    factors = [1.0 if f is None else float(f) for f in (box_factors or [None] * len(stars))]
     pkg = [_finite(s.get("fluxratio")) or 0.0 for s in stars]
     tmag = [_finite(s.get("Tmag")) for s in stars]
     g = [_finite(x) for x in gmags]
@@ -264,41 +305,44 @@ def leakage_shares(stars, crowdsap, gmags, tdepth: float) -> dict:
     rows, weights = [], []
     for i, s in enumerate(stars):
         has_g = None not in (gt, tt, g[i], tmag[i])
-        weights.append(pkg[i] * (10 ** (-0.4 * ((g[i] - tmag[i]) - (gt - tt))) if has_g else 1.0))
-        rows.append({"id": str(s.get("ID")), "g_package": pkg[i], "band": "Gaia G" if has_g else "Tmag",
+        weights.append(pkg[i] * factors[i] * (10 ** (-0.4 * ((g[i] - tmag[i]) - (gt - tt))) if has_g else 1.0))
+        rows.append({"id": str(s.get("ID")), "g_package": pkg[i], "box_factor": factors[i],
+                     "band": "Gaia G" if has_g else "Tmag",
                      "kepler_flux": 10 ** (-0.4 * (g[i] - gt)) if None not in (g[i], gt) else None})
     total = sum(weights)
     for r, w in zip(rows, weights, strict=True):
         r["g"] = w / total if total > 0 else 0.0
     c = _finite(crowdsap)
     if c is not None and 0.0 < c <= 1.0:
-        budget = 1.0 - c
+        budget = (1.0 - c) / c
         others = sum(r["g"] for r in rows[1:])
         for i, r in enumerate(rows):
             if i == 0:
-                r.update(share=None, fluxratio=1.0 / (1.0 + budget), tdepth=float(tdepth))
+                r.update(share=None, fluxratio=c, tdepth=float(tdepth))
                 continue
             share = budget * r["g"] / others if others > 0 else 0.0
             need = tdepth / share if share > 0 else 0.0
-            r.update(share=share, fluxratio=share / (1.0 + budget), tdepth=need if need <= 1 else 0.0)
+            r.update(share=share, fluxratio=(1.0 - c) * r["g"] / others if others > 0 else 0.0,
+                     tdepth=need if need <= 1 else 0.0)
             r["source"] = BUDGET
         rows[0]["source"] = BUDGET
-        return {"source": BUDGET, "budget": budget, "crowdsap": c, "rows": rows}
+        return {"source": BUDGET, "budget": budget, "contaminating_fraction": 1.0 - c, "crowdsap": c, "rows": rows}
     for i, r in enumerate(rows):
         need = tdepth * pkg[0] / pkg[i] if pkg[i] > 0 else 0.0
         r.update(share=None if i == 0 else (pkg[i] / pkg[0] if pkg[0] > 0 else None), fluxratio=pkg[i],
                  tdepth=need if need <= 1 else 0.0, source=BOX)
-    return {"source": BOX, "budget": None, "crowdsap": c, "rows": rows}
+    return {"source": BOX, "budget": None, "contaminating_fraction": None, "crowdsap": c, "rows": rows}
 
 
 def leakage_caveat(shares: dict, crowdsap) -> str:
     """The caveat on the flux shares the run used (``leakage_shares``)."""
     if shares["source"] == BUDGET:
-        return (f"The light the neighbours leak into the target's KBonus PSF light curve is bounded by the "
-                f"contamination budget 1 - CROWDSAP = {shares['budget']:.4f} of the target's KBonus file (CROWDSAP "
-                f"{float(crowdsap):.4f}), shared among them by the package's Gaussian-box fractions in the Kepler "
-                "band (Gaia G as the proxy). The PSF fit removes that light to first order, so each share, and the "
-                "nearby false-positive probability with it, is an upper bound.")
+        return (f"CROWDSAP {float(crowdsap):.4f} of the target's KBonus file is the target's fraction of the aperture "
+                "light, so the light the neighbours leak into its KBonus PSF light curve is at most (1 - CROWDSAP) / "
+                f"CROWDSAP = {shares['budget']:.4f} of the target's own (the target's flux ratio is CROWDSAP), shared "
+                "among them by the package's Gaussian-box fractions in the Kepler band (Gaia G as the proxy). The "
+                "PSF fit removes that light to first order, so each share, and the nearby false-positive probability "
+                "with it, is an upper bound.")
     return ("The export carries no CROWDSAP, so the package's Gaussian-box shares of the 3 x 3 box light are kept; "
             "they describe aperture photometry, not the KBonus PSF fit, and overstate the neighbours' share.")
 
@@ -316,15 +360,41 @@ def leak_caveat(leak: dict | None) -> str | None:
 
 
 def clip_caveat(lightcurve: dict) -> str | None:
-    """The caveat on the export's 5 MAD clip (ruling p); None for an export without the count."""
+    """The caveat on the export's 5 MAD clip (ruling p), a raw MAD (one MAD is 0.6745 sigma, so 5 MAD is about 3.4
+    sigma), with the clipped points inside and outside the transit when the export counts them; None for an export
+    without the count."""
     n = lightcurve.get("clipped")
     if not isinstance(n, int):
         return None
     mad = lightcurve.get("clip_mad", 5.0)
+    rule = f"{mad:g} raw median absolute deviations (about {mad * 0.6745:.1f} sigma)"
     if n == 0:
-        return f"No point of the exported window lay further than {mad:g} median absolute deviations from a box model."
-    return (f"{n} point{'s' if n != 1 else ''} further than {mad:g} median absolute deviations from a box model of "
-            "the transit were clipped from the exported window.")
+        return f"No point of the exported window lay further than {rule} from a box model of the transit."
+    inside, outside = lightcurve.get("clipped_in_transit"), lightcurve.get("clipped_out_of_transit")
+    split = (f" ({inside} in transit, {outside} out of transit)" if isinstance(inside, int)
+             and isinstance(outside, int) else "")
+    return (f"{n} point{'s' if n != 1 else ''} further than {rule} from a box model of the transit were clipped "
+            f"from the exported window{split}.")
+
+
+def export_problems(inputs: dict) -> list[str]:
+    """What an export lacks of the cross-check revision of 22 October 2026: the target's CROWDSAP (in (0, 1]) and its
+    PSFFRAC key, each neighbour's ``params_source`` and the light curve's clip count. [] for a current export."""
+    out = []
+    tgt = inputs.get("target") or {}
+    c = _finite(tgt.get("crowdsap"))
+    if "crowdsap" not in tgt:
+        out.append("the target has no crowdsap key")
+    elif c is None or not 0.0 < c <= 1.0:
+        out.append(f"the target's CROWDSAP {tgt.get('crowdsap')!r} is not in (0, 1]")
+    if "psffrac" not in tgt:
+        out.append("the target has no psffrac key")
+    lacking = [str(n.get("source_id")) for n in inputs.get("neighbours") or [] if "params_source" not in n]
+    if lacking:
+        out.append(f"neighbour{'s' if len(lacking) != 1 else ''} {', '.join(lacking)} carry no parameter sources")
+    if not isinstance((inputs.get("lightcurve") or {}).get("clipped"), int):
+        out.append("the light curve has no clip count")
+    return out
 
 
 # ---------------------------------------------------------------------------------------------------- parameters
@@ -343,13 +413,14 @@ def param_updates(row: dict, given: dict | None, added: bool) -> tuple[list[tupl
             sources[col] = "TIC"
             continue
         value = _finite((given or {}).get(key))
+        said = ((given or {}).get("params_source") or {}).get(key)
         if value is not None:
             updates.append((col, value))
-            sources[col] = ((given or {}).get("params_source") or {}).get(key) or "the export"
-        elif col in estimated:
-            sources[col] = "TRICERATOPS estimate from photometry"
-        else:
-            sources[col] = "none (the package assumes solar values)"
+            sources[col] = said or "the export"
+            continue
+        stands = ("TRICERATOPS estimate from photometry" if col in estimated
+                  else "none (the package assumes solar values)")
+        sources[col] = f"{said}: {stands}" if said else stands
     return updates, sources
 
 
@@ -473,6 +544,67 @@ def assemble_result(runs: list[dict], stars: list[dict], settings: dict, inputs:
                          "median_run_seed": runs[nearest]["seed"]}}
 
 
+# ---------------------------------------------------------------------------------------------------- checkpoint
+
+def partial_path(out: Path) -> Path:
+    """The checkpoint beside the result file: ``<out stem>.partial.json``."""
+    out = Path(out)
+    return out.with_name(out.stem + ".partial.json")
+
+
+def checkpoint_key(fingerprint: str, *, seed: int, draws: int, check_draws: int, parallel_check: bool,
+                   flux_err: float, shares: dict, quarters, allow_old_export: bool, version: str) -> dict:
+    """What a resumed run must share with the runs already made: the inputs' fingerprint, the first seed, the draws
+    per run, the check's draws, the exposure time, the flux error, the flux shares, the quarters, whether an older
+    export was allowed and the package version."""
+    return {"inputs_sha256": fingerprint, "first_seed": int(seed), "N": int(draws),
+            "check_draws": int(check_draws) if parallel_check else None, "parallel_check": bool(parallel_check),
+            "exptime_days": EXPTIME_DAYS, "flux_err_rel_robust": float(flux_err),
+            "flux_shares": {k: shares.get(k) for k in ("source", "budget", "crowdsap")},
+            "quarters": [int(q) for q in quarters], "allow_old_export": bool(allow_old_export),
+            "tool_version": str(version)}
+
+
+def new_state() -> dict:
+    """The state a checkpoint keeps: the runs so far, the serial-against-parallel record, the parallel path's
+    failure, whether the parallel path is in use, and the run numbers a resume started at."""
+    return {"runs": [], "check": None, "failure": None, "parallel": True, "resumes": []}
+
+
+def write_partial(path: Path, key: dict, state: dict) -> None:
+    """Write the checkpoint through a temporary file and a rename, so a stop in the middle of a write leaves the last
+    whole checkpoint."""
+    path = Path(path)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps({"key": key, **state}, indent=1, allow_nan=False), encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def resume_state(path: Path, key: dict) -> dict:
+    """The state of the checkpoint at ``path`` (``new_state``'s keys). Raises OSError when it cannot be read and
+    ValueError when it is not a checkpoint, when its key differs from ``key`` (naming what differs), or when its runs
+    are not the consecutive seeds from the first."""
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(data, dict) or not isinstance(data.get("key"), dict) or not isinstance(data.get("runs"), list):
+        raise ValueError(f"{path} is not a checkpoint of this tool")  # noqa: TRY004  (one error for a bad file)
+    old = data["key"]
+    differ = sorted(k for k in set(key) | set(old) if old.get(k) != key.get(k))
+    if differ:
+        raise ValueError(f"the checkpoint {path} was made with other settings ({', '.join(differ)} differ), so its "
+                         "runs cannot be continued; remove it or run without --resume")
+    runs = data["runs"]
+    for k, r in enumerate(runs):
+        if not isinstance(r, dict) or any(x not in r for x in (*RUN_KEYS, "scenarios")):
+            raise ValueError(f"run {k + 1} of the checkpoint {path} lacks a key")
+        if r["seed"] != key["first_seed"] + k:
+            raise ValueError(f"run {k + 1} of the checkpoint {path} has seed {r['seed']}, not "
+                             f"{key['first_seed'] + k}")
+    state = new_state()
+    state.update(runs=runs, check=data.get("check"), failure=data.get("failure"),
+                 parallel=bool(data.get("parallel", True)), resumes=list(data.get("resumes") or []))
+    return state
+
+
 try:                                # only under .venv-triceratops; the helpers above work without it
     import triceratops.triceratops as tr
 except ImportError:
@@ -495,7 +627,15 @@ def main(argv=None) -> int:
                          "(default on)")
     ap.add_argument("--check-draws", type=int, default=CHECK_DRAWS,
                     help=f"draws for the serial-against-parallel check (default {CHECK_DRAWS:,})")
+    ap.add_argument("--draws", type=int, default=N_DRAWS, help=f"draws per run (default {N_DRAWS:,})")
+    ap.add_argument("--resume", action="store_true",
+                    help="continue from the checkpoint <out stem>.partial.json made with the same inputs and settings")
+    ap.add_argument("--allow-old-export", action="store_true",
+                    help="run an export that lacks what the revision of 22 October 2026 added (the result says so)")
     a = ap.parse_args(argv)
+    if a.draws < 1 or a.check_draws < 1:
+        print("--draws and --check-draws must be positive", file=sys.stderr)
+        return 2
     if tr is None:
         print("TRICERATOPS is not installed in this interpreter; run this tool with "
               ".venv-triceratops/Scripts/python.exe (see its docstring)", file=sys.stderr)
@@ -512,6 +652,12 @@ def main(argv=None) -> int:
         return 1
     if not images:
         print("the export holds no pixel files, so there is no image to place the stars on", file=sys.stderr)
+        return 2
+    problems = export_problems(inputs)
+    if problems and not a.allow_old_export:
+        print(f"the export in {inputs_dir} lacks what the cross-check revision of 22 October 2026 added "
+              f"({'; '.join(problems)}); re-export it with skysift crosscheck --export, or pass --allow-old-export "
+              "to run it on the package's own values (the result then says so)", file=sys.stderr)
         return 2
     if a.runs < MIN_RUNS:
         print(f"{a.runs} runs: skysift crosscheck --import refuses a result of fewer than {MIN_RUNS} (ruling s), so "
@@ -534,16 +680,22 @@ def main(argv=None) -> int:
         return 1
     neighbours = inputs["neighbours"]
     matched, missing = match_neighbours(t.stars.iloc[1:].to_dict("records"), neighbours)
-    added, notes = {}, []
+    added, factors, notes = {}, {}, []
+    if problems:
+        notes.append(f"The export lacks what the revision of 22 October 2026 added ({'; '.join(problems)}); it was "
+                     "run with --allow-old-export, so the package's own values stand where it lacks them.")
     for n in usable_neighbours(neighbours)[1]:
         notes.append(f"Gaia DR3 {n.get('source_id')} is stored without a separation or G, so it was left out of the "
                      "match with the TIC list.")
     for n in missing:
-        added[str(n["source_id"])] = tmag_from_g(n["gmag"], n.get("bp_rp"))
-        t.add_star(ID=str(n["source_id"]), Tmag=added[str(n["source_id"])], bound=False)
-        notes.append(f"Gaia DR3 {n['source_id']} ({n['sep_arcsec']:.1f} arcsec, G {n['gmag']:.2f}) is not in the "
-                     f"TIC list; it was added with an estimated Tmag of {added[str(n['source_id'])]:.2f} at the "
-                     "target's pixel position, since the dossier stores no position for it.")
+        sid = str(n["source_id"])
+        added[sid], factors[sid] = tmag_from_g(n["gmag"], n.get("bp_rp")), offset_box_factor(n["sep_arcsec"])
+        t.add_star(ID=sid, Tmag=added[sid], bound=False)
+        notes.append(f"Gaia DR3 {sid} ({n['sep_arcsec']:.1f} arcsec, G {n['gmag']:.2f}) is not in the TIC list; it "
+                     f"was added with an estimated Tmag of {added[sid]:.2f} at the target's pixel position, since the "
+                     "dossier stores no position for it, and its share of the contamination budget is weighted by "
+                     f"the package's Gaussian box fraction at its stored separation along a pixel row (x "
+                     f"{factors[sid]:.3f} of a star on the target).")
     if inputs.get("neighbour_params_note"):
         notes.append(f"{inputs['neighbour_params_note']}.")
     # the stellar parameters a TIC row lacks, and those of an added star, from the export (ruling q)
@@ -559,8 +711,9 @@ def main(argv=None) -> int:
         params_source[sid] = sources
         set_from = sorted({sources[c] for c, _v in updates})
         if updates:
+            why = "the star is not in the TIC" if sid in added else "the TIC row lacks them"
             notes.append(f"{'Gaia DR3 ' + gaia if gaia else 'TIC ' + sid}: {', '.join(c for c, _v in updates)} set "
-                         f"from {'; '.join(set_from)}, since the TIC row lacks them.")
+                         f"from {'; '.join(set_from)}, since {why}.")
     ra, dec = t.stars["ra"].to_numpy(float), t.stars["dec"].to_numpy(float)
     t.sectors = np.array([q["quarter"] for q in images])
     t.TESS_images = [q["image"] for q in images]
@@ -576,7 +729,8 @@ def main(argv=None) -> int:
         gaia = sid if sid in added else gaia_of.get(sid)
         g = tgt.get("gmag") if i == 0 else (by_source.get(gaia) or {}).get("gmag") if gaia else None
         gmags.append(_finite(g) if _finite(g) is not None else _finite(row.get("GAIAmag")))
-    shares = leakage_shares(rows, tgt.get("crowdsap"), gmags, depth)
+    shares = leakage_shares(rows, tgt.get("crowdsap"), gmags, depth,
+                            box_factors=[factors.get(str(r["ID"])) for r in rows])
     t.stars["fluxratio"] = [r["fluxratio"] for r in shares["rows"]]
     t.stars["tdepth"] = [r["tdepth"] for r in shares["rows"]]
     notes.append(leakage_caveat(shares, tgt.get("crowdsap")))
@@ -598,8 +752,22 @@ def main(argv=None) -> int:
         t.calc_probs(time=phase, flux_0=lc["flux"], flux_err_0=flux_err, P_orb=period, N=n_draws,
                      parallel=parallel, exptime=EXPTIME_DAYS, dilution_corrected=True, verbose=0)
 
-    parallel, failure, check = True, None, None
-    if a.parallel_check:
+    tool_version = version("triceratops")
+    key = checkpoint_key(inputs["fingerprint"], seed=a.seed, draws=a.draws, check_draws=a.check_draws,
+                         parallel_check=a.parallel_check, flux_err=flux_err, shares=shares,
+                         quarters=[q["quarter"] for q in images], allow_old_export=a.allow_old_export,
+                         version=tool_version)
+    partial, state = partial_path(out), new_state()
+    if a.resume:
+        try:
+            state = resume_state(partial, key)
+        except (OSError, ValueError) as e:
+            print(f"cannot resume: {type(e).__name__}: {e}", file=sys.stderr)
+            return 2
+        state["resumes"].append(len(state["runs"]) + 1)
+        print(f"resuming from {partial} at run {len(state['runs']) + 1} (seed {a.seed + len(state['runs'])})",
+              file=sys.stderr)
+    if a.parallel_check and state["check"] is None and not state["runs"] and state["failure"] is None:
         answers = {}
         for mode in (False, True):
             started = clock.monotonic()
@@ -608,11 +776,11 @@ def main(argv=None) -> int:
             except Exception as e:  # the parallel path failing is reported, then the serial loop is used
                 if not mode:
                     raise
-                failure, parallel = f"{type(e).__name__}: {e}", False
+                state["failure"], state["parallel"] = f"{type(e).__name__}: {e}", False
                 break
             answers[mode] = {"fpp": float(t.FPP), "nfpp": float(t.NFPP)}
             print(f"check seed {a.seed} at {a.check_draws:,} draws, {'parallel' if mode else 'serial'}: FPP "
-                  f"{t.FPP:.4g}, NFPP {t.NFPP:.4g} ({clock.monotonic() - started:.0f} s)", file=sys.stderr)
+                  f"{t.FPP:.4g}, NFPP {t.NFPP:.4g} ({clock.monotonic() - started:.1f} s)", file=sys.stderr)
         if len(answers) == 2:
             seed_nfpps = [answers[True]["nfpp"]]
             for extra in range(1, CHECK_SEEDS):          # the Monte Carlo noise of the NFPP at this draw count
@@ -620,32 +788,38 @@ def main(argv=None) -> int:
                 seed_nfpps.append(float(t.NFPP))
                 print(f"check seed {a.seed + extra} at {a.check_draws:,} draws, parallel: NFPP {t.NFPP:.4g}",
                       file=sys.stderr)
-            check = parallel_check_record(a.seed, a.check_draws, answers[False], answers[True], seed_nfpps)
-            notes.append(f"The serial loop against the parallel path: {check['comparison']}")
-    runs = []
-    for k in range(a.runs):
+            state["check"] = parallel_check_record(a.seed, a.check_draws, answers[False], answers[True], seed_nfpps)
+        write_partial(partial, key, state)
+    runs = state["runs"]
+    for k in range(len(runs), a.runs):
         seed, started = a.seed + k, clock.monotonic()
         try:
-            probs(seed, N_DRAWS, parallel)
+            probs(seed, a.draws, state["parallel"])
         except Exception as e:  # as above: the parallel path failing switches to the serial loop
-            if not parallel:
+            if not state["parallel"]:
                 raise
-            failure, parallel = f"{type(e).__name__}: {e}", False
-            probs(seed, N_DRAWS, parallel)
+            state["failure"], state["parallel"] = f"{type(e).__name__}: {e}", False
+            probs(seed, a.draws, False)
         runs.append(run_record(seed, t.FPP, t.NFPP, t.FPP_degenerate, _probs(t)))
-        print(f"run {k + 1}/{a.runs} (seed {seed}, {'parallel' if parallel else 'serial'}): FPP {t.FPP:.3g}, "
-              f"NFPP {t.NFPP:.3g} ({clock.monotonic() - started:.0f} s)", file=sys.stderr)
+        write_partial(partial, key, state)
+        print(f"run {k + 1}/{a.runs} (seed {seed}, {'parallel' if state['parallel'] else 'serial'}): FPP "
+              f"{t.FPP:.3g}, NFPP {t.NFPP:.3g} ({clock.monotonic() - started:.1f} s)", file=sys.stderr)
+    check, failure, parallel = state["check"], state["failure"], state["parallel"]
+    if check:
+        notes.append(f"The serial loop against the parallel path: {check['comparison']}")
     if failure:
         notes.append(f"The package's parallel path failed ({failure}), so the serial loop was used from then on.")
     first_row = t.stars.iloc[0]
     star = inputs.get("star") or {}
-    settings = {"N": N_DRAWS, "exptime_days": EXPTIME_DAYS, "search_radius_pix": SEARCH_RADIUS,
+    settings = {"N": a.draws, "exptime_days": EXPTIME_DAYS, "search_radius_pix": SEARCH_RADIUS,
                 "aperture": "3 x 3 around the target", "dilution_corrected": True, "parallel": parallel,
                 "parallel_failure": failure, "parallel_check": check, "mission": "Kepler",
                 "limb_darkening": "the package's Kepler table", "field_star_population": "Gaia DR3 (package default)",
                 "quarters": [q["quarter"] for q in images], "matched_neighbours": matched, "notes": notes,
                 "flux_err_rel_robust": flux_err, "flux_err_rel_pipeline": pipeline_err, "flux_err_source": which,
-                "flux_shares": {k: shares[k] for k in ("source", "budget", "crowdsap")},
+                "flux_shares": {k: shares[k] for k in ("source", "budget", "contaminating_fraction", "crowdsap")},
+                "allow_old_export": a.allow_old_export, "export_problems": problems,
+                "resumed_at_runs": state["resumes"],
                 "psffrac": _finite(tgt.get("psffrac")), "leak": inputs.get("leak"),
                 "lightcurve_clipped": inputs["lightcurve"].get("clipped"),
                 "kepmag_target": kp, "g_minus_kp_target": None if kp is None or g_t is None else g_t - kp,
@@ -654,11 +828,14 @@ def main(argv=None) -> int:
                                   "skysift": {k: (star.get(k) or {}).get("median") for k in ("teff", "radius",
                                                                                              "mass")}}}
     stars = star_rows(t.stars.to_dict("records"), matched, added, shares, gmags, params_source)
-    result = assemble_result(runs, stars, settings, inputs, version("triceratops"))
-    out.write_text(json.dumps(result, indent=1, allow_nan=False), encoding="utf-8")
+    result = assemble_result(runs[:a.runs], stars, settings, inputs, tool_version)
+    tmp = out.with_name(out.name + ".tmp")
+    tmp.write_text(json.dumps(result, indent=1, allow_nan=False), encoding="utf-8")
+    os.replace(tmp, out)
+    partial.unlink(missing_ok=True)
     fpp, nfpp = result["fpp"], result["nfpp"]
     print(f"median FPP {fpp if fpp is None else f'{fpp:.3g}'}, NFPP {nfpp if nfpp is None else f'{nfpp:.3g}'} over "
-          f"{len(runs) - result['n_degenerate']} runs; wrote {out}", file=sys.stderr)
+          f"{result['n_runs'] - result['n_degenerate']} runs; wrote {out}", file=sys.stderr)
     return 0
 
 
