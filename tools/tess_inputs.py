@@ -9,7 +9,8 @@ stored block is ``{"queried", "tic", "tmag", "tmag_source", "ra", "dec", "sector
 "dst_arcsec", "dra_pix", "ddec_pix", "tmag", "tmag_source"}]}``: a null Tmag is filled from Gaia by Stassun et al.
 2019 equation 1 (equation 2 without BP and RP) with the source recorded, the neighbours keep their offsets in TESS
 pixels (21 arcsec, RA scaled by cos Dec) so the dossier needs no trigonometry, and the TIC's own target row and its
-DUPLICATE and ARTIFACT rows are dropped. The rest of ``meta`` (the KBonus CROWDSAP and PSFFRAC) is kept.
+DUPLICATE and ARTIFACT rows are dropped. The rest of ``meta`` (the KBonus CROWDSAP and PSFFRAC) is kept: the
+block is merged into ``meta`` inside one store session.
 
 The dossier's fingerprint does not cover ``meta``, so regenerate the dossier with ``--force`` after a fetch.
 
@@ -30,7 +31,6 @@ from datetime import UTC, datetime
 import requests
 
 from skysift import net, tess
-from skysift.models import Target
 from skysift.net import ServiceUnavailable
 from skysift.store.db import Store, TargetRow
 
@@ -156,11 +156,14 @@ def target_row(store: Store, target_id: str) -> dict:
         return {c.name: getattr(t, c.name) for c in TargetRow.__table__.columns}
 
 
-def store_inputs(store: Store, row: dict, inputs: dict) -> None:
-    """``meta["tess"]`` = ``inputs`` on the target row, every other ``meta`` key kept (``Store.upsert_target``)."""
-    meta = {**(row.get("meta") or {}), "tess": inputs}
-    store.upsert_target(Target(source=row["source"], target_id=row["target_id"], ra=row["ra"], dec=row["dec"],
-                               gaia_id=row.get("gaia_id"), kic=row.get("kic"), gmag=row.get("gmag"), meta=meta))
+def store_inputs(store: Store, target_id: str, inputs: dict) -> None:
+    """``meta["tess"]`` = ``inputs`` on the target row, every other ``meta`` key kept: read, merged and written in one
+    store session, so a ``meta`` update another writer made after ``target_row`` is not lost."""
+    with store.session() as s:
+        row = s.get(TargetRow, target_id)
+        if row is None:
+            raise LookupError(f"no target {target_id}")
+        row.meta = {**(row.meta or {}), "tess": inputs}
 
 
 def _url(url: str, params: dict) -> str:
@@ -196,7 +199,7 @@ def main(argv=None) -> int:
                     print(line)
                 continue
             inputs = fetch_inputs(row, store=store, today=a.today)
-            store_inputs(store, row, inputs)
+            store_inputs(store, target_id, inputs)
         except (LookupError, ServiceUnavailable) as e:
             print(f"{target_id}: {e}", file=sys.stderr)
             failed += 1

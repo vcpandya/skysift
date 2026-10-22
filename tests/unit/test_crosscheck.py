@@ -415,17 +415,16 @@ def test_comparison_sentence_prints_both_fpps_with_their_ranges_and_the_class():
     block = {**fake_result(sha), "runs": runs, **cc.summarise(runs), "current": True}
     data = {"fpp": {"value": 0.0035}, "cross_check": block}
     text = cc.comparison_sentence(data)
-    assert text.startswith("An independent estimate with TRICERATOPS 1.1.0 (Giacalone et al. 2021), run on the KBonus "
-                           "light curve (Martinez-Palomera et al. 2023) with Kepler limb darkening and the package's "
-                           "Gaia DR3 field-star population, gives a false-positive probability of 0.046 (16th to 84th "
-                           "percentile 0.046 to 0.046)")
+    assert text.startswith("TRICERATOPS 1.1.0 (Giacalone et al. 2021), run on the KBonus light curve with Gaia DR3 "
+                           "field stars, gives a median false-positive probability of 0.046 "
+                           "(16th to 84th percentile 0.046 to 0.046)")
     assert "1 in 1,900 (1 in 1,900 to 1 in 1,900) without a planet transiting an unresolved bound companion (STP)" in text
-    assert "nearby false-positive probability of 1 in 10,000" in text and "the medians of 20 runs." in text
-    assert ("On the scale of Giacalone et al. the medians fall in the paper's class 'likely planet' (FPP below 0.5, "
-            "NFPP below 0.001).") in text and "the medians are" not in text
+    assert "nearby false-positive probability of 1 in 10,000" in text and "over 20 runs;" in text
+    assert ("; the medians fall in the paper's class 'likely planet' (FPP below 0.5, NFPP below 0.001).") in text
+    assert "the medians are" not in text
     # SkySift's own estimate is set beside the FPP without STP, the like-for-like number (ruling o)
     assert "SkySift's own estimate (provisional until its factor tables are reviewed) is 0.0035, a factor of 6.7 from " \
-           "the value without STP." in text and "answer different questions" in text
+           "the value without STP: the two models answer different questions." in text
     assert "e-0" not in text and "e-0" not in cc.comparison_sentence(data, tex=True)
     assert chr(0x2014) not in text and "discover" not in text.lower() and "validated" not in text
     signed = cc.comparison_sentence({"fpp": {"value": 0.0035, "signed_off": True}, "cross_check": block})
@@ -435,7 +434,7 @@ def test_comparison_sentence_prints_both_fpps_with_their_ranges_and_the_class():
     close = cc.comparison_sentence({"fpp": {"value": 0.0006}, "cross_check": block})
     assert "a factor of" not in close and "different questions" not in close
     tex = cc.comparison_sentence(data, tex=True)
-    assert r"TRICERATOPS 1.1.0 \citep{giacalone2021}, run on the KBonus light curve \citep{kbonus} with" in tex
+    assert r"TRICERATOPS 1.1.0 \citep{giacalone2021}, run on the KBonus light curve with" in tex
     assert "Giacalone et al. 2021" not in tex and "Martinez-Palomera" not in tex
     assert cc.comparison_sentence({"fpp": {"value": 0.0035}, "cross_check": None}) is None
     assert cc.comparison_sentence({"fpp": {"value": 0.0035}, "cross_check": {**block, "current": False}}) is None
@@ -448,7 +447,7 @@ def test_comparison_sentence_prints_both_fpps_with_their_ranges_and_the_class():
     # a degenerate run is left out and counted; the validated label is never written as a validation
     deg = [*runs[:19], dict(runs[19], degenerate=True)]
     v = cc.comparison_sentence({"cross_check": {**block, "runs": deg, "n_degenerate": 1, **cc.summarise(deg)}})
-    assert "the medians of 20 runs, 1 degenerate run left out." in v
+    assert "over 20 runs, 1 degenerate run left out;" in v
     tiny = fake_runs(fpp=0.001, nfpp=1e-6)
     low = cc.comparison_sentence({"cross_check": {**block, "runs": tiny, **cc.summarise(tiny)}})
     assert "the medians fall inside the paper's validation lines" in low

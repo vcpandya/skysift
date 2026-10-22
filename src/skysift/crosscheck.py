@@ -46,10 +46,10 @@ RESULT_KEYS = ("tool", "tool_version", "run_utc", "n_runs", "n_degenerate", *SUM
                "stars", "inputs_sha256", "caveats", "settings")
 RUN_KEYS = ("seed", "fpp", "fpp_no_stp", "nfpp", "p_stp", "p_ptp", "best_scenario", "degenerate")
 CITATION = "(Giacalone et al. 2021)"
-KBONUS_CITATION = "(Martinez-Palomera et al. 2023)"
-DIFFERENT_QUESTIONS = ("The two models answer different questions: SkySift's scenario model counts the catalogued "
-                       "neighbours and the pixel exclusion, while TRICERATOPS marginalises over an unresolved "
-                       "companion population with its own priors.")
+# the reason the two estimates may differ, in the short form the word-limited note can carry (Task 8 fix round 1):
+# SkySift's scenario model counts the catalogued neighbours and the pixel exclusion, TRICERATOPS marginalises over an
+# unresolved companion population with its own priors
+DIFFERENT_QUESTIONS = "the two models answer different questions"
 # the scenarios of the package's probability table in words, for the sentence on a dominant scenario
 SCENARIO_WORDS = {
     "TP": "a planet transiting the target", "EB": "an eclipsing binary on the target",
@@ -645,26 +645,26 @@ def owner_flag(data: dict) -> str | None:
 
 
 def comparison_sentence(data: dict, tex: bool = False) -> str | None:
-    """For the pack's texts: the method (the TRICERATOPS version, the KBonus light curve, Kepler limb darkening, the
-    package's Gaia DR3 field-star population; ruling u), the medians of the full FPP, the FPP without STP and the
+    """For the pack's texts: the method (the TRICERATOPS version, the KBonus light curve, the package's Gaia DR3
+    field-star population; ruling u, the Kepler limb darkening left to the cross-check's caveats since fix round 1), the medians of the full FPP, the FPP without STP and the
     NFPP each with its 16th to 84th percentile range and the run count (ruling s), the class of the medians on
     Giacalone et al.'s scale (ruling t), the dominant scenario when the full FPP is at or above 0.5, and SkySift's own
     FPP set beside the FPP without STP, the like-for-like number (ruling o), with one sentence on why when the two
     differ by more than a factor of three. None without a current cross-check of the present format. With ``tex`` a
-    LaTeX ``Raw`` citing ``giacalone2021`` and ``kbonus``."""
+    LaTeX ``Raw`` citing ``giacalone2021``. Trimmed in Task 8 fix round 1 so the note keeps inside the RNAAS limit
+    with the TESS statement: both FPPs, their ranges and the class stay."""
     block = data.get("cross_check")
     if not complete(block) or block.get("current") is not True:
         return None
     n, deg = block["n_runs"], block["n_degenerate"]
     left_out = f", {deg} degenerate run{'s' if deg != 1 else ''} left out" if deg else ""
-    head = f"An independent estimate with TRICERATOPS {block['tool_version']} "
-    middle = ", run on the KBonus light curve "
-    rest = (" with Kepler limb darkening and the package's Gaia DR3 field-star population, gives a false-positive "
-            f"probability of {_p(block['fpp'])} (16th to 84th percentile {range_text(block, 'fpp')}), "
-            f"{_p(block['fpp_no_stp'])} ({range_text(block, 'fpp_no_stp')}) without a planet transiting an "
-            "unresolved bound companion (STP), a scenario SkySift's model leaves out, and a nearby false-positive "
-            f"probability of {_p(block['nfpp'])} ({range_text(block, 'nfpp')}), the medians of {n} runs{left_out}.")
-    rest += f" On the scale of Giacalone et al. {CLASS_PHRASES[classify(block['fpp'], block['nfpp'])]}."
+    head = f"TRICERATOPS {block['tool_version']} "
+    rest = (", run on the KBonus light curve with Gaia DR3 field stars, gives "
+            f"a median false-positive probability of {_p(block['fpp'])} (16th to 84th percentile "
+            f"{range_text(block, 'fpp')}), {_p(block['fpp_no_stp'])} ({range_text(block, 'fpp_no_stp')}) without a "
+            "planet transiting an unresolved bound companion (STP), absent from SkySift's model, and a nearby "
+            f"false-positive probability of {_p(block['nfpp'])} ({range_text(block, 'nfpp')}) over {n} "
+            f"runs{left_out}; {CLASS_PHRASES[classify(block['fpp'], block['nfpp'])]}.")
     dominant = dominant_sentence(block)
     if dominant:
         rest += f" {dominant}"
@@ -677,10 +677,9 @@ def comparison_sentence(data: dict, tex: bool = False) -> str | None:
         ratio = 1.0 if hi == 0 else hi / lo if lo > 0 else math.inf          # both 0 agree
         if ratio > RATIO_SENTENCE_ABOVE:
             apart = "far" if math.isinf(ratio) else f"a factor of {ratio:.1f}"
-            rest += f" {whose} is {probability_text(own)}, {apart} from the value without STP. {DIFFERENT_QUESTIONS}"
+            rest += f" {whose} is {probability_text(own)}, {apart} from the value without STP: {DIFFERENT_QUESTIONS}."
         else:
             rest += f" {whose} is {probability_text(own)}."
     if tex:
-        return Raw(tex_escape(head) + r"\citep{giacalone2021}" + tex_escape(middle) + r"\citep{kbonus}"
-                   + tex_escape(rest))
-    return head + CITATION + middle + KBONUS_CITATION + rest
+        return Raw(tex_escape(head) + r"\citep{giacalone2021}" + tex_escape(rest))
+    return head + CITATION + rest

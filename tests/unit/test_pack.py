@@ -1416,8 +1416,8 @@ def test_pack_prints_the_cross_check_and_the_gate_refuses_without_one(env_with_d
     rep = _build(env, zenodo=live)
     assert rep.zenodo is not None and not rep.zenodo["sandbox"]
     sentence = cross_check.comparison_sentence({**_stored(env), "cross_check": block})
-    assert sentence.startswith("An independent estimate with TRICERATOPS 1.1.0 (Giacalone et al. 2021), run on the "
-                               "KBonus light curve (Martinez-Palomera et al. 2023) with Kepler limb darkening")
+    assert sentence.startswith("TRICERATOPS 1.1.0 (Giacalone et al. 2021), run on the KBonus light curve with Gaia "
+                               "DR3 field stars")
     assert "16th to 84th percentile" in sentence and "without a planet transiting an unresolved bound" in sentence
     for name in ("README.md", "exofop/note.txt", "archive_email.txt"):
         assert sentence in (rep.out_dir / name).read_text(encoding="utf-8"), name
@@ -1425,7 +1425,7 @@ def test_pack_prints_the_cross_check_and_the_gate_refuses_without_one(env_with_d
     assert "waits on the cross-check" not in readme and "For the owner" not in readme
     tex = (rep.out_dir / "note" / "note.tex").read_text(encoding="utf-8")
     fp_section = tex.split(r"\section{How likely is a false positive}")[1].split(r"\section")[0]
-    assert r"TRICERATOPS 1.1.0 \citep{giacalone2021}, run on the KBonus light curve \citep{kbonus}" in fp_section
+    assert r"TRICERATOPS 1.1.0 \citep{giacalone2021}, run on the KBonus light curve with" in fp_section
     assert "{Giacalone} et~al.(2021)" in tex.split(r"\begin{thebibliography}")[1]
     assert note_problems(note_words(tex), tex) == []
     stored = json.loads((rep.out_dir / "data" / "cross_check.json").read_text(encoding="utf-8"))
@@ -1712,7 +1712,8 @@ def test_the_texts_carry_the_tess_statement(env_with_dossier):
     tex = render_note(data)
     section = tex.split(r"\section{How likely is a false positive}")[1].split(r"\section{")[0]
     assert tess_text_plain(block) in section.replace("\n", " ")
-    assert r"\citet{christ2019}" in section and r"\citep{stassun2018,stassun2019}" in section
+    assert r"The method follows \citet{christ2019}, with TIC neighbours \citep{stassun2019}" in section
+    assert r"the TIC noise polynomial \citep{stassun2018} after \citet{sullivan2015}" in section
     cited, items = _cites(tex)
     assert cited == items                                                     # every citation listed, none unused
     assert {key for key, _w in tess.METHOD_CITES} <= items
@@ -1742,6 +1743,48 @@ def test_the_golden_note_with_a_tess_statement_stays_inside_the_word_limit():
     before = note_words(render_note(golden))["total"]
     words = note_words(render_note(_with_tess(golden)))
     assert words["total"] <= NOTE_LIMITS["total"] and words["total"] - before < 250
+
+
+def _full_configuration() -> dict:
+    """The golden with every block the note can carry at once: the TESS statement, a prior claim and a current
+    cross-check whose medians fall in no class and whose FPP without STP sits far from SkySift's own."""
+    from tests.unit.test_crosscheck import fake_result
+    from tests.unit.test_dossier import PRIOR_CLAIM
+    golden = json.loads(GOLDEN.read_text(encoding="utf-8"))
+    full = {**_with_tess(golden), "prior_claims": [{k: PRIOR_CLAIM[k] for k in ("doi", "date", "author", "title")}]}
+    block = fake_result(cross_check.inputs_fingerprint(full), fpp=0.3, nfpp=0.002)
+    full["cross_check"] = cross_check.with_current({**block, "current": True}, full)
+    return full
+
+
+def test_the_full_configuration_stays_inside_the_word_limit():
+    """Task 8 fix round 1, I3(b): the golden with a cross-check sentence (the longest: no class, a factor-of-three
+    sentence), a prior claim and the TESS statement with its methods sentence and nine references stays under the
+    RNAAS 1,500 words."""
+    from skysift import tess
+    full = _full_configuration()
+    tex = render_note(full)
+    flat = " ".join(tex.split())
+    assert str(pack_module.cross_check_sentence(full, True)) in flat and "the two models answer different" in flat
+    assert str(tess.note_sentence(full["tess"], True)) in flat and str(tess.methods_sentence(full["tess"], True)) in flat
+    assert PRIOR_DOI in flat
+    words = note_words(tex)
+    assert words["total"] < NOTE_LIMITS["total"] and note_problems(words, tex) == []
+    assert not [p for p in pack_module.gate_problems(full) if "words" in p]
+
+
+def test_the_live_gate_refuses_a_note_over_the_word_limit(env_with_dossier):
+    """Task 8 fix round 1, I3(a): a rendered note over 1,500 words blocks the live draft, and the sentence and the
+    README both name the count."""
+    ok = _stored_with_cross_check(env_with_dossier)
+    assert not [p for p in pack_module.gate_problems(ok) if "words" in p]
+    long = {**ok, "caveats": [{"title": "A caveat of many words " + "word " * 1500, "text": "Its detail."}]}
+    n = note_words(render_note(long))["total"]
+    assert n > NOTE_LIMITS["total"]
+    assert (f"the Research Note has {n:,} words, over the RNAAS limit of 1,500; shorten it first"
+            in pack_module.gate_problems(long))
+    readme = render_readme(long, {})
+    assert f"`note/figure1`: {n} words in all" in readme and "**Over the limit:**" in readme
 
 
 

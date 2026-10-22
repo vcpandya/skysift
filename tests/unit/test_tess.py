@@ -4,6 +4,7 @@ then the statement block, then ``tools/tess_inputs.py`` with ``net.fetch`` repla
 import itertools
 import json
 import math
+import re
 from pathlib import Path
 
 import numpy as np
@@ -28,8 +29,12 @@ def _numeric_fraction(dx: float, dy: float, sigma: float = 0.75, n: int = 400) -
 
 # ---------------------------------------------------------------------------------------------------- the table
 
-def test_the_sector_table_holds_the_thirteen_kepler_field_sectors():
-    assert sorted(tess.SECTORS) == [14, 15, 26, 40, 41, 53, 54, 55, 74, 75, 80, 81, 82]
+def test_the_sector_table_holds_the_fourteen_kepler_field_sectors():
+    assert sorted(tess.SECTORS) == [14, 15, 26, 40, 41, 53, 54, 55, 56, 74, 75, 80, 81, 82]
+    # Sector 56 (Cycle 5, fix round 1): orbits 119 and 120 of the MIT FFI-times file, UTC converted to BTJD
+    assert tess.SECTORS[56] == {"cycle": 5, "cadence_min": 200 / 60,
+                                "segments": [(2825.251, 2831.724), (2831.934, 2838.513), (2838.724, 2845.876),
+                                             (2846.085, 2853.138)]}
     assert tess.SECTORS[14] == {"cycle": 2, "cadence_min": 30,
                                 "segments": [(1683.354, 1696.375), (1697.354, 1710.187)]}
     assert tess.SECTORS[26]["segments"][-1] == (2023.124, 2035.142)        # the repaired placeholder end
@@ -37,7 +42,7 @@ def test_the_sector_table_holds_the_thirteen_kepler_field_sectors():
     for number, s in tess.SECTORS.items():
         segs = s["segments"]
         assert all(a < b for a, b in segs) and all(b1 < a2 for (_a1, b1), (a2, _b2) in itertools.pairwise(segs)), number
-        assert len(segs) == (4 if s["cycle"] == 6 else 2)
+        assert len(segs) == (4 if s["cycle"] in (5, 6) else 2)
     assert max(tess.SECTORS) <= tess.LAST_COMPLETED_SECTOR
 
 
@@ -67,6 +72,15 @@ def test_dilution_for_one_equal_magnitude_neighbour_one_pixel_away():
     assert d["aperture_pixels"] == 5 and d["n_neighbours"] == 1 and d["n_without_tmag"] == 0
 
 
+def test_a_neighbour_without_offsets_is_left_out_not_placed_on_the_star():
+    d = tess.dilution(15.0, [(12.0, None, 0.5, 10.0), (12.0, 0.4, None, 10.0)])
+    assert d["c"] == 0.0 and d["c_hard42"] == 0.0 and d["n_neighbours"] == 0 and d["n_without_offsets"] == 2
+    b = tess.statement({**META, "neighbours": [{**META["neighbours"][0], "dra_pix": None}]}, EPHEMERIS)
+    assert b["dilution"]["n_without_offsets"] == 1 and b["dilution"]["c"] == 0.0
+    assert any("1 neighbour without a stored offset" in c and "rather than placed on the star" in c
+               for c in b["caveats"])
+
+
 def test_dilution_weights_by_magnitude_skips_a_missing_one_and_cuts_hard_at_42_arcsec():
     d = tess.dilution(15.0, [(12.5, 0.0, 0.0, 0.0), (None, 0.0, 0.0, 0.0), (14.0, 3.0, 0.0, 63.0)])
     bright = 10 ** (-0.4 * (12.5 - 15.0))
@@ -84,11 +98,30 @@ def test_the_nominal_noise_is_the_tic_polynomial():
     assert tess.sigma_1h_nominal(16.0) == pytest.approx(13957, rel=0.01)
 
 
-def test_the_conservative_noise_is_the_spoc_table_interpolated_and_held_at_the_ends():
+def test_the_conservative_noise_is_the_spoc_table_and_the_polynomial_times_its_excess_beyond():
     assert tess.sigma_1h_conservative(15.0) == pytest.approx(8804)
     assert tess.sigma_1h_conservative(15.25) == pytest.approx((8804 + 14449) / 2)
     assert tess.sigma_1h_conservative(12.5) == pytest.approx((790 + 1625) / 2)
-    assert tess.sigma_1h_conservative(10.0) == 790 and tess.sigma_1h_conservative(17.5) == 24151
+    nominal = tess.sigma_1h_nominal
+    # beyond T = 16 the polynomial times 24151 / 13957 = 1.730; below T = 12 times 790 / 595 = 1.328 (fix round 1)
+    assert tess.sigma_1h_conservative(17.0) == pytest.approx(nominal(17.0) * 24151 / nominal(16.0))
+    assert tess.sigma_1h_conservative(17.0) / nominal(17.0) == pytest.approx(1.730, abs=0.002)
+    assert tess.sigma_1h_conservative(17.0) > 40000                      # it keeps rising (24151 was held before)
+    assert tess.sigma_1h_conservative(11.0) == pytest.approx(nominal(11.0) * 790 / nominal(12.0))
+    assert tess.sigma_1h_conservative(11.0) / nominal(11.0) == pytest.approx(1.328, abs=0.002)
+
+
+def test_the_conservative_noise_is_never_below_the_nominal():
+    """I2: at every magnitude and duration the conservative model is the pessimistic one, so the verdict's two
+    thresholds each read the model they are meant to read."""
+    for t in [9.0 + 0.05 * i for i in range(181)]:                    # T = 9 to 18
+        con, nom = tess.sigma_1h_conservative(t), tess.sigma_1h_nominal(t)
+        assert con >= nom, t
+        for dur in (0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0, 9.0, 14.0):
+            assert tess.scale_to_duration(con, dur, empirical=True) >= tess.scale_to_duration(nom, dur), (t, dur)
+    faint = tess.statement({**META, "tmag": 17.2, "neighbours": []}, EPHEMERIS)
+    assert faint["noise"]["conservative_1h_ppm"] > faint["noise"]["nominal_1h_ppm"]
+    assert faint["significance"]["folded_conservative"] <= faint["significance"]["folded_nominal"]
 
 
 def test_scaling_to_the_duration():
@@ -200,19 +233,20 @@ def test_the_statement_for_kic_6146676():
     json.dumps(b, allow_nan=False)
 
 
-def test_the_note_sentence_carries_every_number_of_spec_10_8():
+def test_the_note_sentence_is_one_short_sentence_with_every_number():
     b = tess.statement(META, EPHEMERIS)
     text = tess.note_sentence(b)
-    assert text.startswith("TESS observed the star in 9 sectors (14, 15, 41, 54, 55, 74, 75, 81 and 82; ")
-    assert "full-frame images at 30 minutes, 10 minutes and 200 seconds" in text
-    assert f"{b['n_transits']} Kepler-ephemeris transits fall in its windows" in text
-    assert f"a diluted depth of {b['dilution']['depth_tess_ppm']:,.0f} ppm" in text
-    assert f"a 1-hour noise of {b['noise']['nominal_1h_ppm']:,.0f} to {b['noise']['conservative_1h_ppm']:,.0f} ppm" \
-           in text
-    assert f"at T = {b['dilution']['t_total']:.2f} with the neighbours' light (the star alone 15.19)" in text
-    assert "a folded significance of " in text and text.endswith(f"so {tess.VERDICT_PHRASES[b['verdict']]}.")
+    sig, noise = b["significance"], b["noise"]
+    assert text == (f"TESS observed the star in 9 sectors (14 to 82, 30 min to 200 s); {b['n_transits']} ephemeris "
+                    f"transits fall in its windows at a diluted {b['dilution']['depth_tess_ppm']:,.0f} ppm against "
+                    f"{noise['nominal_1h_ppm']:,.0f} to {noise['conservative_1h_ppm']:,.0f} ppm per hour at a "
+                    f"blended T = {b['dilution']['t_total']:.1f}, a folded {sig['folded_conservative']:.2f} to "
+                    f"{sig['folded_nominal']:.2f} sigma, so {tess.VERDICT_PHRASES[b['verdict']]}.")
+    assert len(text.split()) < 60 and text.count("; ") == 1                # one short sentence
+    alone = tess.statement({**META, "neighbours": []}, EPHEMERIS)
+    assert "at T = 15.2, a folded" in tess.note_sentence(alone)          # no blend, no "blended"
     tex = tess.note_sentence(b, tex=True)
-    assert "Kepler-ephemeris" in tex and "\\%" not in tex
+    assert "ephemeris transits" in tex and "\\%" not in tex
 
 
 @pytest.mark.parametrize("verdict", ["should have detected", "marginal", "not expected"])
@@ -228,16 +262,51 @@ def test_each_verdict_gets_its_phrase_and_an_exofop_line(verdict, monkeypatch):
 def test_no_transit_in_a_window_is_a_statement_about_coverage():
     eph = {**EPHEMERIS, "period_days": 400.0, "t0_bjd": 2457000.0 + 1650.0}   # one transit every 400 days, none in
     b = tess.statement({**META, "sectors": [14, 15]}, eph)
-    assert b["n_transits"] == 0 and b["verdict"] == "not observed in transit"
+    assert b["n_transits"] == 0 and b["verdict"] == "not observed in transit" and b["uncertain"] is False
     text = tess.note_sentence(b)
-    assert "no transit fell in a TESS window" in text and "folded significance" not in text
+    assert "no transit fell in a TESS window" in text and "folded" not in text and "uncertain" not in text
     assert tess.exofop_line(b) == "TESS: not observed in transit; 0 transits in sectors 14 and 15"
 
 
-def test_a_sector_outside_the_table_is_recorded_and_skipped():
-    b = tess.statement({**META, "sectors": [14, 109]}, EPHEMERIS)
-    assert [s["sector"] for s in b["sectors"]] == [14] and b["sectors_skipped"] == [109]
-    assert any("Sector 109" in c for c in b["caveats"])
+def test_a_zero_count_keeps_its_uncertainty_in_every_text():
+    """M5 and M8: with no ephemeris error and no transit counted, the note, the README and the ExoFOP line all say
+    the count is uncertain and how many were expected."""
+    eph = {"period_days": 400.0, "t0_bjd": 2457000.0 + 1650.0, "duration_h": 3.0, "depth_ppm": 2000.0}
+    b = tess.statement({**META, "sectors": [14, 15]}, eph)
+    assert b["n_transits"] == 0 and b["uncertain"] is True
+    expected = f"{b['n_expected']:.1f}"
+    assert f"(about {expected} expected; count uncertain)" in tess.note_sentence(b)
+    assert f"(about {expected} expected from phase coverage; count uncertain)" in tess.readme_row(b)
+    assert tess.exofop_line(b) == (f"TESS: not observed in transit; 0 transits in sectors 14 and 15 (count "
+                                   f"uncertain, about {expected} expected)")
+
+
+def test_sector_56_is_counted():
+    b = tess.statement({**META, "sectors": [55, 56]}, EPHEMERIS)
+    assert [s["sector"] for s in b["sectors"]] == [55, 56] and b["sectors_skipped"] == []
+    assert b["sectors"][1]["cycle"] == 5 and "(55 to 56, 10 min to 200 s)" in b["sentence"]
+
+
+def test_a_sector_outside_the_table_is_named_as_not_assessed_in_every_text():
+    """I1: a sector TESScut lists that the table lacks is not counted, and the note sentence, the README row and the
+    ExoFOP line each say "and Sector N, not assessed"; the caveat says TESS observed it."""
+    b = tess.statement({**META, "sectors": [14, 15, 109]}, EPHEMERIS)
+    assert [s["sector"] for s in b["sectors"]] == [14, 15] and b["sectors_skipped"] == [109]
+    caveat = next(c for c in b["caveats"] if "Sector 109" in c)
+    assert "TESScut lists Sector 109 for this star, so TESS observed it" in caveat
+    assert "windows are not in the table" in caveat
+    assert tess.note_sentence(b).startswith("TESS observed the star in 2 sectors (14 to 15, 30 min), and Sector 109, "
+                                            "not assessed")
+    assert "in sectors 14 and 15, and Sector 109, not assessed" in tess.readme_row(b)
+    assert tess.exofop_line(b).startswith(f"TESS: {b['verdict']}; {b['n_transits']} transit")
+    assert "in sectors 14 and 15, and Sector 109, not assessed" in tess.exofop_line(b)
+    two = tess.statement({**META, "sectors": [14, 109, 110]}, EPHEMERIS)
+    assert ", and Sectors 109 and 110, not assessed" in tess.note_sentence(two)
+    only = tess.statement({**META, "sectors": [109]}, EPHEMERIS)
+    assert tess.note_sentence(only) == ("TESS observed the star only in Sector 109, not assessed here, so no transit "
+                                        "is counted in a TESS window.")
+    assert tess.readme_row(only) == "not assessed: TESS observed the star only in Sector 109"
+    assert tess.exofop_line(only).startswith("TESS: not assessed; observed only in Sector 109")
 
 
 def test_an_ephemeris_without_errors_marks_the_count_uncertain():
@@ -245,7 +314,7 @@ def test_an_ephemeris_without_errors_marks_the_count_uncertain():
     b = tess.statement(META, eph)
     assert b["timing_error_hours_at_tess"] is None and b["uncertain"] is True
     assert all(s["uncertain"] for s in b["sectors"])
-    assert "expected from phase coverage" in tess.note_sentence(b)
+    assert f"(no ephemeris error; about {b['n_expected']:.1f} expected)" in tess.note_sentence(b)
     assert any("no error" in c for c in b["caveats"])
 
 
@@ -254,6 +323,24 @@ def test_no_sector_at_all():
     assert b["verdict"] == "not observed in transit" and b["sectors"] == []
     assert tess.note_sentence(b) == ("No TESS sector up to 108 observed the star, so no transit fell in a TESS "
                                      "window.")
+
+
+def test_the_methods_sentence_credits_each_choice_to_its_source():
+    b = tess.statement(META, EPHEMERIS)
+    plain = tess.methods_sentence(b)
+    assert "five pixels against the SPOC's six at Tmag 13 (Guerrero et al. 2021)" in plain
+    assert "the TIC noise polynomial (Stassun et al. 2018) after Sullivan et al. 2015" in plain
+    assert "21 arcsec pixels (Ricker et al. 2015)" in plain and "no TESS light curve was examined" in plain
+    assert plain.startswith("The method follows Christ et al. 2019, with TIC neighbours (Stassun et al. 2019)")
+    tex = str(tess.methods_sentence(b, tex=True))
+    assert {key for key, _w in tess.METHOD_CITES} == set(re.findall(r"\\cite[pt]\{([^}]+)\}", tex))
+    assert tess.methods_sentence({"available": False}) is None
+
+
+def test_the_two_pixel_radius_sum_is_named_for_comparison_not_as_a_bound():
+    b = tess.statement(META, EPHEMERIS)
+    row = tess.readme_row(b)
+    assert "with the two-pixel-radius sum, for comparison" in row and "bound" not in row and "hard" not in row
 
 
 def test_a_missing_magnitude_or_ephemeris_leaves_the_block_unavailable():
@@ -333,6 +420,31 @@ def test_the_tool_fetches_by_get_and_stores_the_inputs_in_meta(tool, tmp_path, m
     assert set(t) == {"queried", "tic", "tmag", "tmag_source", "ra", "dec", "sectors", "neighbours"}
     assert set(bright) == {"tic", "dst_arcsec", "dra_pix", "ddec_pix", "tmag", "tmag_source"}
     assert tess.statement(t, EPHEMERIS)["available"] is True
+
+
+def test_the_tool_fills_a_missing_tmag_from_gaia_equation_1_with_both_colours(tool):
+    row = {"ID": 1, "Tmag": None, "GAIAmag": 16.2329, "gaiabp": 16.8599, "gaiarp": 15.4928}
+    t, source = tool.magnitude(row)
+    assert t == pytest.approx(15.552, abs=0.001) and source == tess.TMAG_EQ1
+    assert tool.magnitude({**row, "gaiarp": None}) == (pytest.approx(16.2329 - 0.430), tess.TMAG_EQ2)
+    assert tool.magnitude({"Tmag": 15.19}) == (15.19, tess.TMAG_TIC)
+    assert tool.magnitude({"Tmag": None, "GAIAmag": None}) == (None, None)
+
+
+def test_the_tool_merges_meta_in_one_session_and_keeps_a_later_write(tool, tmp_path):
+    """M9: a ``meta`` key another writer added after the tool read the row survives the tool's write."""
+    from skysift.store.db import TargetRow
+    store, _url = _store_with_target(tmp_path)
+    row = tool.target_row(store, "kic-006146676")
+    with store.session() as s:
+        t = s.get(TargetRow, "kic-006146676")
+        t.meta = {**(t.meta or {}), "kepmag": 16.1}
+    tool.store_inputs(store, row["target_id"], {"tic": 1})
+    with store.session() as s:
+        meta = dict(s.get(TargetRow, "kic-006146676").meta)
+    assert meta == {"crowdsap": 0.62, "psffrac": 0.81, "kepmag": 16.1, "tess": {"tic": 1}}
+    with pytest.raises(LookupError):
+        tool.store_inputs(store, "kic-000000001", {"tic": 1})
 
 
 def test_the_tool_s_dry_run_prints_the_urls_and_fetches_nothing(tool, tmp_path, monkeypatch, capsys):

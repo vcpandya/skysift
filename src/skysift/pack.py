@@ -290,7 +290,8 @@ def references(data: dict) -> dict[str, bool]:
 
 
 BIBLIOGRAPHY = (
-    ("battley2021", r"{Battley} et~al.(2021)", r"Battley, M.~P., et~al. 2021, MNRAS, 503, 4092"),
+    ("battley2021", r"{Battley} et~al.(2021)",
+     r"Battley, M.~P., Kunimoto, M., Armstrong, D.~J., \& Pollacco, D. 2021, MNRAS, 503, 4092"),
     ("bryson2013", r"{Bryson} et~al.(2013)",
      r"Bryson, S.~T., Jenkins, J.~M., Gilliland, R.~L., et~al. 2013, PASP, 125, 889"),
     ("christ2019", r"{Christ} et~al.(2019)", r"Christ, C.~N., Montet, B.~T., \& Fabrycky, D.~C. 2019, AJ, 157, 235"),
@@ -300,7 +301,8 @@ BIBLIOGRAPHY = (
     ("fressin2013", r"{Fressin} et~al.(2013)", r"Fressin, F., Torres, G., Charbonneau, D., et~al. 2013, ApJ, 766, 81"),
     ("giacalone2021", r"{Giacalone} et~al.(2021)",
      r"Giacalone, S., Dressing, C.~D., Jensen, E.~L.~N., et~al. 2021, AJ, 161, 24"),
-    ("guerrero2021", r"{Guerrero} et~al.(2021)", r"Guerrero, N.~M., et~al. 2021, ApJS, 254, 39"),
+    ("guerrero2021", r"{Guerrero} et~al.(2021)",
+     r"Guerrero, N.~M., Seager, S., Huang, C.~X., et~al. 2021, ApJS, 254, 39"),
     ("holczer2016", r"{Holczer} et~al.(2016)", r"Holczer, T., et~al. 2016, ApJS, 225, 9"),
     ("kbonus", r"{Mart{\'\i}nez-Palomera} et~al.(2023a)",
      r"Mart{\'\i}nez-Palomera, J., Hedges, C., \& Dotson, J. 2023a, AJ, 166, 265, doi:10.3847/1538-3881/ad0727"),
@@ -316,12 +318,17 @@ BIBLIOGRAPHY = (
     ("mann2019", r"{Mann} et~al.(2019)", r"Mann, A.~W., Dupuy, T., Kraus, A.~L., et~al. 2019, ApJ, 871, 63"),
     ("morton2012", r"{Morton}(2012)", r"Morton, T.~D. 2012, ApJ, 761, 6"),
     ("pecaut2013", r"{Pecaut} \& {Mamajek}(2013)", r"Pecaut, M.~J., \& Mamajek, E.~E. 2013, ApJS, 208, 9"),
-    ("ricker2015", r"{Ricker} et~al.(2015)", r"Ricker, G.~R., et~al. 2015, JATIS, 1, 014003"),
+    ("ricker2015", r"{Ricker} et~al.(2015)",
+     r"Ricker, G.~R., Winn, J.~N., Vanderspek, R., et~al. 2015, JATIS, 1, 014003"),
     ("schmitt2014", r"{Schmitt} et~al.(2014)", r"Schmitt, J.~R., et~al. 2014, AJ, 148, 28"),
-    ("stassun2018", r"{Stassun} et~al.(2018)", r"Stassun, K.~G., et~al. 2018, AJ, 156, 102"),
-    ("stassun2019", r"{Stassun} et~al.(2019)", r"Stassun, K.~G., et~al. 2019, AJ, 158, 138"),
-    ("sullivan2015", r"{Sullivan} et~al.(2015)", r"Sullivan, P.~W., et~al. 2015, ApJ, 809, 77"),
-    ("twicken2025", r"{Twicken} et~al.(2025)", r"Twicken, J.~D., et~al. 2025, arXiv:2506.04136"),
+    ("stassun2018", r"{Stassun} et~al.(2018)",
+     r"Stassun, K.~G., Oelkers, R.~J., Pepper, J., et~al. 2018, AJ, 156, 102"),
+    ("stassun2019", r"{Stassun} et~al.(2019)",
+     r"Stassun, K.~G., Oelkers, R.~J., Paegert, M., et~al. 2019, AJ, 158, 138"),
+    ("sullivan2015", r"{Sullivan} et~al.(2015)",
+     r"Sullivan, P.~W., Winn, J.~N., Berta-Thompson, Z.~K., et~al. 2015, ApJ, 809, 77"),
+    ("twicken2025", r"{Twicken} et~al.(2025)",
+     r"Twicken, J.~D., Jenkins, J.~M., Caldwell, D.~A., et~al. 2025, RNAAS, 9, 132, doi:10.3847/2515-5172/addec4"),
 )
 
 
@@ -1108,8 +1115,10 @@ def gate_problems(raw: dict) -> list[str]:
     (no cross-check, one stored by an earlier version of the tool or one made for an earlier dossier; its numbers
     never block, ruling t), and a stored
     commit that is dirty or unknown (the software statement could not name archived code; ruling g), a pixel verdict
-    made under an older pixel rule (``dossier.pixel_rule_stale``) and prior claims that were not checked
-    (``dossier.prior_claims_unchecked``). Empty when the dossier may go to zenodo.org."""
+    made under an older pixel rule (``dossier.pixel_rule_stale``), a pixel rerun that disagrees with the reviewer
+    (``dossier.pixel_verdict_disagrees``), prior claims that were not checked (``dossier.prior_claims_unchecked``)
+    and a rendered Research Note over the RNAAS limit of 1,500 words (``note_words``; the TESS statement itself never
+    blocks). Empty when the dossier may go to zenodo.org."""
     out = []
     for key, what in (("timing", "the ephemeris"), ("shape", "the transit shape")):
         block = raw.get(key)
@@ -1128,6 +1137,10 @@ def gate_problems(raw: dict) -> list[str]:
         out.append(f"{stale}; the recheck reruns the pixel step first")
     if ds.pixel_verdict_disagrees(raw):
         out.append("the pixel rerun disagrees with the reviewer's decision; a reviewer looks again first")
+    words = note_words(render_note(raw))["total"]
+    if words > NOTE_LIMITS["total"]:
+        out.append(f"the Research Note has {words:,} words, over the RNAAS limit of {NOTE_LIMITS['total']:,}; "
+                   "shorten it first")
     if ds.prior_claims_unchecked(raw):
         out.append("prior claims on the signal were not checked (no docs/candidates folder)")
     return out

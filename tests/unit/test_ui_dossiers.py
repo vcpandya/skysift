@@ -898,7 +898,8 @@ def test_section_03_carries_the_tess_statement(seeded_dossier):
         checks = html.unescape(client.get(f"/dossiers/{STAGE2_TARGET}").text.split('id="checks"')[1]
                                .split('id="pixels"')[0])
         assert "<h3>TESS</h3>" in checks and block["sentence"] in checks
-        assert "TESS sectors on the Kepler ephemeris" in checks and "the hard 42 arcsec cut" in checks
+        assert "TESS sectors on the Kepler ephemeris" in checks
+        assert "as the two-pixel-radius sum, for comparison" in checks
         assert "no TESS light curve was examined" in checks and chr(0x2014) not in checks
         assert checks.index("Cross-check") < checks.index("<h3>TESS</h3>")
     path = Path(app.state.store.dossier(STAGE2_TARGET)["data_path"])
@@ -907,6 +908,7 @@ def test_section_03_carries_the_tess_statement(seeded_dossier):
     checks = client.get(f"/dossiers/{STAGE2_TARGET}").text.split('id="checks"')[1].split('id="pixels"')[0]
     assert "TESS coverage was not assessed (TESS inputs not fetched)." in checks
     assert f"tools/tess_inputs.py --target {STAGE2_TARGET}" in checks
+    assert f"then run <span class=\"mono\">skysift dossier --target {STAGE2_TARGET} --force</span>" in checks
     old = {k: v for k, v in data.items() if k != "tess"}                      # a version 3 dossier has no block
     path.write_text(json.dumps(old), encoding="utf-8")
     checks = client.get(f"/dossiers/{STAGE2_TARGET}").text.split('id="checks"')[1].split('id="pixels"')[0]
