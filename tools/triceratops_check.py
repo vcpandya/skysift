@@ -60,11 +60,21 @@ seed-to-seed standard deviation of the parallel NFPP (``parallel_check_record``)
 tool says so and runs the rest serially. Each run stores its FPP, FPP without STP, NFPP, P(STP), P(PTP), best scenario and
 whether it was degenerate; the medians and the 16th and 84th percentiles are over the runs that are not.
 
+Field stars. The constructor's Gaia DR3 query for the field-star population returns None when it fails, and the
+package then skips the DTP, DEB, DEBx2P, BTP, BEB and BEBx2P scenarios without a word, so the tool refuses to start
+(exit 2) without a readable, non-empty population file and records its row count and a hash of its sorted rows in
+``settings.field_stars`` (``field_star_summary``).
+
 Checkpoint. After the check and after every run the tool writes ``<out stem>.partial.json`` (``partial_path``): the
-runs so far, the check, the parallel state and the settings that define a run (``checkpoint_key``). ``--resume``
-reads it, refuses it when the inputs fingerprint or any of those settings differ, and goes on from the next seed. The
-result file is written once at the end and the partial file removed. ``--draws`` (default 1e6) sets the draws per run,
-so ``--runs 20 --draws 2000 --check-draws 2000`` runs ``main`` end to end in minutes.
+runs so far, the check, the parallel state and what defines a run (``checkpoint_key``): the settings, the field-star
+rows' hash, the hash of the final ``stars`` table after the parameter and share steps (``stars_digest``), and the
+hashes of ``lightcurve.csv`` and ``inputs.json`` as files, since a resume rebuilds all of them. ``--resume`` refuses a
+checkpoint whose key differs (naming what differs) or that holds more runs than ``--runs``, and goes on from the next
+seed; with no checkpoint it starts fresh and ``settings.resume_note`` says so, so a launcher can always pass it. A
+checkpoint found without ``--resume`` stops the tool (exit 2), so a relaunch never overwrites it. The result file is
+written once at the end and the partial file removed. ``--draws`` (default 1e6) sets the draws per run, so ``--runs 2
+--draws 2000 --check-draws 2000`` runs ``main`` end to end in minutes; below 1e6 the tool warns that the result is a
+smoke test, and the import refuses it, as it refuses a result made with ``--allow-old-export``.
 
 The helpers above the guarded ``import triceratops`` need numpy and astropy only, so the engine's tests import them.
 
@@ -75,6 +85,7 @@ The helpers above the guarded ``import triceratops`` need numpy and astropy only
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -93,7 +104,10 @@ MIN_RUNS = 20                       # skysift.crosscheck.N_RUNS: the import refu
 SEARCH_RADIUS = 10                  # Kepler pixels, the package's default
 N_PIX = 2 * SEARCH_RADIUS + 2       # the padded image side, as the package builds it
 EXPTIME_DAYS = 0.0204               # Kepler long cadence
-N_DRAWS = 1_000_000
+N_DRAWS = 1_000_000                 # skysift.crosscheck.MIN_DRAWS: the import refuses fewer draws per run
+RADIUS_MISMATCH = 0.2               # a mass belonging to a radius this far from the package's is left to the package
+REPLACE_ATTEMPTS = 5                # a checkpoint held open by another process: tries before warning
+STARS_COLUMNS = ("ID", "Tmag", "ra", "dec", "Teff", "rad", "mass", "plx", "fluxratio", "tdepth")
 CHECK_DRAWS = 20_000                # the serial-against-parallel check: the same estimator, so a few draws suffice
 CHECK_SEEDS = 4                     # parallel seeds at those draws, whose NFPP scatter is the Monte Carlo noise
 FPP_DECIMALS = 3                    # the serial and parallel FPPs are compared to this many decimals
@@ -403,23 +417,38 @@ def param_updates(row: dict, given: dict | None, added: bool) -> tuple[list[tupl
     """(the ``update_star`` calls, the source of each parameter) for one ``stars`` row (ruling q): a Teff, radius or
     mass the TIC row lacks (the package lists it in ``params_estimated`` when it filled it from photometry, or it is
     not finite), and every one of an added star, takes the export's value (``given``: {"teff", "radius", "mass",
-    "params_source"}) where it has one; otherwise the TIC value ("TIC"), the package's estimate ("TRICERATOPS
-    estimate from photometry") or nothing ("none (the package assumes solar values)") stands."""
+    "params_source", "mass_radius"}) where it has one; otherwise the TIC value ("TIC"), the package's estimate
+    ("TRICERATOPS estimate from photometry") or nothing ("none (the package assumes solar values)") stands. A mass
+    that belongs to a radius (``mass_radius``, else the export's radius) more than ``RADIUS_MISMATCH`` from the radius
+    the package will use (the TIC's when it is kept) is left to the package, its source saying why, so a star never
+    carries one source's mass on another's radius."""
     est = row.get("params_estimated")
     estimated = {e.strip().split(" ")[0] for e in est.split(",")} if isinstance(est, str) and est else set()
     updates, sources = [], {}
+    used_radius = None
     for col, key in PARAMS:
         if not (added or col in estimated or _finite(row.get(col)) is None):
             sources[col] = "TIC"
+            if col == "rad":
+                used_radius = _finite(row.get(col))
             continue
         value = _finite((given or {}).get(key))
         said = ((given or {}).get("params_source") or {}).get(key)
+        stands = ("TRICERATOPS estimate from photometry" if col in estimated
+                  else "none (the package assumes solar values)")
+        if col == "rad":
+            used_radius = value if value is not None else _finite(row.get(col))
+        belongs = _finite((given or {}).get("mass_radius", (given or {}).get("radius")))
+        if col == "mass" and value is not None and None not in (used_radius, belongs) and belongs > 0 and \
+                abs(used_radius - belongs) / belongs > RADIUS_MISMATCH:
+            sources[col] = (f"{said or 'the export'}, left to the package: that mass belongs to radius {belongs:.3f}, "
+                            f"more than {RADIUS_MISMATCH:.0%} from the radius {used_radius:.3f} the package uses; "
+                            f"{stands}")
+            continue
         if value is not None:
             updates.append((col, value))
             sources[col] = said or "the export"
             continue
-        stands = ("TRICERATOPS estimate from photometry" if col in estimated
-                  else "none (the package assumes solar values)")
         sources[col] = f"{said}: {stands}" if said else stands
     return updates, sources
 
@@ -470,6 +499,16 @@ def summarise(runs: list[dict]) -> dict:
     return out
 
 
+def _clamp(x) -> float:
+    """A probability held in 0 to 1 (the package's FPP can be a rounding error below 0); 0 when not finite."""
+    return _unit(x)[0]
+
+
+def _tiny(x: float, spec: str) -> str:
+    """``x`` in ``spec``, or 0 below 1e-12, where the package's sums are rounding."""
+    return "0" if x < 1e-12 else format(x, spec)
+
+
 def parallel_check_record(seed: int, n: int, serial: dict, parallel: dict, seed_nfpps: list[float]) -> dict:
     """The serial-against-parallel check of one seed at ``n`` draws (ruling s): both FPPs and both NFPPs, the draw
     count, and the comparison stated in words, never as one pass flag. The FPPs are compared to ``FPP_DECIMALS``
@@ -477,14 +516,17 @@ def parallel_check_record(seed: int, n: int, serial: dict, parallel: dict, seed_
     scenarios, whose evidences rest on the few draws that fit, so at a small draw count it carries Monte Carlo noise of
     its own: the noise is measured as the sample standard deviation of the parallel NFPP over ``seed_nfpps`` (the
     parallel path at ``n`` draws and consecutive seeds, the first being ``seed``), and a gap within ``NOISE_SIGMAS``
-    of those is noise."""
+    of those is noise. Every value is held in 0 to 1 and a value below 1e-12 is printed as 0."""
+    serial = {k: _clamp(serial[k]) for k in ("fpp", "nfpp")}
+    parallel = {k: _clamp(parallel[k]) for k in ("fpp", "nfpp")}
+    seed_nfpps = [_clamp(x) for x in seed_nfpps]
     fpp_gap, nfpp_gap = abs(serial["fpp"] - parallel["fpp"]), abs(serial["nfpp"] - parallel["nfpp"])
     fpp_equal = fpp_gap < 0.5 * 10 ** -FPP_DECIMALS
     sd = float(np.std(seed_nfpps, ddof=1)) if len(seed_nfpps) > 1 else None
     in_sd = nfpp_gap / sd if sd else None
-    fpp_words = (f"the FPPs ({serial['fpp']:.4g} serial, {parallel['fpp']:.4g} parallel) are "
+    fpp_words = (f"the FPPs ({_tiny(serial['fpp'], '.4g')} serial, {_tiny(parallel['fpp'], '.4g')} parallel) are "
                  f"{'' if fpp_equal else 'not '}equal to {FPP_DECIMALS} decimals")
-    nfpps = f"the NFPPs ({serial['nfpp']:.3g} serial, {parallel['nfpp']:.3g} parallel)"
+    nfpps = f"the NFPPs ({_tiny(serial['nfpp'], '.3g')} serial, {_tiny(parallel['nfpp'], '.3g')} parallel)"
     if in_sd is None:
         nfpp_words = f"{nfpps} cannot be set against the Monte Carlo noise, which needs two seeds that differ"
     else:
@@ -502,7 +544,8 @@ def star_rows(stars: list[dict], matched: list[dict], added: dict[str, float], s
               params_source: dict) -> list[dict]:
     """The stars the run used, from TRICERATOPS's ``stars`` rows after the shares were written: id, Tmag, G,
     separation, the flux ratio and required depth used, the package's box fraction, the Kepler-band fraction, the
-    Kepler-band flux relative to the target, the share and its source, the Teff, radius and mass with their sources,
+    Kepler-band flux relative to the target, the box factor (1 for a TIC star at its own position, the Gaussian factor
+    at its separation for an added one), the share and its source, the Teff, radius and mass with their sources,
     the Gaia id and whether the Tmag is an estimate."""
     gaia_of = {m["tic_id"]: m["source_id"] for m in matched}
 
@@ -514,7 +557,8 @@ def star_rows(stars: list[dict], matched: list[dict], added: dict[str, float], s
         out.append({"id": sid, "tmag": num(s.get("Tmag")), "gmag": num(g), "sep_arcsec": num(s.get("sep (arcsec)")),
                     "flux_ratio": num(s.get("fluxratio")), "tdepth": num(s.get("tdepth")),
                     "g_package": sh["g_package"], "g_kepler": sh["g"], "kepler_flux": sh["kepler_flux"],
-                    "band": sh["band"], "share": sh["share"], "share_source": sh["source"],
+                    "band": sh["band"], "box_factor": sh["box_factor"], "share": sh["share"],
+                    "share_source": sh["source"],
                     "teff": num(s.get("Teff")), "rad": num(s.get("rad")), "mass": num(s.get("mass")),
                     "params_source": params_source.get(sid),
                     "gaia_source_id": sid if sid in added else gaia_of.get(sid), "tmag_estimated": sid in added})
@@ -552,17 +596,54 @@ def partial_path(out: Path) -> Path:
     return out.with_name(out.stem + ".partial.json")
 
 
+def file_sha256(path) -> str:
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def field_star_summary(fname) -> dict:
+    """{"file", "n_rows", "sha256"} of the package's field-star population (``t.trilegal_fname``): the hash is over
+    the header and the rows sorted, so the order the query returns them in does not matter. Raises ValueError when
+    the package has no population (its query failed or returned nothing), the file cannot be read or it holds no
+    star."""
+    if not isinstance(fname, str) or not fname:
+        raise ValueError("the package has no field-star population")
+    try:
+        lines = Path(fname).read_text(encoding="utf-8").splitlines()
+    except OSError as e:
+        raise ValueError(f"the field-star population {fname} cannot be read ({type(e).__name__}: {e})") from None
+    rows = sorted(line for line in lines[1:] if line.strip())
+    if not rows:
+        raise ValueError(f"the field-star population {fname} holds no star")
+    digest = hashlib.sha256("\n".join([lines[0], *rows]).encode("utf-8")).hexdigest()
+    return {"file": Path(fname).name, "n_rows": len(rows), "sha256": digest}
+
+
+def stars_digest(rows) -> str:
+    """A SHA-256 of the ``stars`` table the runs use (``STARS_COLUMNS``, each number at 8 significant figures), taken
+    after the parameter and share steps."""
+    def cell(x):
+        f = _finite(x)
+        return None if f is None else f"{f:.8g}"
+    table = [[str(r.get("ID")), *(cell(r.get(c)) for c in STARS_COLUMNS[1:])] for r in rows]
+    return hashlib.sha256(json.dumps(table).encode("utf-8")).hexdigest()
+
+
 def checkpoint_key(fingerprint: str, *, seed: int, draws: int, check_draws: int, parallel_check: bool,
-                   flux_err: float, shares: dict, quarters, allow_old_export: bool, version: str) -> dict:
+                   flux_err: float, shares: dict, quarters, allow_old_export: bool, version: str,
+                   field_stars: dict | None = None, stars_sha256: str | None = None,
+                   lightcurve_sha256: str | None = None, inputs_json_sha256: str | None = None) -> dict:
     """What a resumed run must share with the runs already made: the inputs' fingerprint, the first seed, the draws
     per run, the check's draws, the exposure time, the flux error, the flux shares, the quarters, whether an older
-    export was allowed and the package version."""
+    export was allowed, the package version, and the hashes of what a resume rebuilds: the field-star population
+    (``field_star_summary``), the final ``stars`` table (``stars_digest``), ``lightcurve.csv`` and ``inputs.json``."""
     return {"inputs_sha256": fingerprint, "first_seed": int(seed), "N": int(draws),
             "check_draws": int(check_draws) if parallel_check else None, "parallel_check": bool(parallel_check),
             "exptime_days": EXPTIME_DAYS, "flux_err_rel_robust": float(flux_err),
             "flux_shares": {k: shares.get(k) for k in ("source", "budget", "crowdsap")},
             "quarters": [int(q) for q in quarters], "allow_old_export": bool(allow_old_export),
-            "tool_version": str(version)}
+            "tool_version": str(version), "field_stars_n": (field_stars or {}).get("n_rows"),
+            "field_stars_sha256": (field_stars or {}).get("sha256"), "stars_sha256": stars_sha256,
+            "lightcurve_sha256": lightcurve_sha256, "inputs_json_sha256": inputs_json_sha256}
 
 
 def new_state() -> dict:
@@ -571,13 +652,32 @@ def new_state() -> dict:
     return {"runs": [], "check": None, "failure": None, "parallel": True, "resumes": []}
 
 
-def write_partial(path: Path, key: dict, state: dict) -> None:
+def write_partial(path: Path, key: dict, state: dict, *, attempts: int = REPLACE_ATTEMPTS, pause: float = 0.2) -> bool:
     """Write the checkpoint through a temporary file and a rename, so a stop in the middle of a write leaves the last
-    whole checkpoint."""
+    whole checkpoint. On Windows the rename fails while another process (an indexer, a virus scan, a reader) holds
+    the checkpoint open, so it is tried ``attempts`` times ``pause`` seconds apart, and then the tool warns and goes
+    on, the next run's checkpoint trying again. Returns whether the checkpoint was written."""
     path = Path(path)
     tmp = path.with_name(path.name + ".tmp")
     tmp.write_text(json.dumps({"key": key, **state}, indent=1, allow_nan=False), encoding="utf-8")
-    os.replace(tmp, path)
+    for k in range(attempts):
+        try:
+            os.replace(tmp, path)
+            return True
+        except PermissionError:
+            if k + 1 < attempts:
+                clock.sleep(pause)
+    print(f"warning: the checkpoint {path} is held open by another process and was not replaced; the run goes on "
+          "and the next checkpoint tries again", file=sys.stderr)
+    return False
+
+
+def checkpoint_runs(path: Path) -> int:
+    """The number of runs a checkpoint holds. Raises OSError or ValueError when it cannot be read as one."""
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(data, dict) or not isinstance(data.get("runs"), list):
+        raise ValueError(f"{path} is not a checkpoint of this tool")  # noqa: TRY004  (one error for a bad file)
+    return len(data["runs"])
 
 
 def resume_state(path: Path, key: dict) -> dict:
@@ -636,6 +736,8 @@ def main(argv=None) -> int:
     if a.draws < 1 or a.check_draws < 1:
         print("--draws and --check-draws must be positive", file=sys.stderr)
         return 2
+    if a.draws < N_DRAWS:
+        print(f"--draws {a.draws:,} is below {N_DRAWS:,}: smoke only, the import will refuse it", file=sys.stderr)
     if tr is None:
         print("TRICERATOPS is not installed in this interpreter; run this tool with "
               ".venv-triceratops/Scripts/python.exe (see its docstring)", file=sys.stderr)
@@ -643,6 +745,20 @@ def main(argv=None) -> int:
     from importlib.metadata import version
 
     inputs_dir, out = Path(a.inputs).resolve(), Path(a.out).resolve()
+    partial = partial_path(out)
+    if partial.exists() and not a.resume:
+        print(f"checkpoint exists; pass --resume or remove it ({partial})", file=sys.stderr)
+        return 2
+    if a.resume and partial.exists():
+        try:
+            held = checkpoint_runs(partial)
+        except (OSError, ValueError) as e:
+            print(f"cannot resume: {type(e).__name__}: {e}", file=sys.stderr)
+            return 2
+        if held > a.runs:
+            print(f"the checkpoint {partial} holds {held} runs, more than --runs {a.runs}; pass --runs {held} or more "
+                  "so none of them is lost", file=sys.stderr)
+            return 2
     try:
         inputs = json.loads((inputs_dir / "inputs.json").read_text(encoding="utf-8"))
         lc = read_lightcurve(inputs_dir / inputs["lightcurve"]["file"])
@@ -667,6 +783,13 @@ def main(argv=None) -> int:
     os.chdir(out.parent)                        # the constructor writes the field-star file in the working folder
     t = tr.target(ID=int(tgt.get("kic") or inputs["neighbour_kic"]), sectors=[], search_radius=SEARCH_RADIUS,
                   mission="Kepler", ra=tgt["ra"], dec=tgt["dec"])
+    try:
+        field_stars = field_star_summary(getattr(t, "trilegal_fname", None))
+    except ValueError as e:
+        print(f"{e}: the package's Gaia DR3 query for the field-star population is the likely cause (an outage or a "
+              "refusal), and without the population it would skip the DTP, DEB, DEBx2P, BTP, BEB and BEBx2P "
+              "scenarios, so no run is started", file=sys.stderr)
+        return 2
     first = t.stars.iloc[0]
     offset = math.hypot((first["ra"] - tgt["ra"]) * math.cos(math.radians(tgt["dec"])), first["dec"] - tgt["dec"])
     if offset * 3600 > 2.0:
@@ -756,9 +879,15 @@ def main(argv=None) -> int:
     key = checkpoint_key(inputs["fingerprint"], seed=a.seed, draws=a.draws, check_draws=a.check_draws,
                          parallel_check=a.parallel_check, flux_err=flux_err, shares=shares,
                          quarters=[q["quarter"] for q in images], allow_old_export=a.allow_old_export,
-                         version=tool_version)
-    partial, state = partial_path(out), new_state()
-    if a.resume:
+                         version=tool_version, field_stars=field_stars,
+                         stars_sha256=stars_digest(t.stars.to_dict("records")),
+                         lightcurve_sha256=file_sha256(inputs_dir / inputs["lightcurve"]["file"]),
+                         inputs_json_sha256=file_sha256(inputs_dir / "inputs.json"))
+    state, resume_note = new_state(), None
+    if a.resume and not partial.exists():
+        resume_note = "--resume was given but no checkpoint existed, so the run started fresh"
+        print(resume_note, file=sys.stderr)
+    elif a.resume:
         try:
             state = resume_state(partial, key)
         except (OSError, ValueError) as e:
@@ -815,6 +944,7 @@ def main(argv=None) -> int:
                 "aperture": "3 x 3 around the target", "dilution_corrected": True, "parallel": parallel,
                 "parallel_failure": failure, "parallel_check": check, "mission": "Kepler",
                 "limb_darkening": "the package's Kepler table", "field_star_population": "Gaia DR3 (package default)",
+                "field_stars": field_stars, "resume_note": resume_note,
                 "quarters": [q["quarter"] for q in images], "matched_neighbours": matched, "notes": notes,
                 "flux_err_rel_robust": flux_err, "flux_err_rel_pipeline": pipeline_err, "flux_err_source": which,
                 "flux_shares": {k: shares[k] for k in ("source", "budget", "contaminating_fraction", "crowdsap")},
@@ -828,7 +958,7 @@ def main(argv=None) -> int:
                                   "skysift": {k: (star.get(k) or {}).get("median") for k in ("teff", "radius",
                                                                                              "mass")}}}
     stars = star_rows(t.stars.to_dict("records"), matched, added, shares, gmags, params_source)
-    result = assemble_result(runs[:a.runs], stars, settings, inputs, tool_version)
+    result = assemble_result(runs, stars, settings, inputs, tool_version)
     tmp = out.with_name(out.name + ".tmp")
     tmp.write_text(json.dumps(result, indent=1, allow_nan=False), encoding="utf-8")
     os.replace(tmp, out)

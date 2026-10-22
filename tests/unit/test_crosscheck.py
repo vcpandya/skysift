@@ -292,11 +292,18 @@ def test_neighbour_params_prefers_gaia_and_falls_back_to_the_dwarf_table():
     assert colour["teff"] == pytest.approx(np.interp(1.1, tab[:, 0], tab[:, 1]), abs=1)
     assert colour["radius"] == pytest.approx(np.interp(1.1, tab[:, 0], tab[:, 2]), abs=1e-3)
     assert all(s.startswith("Mamajek dwarf table at BP-RP 1.100 (Pecaut") for s in colour["source"].values())
-    # M9: a GSP-Phot radius above the dwarf table's largest is an evolved star: its mass is left to the package
+    assert no_mass["mass_radius"] == 0.68 and full["mass_radius"] == 0.68
+    # a GSP-Phot radius more than 20 per cent above the dwarf table's at the star's Teff is an evolved star: its mass
+    # is left to the package (round 2: against the radius at its Teff, not the table's largest)
+    by_teff = np.argsort(tab[:, 1])
     evolved = cc.neighbour_params({"teff_gspphot": "4800", "radius_gspphot": "4.1", "mass_flame": ""}, 1.1)
     assert evolved["radius"] == 4.1 and evolved["teff"] == 4800.0 and evolved["mass"] is None
-    assert evolved["source"]["mass"] == ("Gaia DR3 GSP-Phot radius 4.100 above the dwarf table's largest 2.49: "
-                                         "evolved; mass left to the package")
+    dwarf = float(np.interp(4800.0, tab[by_teff, 1], tab[by_teff, 2]))
+    assert evolved["source"]["mass"] == (f"Gaia DR3 GSP-Phot radius 4.100 is more than 20% above the dwarf table's "
+                                         f"{dwarf:.3f} at Teff 4800 K: evolved; mass left to the package")
+    assert evolved["mass_radius"] is None
+    subgiant = cc.neighbour_params({"teff_gspphot": "6000", "radius_gspphot": "2.0", "mass_flame": ""}, None)
+    assert subgiant["mass"] is None and "evolved" in subgiant["source"]["mass"]        # below 2.49, still evolved
     from tools import triceratops_check as tc
     updates, sources = tc.param_updates({"Teff": 4000.0, "rad": 1.0, "mass": 1.0, "params_estimated": "Teff,rad,mass"},
                                         {**evolved, "params_source": evolved["source"]}, added=False)
@@ -609,7 +616,7 @@ def test_tool_runs_are_recorded_summarised_and_pass_the_import_checks():
     assert r["best_scenario"] == {"id": "169822650", "scenario": "TP", "prob": 0.735}
     assert tc.run_record(1, -1e-17, 0.0, False, [])["fpp"] == 0.0            # rounding below 0 is clipped
     runs = [tc.run_record(7 + k, f, f / 10, k == 4, scen) for k, f in enumerate(np.linspace(0.01, 0.2, 20))]
-    settings = {"N": 10, "notes": ["a note"], "parallel": True}
+    settings = {"N": 1_000_000, "notes": ["a note"], "parallel": True, "allow_old_export": False}
     result = tc.assemble_result(runs, [{"id": "1", "tmag": 15.2}], settings, {"fingerprint": "b" * 64}, "1.1.0")
     assert tuple(result) == cc.RESULT_KEYS and result["tool"] == cc.TOOL and result["n_degenerate"] == 1
     good = [x for x in runs if not x["degenerate"]]
@@ -681,7 +688,8 @@ def test_an_export_from_a_dossier_below_the_current_version_is_refused(env, tmp_
     could never be current: the export refuses it before writing anything (I1)."""
     path = Path(env.store.dossier(STAGE2_TARGET)["data_path"])
     path.write_text(json.dumps({**_stored(env), "dossier_version": "2"}), encoding="utf-8")
-    with pytest.raises(cc.OldDossier, match="dossier version 2 is below 3; regenerate first"):
+    from skysift.dossier import DOSSIER_VERSION
+    with pytest.raises(cc.OldDossier, match=f"dossier version 2 is below {DOSSIER_VERSION}; regenerate first"):
         cc.export_inputs(env.store, env.blob, env.settings, STAGE2_TARGET, tmp_path / "cc", fetch=env.xfetch)
     assert not (tmp_path / "cc").exists()
     from typer.testing import CliRunner
@@ -842,3 +850,123 @@ def test_tool_checkpoint_resumes_only_the_same_settings(tmp_path):
     part.write_text("[]", encoding="utf-8")
     with pytest.raises(ValueError, match="not a checkpoint"):
         tc.resume_state(part, key)
+
+
+def test_tool_leaves_a_mass_that_belongs_to_another_radius_to_the_package():
+    """Round 2 minor 6, the smoke's TIC 169822636: the TIC Teff 4950 and radius 2.54 stand, and the mass the TIC
+    lacks would come from the dwarf relation at the GSP-Phot radius 0.517, so it is left to the package."""
+    from tools import triceratops_check as tc
+    given = cc.neighbour_params({"teff_gspphot": "5021.5", "radius_gspphot": "0.517", "mass_flame": ""}, 1.0)
+    given = {**given, "params_source": given["source"]}
+    row = {"Teff": 4950.0, "rad": 2.54, "mass": 0.9, "params_estimated": "mass"}
+    updates, sources = tc.param_updates(row, given, added=False)
+    assert updates == [] and sources["Teff"] == sources["rad"] == "TIC"
+    assert sources["mass"].startswith("Mamajek dwarf table mass-radius relation at the GSP-Phot radius 0.517")
+    assert ("left to the package: that mass belongs to radius 0.517, more than 20% from the radius 2.540 the package "
+            "uses; TRICERATOPS estimate from photometry") in sources["mass"]
+    updates, _sources = tc.param_updates({**row, "rad": 0.55}, given, added=False)       # within 20 per cent: set
+    assert updates == [("mass", given["mass"])]
+    updates, _sources = tc.param_updates({"Teff": None, "rad": None, "mass": None}, given, added=True)
+    assert [c for c, _v in updates] == ["Teff", "rad", "mass"]                      # an added star: one source
+
+
+def test_the_import_refuses_a_smoke_result_and_an_old_export_result():
+    """Round 2 important 1: fewer than 1e6 draws per run, or a run made with --allow-old-export, is refused."""
+    sha = "a" * 64
+    good = fake_result(sha)
+    cc.validate_result({**good, "settings": {**good["settings"], "N": 1_000_000, "allow_old_export": False}})
+    cc.validate_result(good)                                 # a result from before the flag: N 1e6 and no flag
+    for n in (2000, 999_999, None, 1e6, True):
+        with pytest.raises(cc.BadResult, match=f"settings.N is {n!r} draws per run, below the 1,000,000"):
+            cc.validate_result({**good, "settings": {**good["settings"], "N": n}})
+    with pytest.raises(cc.BadResult, match="settings.allow_old_export is True: the result was made from an export"):
+        cc.validate_result({**good, "settings": {**good["settings"], "allow_old_export": True}})
+
+
+def test_tool_warns_below_a_million_draws_and_guards_the_checkpoint(tmp_path, monkeypatch, capsys):
+    """Round 2: the smoke warning; a checkpoint found without --resume stops the tool, and a resume with fewer runs
+    than the checkpoint holds is refused, both before anything is built."""
+    from tools import triceratops_check as tc
+    monkeypatch.setattr(tc, "tr", None)
+    args = ["--inputs", str(tmp_path), "--out", str(tmp_path / "r.json")]
+    assert tc.main([*args, "--draws", "2000"]) == 2
+    assert "--draws 2,000 is below 1,000,000: smoke only, the import will refuse it" in capsys.readouterr().err
+    monkeypatch.setattr(tc, "tr", object())
+    key = tc.checkpoint_key("a" * 64, seed=1, draws=2000, check_draws=2000, parallel_check=True, flux_err=0.001,
+                            shares={"source": "x"}, quarters=[1], allow_old_export=False, version="1.1.0")
+    state = tc.new_state()
+    state["runs"] = [tc.run_record(1 + k, 0.1, 1e-4, False, []) for k in range(3)]
+    tc.write_partial(tc.partial_path(tmp_path / "r.json"), key, state)
+    assert tc.main(args) == 2
+    assert "checkpoint exists; pass --resume or remove it" in capsys.readouterr().err
+    assert tc.main([*args, "--resume", "--runs", "1"]) == 2
+    assert "holds 3 runs, more than --runs 1" in capsys.readouterr().err
+    assert tc.partial_path(tmp_path / "r.json").exists()                          # nothing was lost
+
+
+def test_tool_field_stars_and_stars_are_hashed_for_the_resume_key(tmp_path):
+    """Round 2 important 2: no field-star population stops the tool; its hash ignores the row order; the key names
+    each rebuilt input that differs."""
+    from tools import triceratops_check as tc
+    with pytest.raises(ValueError, match="no field-star population"):
+        tc.field_star_summary(None)
+    with pytest.raises(ValueError, match="cannot be read"):
+        tc.field_star_summary(str(tmp_path / "none.csv"))
+    (tmp_path / "empty.csv").write_text("Mact,logg\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="holds no star"):
+        tc.field_star_summary(str(tmp_path / "empty.csv"))
+    (tmp_path / "a.csv").write_text("Mact,logg\n0.5,4.6\n0.8,4.5\n", encoding="utf-8")
+    (tmp_path / "b.csv").write_text("Mact,logg\n0.8,4.5\n0.5,4.6\n", encoding="utf-8")
+    a, b = tc.field_star_summary(str(tmp_path / "a.csv")), tc.field_star_summary(str(tmp_path / "b.csv"))
+    assert a["n_rows"] == 2 and a["sha256"] == b["sha256"] and a["file"] == "a.csv"
+    stars = [{"ID": 1, "Tmag": 15.2, "ra": 1.0, "dec": 2.0, "Teff": 3600.0, "rad": 0.5, "mass": 0.5, "plx": 3.3,
+              "fluxratio": 0.85, "tdepth": 0.002}]
+    assert tc.stars_digest(stars) == tc.stars_digest([dict(stars[0])])
+    assert tc.stars_digest(stars) != tc.stars_digest([{**stars[0], "mass": 0.6}])
+    common = {"seed": 1, "draws": 2000, "check_draws": 2000, "parallel_check": True, "flux_err": 0.001,
+              "shares": {"source": "x"}, "quarters": [1], "allow_old_export": False, "version": "1.1.0"}
+    key = tc.checkpoint_key("a" * 64, **common, field_stars=a, stars_sha256=tc.stars_digest(stars),
+                            lightcurve_sha256="1" * 64, inputs_json_sha256="2" * 64)
+    part = tmp_path / "r.partial.json"
+    tc.write_partial(part, key, tc.new_state())                    # a hand-made checkpoint
+    assert tc.resume_state(part, key)["runs"] == []
+    for field, other in (("field_stars_sha256", "f" * 64), ("field_stars_n", 3), ("stars_sha256", "e" * 64),
+                         ("lightcurve_sha256", "3" * 64), ("inputs_json_sha256", "4" * 64)):
+        with pytest.raises(ValueError, match=rf"\({field} differ\)"):
+            tc.resume_state(part, {**key, field: other})
+
+
+def test_tool_checkpoint_survives_a_file_held_open(tmp_path, monkeypatch, capsys):
+    from tools import triceratops_check as tc
+    real, calls = tc.os.replace, []
+
+    def flaky(src, dst):
+        calls.append(1)
+        if len(calls) < 3:
+            raise PermissionError("in use")
+        real(src, dst)
+    monkeypatch.setattr(tc.os, "replace", flaky)
+    part = tmp_path / "r.partial.json"
+    assert tc.write_partial(part, {"k": 1}, tc.new_state(), pause=0) is True and len(calls) == 3 and part.exists()
+
+    def held(src, dst):
+        raise PermissionError("in use")
+    monkeypatch.setattr(tc.os, "replace", held)
+    assert tc.write_partial(part, {"k": 2}, tc.new_state(), pause=0) is False
+    assert "held open by another process" in capsys.readouterr().err
+    assert json.loads(part.read_text(encoding="utf-8"))["key"] == {"k": 1}        # the last whole checkpoint stays
+
+
+def test_tool_check_record_is_clamped_and_star_rows_carry_the_box_factor():
+    from tools import triceratops_check as tc
+    rec = tc.parallel_check_record(1, 2000, {"fpp": -2.709e-14, "nfpp": 1.12e-24}, {"fpp": -2.665e-14, "nfpp": 0.5},
+                                   [0.5, 0.4])
+    assert rec["fpp_serial"] == rec["fpp_parallel"] == 0.0 and rec["nfpp_parallel"] == 0.5
+    assert "the FPPs (0 serial, 0 parallel)" in rec["comparison"] and "the NFPPs (0 serial, 0.5 parallel)" in \
+        rec["comparison"]
+    stars = [{"ID": "t", "Tmag": 15.0, "fluxratio": 0.6}, {"ID": "tic", "Tmag": 14.0, "fluxratio": 0.2},
+             {"ID": "added", "Tmag": 17.0, "fluxratio": 0.2}]
+    f = tc.offset_box_factor(7.0)
+    shares = tc.leakage_shares(stars, 0.8, [None] * 3, 0.002, box_factors=[None, None, f])
+    rows = tc.star_rows(stars, [], {"added": 17.0}, shares, [None] * 3, {})
+    assert [r["box_factor"] for r in rows] == [1.0, 1.0, f]

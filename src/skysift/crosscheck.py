@@ -30,6 +30,8 @@ from skysift.lc.tpf import fetch_tpfs, parse_tpf, tpf_listing_url
 from skysift.pack_text import Raw, tex_escape
 
 TOOL = "triceratops"
+MIN_DRAWS = 1_000_000  # draws per run the import accepts; the tool's default (its N_DRAWS); fewer is a smoke
+RADIUS_MISMATCH = 0.2  # a radius more than this fraction above the dwarf table's at the star's Teff is evolved
 N_RUNS = 20                     # at least this many seeded runs (ruling s); the import refuses fewer
 WINDOW_DURATIONS = 3.0          # the exported light curve: within this many durations of each transit
 CLIP_MAD = 5.0                  # a point further than this many MADs from a box model is clipped (ruling p)
@@ -171,20 +173,17 @@ def _table_value(x: float, xcol: int, ycol: int) -> float:
     return float(np.interp(x, tab[order, xcol], tab[order, ycol]))
 
 
-def _table_max(col: int) -> float:
-    from skysift.stars import mamajek_table
-    return float(np.max(mamajek_table()[:, col]))
-
-
 def neighbour_params(row: dict | None, bp_rp) -> dict:
     """The Teff (K), radius and mass (solar) the tool sets on a TIC row that lacks them (ruling q), each with its
     source: Gaia DR3's GSP-Phot Teff and radius and its FLAME mass from ``row`` (the neighbour's row of the Gaia query,
     None when Gaia had none or was not reached); a mass missing beside a GSP-Phot radius from the Mamajek dwarf table's
     mass-radius relation at that radius; anything else missing from the table at the BP-RP colour (Pecaut and Mamajek
-    2013), the row's own colour first. A GSP-Phot radius above the dwarf table's largest (an evolved star) without a
-    FLAME mass leaves the mass None, its source saying "evolved; mass left to the package", since the dwarf relation
-    would give a dwarf's mass. A parameter neither Gaia nor a colour gives is None, so the package's own estimate
-    stays. Returns {"teff", "radius", "mass", "source": {"teff", "radius", "mass"}}."""
+    2013), the row's own colour first. A GSP-Phot radius more than ``RADIUS_MISMATCH`` above the dwarf table's radius
+    at the star's Teff (an evolved star) without a FLAME mass leaves the mass None, its source saying why and "evolved;
+    mass left to the package", since the dwarf relation would give a dwarf's mass. A parameter neither Gaia nor a
+    colour gives is None, so the package's own estimate stays. Returns {"teff", "radius", "mass", "mass_radius" (the
+    radius the mass belongs to, so the tool can leave the mass to the package when the radius the package uses is
+    another; None without a mass), "source": {"teff", "radius", "mass"}}."""
     from skysift.priors import CITATIONS
     row = row or {}
     colour = _finite(row.get("bp_rp"))
@@ -198,10 +197,12 @@ def neighbour_params(row: dict | None, bp_rp) -> dict:
         value = _finite(row.get(gaia_key))
         if value is not None and value > 0:
             out[key], out["source"][key] = value, gaia_words
-        elif key == "mass" and out["source"].get("radius") == "Gaia DR3 GSP-Phot" and out["radius"] > _table_max(2):
+        elif key == "mass" and out["source"].get("radius") == "Gaia DR3 GSP-Phot" and out.get("teff") and \
+                out["radius"] > (1 + RADIUS_MISMATCH) * (dwarf := _table_value(out["teff"], 1, 2)):
             out[key] = None
-            out["source"][key] = (f"Gaia DR3 GSP-Phot radius {out['radius']:.3f} above the dwarf table's largest "
-                                  f"{_table_max(2):.2f}: evolved; mass left to the package")
+            out["source"][key] = (f"Gaia DR3 GSP-Phot radius {out['radius']:.3f} is more than "
+                                  f"{RADIUS_MISMATCH:.0%} above the dwarf table's {dwarf:.3f} at Teff "
+                                  f"{out['teff']:.0f} K: evolved; mass left to the package")
         elif key == "mass" and out["source"].get("radius") == "Gaia DR3 GSP-Phot":
             out[key] = round(_table_value(out["radius"], 2, 3), 3)
             out["source"][key] = (f"Mamajek dwarf table mass-radius relation at the GSP-Phot radius "
@@ -211,6 +212,7 @@ def neighbour_params(row: dict | None, bp_rp) -> dict:
             out["source"][key] = table
         else:
             out[key], out["source"][key] = None, None
+    out["mass_radius"] = out["radius"] if out["mass"] is not None else None
     return out
 
 
@@ -364,7 +366,8 @@ def export_inputs(store, blob, settings, target_id: str, out_dir: Path, *, fetch
     for n in stored_neighbours:
         p = neighbour_params(gaia_rows.get(str(n.get("source_id"))), n.get("bp_rp"))
         neighbours.append({**{k: n.get(k) for k in ("source_id", "sep_arcsec", "gmag", "bp_rp")},
-                           "teff": p["teff"], "radius": p["radius"], "mass": p["mass"], "params_source": p["source"]})
+                           "teff": p["teff"], "radius": p["radius"], "mass": p["mass"], "mass_radius": p["mass_radius"],
+                           "params_source": p["source"]})
     kepmag = next((meta.get(k) for k in ("kepmag", "kp") if _finite(meta.get(k)) is not None), None)
     inputs = {"target": {**{k: t.get(k) for k in ("target_id", "gaia_id", "kic", "ra", "dec", "gmag")},
                          "crowdsap": _finite(meta.get("crowdsap")), "psffrac": _finite(meta.get("psffrac")),
@@ -436,8 +439,9 @@ def validate_result(result) -> None:
     """Raise BadResult naming the first thing wrong with a result: a missing key, another tool, fewer than
     ``N_RUNS`` runs or a run list of another length, a run without its probabilities (each between 0 and 1) or with
     an FPP without STP that is not (FPP - P_STP) / (1 - P_STP), a degenerate count that is not the runs', every run
-    degenerate, a median or percentile that is not the non-degenerate runs' (``summarise``), or an inputs hash that is
-    not a SHA-256."""
+    degenerate, a median or percentile that is not the non-degenerate runs' (``summarise``), an inputs hash that is
+    not a SHA-256, fewer than ``MIN_DRAWS`` draws per run (``settings.N``: a smoke result), or a run made with
+    ``--allow-old-export`` (``settings.allow_old_export`` true)."""
     if not isinstance(result, dict):
         raise BadResult("the result file does not hold a JSON object")
     lacking = [k for k in RESULT_KEYS if k not in result]
@@ -470,6 +474,14 @@ def validate_result(result) -> None:
                       ("caveats", list), ("settings", dict)):
         if not isinstance(result[key], kind):
             raise BadResult(f"{key} must be a {kind.__name__}")
+    draws = result["settings"].get("N")
+    if not isinstance(draws, int) or isinstance(draws, bool) or draws < MIN_DRAWS:
+        raise BadResult(f"settings.N is {draws!r} draws per run, below the {MIN_DRAWS:,} the cross-check needs; a "
+                        "result at fewer draws is a smoke test, so run the tool at its default draws")
+    if result["settings"].get("allow_old_export", False) is not False:          # absent: a tool before the flag
+        raise BadResult(f"settings.allow_old_export is {result['settings']['allow_old_export']!r}: the result was "
+                        "made from an export before the revision of 22 October 2026, on the package's own shares; "
+                        "re-export and run the tool again")
 
 
 def complete(block: dict | None) -> bool:
