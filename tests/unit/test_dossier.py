@@ -1245,7 +1245,7 @@ def test_generate_stores_the_prior_claims(env):
     (folder / "prior_claims.json").write_text(json.dumps([PRIOR_CLAIM]), encoding="utf-8")
     data = json.loads(generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch, force=True)
                       .data_path.read_text(encoding="utf-8"))
-    stored = {k: v for k, v in PRIOR_CLAIM.items() if k != "status"}    # the owner's file keeps the status
+    stored = {k: PRIOR_CLAIM[k] for k in ("doi", "date", "author", "title")}  # status and note stay in the file
     assert data["prior_claims"] == [stored] and data["dossier_version"] == "4"
     assert "prior_claims_unchecked" not in [c.get("key") for c in data["caveats"]]
 
@@ -1346,3 +1346,44 @@ def test_the_tess_block_reads_the_stored_inputs_and_the_fitted_ephemeris(env):
     assert block["dilution"]["depth_tess_ppm"] == pytest.approx(expected["dilution"]["depth_tess_ppm"], rel=1e-6)
     keys = [c.get("key") for c in d["caveats"]]
     assert not [k for k in keys if k and "tess" in k]          # the block keeps its own caveats
+
+
+
+# ---------------------------------------------------------------------------------------------------- fix round 2
+
+def _decided_data(verdict: str, decision: str = "approve", made: str = "2026-10-23T10:00:00",
+                  decided: str = "2026-10-22T10:00:00") -> dict:
+    from skysift.vetting.rung5_pixels import PIXEL_RULE_VERSION
+    return {"status": {"final_status": "candidate_stage2", "decision": {"decision": decision, "utc": decided}},
+            "tests": [{"rung": "rung5_pixels", "status": verdict, "reason": "pixels: the dip is on the neighbour",
+                       "created": made, "metrics": {"seasons": [], "rule_version": PIXEL_RULE_VERSION}}]}
+
+
+def test_a_pixel_rerun_against_the_decision_is_flagged_and_refused():
+    """Round 2, I1: a fail or undetermined rung 5 row written after an approval names both and refuses the draft;
+    a pass, a row older than the decision (approved knowingly) and another decision are not flagged, and the
+    current rule clears the stale caveat."""
+    from skysift.pack import gate_problems
+    data = _decided_data("fail")
+    words = dossier_module.pixel_verdict_disagrees(data)
+    assert "decision is approve" in words and "gives fail (pixels: the dip is on the neighbour)" in words
+    keys = [c.get("key") for c in caveats(data)]
+    assert "pixel_verdict_disagrees" in keys and "pixel_rule_stale" not in keys
+    assert any("disagrees with the reviewer's decision" in p for p in gate_problems(data))
+    assert dossier_module.pixel_verdict_disagrees(_decided_data("undetermined")) is not None
+    assert dossier_module.pixel_verdict_disagrees(_decided_data("pass")) is None
+    assert dossier_module.pixel_verdict_disagrees(_decided_data("fail", made="2026-10-21T10:00:00")) is None
+    assert dossier_module.pixel_verdict_disagrees(_decided_data("fail", decision="reject")) is None
+    assert not any("disagrees" in p for p in gate_problems(_decided_data("pass")))
+
+
+def test_the_export_embeds_only_the_public_fields_of_a_prior_claim():
+    """Round 2, M1: a dossier stored by earlier code with the claim's status and note embeds neither."""
+    data = {"target": {"name": "KIC 5689121"}, "prior_claims": [PRIOR_CLAIM]}
+    page = export_html(data)
+    blob = page.split('<script id="dossier-data" type="application/json">')[1].split("</script>")[0]
+    embedded = json.loads(blob.replace("\\/", "/"))
+    assert embedded["prior_claims"] == [{k: PRIOR_CLAIM[k] for k in ("doi", "date", "author", "title")}]
+    assert "reported not accepted" not in page and "sweep a week later" not in page
+    assert dossier_module.public_claims({"prior_claims": None})["prior_claims"] is None
+    assert data["prior_claims"] == [PRIOR_CLAIM]                              # the caller's dict is not changed

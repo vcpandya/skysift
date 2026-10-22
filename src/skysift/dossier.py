@@ -35,6 +35,7 @@ import subprocess
 import zipfile
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path, PureWindowsPath
 
 import numpy as np
@@ -996,6 +997,33 @@ def pixel_rule_stale(data: dict) -> str | None:
     return f"the pixel verdict predates pixel rule version {PIXEL_RULE_VERSION}"
 
 
+PIXEL_DISAGREEING = {"approve": ("fail", "undetermined")}   # as recheck.DISAGREEING
+
+
+def pixel_verdict_disagrees(data: dict) -> str | None:
+    """The sentence naming both when the latest rung 5 row, written after the reviewer's latest decision (the pixel
+    rerun of a decided signal under a newer rule), contradicts it: a fail or an undetermined row under an approval.
+    None otherwise, so a verdict that agrees clears nothing but the stale-rule caveat, and a reviewer who approved
+    over an older row knowingly is not flagged. ``gate_problems`` refuses the live draft on it."""
+    decision = (data.get("status") or {}).get("decision") or {}
+    row = _rung(data.get("tests") or [], "rung5_pixels")
+    if not isinstance(decision, dict) or row is None:
+        return None
+    verdict, what = row.get("status"), decision.get("decision")
+    if verdict not in PIXEL_DISAGREEING.get(what or "", ()):
+        return None
+    try:
+        made = datetime.fromisoformat(str(row.get("created")))
+        decided = datetime.fromisoformat(str(decision["utc"]))
+    except (KeyError, TypeError, ValueError):
+        return None
+    if made.replace(tzinfo=None) <= decided.replace(tzinfo=None):
+        return None
+    return (f"The reviewer's decision is {what}, but the pixel step rerun under pixel rule {PIXEL_RULE_VERSION} "
+            f"after it gives {verdict} ({row.get('reason') or 'no reason stored'}). The decision stands until a "
+            "reviewer looks again, and the live Zenodo draft waits for that.")
+
+
 def prior_claims_unchecked(data: dict) -> bool:
     """The dossier was built where the candidates folder was absent (``prior_claims`` stored as None), so no prior
     claim on the signal was looked for. A dossier from before the key existed reads as checked with none."""
@@ -1039,6 +1067,10 @@ def caveats(data: dict) -> list[dict]:
         out.append({"key": "pixel_rule_stale", "title": stale.capitalize(),
                     "text": f"The rung 5 row was made under an older pixel rule, so {stale}. The recheck reruns it "
                             "under the current rule, and the live Zenodo draft waits for that."})
+    disagree = pixel_verdict_disagrees(data)
+    if disagree:
+        out.append({"key": "pixel_verdict_disagrees", "title": "The pixel rerun disagrees with the reviewer's decision",
+                    "text": disagree})
     if prior_claims_unchecked(data):
         out.append({"key": "prior_claims_unchecked", "title": "Prior claims on this signal were not checked",
                     "text": "The engine ran without the docs/candidates folder of a source checkout, so it could not "
@@ -1297,13 +1329,26 @@ def prior_claims(target_id: str, root: Path | None = None) -> list[dict]:
     return sorted(out, key=lambda c: c["date"])
 
 
+PRIOR_CLAIM_PUBLIC = ("doi", "date", "author", "title")     # what may travel with a pack about a prior claim
+
+
+def public_claims(data: dict) -> dict:
+    """``data`` with each prior claim cut to ``PRIOR_CLAIM_PUBLIC`` (the status of someone else's submission and the
+    owner's note stay in prior_claims.json): ``generate`` stores this, and the pack and the standalone export cut a
+    dossier stored by earlier code again before they embed it. ``data`` itself is not changed; None stays None."""
+    claims = data.get("prior_claims")
+    if not isinstance(claims, list):
+        return data
+    return {**data, "prior_claims": [{k: c.get(k) for k in PRIOR_CLAIM_PUBLIC} for c in claims if isinstance(c, dict)]}
+
+
 def hand_built_localisation(target_id: str, rung5_metrics: dict, root: Path | None = None) -> dict | None:
     """How far, season by season, the rung 5 centroid's distance from the star sits from the hand-built study's
     (``docs/candidates/<target>/localisation/results.json``, its S/N-box centroid distance to the candidate per
     season, quarter mod 4 as rung 5's seasons): {"max_diff_pix", "n_seasons", "agrees", "combined_err_pix",
     "source"} over the seasons that voted and that the study lists, ``agrees`` when every season's difference is below
-    its combined error (rung 5's centroid error and the study's Monte Carlo error in quadrature), or None without the
-    file or a common season."""
+    its combined error (rung 5's centroid error and the study's Monte Carlo error in quadrature; ``agrees`` and
+    ``combined_err_pix`` None when a season has neither error), or None without the file or a common season."""
     base = Path(CANDIDATES_DIR if root is None else root)
     path = base / target_id / "localisation" / "results.json"
     if not path.is_file():
@@ -1326,8 +1371,10 @@ def hand_built_localisation(target_id: str, rung5_metrics: dict, root: Path | No
     if not diffs:
         return None
     worst = max(diffs)
+    known = all(e > 0 for _d, e in diffs)        # a season without either error gives no verdict
     return {"max_diff_pix": round(worst[0], 4), "n_seasons": len(diffs),
-            "agrees": all(d < e for d, e in diffs), "combined_err_pix": round(worst[1], 4),
+            "agrees": all(d < e for d, e in diffs) if known else None,
+            "combined_err_pix": round(worst[1], 4) if known else None,
             "source": f"docs/candidates/{target_id}/localisation/results.json"}
 
 
@@ -1356,8 +1403,8 @@ def generate(store: Store, blob, settings, target_id: str, *, signal_id: int | N
     stale = _stale_reason(old, signal, force, fp)
     # read first: a malformed file stops the run before any work. Without the candidates folder (an installed
     # package, not a checkout) nothing was checked: None, a caveat and a gate problem, never a silent empty list.
-    # The claim's status stays in the owner's file: the dossier JSON travels with the public pack.
-    claims = ([{k: v for k, v in c.items() if k != "status"} for c in prior_claims(target_id)]
+    # The claim's status and note stay in the owner's file: the dossier JSON travels with the public pack.
+    claims = (public_claims({"prior_claims": prior_claims(target_id)})["prior_claims"]
               if Path(CANDIDATES_DIR).is_dir() else None)
     target = _target_dict(store, target_id)
     say(f"signal {sid} ({signal['final_status']}, SDE {signal['sde']:.1f}); loading the light curve")
@@ -1523,9 +1570,11 @@ def export_html(data: dict, static_dir: Path = STATIC_DIR, data_dir: Path | None
     """One standalone file: the dashboard's stylesheet (tokens and components) with the fonts as data URIs,
     ``dossier.css``, the JSON in ``<script id="dossier-data" type="application/json">`` (every ``/`` escaped, so no
     ``</`` and no URL appears in the markup) and ``dossier.js``, which draws the page and its own level toggle. Nothing
-    is loaded from anywhere else. With ``data_dir`` every local path in the data is cut first (``public_paths``), as
-    the pack does: the file is meant for someone outside the laptop."""
+    is loaded from anywhere else. Prior claims are cut to their public fields (``public_claims``), and with
+    ``data_dir`` every local path in the data is cut first (``public_paths``), as the pack does: the file is meant for
+    someone outside the laptop."""
     static_dir = Path(static_dir)
+    data = public_claims(data)
     if data_dir is not None:
         data = public_paths(data, data_dir)
     app_css = _inline_fonts((static_dir / "app.css").read_text(encoding="utf-8"), static_dir / "fonts")

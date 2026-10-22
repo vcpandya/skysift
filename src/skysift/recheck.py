@@ -92,10 +92,11 @@ class RecheckReport:
                                                               "skipped": 0})
     seconds: float = 0.0
     stopped: bool = False           # a stop request ended the recheck before its queue did
+    decided_pixel_changed: int = 0  # decided signals whose pixel rerun disagrees with the decision
 
     def as_dict(self) -> dict:
         return {"considered": self.considered, "steps": dict(self.steps), "outcomes": dict(self.outcomes),
-                "seconds": self.seconds, "stopped": self.stopped}
+                "seconds": self.seconds, "stopped": self.stopped, "decided_pixel_changed": self.decided_pixel_changed}
 
 
 @dataclass
@@ -256,6 +257,90 @@ def reopened_queue(store: Store, detector_version: str) -> list[dict]:
     return [{"id": i, "target_id": t} for i, t, metrics in rows if floor_reopens({"metrics": metrics})]
 
 
+def decided_queue(store: Store, detector_version: str) -> list[dict]:
+    """Signals of this search version that a reviewer decided on (any decision) whose latest rung 5 row localised
+    under an older pixel rule (``floor_reopens``), by id: the recheck reruns their pixel step alone and keeps the
+    decision (``decided_reopens``), so a rule bump never strands an approved candidate behind the stale-rule gate."""
+    latest = (select(func.max(TestRow.id).label("id")).where(TestRow.rung == "rung5_pixels")
+              .group_by(TestRow.signal_id).subquery())
+    decided = select(DecisionRow.signal_id).distinct().subquery()
+    with store.session() as s:
+        rows = s.execute(select(SignalRow.id, SignalRow.target_id, TestRow.metrics)
+                         .join(TestRow, TestRow.signal_id == SignalRow.id).join(latest, latest.c.id == TestRow.id)
+                         .join(decided, decided.c.signal_id == SignalRow.id)
+                         .where(SignalRow.detector_version == detector_version)
+                         .order_by(SignalRow.id)).all()
+    return [{"id": i, "target_id": t} for i, t, metrics in rows if floor_reopens({"metrics": metrics})]
+
+
+def decided_reopens(store: Store, sig: StoredSignal, tests: list[dict]) -> bool:
+    """The pixel step applies to a decided signal: its latest rung 5 row localised under an older pixel rule
+    (``floor_reopens``) and its reruns under the current rule have not crashed ``REOPEN_CRASHES_MAX`` times in a row.
+    Only the pixel step runs; the decision and the signal's status stay as they are."""
+    rung5 = _latest(tests, "rung5_pixels")
+    return (rung5 is not None and floor_reopens(rung5) and _decided(store, sig.id)
+            and _reopen_crashes(store, sig.id) < REOPEN_CRASHES_MAX)
+
+
+DISAGREEING = {"approve": ("fail", "undetermined")}     # a decision and the pixel verdicts that contradict it
+
+
+def pixel_disagrees(decision: str | None, status: str | None) -> bool:
+    """The rerun's pixel verdict contradicts the reviewer's decision (a fail or an undetermined row under an
+    approval)."""
+    return status in DISAGREEING.get(decision or "", ())
+
+
+def _recheck_decided(store: Store, blob, settings: Settings, loader: LightCurveLoader, sig: StoredSignal,
+                     target: dict | None, *, fetch, tpf_loader, say, report: RecheckReport, cache: dict) -> None:
+    """The pixel step alone on a decided signal under an older pixel rule (``decided_reopens``): the new rung 5 row is
+    stored beside the decision, which stays, as does ``final_status``. An outage or a crash writes a "skipped" row
+    (crashes numbered per rule version, as on a reopened settled signal). A verdict that disagrees with the decision
+    is counted in ``decided_pixel_changed``; the dossier then carries ``pixel_verdict_disagrees``."""
+    if target is None:
+        _commit(store, say, sig, _write(sig, "pixels", "skipped", f"no target row for {sig.signal.target_id}",
+                                        decided=True))
+        return
+    settings = signal_settings(settings, sig)
+    key = (sig.signal.target_id, settings.thresholds.model_dump_json())
+    if cache.get("key") == key:
+        lc = cache["lc"]
+    else:
+        try:
+            lc = loader.load(target)
+        except Exception as e:              # an outage, a changed archive file, a parser error: the signal waits
+            logger.warning("recheck of decided signal %s: light curve unavailable", sig.id, exc_info=True)
+            _commit(store, say, sig, _write(sig, "pixels", "skipped", f"light curve unavailable: {e}", decided=True))
+            return
+        cache.clear(); cache.update(key=key, lc=lc, base=None)
+    ctx = RecheckContext(store, blob, settings, fetch, lc,
+                         Target(**{k: target[k] for k in TARGET_FIELDS if target.get(k) is not None},
+                                meta=target["meta"]),
+                         with_novelty=False, tpf_loader=tpf_loader, say=say, _base=cache.get("base"))
+    try:
+        rung = Rung5Pixels(tpf_loader=ctx.tpf_loader or fetch_tpfs, blob=ctx.blob, signal_id=sig.id)
+        _outcome, results, timings = ctx.vet(sig.signal, Ladder([rung], DEFAULT_LADDER_VERSION), ctx.flux(sig))
+        r = results[0]
+        if r.reason.startswith("outage:"):
+            write = _write(sig, "pixels", "skipped", r.reason, decided=True)
+        elif r.reason.startswith("exception:"):
+            write = _write(sig, "pixels", "skipped", _reopen_crash_reason(store, sig.id, r.reason), decided=True)
+        else:
+            write = _write(sig, "pixels", r.status.value, r.reason, results, timings, decided=True)
+    except Exception as e:                  # a broken step leaves the signal as it is for a person
+        logger.exception("recheck step pixels failed for decided signal %s", sig.id)
+        write = _write(sig, "pixels", "skipped", _reopen_crash_reason(store, sig.id, f"exception: {type(e).__name__}"),
+                       decided=True)
+    cache["base"] = ctx._base
+    if _commit(store, say, sig, write).ran:
+        report.steps["pixels"] += 1
+        decisions = store.decisions(sig.id)
+        if pixel_disagrees(decisions[0]["decision"] if decisions else None, write.outcome):
+            report.decided_pixel_changed += 1
+            say(f"recheck {sig.id} ({sig.signal.target_id}) pixels: {write.outcome} under the decision "
+                f"{decisions[0]['decision']}; the dossier flags it")
+
+
 def _deciding_reason(results: list[TestResult]) -> str:
     """The reason of the row that decided a ladder outcome: the failure, else the first undetermined row."""
     for status in (TestStatus.FAIL, TestStatus.UNDETERMINED):
@@ -266,9 +351,10 @@ def _deciding_reason(results: list[TestResult]) -> str:
 
 
 def _write(sig: StoredSignal, step: str, outcome: str, reason: str = "", results=(), timings=(),
-           child: ChildWrite | None = None) -> StepWrite:
+           child: ChildWrite | None = None, decided: bool = False) -> StepWrite:
     return StepWrite(signal_id=sig.id, step=step, ladder_version=DEFAULT_LADDER_VERSION, outcome=outcome,
-                     reason=reason, tests=list(zip(results, timings, strict=True)), child=child)
+                     reason=reason, tests=list(zip(results, timings, strict=True)), child=child,
+                     decided_pixels=decided)
 
 
 def _ladder(ctx: RecheckContext) -> Ladder:
@@ -529,8 +615,10 @@ def recheck(store: Store, blob, settings: Settings, *, fetch=net.fetch, signal_i
     out, as in a sweep run without it. ``retention`` (a ``Retention``; None keeps every file) releases a target's
     pixel files in stream mode once its pixel step is written and no signal of that target is left in the work
     list. ``stop_requested`` is polled before each signal: once it answers True the recheck returns the report so far
-    with ``stopped`` set (every finished step is committed). A signal a reviewer decided on after the queue was read
-    is passed over. ``log`` receives one line per signal and step, which also goes to the logger at INFO."""
+    with ``stopped`` set (every finished step is committed). A signal a reviewer decided on is passed over, except
+    for the pixel step alone when its rung 5 row predates the pixel rule (``decided_queue``, ``decided_reopens``):
+    the decision stays, and a disagreeing verdict is counted in ``decided_pixel_changed``. ``log`` receives one
+    line per signal and step, which also goes to the logger at INFO."""
     started = time.time()
     report = RecheckReport()
 
@@ -546,7 +634,8 @@ def recheck(store: Store, blob, settings: Settings, *, fetch=net.fetch, signal_i
     queue = store.recheck_queue(version)
     if pixels:
         queued = {q["id"] for q in queue}
-        queue = sorted([*queue, *(q for q in reopened_queue(store, version) if q["id"] not in queued)],
+        extra = [*reopened_queue(store, version), *decided_queue(store, version)]
+        queue = sorted([*queue, *{q["id"]: q for q in extra if q["id"] not in queued}.values()],
                        key=lambda q: q["id"])
     if signal_ids is not None:
         wanted = set(signal_ids)
@@ -562,6 +651,13 @@ def recheck(store: Store, blob, settings: Settings, *, fetch=net.fetch, signal_i
             break
         signal_id, target_id = work.popleft()
         if _decided(store, signal_id):
+            sig, target = _stored(store, signal_id)
+            if pixels and sig.signal.detector_version == version and decided_reopens(
+                    store, sig, store.latest_tests(signal_id)):
+                report.considered += 1
+                _recheck_decided(store, blob, settings, loader, sig, target, fetch=fetch, tpf_loader=tpf_loader,
+                                 say=say, report=report, cache=cache)
+                settled.add(target_id)
             continue
         report.considered += 1
         sig, target = _stored(store, signal_id)

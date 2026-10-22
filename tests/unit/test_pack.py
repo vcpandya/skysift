@@ -1742,3 +1742,29 @@ def test_the_golden_note_with_a_tess_statement_stays_inside_the_word_limit():
     before = note_words(render_note(golden))["total"]
     words = note_words(render_note(_with_tess(golden)))
     assert words["total"] <= NOTE_LIMITS["total"] and words["total"] - before < 250
+
+
+
+# ---------------------------------------------------------------------------------------------------- fix round 2
+
+def test_the_hand_built_sentence_without_an_error_gives_no_verdict():
+    """Round 2, M2: a block stored before ``agrees`` existed, or one without a combined error, says only how far."""
+    old = {"max_diff_pix": 0.03, "n_seasons": 4, "source": "x.json"}
+    for block in (old, {**old, "agrees": None, "combined_err_pix": None}, {**old, "agrees": False,
+                                                                           "combined_err_pix": 0.0}):
+        words = pack_module.hand_built_sentence({"hand_built_localisation": block})
+        assert words.endswith("by up to 0.03 px over 4 seasons (the error is not available; x.json).")
+        assert "agrees" not in words and "combined error" not in words
+
+
+def test_the_pack_embeds_only_the_public_fields_of_a_prior_claim(env_prior):
+    """Round 2, M1: a stored dossier that still carries the claim's status and note (code before round 2) is cut at
+    pack time: the dossier.html in the pack and its ExoFOP copy embed neither."""
+    from tests.unit.test_dossier import PRIOR_CLAIM
+    env = env_prior
+    path = Path(env.store.dossier(STAGE2_TARGET)["data_path"])
+    path.write_text(json.dumps({**env.data, "prior_claims": [PRIOR_CLAIM]}), encoding="utf-8")
+    rep = _build(env)
+    for page in [rep.out_dir / "dossier.html", *rep.out_dir.glob("exofop/*_dossier.html")]:
+        text = page.read_text(encoding="utf-8").replace(chr(92) + "/", "/")     # the JSON escapes every slash
+        assert PRIOR_DOI in text and "reported not accepted" not in text and "sweep a week later" not in text, page

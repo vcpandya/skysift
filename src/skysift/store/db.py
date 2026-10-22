@@ -153,6 +153,9 @@ class StepWrite:
     reason: str = ""
     tests: list[tuple[TestResult, float]] = field(default_factory=list)
     child: ChildWrite | None = None
+    # the pixel rerun of a decided signal under a newer pixel rule (``recheck.decided_reopens``): its rows are
+    # written although a reviewer decided, and the signal's status is not derived again, so the decision stands
+    decided_pixels: bool = False
 
 
 def _get(t, key: str):
@@ -531,12 +534,22 @@ class Store:
         ``REVIEWER_DECIDED_REASON`` is written. When the step derives a signal and the signal already has a child on
         that branch (two rechecks overlapped: the other one committed its P/2 signal after this one decided to make
         it), only a rechecks row "skipped" with ``CHILD_EXISTS_REASON`` is written, so one parent never has two P/2
-        children. Returns {"recheck_id", "child_id", "status", "written"}."""
+        children. A pixel step marked ``decided_pixels`` (the rerun of a decided signal under a newer pixel rule) is
+        written on a decided signal, its rechecks row and test rows only: the status is not derived again, so the
+        decision and ``final_status`` stay. Returns {"recheck_id", "child_id", "status", "written"}."""
         with self.session() as s:
             sig = s.get(SignalRow, write.signal_id)
             if sig is None:
                 raise KeyError(write.signal_id)
             decided = s.scalar(select(DecisionRow.id).where(DecisionRow.signal_id == sig.id).limit(1))
+            if decided is not None and write.decided_pixels and write.step == "pixels" and write.child is None:
+                row = RecheckRow(signal_id=sig.id, step=write.step, ladder_version=write.ladder_version,
+                                 outcome=write.outcome, reason=write.reason)
+                s.add(row); s.flush()
+                for r, dt in write.tests:
+                    self._add_test_row(s, sig.id, r, dt, row.id)
+                s.flush()
+                return {"recheck_id": row.id, "child_id": None, "status": sig.final_status, "written": True}
             if decided is not None:
                 row = RecheckRow(signal_id=sig.id, step=write.step, ladder_version=write.ladder_version,
                                  outcome="skipped", reason=REVIEWER_DECIDED_REASON)

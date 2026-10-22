@@ -295,7 +295,8 @@ def test_report_as_dict_is_plain_json():
     d = rep.as_dict()
     assert d == {"considered": 2, "steps": {"ladder": 1, "period": 0, "catalogue": 0, "pixels": 0},
                  "outcomes": {"candidate_stage1": 0, "candidate_stage2": 0, "undetermined": 0, "rejected": 0,
-                              "superseded": 0, "skipped": 1}, "seconds": 0.0, "stopped": False}
+                              "superseded": 0, "skipped": 1}, "seconds": 0.0, "stopped": False,
+                 "decided_pixel_changed": 0}
     d["steps"]["ladder"] = 9
     assert rep.steps["ladder"] == 1 and math.isfinite(d["seconds"])
 
@@ -821,3 +822,42 @@ def test_the_p2_child_does_not_inherit_the_parents_alias_note():
     child = pipeline.halved_signal(parent, lc, lc.flux)
     assert "alias_resolved" not in child.extra and child.extra["mask"] == [[1.0, 2.0]]
     assert child.extra["search_window"] == parent.extra["search_window"] and "alias_resolved" in parent.extra
+
+
+# ---------------------------------------------------------------------------------------------------- fix round 2
+
+def test_a_decided_signal_below_the_rule_version_reruns_its_pixel_step_alone(env):
+    """Round 2, I1: an approved stage 2 candidate with a rung 5 row under an older pixel rule takes the pixel step
+    alone; the new row is stored, the decision and the status stay, and an agreeing verdict counts nothing. One at
+    the current version is not touched."""
+    v2 = {"seasons": SEASONS, "rule_version": 2}
+    old = env.seed_signal(tpfs="target", tests=[("rung5_pixels", "pass", PASSED)], metrics={"rung5_pixels": v2})
+    current = env.seed_signal(tpfs="target", tests=[("rung5_pixels", "pass", PASSED)],
+                              metrics={"rung5_pixels": {**v2, "rule_version": recheck_mod.PIXEL_RULE_VERSION}})
+    for sid in (old, current):
+        env.store.decide(sid, "approve")
+    assert [q["id"] for q in recheck_mod.decided_queue(env.store, env.version)] == [old]
+    rep = recheck(env.store, env.blob, env.settings, fetch=fake_fetch.fetch, tpf_loader=env.tpf_loader)
+    assert rep.steps == {"ladder": 0, "period": 0, "catalogue": 0, "pixels": 1} and rep.considered == 1
+    assert rep.decided_pixel_changed == 0 and rep.as_dict()["decided_pixel_changed"] == 0
+    rung5 = env.store.latest_tests(old)[-1]
+    assert rung5["rung"] == "rung5_pixels" and rung5["status"] == "pass"
+    assert rung5["metrics"]["rule_version"] == recheck_mod.PIXEL_RULE_VERSION and rung5["recheck_id"] is not None
+    assert env.store.signal_status(old) == "candidate_stage2" and env.store.decisions(old)[0]["decision"] == "approve"
+    assert [r["step"] for r in env.store.rechecks(old)] == ["pixels"] and env.store.rechecks(current) == []
+    before = env.store.counts()
+    rep = recheck(env.store, env.blob, env.settings, fetch=fake_fetch.fetch, tpf_loader=env.tpf_loader)
+    assert rep.considered == 0 and env.store.counts() == before          # the rerun is done once
+
+
+def test_a_pixel_rerun_that_disagrees_with_an_approval_is_counted_and_keeps_the_decision(env):
+    """Round 2, I1: the dip sits on the neighbour now, under an approval: the fail row is stored, the status and the
+    decision stay, and the recheck counts it under decided_pixel_changed."""
+    v2 = {"seasons": SEASONS, "rule_version": 2}
+    sid = env.seed_signal(tpfs="neighbour", tests=[("rung5_pixels", "pass", PASSED)], metrics={"rung5_pixels": v2})
+    status = env.store.signal_status(sid)
+    env.store.decide(sid, "approve")
+    rep = recheck(env.store, env.blob, env.settings, fetch=fake_fetch.fetch, tpf_loader=env.tpf_loader)
+    assert rep.decided_pixel_changed == 1 and rep.steps["pixels"] == 1
+    assert env.store.latest_tests(sid)[-1]["status"] == "fail"
+    assert env.store.signal_status(sid) == status and env.store.decisions(sid)[0]["decision"] == "approve"

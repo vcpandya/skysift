@@ -406,9 +406,13 @@ def hand_built_sentence(data: dict) -> str | None:
     if block.get("agrees") is True:
         return (f"Season by season the centroid's distance from this star agrees with the hand-built localisation of "
                 f"the same pixels within {max(diff, 0.01):.2f} px over {seasons} ({block.get('source')}).")
+    err = _num(block.get("combined_err_pix"))
+    if block.get("agrees") is False and err is not None and err > 0:
+        return (f"Season by season the centroid's distance from this star differs from the hand-built localisation "
+                f"of the same pixels by up to {diff:.2f} px over {seasons}, more than the seasons' combined error "
+                f"({block.get('source')}).")
     return (f"Season by season the centroid's distance from this star differs from the hand-built localisation of the "
-            f"same pixels by up to {diff:.2f} px over {seasons}, more than the seasons' combined error "
-            f"({block.get('source')}).")
+            f"same pixels by up to {diff:.2f} px over {seasons} (the error is not available; {block.get('source')}).")
 
 
 def _timed(data: dict) -> bool:
@@ -1122,6 +1126,8 @@ def gate_problems(raw: dict) -> list[str]:
     stale = ds.pixel_rule_stale(raw)
     if stale:
         out.append(f"{stale}; the recheck reruns the pixel step first")
+    if ds.pixel_verdict_disagrees(raw):
+        out.append("the pixel rerun disagrees with the reviewer's decision; a reviewer looks again first")
     if ds.prior_claims_unchecked(raw):
         out.append("prior claims on the signal were not checked (no docs/candidates folder)")
     return out
@@ -1837,7 +1843,7 @@ def build_pack(store, blob, settings, target_id: str, *, out_dir: Path | None = 
     citation, creators_source = load_citation()
     if citation is None:
         say("no CITATION.cff or package author found; the creators are placeholders")
-    data = public_paths(raw, settings.data_dir)
+    data = ds.public_claims(public_paths(raw, settings.data_dir))     # the pack embeds and uploads this JSON
     final = out_dir
     out_dir = _building(final)
     try:
