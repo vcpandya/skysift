@@ -73,7 +73,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"dossier version {data.get('dossier_version')!r} is not {dossier.DOSSIER_VERSION!r}; nothing written",
               file=sys.stderr)
         return 1
-    out.write_text(jsonutil.dumps(golden_block(data), indent=1) + "\n", encoding="utf-8")
+    out.write_text(jsonutil.dumps(golden_block(data), indent=1) + "\n", encoding="utf-8", newline="\n")
     print(f"wrote {out} (scratch store {scratch})")
     return 0
 

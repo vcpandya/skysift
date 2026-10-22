@@ -1,6 +1,6 @@
 {
- "dossier_version": "4",
- "generated": "2026-10-22T10:14:29.776033+00:00",
+ "dossier_version": "5",
+ "generated": "2026-10-22T20:28:09.920715+00:00",
  "target": {
   "target_id": "kic-006146676",
   "source": "kbonus_bkg",
@@ -1875,31 +1875,32 @@
   "name": "KIC 6146676"
  },
  "ephemeris": {
-  "period_days": 40.290806,
-  "t0_bkjd": 135.79518,
-  "t0_bjd": 2454968.795182,
-  "duration_h": 3.8647124,
-  "depth_ppm": 2186.63,
+  "period_days": 40.290812,
+  "t0_bkjd": 135.79502,
+  "t0_bjd": 2454968.795018,
+  "duration_h": 3.6940537,
+  "depth_ppm": 2213.9651,
   "sde": 50.501758,
   "snr": 30.039973,
   "n_events": 33,
-  "period_source": "linear fit of 32 transit times",
-  "period_err_days": 0.00014775705,
-  "t0_bkjd_err": 0.0031128049,
-  "t0_bjd_err": 0.0031128049,
-  "t_ref_bkjd": 901.3205,
-  "t_ref_bjd": 2455734.320501,
-  "t_ref_err_days": 0.0014129189,
+  "period_source": "linear fit of 31 transit times",
+  "period_err_days": 0.00014851643,
+  "t0_bkjd_err": 0.0031395372,
+  "t0_bjd_err": 0.0031395372,
+  "t_ref_bkjd": 901.32045,
+  "t_ref_bjd": 2455734.320451,
+  "t_ref_err_days": 0.0014183356,
   "epoch_ref": 19,
   "duration_h_err": {
-   "minus": 0.19311392,
-   "plus": 0.24879937
+   "minus": 0.045214529,
+   "plus": 0.044320034
   },
   "duration_source": "fitted T14",
-  "depth_ppm_err": 107.95947,
+  "depth_ppm_err": 114.37157,
   "depth_source": "per-event weighted mean of the box depth",
   "ephemeris_method": "weighted linear fit of per-transit mid-times, reference epoch at the centre of the series (Deeg 2015; Holczer et al. 2016)",
-  "shape_method": "bootstrap over transits of the uniform-disc fit (Schmitt et al. 2014)"
+  "shape_method": "bootstrap over transits of the quadratic limb-darkened, exposure-integrated fit (Schmitt et al. 2014)",
+  "fold_ephemeris": "linear fit of 31 transit times"
  },
  "fap": {
   "k": 11,
@@ -1927,7 +1928,7 @@
   "sentence_not_covered": "This is about noise. A real dip on a neighbouring star or an eclipsing binary passes this test."
  },
  "fpp": {
-  "value": 0.0035281094,
+  "value": 0.003022042,
   "words": "under 1 percent",
   "label": "False positive",
   "signed_off": true,
@@ -1935,8 +1936,8 @@
   "neighbours_known": true,
   "value_without_beb": null,
   "spec_product": {
-   "eb_weight": 2.8559513e-07,
-   "value": 3.7617702e-05,
+   "eb_weight": 2.5557747e-07,
+   "value": 2.9845414e-05,
    "rule": "spec 4.2 as first written: one EB scenario at 2P weighted by S_sec x S_oe"
   },
   "confusion_radius_arcsec": 2.0,
@@ -2005,14 +2006,14 @@
   "scenarios": [
    {
     "name": "PL",
-    "prior": 0.59276589,
+    "prior": 0.66861021,
     "geometric": 0.012838661,
     "data": 0.99756055,
-    "weight": 0.0075917552,
+    "weight": 0.0085631194,
     "factors": {
      "class": "M",
-     "rp_rearth": 2.63,
-     "f_pl": 0.59276589,
+     "rp_rearth": 2.5,
+     "f_pl": 0.66861021,
      "a_au": 0.18292308,
      "R_star_over_a": 0.012838661,
      "T14_circ": 0.16466103,
@@ -2042,8 +2043,8 @@
     "name": "EB-P",
     "prior": 0.0088963842,
     "geometric": 0.016823405,
-    "data": 0.16825271,
-    "weight": 2.5181959e-05,
+    "data": 0.16294852,
+    "weight": 2.4388093e-05,
     "factors": {
      "class": "M",
      "f_bin": 0.26,
@@ -2052,18 +2053,18 @@
      "S_v": 1.0,
      "g_P": 0.034216862,
      "a_P_au": 0.20939465,
-     "secondary_predicted_ppm": 218.663,
+     "secondary_predicted_ppm": 221.39651,
      "secondary_ppm": 95.430951,
      "secondary_err_ppm": 128.22074,
-     "S_sec": 0.16825271
+     "S_sec": 0.16294852
     }
    },
    {
     "name": "EB-2P",
     "prior": 0.010741941,
     "geometric": 0.010598081,
-    "data": 0.014910037,
-    "weight": 1.6974176e-06,
+    "data": 0.013777238,
+    "weight": 1.5684553e-06,
     "factors": {
      "class": "M",
      "f_bin": 0.26,
@@ -2072,21 +2073,21 @@
      "S_v": 1.0,
      "g_2P": 0.041315157,
      "a_2P_au": 0.33239329,
-     "odd_even_predicted_ppm": 546.65749,
+     "odd_even_predicted_ppm": 553.49128,
      "odd_even_ppm": 69.282579,
      "odd_even_err_ppm": 219.73811,
-     "S_oe": 0.014910037
+     "S_oe": 0.013777238
     }
    }
   ],
   "inputs": {
    "period": 40.291087,
-   "depth": 0.00218663,
+   "depth": 0.0022139651,
    "gmag": 16.236654,
    "teff": 3653.0,
    "radius": 0.505,
    "mass": 0.503,
-   "rp_rearth": 2.63,
+   "rp_rearth": 2.5,
    "fit_k": 0.047758423,
    "fit_b": 0.8932519,
    "fit_a_over_r": 43.616611,
@@ -2201,16 +2202,16 @@
  },
  "planet": {
   "rp_rearth": {
-   "median": 2.63,
+   "median": 2.5,
    "minus": 0.1,
-   "plus": 0.11,
-   "source": "k 0.0478 from the transit fit x R*; radius-ratio error from the bootstrap"
+   "plus": 0.09,
+   "source": "k 0.0455 from the transit fit x R*; radius-ratio error from the bootstrap"
   },
   "a_au": {
    "median": 0.1829,
    "minus": 0.0015,
    "plus": 0.0015,
-   "source": "Kepler's third law, P 40.29109 d and the stellar mass draws"
+   "source": "Kepler's third law, P 40.29081 d and the stellar mass draws"
   },
   "a_over_r": {
    "median": 77.9,
@@ -2251,7 +2252,7 @@
   "spectral_type": "M1V",
   "star_colour": "red",
   "a_au": 0.1829,
-  "rp_rearth": 2.63,
+  "rp_rearth": 2.5,
   "teq_k": 268.0,
   "insolation_earth": 1.22,
   "hz_inner_au": 0.2159,
@@ -2267,22 +2268,22 @@
   "ok": true,
   "reason": null,
   "method": "weighted linear fit of per-transit mid-times, reference epoch at the centre of the series (Deeg 2015; Holczer et al. 2016)",
-  "period": 40.290806,
-  "period_err": 0.00014775705,
-  "t_ref": 901.3205,
-  "t_ref_bjd": 2455734.320501,
-  "t_ref_err": 0.0014129189,
+  "period": 40.290812,
+  "period_err": 0.00014851643,
+  "t_ref": 901.32045,
+  "t_ref_bjd": 2455734.320451,
+  "t_ref_err": 0.0014183356,
   "epoch_ref": 19,
-  "cov": 4.9523894e-09,
-  "t0": 135.79518,
-  "t0_bjd": 2454968.795182,
-  "t0_err": 0.0031128049,
-  "chi2": 18.517142,
-  "dof": 30,
+  "cov": 3.0948901e-09,
+  "t0": 135.79502,
+  "t0_bjd": 2454968.795018,
+  "t0_err": 0.0031395372,
+  "chi2": 18.357319,
+  "dof": 29,
   "inflation": 1.0,
-  "rms_min": 9.3863509,
-  "n_used": 32,
-  "n_measured": 33,
+  "rms_min": 9.3990745,
+  "n_used": 31,
+  "n_measured": 32,
   "n_outliers": 1,
   "times": [
    {
@@ -2364,14 +2365,14 @@
    },
    {
     "epoch": 8,
-    "t_bkjd": 458.1279,
-    "t_bjd": 2455291.1279,
-    "err_days": 0.015824434,
-    "chi2_red": 1.6238564,
+    "t_bkjd": null,
+    "t_bjd": null,
+    "err_days": null,
+    "chi2_red": null,
     "n_in": 6,
     "n_out": 22,
-    "used": true,
-    "reason": null
+    "used": false,
+    "reason": "single-event S/N below 2.5 (Holczer et al. 2016)"
    },
    {
     "epoch": 9,
@@ -2602,7 +2603,7 @@
     "n_in": 4,
     "n_out": 21,
     "used": false,
-    "reason": "outlier (6.4 MAD)"
+    "reason": "outlier (6.3 MAD)"
    },
    {
     "epoch": 32,
@@ -2655,64 +2656,135 @@
  "shape": {
   "ok": true,
   "reason": null,
-  "method": "bootstrap over transits of the uniform-disc fit (Schmitt et al. 2014)",
+  "method": "bootstrap over transits of the quadratic limb-darkened, exposure-integrated fit (Schmitt et al. 2014)",
   "n_boot": 200,
   "n_converged": 200,
   "seed": 20261022,
   "k": {
-   "median": 0.047758423,
-   "minus": 0.0011932979,
-   "plus": 0.0013563021,
-   "boot_median": 0.047765579
+   "median": 0.046234648,
+   "minus": 0.0010407602,
+   "plus": 0.00083595013,
+   "point": 0.045466519
   },
   "b": {
-   "median": 0.8932519,
-   "minus": 0.063026886,
-   "plus": 0.029643819,
-   "boot_median": 0.88477674
+   "median": 0.46756533,
+   "minus": 0.022742551,
+   "plus": 0.022215952,
+   "point": 0.47013838
   },
   "a_over_r": {
-   "median": 43.616611,
-   "minus": 6.1291995,
-   "plus": 9.6857364,
-   "boot_median": 45.369255
+   "median": 77.989495,
+   "minus": 0.041085625,
+   "plus": 0.040404131,
+   "point": 77.941818
   },
   "t14_h": {
-   "median": 3.8647124,
-   "minus": 0.19311392,
-   "plus": 0.24879937,
-   "boot_median": 3.8133298
+   "median": 3.6940537,
+   "minus": 0.045214529,
+   "plus": 0.044320034,
+   "point": 3.687721
   },
   "model_depth_ppm": {
-   "median": 2280.867,
-   "minus": 112.57301,
-   "plus": 131.40867,
-   "boot_median": 2281.5506
+   "median": 2510.0174,
+   "minus": 123.23987,
+   "plus": 81.034187,
+   "point": 2419.3247
   },
   "box_depth_ppm": {
-   "median": 2191.8193,
-   "minus": 110.87508,
-   "plus": 110.87508
+   "median": 2241.5462,
+   "minus": 116.87763,
+   "plus": 116.87763
   },
   "box_duration_h": null,
-  "ingress_min": 46.087883,
-  "degenerate": false,
-  "degeneracy_reason": null
+  "ingress_min": 12.211569,
+  "degenerate": true,
+  "degeneracy_reason": "ingress shorter than the cadence: b and a/R* are degenerate with k",
+  "fits": {
+   "free": {
+    "ok": true,
+    "reason": null,
+    "variant": "free",
+    "k": 0.044163171,
+    "b": 7.1748894e-07,
+    "a_over_r": 88.502423,
+    "t14_days": 0.15131411,
+    "depth_ppm": 2412.264,
+    "chi2_data": 797.43842,
+    "chi2_prior": 0.0,
+    "chi2_total": 797.43842,
+    "n_points": 1064,
+    "u1": 0.4198392,
+    "u2": 0.3101408,
+    "exposure_min": 29.424465,
+    "density_gcc": 8.0781308,
+    "prior_gcc": null
+   },
+   "prior": {
+    "ok": true,
+    "reason": null,
+    "variant": "prior",
+    "k": 0.045466519,
+    "b": 0.47013838,
+    "a_over_r": 77.941818,
+    "t14_days": 0.15365504,
+    "depth_ppm": 2419.3247,
+    "chi2_data": 797.60422,
+    "chi2_prior": 0.00022712348,
+    "chi2_total": 797.60444,
+    "n_points": 1064,
+    "u1": 0.4198392,
+    "u2": 0.3101408,
+    "exposure_min": 29.424465,
+    "density_gcc": 5.517686,
+    "prior_gcc": [
+     5.51,
+     0.51
+    ]
+   }
+  },
+  "comparison": {
+   "constrained": false,
+   "quoted": "prior",
+   "delta_chi2": 0.16602762,
+   "density_tension_sigma": 5.0355505,
+   "a_over_r_label": "from the stellar parameters",
+   "reason": "unconstrained at this cadence, consistent with the host's density"
+  },
+  "limb_darkening": {
+   "law": "quadratic",
+   "u1": 0.4198392,
+   "u2": 0.3101408,
+   "teff": 3653.0,
+   "logg": 4.5,
+   "source": "Claret and Bloemen 2011, Kepler band, quadratic law, ATLAS models (method L, log g 4.5, [M/H] 0, microturbulence 2 km/s), linear in Teff between the rows, held at the table's edges"
+  },
+  "exposure_min": 29.424465
  },
  "parity": {
   "odd": {
-   "depth_ppm": 2222.4768,
-   "err_ppm": 161.73886,
+   "depth_ppm": 2276.335,
+   "err_ppm": 176.66469,
    "n": 15,
-   "inflation": 1.6117304
+   "inflation": 1.7410954
   },
   "even": {
-   "depth_ppm": 2153.1942,
-   "err_ppm": 148.74602,
+   "depth_ppm": 2155.8277,
+   "err_ppm": 151.42012,
    "n": 16,
-   "inflation": 1.5347676
+   "inflation": 1.545667
   },
-  "difference_sigma": 0.31529614
+  "difference_sigma": 0.51791739,
+  "stacked": {
+   "odd": {
+    "depth_ppm": 2194.3948,
+    "err_ppm": 104.46814
+   },
+   "even": {
+    "depth_ppm": 2077.0826,
+    "err_ppm": 131.65304
+   },
+   "difference_sigma": 0.69801346
+  }
  },
  "secondary": {
   "depth_ppm": 95.430951,
@@ -2723,7 +2795,7 @@
   "strongest_sigma": 3.8065215,
   "albedo_limit": null,
   "albedo_note": "no constraint",
-  "albedo_reason": "the limit exceeds 1 (A_g < 400)"
+  "albedo_reason": "degenerate shape"
  },
  "cross_check": {
   "tool": "triceratops",
@@ -4222,7 +4294,7 @@
    ],
    "median_run_seed": 16
   },
-  "current": true,
+  "current": false,
   "class": "candidate"
  },
  "centroid_offset": {
@@ -4245,6 +4317,41 @@
   "agrees": true,
   "combined_err_pix": 0.1293,
   "source": "docs/candidates/kic-006146676/localisation/results.json"
+ },
+ "stability": {
+  "status": "pass",
+  "reason": "",
+  "ephemeris": "linear fit of 31 transit times",
+  "metrics": {
+   "stacked": false,
+   "season_depths": {
+    "0": 2215.672,
+    "1": 2138.6726,
+    "2": 2297.2081,
+    "3": 2159.1965
+   },
+   "season_errs": {
+    "0": 259.14697,
+    "1": 229.23079,
+    "2": 235.21098,
+    "3": 216.68245
+   },
+   "season_z": {
+    "0": 0.070444639,
+    "1": -0.30776541,
+    "2": 0.47919652,
+    "3": -0.22015642
+   },
+   "chi2": 0.37778015,
+   "dof": 3,
+   "p_value": 0.94479336,
+   "n_events": 31,
+   "sap_psf_ratio": 0.69595868,
+   "alt_depth_ppm": 1540.8282,
+   "alt_depth_err_ppm": 129.2231,
+   "aperture_z": -3.9007213,
+   "aperture_ratio": 0.69595868
+  }
  },
  "signal": {
   "id": 1032,
@@ -4692,6 +4799,6 @@
    "rung4_novelty": "4",
    "rung5_pixels": "4"
   },
-  "git_commit": "8fb90ec"
+  "git_commit": "a4fe457"
  }
 }

@@ -661,11 +661,12 @@ GENERATED = REPO / "tests" / "golden" / "kic-006146676-generated.json"     # too
 
 
 def test_hand_built_values_agree_within_errors():
-    """The live run of 22 October 2026, at dossier version 4 since a56d8c8 (first compared in
+    """The live run of 22 October 2026, at dossier version 5 since Task 10 (first compared in
     docs/superpowers/notes/2026-10-21-dossier-comparison.md) against the hand-built KIC 6146676 study: Rp, a and Teq
-    within the study's quoted errors, the fitted T14 within the study's, the per-season centroid within 0.1 pixel of
-    the study's, the rung 5 rows at rule version 4 (a measured floor and a registration shift in every season, all four
-    seasons voting), the habitable-zone flags, and the stored FPP reproduced from its stored inputs."""
+    within the study's quoted errors, the fitted T14 below the study's uniform-disc one, the per-season centroid
+    within 0.1 pixel of the study's, the rung 5 rows at rule version 4 (a measured floor and a registration shift in
+    every season, all four seasons voting), the habitable-zone flags, and the stored FPP reproduced from its stored
+    inputs."""
     ref = json.loads(HAND_BUILT.read_text(encoding="utf-8"))
     gen = json.loads(GENERATED.read_text(encoding="utf-8"))
     pb = ref["context"]["summary"]["planet_baseline"]
@@ -677,11 +678,15 @@ def test_hand_built_values_agree_within_errors():
     # the golden is the version 5 run (spec 11.3: the limb-darkened shape, the linear-ephemeris folds and the SES cut)
     assert gen["dossier_version"] == DOSSIER_VERSION == dossier_module.DOSSIER_VERSION
     eph = gen["ephemeris"]
-    assert eph["duration_source"] == "fitted T14" and eph["period_source"] == "linear fit of 32 transit times"
+    # 31 of 32: epoch 8 falls below the single-event S/N cut (Holczer et al. 2016) and epoch 31 is an outlier
+    assert eph["duration_source"] == "fitted T14" and eph["period_source"] == "linear fit of 31 transit times"
     assert eph["period_err_days"] > 0 and eph["t_ref_err_days"] > 0 and eph["epoch_ref"] == 19
     err = eph["duration_h_err"]
     assert err["minus"] > 0 and err["plus"] > 0
-    assert abs(eph["duration_h"] - ref["fit"]["t14_h"]) <= err["plus"]       # 3.865 h against the study's 3.918 h
+    # the study's 3.918 h is a uniform-disc fit at b 0.885 and a/R* 44, which stretches T14 to mimic the rounded,
+    # limb-darkened bottom; version 5's limb-darkened fit at the host's density gives 3.69 h (the free fit 3.63 h),
+    # so the comparison is one-sided, no longer within the error
+    assert 0 < ref["fit"]["t14_h"] - eph["duration_h"] < 0.3
     to_candidate = ref["pixels"]["summary"]["seasons_snrbox_centroid_dist_to_candidate_pix"]
     rung5 = next(t for t in gen["tests"] if t["rung"] == "rung5_pixels")
     assert rung5["status"] == "pass" and rung5["metrics"]["tpf_missing"] == []
