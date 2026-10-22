@@ -91,6 +91,7 @@ from skysift.pack_text import (
     ephemeris_sentence,
     err_digits,
     pm_text,
+    prior_claims,
     quantities,
     tex_escape,
     value_text,
@@ -311,6 +312,88 @@ BIBLIOGRAPHY = (
     ("pecaut2013", r"{Pecaut} \& {Mamajek}(2013)", r"Pecaut, M.~J., \& Mamajek, E.~E. 2013, ApJS, 208, 9"),
     ("schmitt2014", r"{Schmitt} et~al.(2014)", r"Schmitt, J.~R., et~al. 2014, AJ, 148, 28"),
 )
+
+
+RECOVERY_WORDS = ("SkySift found it again in a blind sweep, so this is an independent recovery and vetting of "
+                  "{that}, not a new candidate.")
+
+
+def _family(author: str) -> str:
+    parts = author.split()
+    return parts[-1] if parts else author
+
+
+def prior_keys(data: dict) -> list[tuple[dict, str]]:
+    """Each prior claim with its bibliography key, the author's family name and the year ("mehta2026"), a letter
+    added when the key is taken by another claim or by ``BIBLIOGRAPHY``."""
+    taken = {key for key, _label, _text in BIBLIOGRAPHY}
+    out = []
+    for claim in prior_claims(data):
+        base = re.sub(r"[^a-z]", "", _family(claim["author"]).lower()) + str(claim.get("date") or "")[:4]
+        key, n = base, 1
+        while key in taken:
+            key, n = f"{base}{chr(ord('a') + n)}", n + 1
+        taken.add(key)
+        out.append((claim, key))
+    return out
+
+
+def prior_bib(data: dict) -> list[tuple[str, Raw, str]]:
+    """The bibliography items of the prior claims' Zenodo records: (key, natbib label, plain text the template
+    escapes), as "Mehta, K. 2026, <title>, Zenodo, doi:<doi>"."""
+    out = []
+    for claim, key in prior_keys(data):
+        family, year = _family(claim["author"]), str(claim["date"])[:4]
+        initials = " ".join(f"{p[0]}." for p in claim["author"].split()[:-1])
+        who = f"{family}, {initials}" if initials else family
+        out.append((key, Raw(f"{{{tex_escape(family)}}}({tex_escape(year)})"),
+                    f"{who} {year}, {claim['title']}, Zenodo, doi:{claim['doi']}"))
+    return out
+
+
+def prior_claim_sentence(data: dict, tex: bool = False) -> str | None:
+    """Who reported the signal first, when and where (the DOI of the public record), and that SkySift's result is an
+    independent blind recovery and vetting of that claim, never a new candidate. None without a prior claim. With
+    ``tex`` a ``Raw`` citing each record (``prior_bib``); the plain text names the record's title instead."""
+    pairs = prior_keys(data)
+    if not pairs:
+        return None
+    parts: list = []
+    for i, (claim, key) in enumerate(pairs):
+        record = f"Zenodo, {date_words(claim['date'])}, doi:{claim['doi']}"
+        if claim.get("status"):
+            record += f"; {claim['status']}"
+        if i:
+            parts.append(", and ")
+        parts.append(Raw(rf"\citet{{{key}}}") if tex else claim["author"])
+        said = "reported this signal first" if i == 0 else "reported it again"
+        parts.append(f" {said} ({record})" if tex else f' {said}, in "{claim["title"]}" ({record})')
+    parts.append(". " + RECOVERY_WORDS.format(that="that claim" if len(pairs) == 1 else "those claims"))
+    return _joined(tex, *parts)
+
+
+def priority_sentence(data: dict) -> str | None:
+    """README step 2: the prior claim is the record of priority, and what the upload says about it."""
+    claims = prior_claims(data)
+    if not claims:
+        return None
+    first = claims[0]
+    return (f"the prior claim ({first['author']}, {date_words(first['date'])}, doi:{first['doi']}) is the record of "
+            "priority. The upload note presents this result as an independent recovery and vetting of that claim, "
+            "and the planet file's paper and notes fields name its DOI.")
+
+
+def hand_built_sentence(data: dict) -> str | None:
+    """The pixel section's one sentence on the hand-built study of the same pixels (``dossier.hand_built_localisation``):
+    the largest season-by-season difference in the centroid's distance from this star, and where the study is."""
+    block = data.get("hand_built_localisation")
+    diff = _num(block.get("max_diff_pix")) if isinstance(block, dict) else None
+    if diff is None:
+        return None
+    n = block.get("n_seasons")
+    seasons = f"{n} season{'s' if n != 1 else ''}" if isinstance(n, int) else "the seasons that voted"
+    return (f"Season by season the centroid's distance from this star agrees with the hand-built localisation of the "
+            f"same pixels within {max(diff, 0.01):.2f} px over {seasons} ({block.get('source')}).")
 
 
 def _timed(data: dict) -> bool:
@@ -611,6 +694,9 @@ def pixel_sentence(data: dict, tex: bool = False) -> str:
         n = float(np.median([p[1] for p in pairs]))
         text += (f" A two-source fit gives a median depth of {t:,.0f} ppm on this star and {n:,.0f} ppm on the "
                  "neighbour.")
+    hand = hand_built_sentence(data)
+    if hand:
+        text += f" {hand}"
     if silent:
         text += f" {_silent_sentence(silent)}"
     if row.get("status") == "fail":
@@ -741,6 +827,9 @@ def numbers(data: dict, tex: bool = False, after_bjd: float | None = None) -> di
         "cross_check_sentence": cross_check_sentence(data, tex),
         "cross_check_block": cc.verdict(data.get("cross_check"))[1],
         "abstract": abstract_text(data),
+        "prior_text": prior_claim_sentence(data, tex), "prior_plain": prior_claim_sentence(data),
+        "prior_notes": "; ".join(c["note"] for c in prior_claims(data) if c.get("note")) or None,
+        "priority_text": priority_sentence(data),
         "caveat_text": " ".join(f"{c['title'].rstrip('.')}." for c in caveats) or "No caveat is recorded.",
         "window_h": _f(plots.get("window_h"), 1), "bin_minutes": bin_minutes(data),
         "model_words": "transit fit" if plots.get("model_kind") == "fit" else "box model of the detection",
@@ -763,8 +852,12 @@ def abstract_text(data: dict) -> str:
     when the star is characterised, both probabilities and the candidate status, each from the stored numbers."""
     target, eph = data.get("target") or {}, data.get("ephemeris") or {}
     name = target.get("name") or target.get("target_id")
-    parts = [(f"This note reports a transit candidate on {name}, a star that Kepler recorded only in the background "
-              "of other targets' pixels."),
+    claims = prior_claims(data)
+    first = (f"; {claims[0]['author']} reported the signal first on {date_words(claims[0]['date'])} "
+             f"(doi:{claims[0]['doi']})") if claims else ""
+    what = "an independent recovery of a transit candidate" if claims else "a transit candidate"
+    parts = [(f"This note reports {what} on {name}, a star that Kepler recorded only in the background "
+              f"of other targets' pixels{first}."),
              (f"In its KBonus Kepler Background light curve a dip of {_f(eph.get('depth_ppm'), 0, True)} ppm lasting "
               f"{_f(eph.get('duration_h'), 2)} hours repeats every {_f(eph.get('period_days'), 5)} days over "
               f"{eph.get('n_events')} transits.")]
@@ -805,10 +898,22 @@ def archive_paragraph(data: dict, doi: str, tic: str | None) -> str:
     rp = f", which gives a planet radius of {n['rp_text']} Earth radii" if n["rp_text"] else ""
     exofop = f"under TIC {tic}" if tic else f"on the {n['name']} page"
     cross = f" {n['cross_check_sentence']}" if n["cross_check_sentence"] else ""
-    return (f"I write about a transit candidate on {n['name']}{where}, now in an accepted refereed paper "
-            f"(doi:{PAPER_DOI_PLACEHOLDER}), since the archive takes parameters from such a paper and not from the "
-            f"Research Note of the AAS that first reported it (doi:{RNAAS_DOI_PLACEHOLDER}). SkySift (search version "
-            f"{n['search_version']}, commit {n['commit']}) found it in the KBonus Kepler Background light curves. "
+    claims = prior_claims(data)
+    if claims:
+        c = claims[0]
+        opening = (f"I write about a transit candidate on {n['name']}{where}, first reported by {c['author']} on "
+                   f"{date_words(c['date'])} (doi:{c['doi']}). SkySift's independent recovery and vetting of it is "
+                   f"now in an accepted refereed paper (doi:{PAPER_DOI_PLACEHOLDER}), since the archive takes "
+                   "parameters from such a paper and not from the Research Note of the AAS that reported the "
+                   f"recovery (doi:{RNAAS_DOI_PLACEHOLDER}). SkySift (search version {n['search_version']}, commit "
+                   f"{n['commit']}) found it again in a blind sweep of the KBonus Kepler Background light curves. ")
+    else:
+        opening = (f"I write about a transit candidate on {n['name']}{where}, now in an accepted refereed paper "
+                   f"(doi:{PAPER_DOI_PLACEHOLDER}), since the archive takes parameters from such a paper and not "
+                   f"from the Research Note of the AAS that first reported it (doi:{RNAAS_DOI_PLACEHOLDER}). SkySift "
+                   f"(search version {n['search_version']}, commit {n['commit']}) found it in the KBonus Kepler "
+                   "Background light curves. ")
+    return opening + (
             f"The ephemeris is {n['ephemeris_text']}{rp}. {n['fap_text']} {n['fpp_text']}{cross} The light curve, "
             f"ephemeris, transit times, vetting metrics and figures are frozen on Zenodo (doi:{doi}) and uploaded to "
             f"ExoFOP-TESS {exofop}. I would be glad to see it considered for the archive's tables, and I can send "
@@ -843,7 +948,8 @@ def render_note(data: dict, doi_placeholder: str = DOI_PLACEHOLDER, *, citation:
     ``note.tex.j2`` (title, abstract, sections, one figure, references), citing exactly the works the dossier used.
     A sandbox DOI is printed with the words that it must be replaced before submission."""
     refs = references(data)
-    bib = [(key, Raw(label), Raw(text)) for key, label, text in BIBLIOGRAPHY if refs.get(key)]
+    bib = sorted([(key, Raw(label), Raw(text)) for key, label, text in BIBLIOGRAPHY if refs.get(key)]
+                 + prior_bib(data), key=lambda item: item[0])
     doi = doi_placeholder or DOI_PLACEHOLDER
     note = f", a {SANDBOX_DOI_NOTE}" if doi.startswith(SANDBOX_DOI_PREFIX) else ""
     body = _env(tex=True).get_template("note.tex.j2").render(

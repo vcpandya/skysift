@@ -46,7 +46,7 @@ runner = CliRunner()
 EM_DASH = chr(0x2014)
 WARNING = ("This candidate is not yet approved by a reviewer. Build the record, but do not freeze or upload it before "
            "the approval.")
-ISE = re.compile(r"\b(organis|characteris|summaris|localis|recognis|normalis|minimis|optimis)(e|ed|es|ing|ation)\b",
+IZE = re.compile(r"\b(organiz|characteriz|summariz|localiz|recogniz|normaliz|minimiz|optimiz)(e|ed|es|ing|ation)\b",
                  re.IGNORECASE)
 SANDBOX_WORDS = "sandbox DOI, replace before submission"
 
@@ -299,7 +299,7 @@ def test_readme_lists_the_five_steps_and_the_approval_warning(env_with_dossier):
         assert title in text
     assert text.splitlines()[0] == WARNING
     assert "not yet approved" in text and EM_DASH not in text and "stakeholder" not in text.lower()
-    assert "discover" not in text.lower() and not ISE.search(text)
+    assert "discover" not in text.lower() and not IZE.search(text)
     for account in ("Zenodo account", "ExoFOP", "AAS journals account", "arXiv", "help desk"):
         assert account in text
     assert "Gaia DR3 2101234567890123462" in text and "KIC id is accepted directly" in text
@@ -466,7 +466,7 @@ def test_every_pack_text_gives_both_probabilities_without_the_provisional_mark(e
     for name in ("README.md", "note/note.tex", "exofop/note.txt", "archive_email.txt"):
         text = (rep.out_dir / name).read_text(encoding="utf-8")
         assert fap in text and fpp in text and "provisional" not in text, name       # signed off 21 October 2026
-        assert EM_DASH not in text and "discover" not in text.lower() and not ISE.search(text), name
+        assert EM_DASH not in text and "discover" not in text.lower() and not IZE.search(text), name
 
 
 def test_the_exofop_note_keeps_its_blank_lines(env_with_dossier):
@@ -1506,3 +1506,80 @@ def test_the_readme_says_where_to_find_the_tic(env_with_dossier):
     assert "TIC id is on its ExoFOP target page" in step2 and "MAST TIC search by the KIC coordinates" in step2
     named = render_readme(env_with_dossier.data, {"tic": "169822650"}).split("## Step 2.")[1].split("## Step 3.")[0]
     assert "MAST TIC search" not in named and "TIC 169822650" in named
+
+
+# ---------------------------------------------------------------------------------------------------- prior claims (P1)
+
+RECOVERY = "independent recovery"
+PRIOR_DOI = "10.5281/zenodo.23325261"
+
+
+@pytest.fixture
+def env_prior(settings, monkeypatch):
+    """The seed with a prior claim declared in its candidates folder, and a hand-built localisation beside it."""
+    from tests.unit.test_dossier import PRIOR_CLAIM
+    env = _make_env(settings, monkeypatch)
+    folder = dossier_module.CANDIDATES_DIR / STAGE2_TARGET
+    (folder / "localisation").mkdir(parents=True)
+    (folder / "prior_claims.json").write_text(json.dumps([PRIOR_CLAIM]), encoding="utf-8")
+    _store_pixels(env, _pixels_npz())
+    env.report = generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch)
+    env.data = json.loads(env.report.data_path.read_text(encoding="utf-8"))
+    seasons = [s for s in next(t for t in env.data["tests"] if t["rung"] == "rung5_pixels")["metrics"]["seasons"]
+               if s.get("voting")]
+    hand = {str(s["season"]): s["dist_target_pix"] + 0.03 for s in seasons}
+    (folder / "localisation" / "results.json").write_text(json.dumps({"summary": {
+        "seasons_snrbox_centroid_dist_to_candidate_pix": hand}}), encoding="utf-8")
+    env.report = generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch, force=True)
+    env.data = json.loads(env.report.data_path.read_text(encoding="utf-8"))
+    return env
+
+
+def _texts(rep) -> dict[str, str]:
+    return {name: (rep.out_dir / name).read_text(encoding="utf-8")
+            for name in ("README.md", "note/note.tex", "exofop/note.txt", "archive_email.txt")}
+
+
+def test_a_prior_claim_makes_every_text_an_independent_recovery(env_prior):
+    env = env_prior
+    assert env.data["prior_claims"][0]["doi"] == PRIOR_DOI
+    rep = _build(env, tic="169822650")
+    texts = _texts(rep)
+    for name, text in texts.items():
+        assert RECOVERY in text and PRIOR_DOI in text and "13 October 2026" in text, name
+        assert "discovery" not in text.lower() and EM_DASH not in text and not IZE.search(text), name
+    note = texts["note/note.tex"]
+    assert r"\title{An independent recovery of the" in note and r"\citet{mehta2026}" in note
+    assert r"\bibitem[{Mehta}(2026)]{mehta2026} Mehta, K. 2026, Planethunt: archival evidence for the KIC 5689121" in note
+    assert "This note reports a transit candidate" not in note and "not a new candidate" in note
+    assert note.index("]{mann2019}") < note.index("]{mehta2026}") < note.index("]{morton2012}")   # alphabetical
+    assert note_problems(note_words(note), note) == []
+    step2 = texts["README.md"].split("## Step 2.")[1].split("## Step 3.")[0]
+    assert "record of priority" in step2 and PRIOR_DOI in step2
+    assert "same host assignment; SkySift's sweep a week later" in texts["README.md"]
+    assert "SkySift independent recovery of the transit candidate on " in texts["exofop/note.txt"]
+    assert "first reported" in texts["archive_email.txt"]
+    # the pixel section says how far the dossier's centroid sits from the hand-built localisation
+    for name in ("note/note.tex", "exofop/note.txt"):
+        assert "hand-built localisation" in texts[name] and "within 0.03 px" in texts[name], name
+    planet = _parse_pipe((rep.out_dir / "exofop" / f"params_planet_{_today()}_001.txt").read_text(encoding="utf-8"),
+                         PLANET_COLUMNS)
+    assert planet["paper"] == f"https://doi.org/{PRIOR_DOI}" and PRIOR_DOI in planet["notes"]
+    assert RECOVERY in planet["notes"] and len(planet["notes"]) <= exofop.EXOFOP_NOTES_MAX
+
+
+def test_without_a_prior_claim_nothing_speaks_of_a_recovery(env_with_dossier):
+    env = env_with_dossier
+    assert env.data["prior_claims"] == [] and env.data["hand_built_localisation"] is None
+    texts = _texts(_build(env))
+    for name, text in texts.items():
+        assert RECOVERY not in text and "record of priority" not in text and PRIOR_DOI not in text, name
+        assert "hand-built localisation" not in text, name
+    assert r"\title{A " in texts["note/note.tex"]
+    assert note_problems(note_words(texts["note/note.tex"]), texts["note/note.tex"]) == []
+
+
+def test_a_version_3_dossier_without_the_key_reads_as_no_claim(env_with_dossier):
+    data = {k: v for k, v in env_with_dossier.data.items() if k not in ("prior_claims", "hand_built_localisation")}
+    assert pack_module.prior_claim_sentence(data) is None and RECOVERY not in render_note(data)
+    assert "record of priority" not in render_readme(data, {})

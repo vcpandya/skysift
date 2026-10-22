@@ -824,3 +824,21 @@ def test_the_pixel_section_quotes_the_offset_against_the_rule(seeded_dossier):
     assert "the distance from the Gaia position (0.25 ± 0.28 arcsec) carries the WCS zero point" in pixels
     export = client.get(f"/dossiers/{STAGE2_TARGET}/export.html").text
     assert '"centroid_offset":{' in export.replace(" ", "") and "Against the star's own out-of-transit" in export
+
+
+def test_section_01_presents_a_prior_claim_as_an_independent_recovery(seeded_dossier):
+    """P1: with a prior claim stored, the page's section 01 cites it (author, DOI, date) and calls the result an
+    independent recovery; the standalone page carries the claim in its JSON and the same words in its script."""
+    from pathlib import Path
+
+    from tests.unit.test_dossier import PRIOR_CLAIM
+    client, app, _ids, data = seeded_dossier
+    signal = client.get(f"/dossiers/{STAGE2_TARGET}").text.split('id="signal"')[1].split('id="repeat"')[0]
+    assert "independent recovery" not in signal and PRIOR_CLAIM["doi"] not in signal
+    path = Path(app.state.store.dossier(STAGE2_TARGET)["data_path"])
+    path.write_text(json.dumps({**data, "prior_claims": [PRIOR_CLAIM]}), encoding="utf-8")
+    signal = client.get(f"/dossiers/{STAGE2_TARGET}").text.split('id="signal"')[1].split('id="repeat"')[0]
+    assert "Kuber Mehta reported this signal first" in signal and "doi:10.5281/zenodo.23325261" in signal
+    assert "13 October 2026" in signal and "independent recovery and vetting of that claim, not a new candidate" in signal
+    export = client.get(f"/dossiers/{STAGE2_TARGET}/export.html").text
+    assert '"prior_claims":[{' in export.replace(" ", "") and "independent recovery and vetting of" in export

@@ -200,3 +200,12 @@ def ephemeris_sentence(data: dict) -> str:
              f"duration {q['duration_pm']} h{q['duration_note']}" if q["duration_pm"] else None,
              f"depth {q['depth_pm']} ppm{q['depth_note']}" if q["depth_pm"] else None]
     return ", ".join(p for p in parts if p)
+
+
+def prior_claims(data: dict) -> list[dict]:
+    """The dossier's ``prior_claims`` (``dossier.prior_claims``: earlier public claims on the same signal, earliest
+    first), each with a DOI; an empty list for a dossier without the key, which a version-3 reader allows."""
+    claims = data.get("prior_claims")
+    if not isinstance(claims, list):
+        return []
+    return [c for c in claims if isinstance(c, dict) and str(c.get("doi") or "").strip()]

@@ -101,6 +101,9 @@
 
 <section id="signal" class="dossier-section" aria-labelledby="signal-title">
   {{ section_head("01", "signal", "The signal", "Every " ~ (e.period_days | fmt(2)) ~ " days the star dims by " ~ (e.depth_ppm | fmt(0)) ~ " parts per million for " ~ (e.duration_h | fmt(1)) ~ " hours. Folding the light curve on that period stacks every dip into one.") }}
+  {%- if prior_text %}
+  <p class="prior-claim">{{ prior_text }}</p>
+  {%- endif %}
   <figure class="dossier-fig">
     <figcaption>The folded light curve: single cadences, their bins with errors, and the {{ "fitted transit" if plots.model_kind == "fit" else "box the search found" }}.
       <span class="legend"><i class="sw sw-muted"></i>cadences <i class="sw sw-ion"></i>bins <i class="sw sw-solar"></i>model</span></figcaption>

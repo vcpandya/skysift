@@ -153,6 +153,8 @@ def _make_env(settings, monkeypatch, responses=None, calibration=True, calibrati
     # a fixture dossier stores a clean commit whatever the state of the checkout the tests run in, since the live
     # gate refuses a dirty or unknown one
     monkeypatch.setattr(dossier_module, "git_commit", lambda: "abc1234")
+    # the seed target shares its id with docs/candidates/kic-006146676: a fixture reads its own empty folder instead
+    monkeypatch.setattr(dossier_module, "CANDIDATES_DIR", Path(settings.data_dir) / "candidates")
     path = cal.default_path(settings.data_dir, "kbonus_bkg")
     if calibration:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -454,6 +456,15 @@ def test_cli_dossier_prints_json_when_piped(cli_env, tmp_path):
 def test_cli_dossier_fails_plainly_for_a_target_without_signals(cli_env):
     r = CliRunner().invoke(app, ["dossier", "--target", "kic-000000001"])
     assert r.exit_code == 1 and "no signal" in r.output and "Traceback" not in r.output
+
+
+def test_cli_dossier_exits_2_on_a_malformed_prior_claims_file(cli_env):
+    folder = dossier_module.CANDIDATES_DIR / STAGE2_TARGET
+    folder.mkdir(parents=True)
+    (folder / "prior_claims.json").write_text('[{"doi": "10.5281/zenodo.1"}]', encoding="utf-8")
+    r = CliRunner().invoke(app, ["dossier", "--target", STAGE2_TARGET])
+    assert r.exit_code == 2 and "has no date, author, title" in r.output and "Traceback" not in r.output
+    assert cli_env.store.dossier(STAGE2_TARGET) is None                  # nothing was written
 
 
 def test_cli_dossier_exits_2_when_the_light_curve_was_released(cli_env):
@@ -1154,3 +1165,59 @@ def test_a_stamp_wcs_shifted_by_a_fifth_of_a_pixel_moves_only_the_catalogue_offs
     assert block["n_seasons"] == 4 and block["reference"] == "the star's own direct-image centroid"
     assert block["catalogue_referenced_arcsec"] == pytest.approx(0.8, abs=0.15)
     assert block["self_referenced_arcsec"] < 0.2 and block["sigma"] < 3 and block["counts"] is False
+
+
+# ---------------------------------------------------------------------------------------------------- prior claims (P1)
+
+PRIOR_CLAIM = {"doi": "10.5281/zenodo.23325261", "date": "2026-10-13", "author": "Kuber Mehta",
+               "title": "Planethunt: archival evidence for the KIC 5689121 transit candidate",
+               "status": "Research Note submitted 13 October 2026, reported not accepted",
+               "note": "same host assignment; SkySift's sweep a week later"}
+
+
+def test_prior_claims_are_read_from_the_target_folder(tmp_path):
+    assert dossier_module.prior_claims("kic-005689121", root=tmp_path) == []          # no file, no claim
+    folder = tmp_path / "kic-005689121"
+    folder.mkdir()
+    (folder / "prior_claims.json").write_text(json.dumps([PRIOR_CLAIM]), encoding="utf-8")
+    assert dossier_module.prior_claims("kic-005689121", root=tmp_path) == [PRIOR_CLAIM]
+    (folder / "prior_claims.json").write_text(json.dumps([{**PRIOR_CLAIM, "doi": ""}]), encoding="utf-8")
+    with pytest.raises(dossier_module.PriorClaimsError, match="doi"):
+        dossier_module.prior_claims("kic-005689121", root=tmp_path)
+    (folder / "prior_claims.json").write_text("{not json", encoding="utf-8")
+    with pytest.raises(dossier_module.PriorClaimsError, match="prior_claims.json"):
+        dossier_module.prior_claims("kic-005689121", root=tmp_path)
+
+
+def test_the_kic_5689121_folder_declares_its_prior_claim():
+    claims = dossier_module.prior_claims("kic-005689121", root=REPO / "docs" / "candidates")
+    assert claims == [PRIOR_CLAIM]
+    assert dossier_module.prior_claims("kic-006146676", root=REPO / "docs" / "candidates") == []
+
+
+def test_the_hand_built_localisation_is_compared_season_by_season(tmp_path):
+    folder = tmp_path / "kic-005689121" / "localisation"
+    folder.mkdir(parents=True)
+    hand = {"0": 0.144, "1": 0.150, "2": 0.134, "3": 0.263}
+    (folder / "results.json").write_text(json.dumps({"summary": {
+        "seasons_snrbox_centroid_dist_to_candidate_pix": hand}}), encoding="utf-8")
+    rung5 = {"seasons": [{"season": 0, "dist_target_pix": 0.120, "voting": True},
+                         {"season": 1, "dist_target_pix": 0.170, "voting": True},
+                         {"season": 2, "dist_target_pix": 0.150, "voting": True},
+                         {"season": 3, "dist_target_pix": 0.9, "voting": False}]}       # a silent season is left out
+    block = dossier_module.hand_built_localisation("kic-005689121", rung5, root=tmp_path)
+    assert block == {"max_diff_pix": pytest.approx(0.024), "n_seasons": 3,
+                     "source": "docs/candidates/kic-005689121/localisation/results.json"}
+    assert dossier_module.hand_built_localisation("kic-006146676", rung5, root=tmp_path) is None
+    assert dossier_module.hand_built_localisation("kic-005689121", {}, root=tmp_path) is None
+
+
+def test_generate_stores_the_prior_claims(env):
+    assert json.loads(generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch)
+                      .data_path.read_text(encoding="utf-8"))["prior_claims"] == []
+    folder = dossier_module.CANDIDATES_DIR / STAGE2_TARGET
+    folder.mkdir(parents=True)
+    (folder / "prior_claims.json").write_text(json.dumps([PRIOR_CLAIM]), encoding="utf-8")
+    data = json.loads(generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch, force=True)
+                      .data_path.read_text(encoding="utf-8"))
+    assert data["prior_claims"] == [PRIOR_CLAIM] and data["dossier_version"] == "3"

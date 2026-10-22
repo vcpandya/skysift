@@ -445,6 +445,15 @@
     };
     // 01 to 08
     para(0, `Every ${fmt(E.period_days, 2)} days the star dims by ${fmt(E.depth_ppm)} parts per million for ${fmt(E.duration_h, 1)} hours.`, "lede");
+    // a prior public claim on the signal, as skysift.pack.prior_claim_sentence words it: this is a recovery
+    const claims = (Array.isArray(D.prior_claims) ? D.prior_claims : []).filter((c) => c && c.doi);
+    if (claims.length) {
+      const months = ["January", "February", "March", "April", "May", "June", "July", "August", "September",
+        "October", "November", "December"];
+      const day = (iso) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso || ""); return m ? `${+m[3]} ${months[+m[2] - 1]} ${m[1]}` : (iso || ""); };
+      const said = claims.map((c, i) => `${c.author} ${i ? "reported it again" : "reported this signal first"}, in "${c.title}" (Zenodo, ${day(c.date)}, doi:${c.doi}${c.status ? `; ${c.status}` : ""})`);
+      para(0, `${said.join(", and ")}. SkySift found it again in a blind sweep, so this is an independent recovery and vetting of ${claims.length === 1 ? "that claim" : "those claims"}, not a new candidate.`, "prior-claim");
+    }
     fig(0, "fold", "The folded light curve: single cadences, their bins and the model.");
     fig(0, "spectrum", "The detection spectrum, with the aliases of the period marked.", true);
     const T = D.timing;

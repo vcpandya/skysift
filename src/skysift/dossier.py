@@ -1196,6 +1196,65 @@ def _section(name: str, errors: dict, build: Callable[[], object]):
         return None
 
 
+CANDIDATES_DIR = Path(__file__).resolve().parents[2] / "docs" / "candidates"     # present in a source checkout only
+PRIOR_CLAIM_FIELDS = ("doi", "date", "author", "title", "status", "note")
+PRIOR_CLAIM_REQUIRED = ("doi", "date", "author", "title")
+
+
+class PriorClaimsError(ValueError):
+    """A ``prior_claims.json`` that is not a list of claims each carrying a DOI, a date, an author and a title."""
+
+
+def prior_claims(target_id: str, root: Path | None = None) -> list[dict]:
+    """The public, dated claims on the same signal made before SkySift's, as the person running the engine declared
+    them in ``docs/candidates/<target>/prior_claims.json`` (a list of {doi, date, author, title, status, note}; the
+    date as YYYY-MM-DD). An empty list when the file is absent. A file that does not read as such a list raises
+    PriorClaimsError, since a claim dropped in silence would let the texts call a recovery a new candidate."""
+    path = Path(CANDIDATES_DIR if root is None else root) / target_id / "prior_claims.json"
+    if not path.is_file():
+        return []
+    try:
+        claims = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        raise PriorClaimsError(f"{path} does not read as JSON ({e})") from e
+    if not isinstance(claims, list) or not all(isinstance(c, dict) for c in claims):
+        raise PriorClaimsError(f"{path} is not a list of claims")
+    out = []
+    for i, claim in enumerate(claims):
+        missing = [k for k in PRIOR_CLAIM_REQUIRED if not str(claim.get(k) or "").strip()]
+        if missing:
+            raise PriorClaimsError(f"{path}: claim {i + 1} has no {', '.join(missing)}")
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(claim["date"])):
+            raise PriorClaimsError(f"{path}: claim {i + 1} has the date {claim['date']!r}, not YYYY-MM-DD")
+        out.append({k: str(claim.get(k) or "").strip() for k in PRIOR_CLAIM_FIELDS})
+    return sorted(out, key=lambda c: c["date"])
+
+
+def hand_built_localisation(target_id: str, rung5_metrics: dict, root: Path | None = None) -> dict | None:
+    """How far, season by season, the rung 5 centroid's distance from the star sits from the hand-built study's
+    (``docs/candidates/<target>/localisation/results.json``, its S/N-box centroid distance to the candidate per
+    season, quarter mod 4 as rung 5's seasons): {"max_diff_pix", "n_seasons", "source"} over the seasons that voted
+    and that the study lists, or None without the file or a common season."""
+    base = Path(CANDIDATES_DIR if root is None else root)
+    path = base / target_id / "localisation" / "results.json"
+    if not path.is_file():
+        return None
+    try:
+        hand = (json.loads(path.read_text(encoding="utf-8")).get("summary") or {}).get(
+            "seasons_snrbox_centroid_dist_to_candidate_pix") or {}
+    except (OSError, ValueError, AttributeError):
+        return None
+    diffs = []
+    for s in (rung5_metrics or {}).get("seasons") or []:
+        ours, theirs = s.get("dist_target_pix"), hand.get(str(s.get("season")))
+        if s.get("voting") and isinstance(ours, int | float) and isinstance(theirs, int | float):
+            diffs.append(abs(float(ours) - float(theirs)))
+    if not diffs:
+        return None
+    return {"max_diff_pix": round(max(diffs), 4), "n_seasons": len(diffs),
+            "source": f"docs/candidates/{target_id}/localisation/results.json"}
+
+
 def generate(store: Store, blob, settings, target_id: str, *, signal_id: int | None = None, force: bool = False,
              fetch=net.fetch, log: Callable[[str], None] | None = None, n_boot: int | None = None) -> DossierReport:
     """Write ``<data_dir>/dossiers/<target_id>/dossier_data.json`` and its ``dossiers`` row (spec 5.4). A no-op
@@ -1219,6 +1278,7 @@ def generate(store: Store, blob, settings, target_id: str, *, signal_id: int | N
         say(f"dossier for {target_id} is current (signal {sid}); nothing to do")
         return _stored_report(data_path, sid, target_id)
     stale = _stale_reason(old, signal, force, fp)
+    claims = prior_claims(target_id)            # read first: a malformed file stops the run before any work
     target = _target_dict(store, target_id)
     say(f"signal {sid} ({signal['final_status']}, SDE {signal['sde']:.1f}); loading the light curve")
     lc = LightCurveLoader(store, blob, source_factory=_offline_factory(target_id, sid)).load(target, pin=True)
@@ -1243,6 +1303,8 @@ def generate(store: Store, blob, settings, target_id: str, *, signal_id: int | N
     fap = cal.false_alarm(rows, float(signal["sde"]), version)
     data = _assemble(store, signal, target, tests, decisions, plots, pixels, star, planet, gaia_errors, fap, fpp,
                      inputs, calibration, version, settings.data_dir, blocks)
+    data["prior_claims"] = claims
+    data["hand_built_localisation"] = hand_built_localisation(target_id, _metrics(tests, "rung5_pixels"))
     data["section_errors"] = errors
     data["caveats"] = caveats(data)
     data = _tidy(data)

@@ -455,6 +455,7 @@ def seed_dossier(store: Store, data_dir, target_id: str = STAGE2_TARGET) -> dict
         "rechecks": store.rechecks(sid), "children": store.children(sid), "fap": fap, "fpp": fpp,
         "pixels": _seed_pixels(),
         "centroid_offset": ds.centroid_offset(next((x["metrics"] for x in tests if x["rung"] == "rung5_pixels"), {})),
+        "prior_claims": [], "hand_built_localisation": None,
         "star": star, "planet": planet, "look": look, "caveats": [],
         "section_errors": {}, "cross_check": None,
         "provenance": {"search_version": sig["detector_version"], "ladder_version": ladder,

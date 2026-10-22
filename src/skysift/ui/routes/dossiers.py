@@ -16,7 +16,7 @@ from markupsafe import Markup
 
 from skysift import dossier as ds
 from skysift import jsonutil
-from skysift.pack import STEP_TEXTS, STEPS, offset_sentence
+from skysift.pack import STEP_TEXTS, STEPS, offset_sentence, prior_claim_sentence
 from skysift.pack_text import err_digits as _err_digits
 from skysift.ui import queries
 from skysift.ui.app import render, require_token
@@ -214,6 +214,7 @@ def dossier_page(request: Request, target_id: str):
                   why_rows=data.get("why") or [], ladder=_ladder_rows(data.get("tests") or []),
                   seasons=seasons, close_call=close, notices=_section_notices(data), err_digits=err_digits,
                   offset_text=offset_sentence(data) if data else None,
+                  prior_text=prior_claim_sentence(data) if data else None,
                   payload=_payload(data) if data else None, sections=SECTION_IDS,
                   look_svg=Markup(planet_svg(look, 180)) if look else None,
                   look_words=look_sentence(look, look) if look else None,

@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 
 from skysift.pack_rows import logg_value, provenance_rows, star_characterized
-from skysift.pack_text import _bjd, _errors, _num, _pm_parts
+from skysift.pack_text import _bjd, _errors, _num, _pm_parts, prior_claims
 
 # ExoFOP's bulk templates (ExoFOP help, read 22 October 2026), pipe-delimited, one row per target
 EXOFOP_PLANET_TEMPLATE = "params_planet_{date}_001.txt"
@@ -73,13 +73,28 @@ def _candname(data: dict) -> str:
     return f"SkySift-{target.get('target_id') or 'target'}-s{sig.get('id')}"
 
 
+def prior_fields(data: dict) -> dict:
+    """The planet file's ``paper`` and ``notes`` when the dossier holds a prior claim (``pack_text.prior_claims``):
+    the earliest claim's DOI as the paper, and a note, at most ``EXOFOP_NOTES_MAX`` characters, that SkySift's result
+    is an independent recovery and vetting of it. Empty without a claim, so the placeholders stay."""
+    claims = prior_claims(data)
+    if not claims:
+        return {}
+    doi, date = claims[0]["doi"], claims[0].get("date") or ""
+    note = f"independent recovery and vetting by SkySift of the prior claim doi:{doi} ({date})"
+    if len(note) > EXOFOP_NOTES_MAX:
+        note = f"independent recovery of doi:{doi}"[:EXOFOP_NOTES_MAX]
+    return {"paper": f"https://doi.org/{doi}", "notes": note}
+
+
 def render_exofop_planet(data: dict, date: str, tic: str | None, tag: str) -> str:
     """``exofop/params_planet_<date>_001.txt``, ExoFOP's planet template (``EXOFOP_PLANET_COLUMNS``): the target
     ``TIC<tic>.01`` (``TIC<TIC-TO-FILL>.01`` without a TIC id), flag ``newctoi`` with its discovery and candidate
     name, disposition ``PC``, the ephemeris with its errors (epoch in full BJD_TDB), Rp/R*, a/R* and b only when the
     bootstrap gives them errors, the planet's radius, temperature, insolation and orbit with theirs, ``prop_period``
-    0 and the paper URL and notes as placeholders. Every uncertainty is the larger half-width; empty fields are what
-    SkySift does not have."""
+    0 and the paper URL and notes as placeholders, or, when the dossier holds a prior claim on the signal, the claim's
+    DOI in both (``prior_fields``). Every uncertainty is the larger half-width; empty fields are what SkySift does not
+    have."""
     eph, planet, shape = data.get("ephemeris") or {}, data.get("planet") or {}, data.get("shape") or {}
     e = _errors(eph)
     period = _plain(eph.get("period_days"), e["period"], e["period"], 5)
@@ -90,7 +105,8 @@ def render_exofop_planet(data: dict, date: str, tic: str | None, tag: str) -> st
               "discovery": EXOFOP_DISCOVERY, "candname": _candname(data),
               "period": period[0], "period_unc": period[1], "epoch": epoch[0], "epoch_unc": epoch[1],
               "depth": depth[0], "depth_unc": depth[1], "duration": duration[0], "duration_unc": duration[1],
-              "tag": tag, "prop_period": 0, "paper": "<PAPER-URL-TO-FILL>", "notes": "<NOTES-TO-FILL>"}
+              "tag": tag, "prop_period": 0, "paper": "<PAPER-URL-TO-FILL>", "notes": "<NOTES-TO-FILL>",
+              **prior_fields(data)}
     if shape.get("ok") is True:
         for name, unc, key, nd in (("imp", "imp_unc", "b", 2), ("r_planet", "r_planet_err", "k", 4),
                                    ("ar_star", "ar_star_err", "a_over_r", 1)):
