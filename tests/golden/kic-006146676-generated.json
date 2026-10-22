@@ -1,6 +1,6 @@
 {
  "dossier_version": "5",
- "generated": "2026-10-22T20:28:09.920715+00:00",
+ "generated": "2026-10-22T22:06:46.937689+00:00",
  "target": {
   "target_id": "kic-006146676",
   "source": "kbonus_bkg",
@@ -1878,7 +1878,7 @@
   "period_days": 40.290812,
   "t0_bkjd": 135.79502,
   "t0_bjd": 2454968.795018,
-  "duration_h": 3.6940537,
+  "duration_h": 3.6899841,
   "depth_ppm": 2213.9651,
   "sde": 50.501758,
   "snr": 30.039973,
@@ -1892,14 +1892,14 @@
   "t_ref_err_days": 0.0014183356,
   "epoch_ref": 19,
   "duration_h_err": {
-   "minus": 0.045214529,
-   "plus": 0.044320034
+   "minus": 0.048809661,
+   "plus": 0.054107932
   },
   "duration_source": "fitted T14",
   "depth_ppm_err": 114.37157,
   "depth_source": "per-event weighted mean of the box depth",
   "ephemeris_method": "weighted linear fit of per-transit mid-times, reference epoch at the centre of the series (Deeg 2015; Holczer et al. 2016)",
-  "shape_method": "bootstrap over transits of the quadratic limb-darkened, exposure-integrated fit (Schmitt et al. 2014)",
+  "shape_method": "bootstrap over transits of the quadratic limb-darkened, exposure-integrated fit, with the density prior's centre drawn from its Gaussian on each resample (Schmitt et al. 2014)",
   "fold_ephemeris": "linear fit of 31 transit times"
  },
  "fap": {
@@ -1928,7 +1928,7 @@
   "sentence_not_covered": "This is about noise. A real dip on a neighbouring star or an eclipsing binary passes this test."
  },
  "fpp": {
-  "value": 0.003022042,
+  "value": 0.0031329886,
   "words": "under 1 percent",
   "label": "False positive",
   "signed_off": true,
@@ -1937,7 +1937,7 @@
   "value_without_beb": null,
   "spec_product": {
    "eb_weight": 2.5557747e-07,
-   "value": 2.9845414e-05,
+   "value": 3.0944522e-05,
    "rule": "spec 4.2 as first written: one EB scenario at 2P weighted by S_sec x S_oe"
   },
   "confusion_radius_arcsec": 2.0,
@@ -2006,14 +2006,14 @@
   "scenarios": [
    {
     "name": "PL",
-    "prior": 0.66861021,
+    "prior": 0.64486136,
     "geometric": 0.012838661,
     "data": 0.99756055,
-    "weight": 0.0085631194,
+    "weight": 0.0082589597,
     "factors": {
      "class": "M",
-     "rp_rearth": 2.5,
-     "f_pl": 0.66861021,
+     "rp_rearth": 2.54,
+     "f_pl": 0.64486136,
      "a_au": 0.18292308,
      "R_star_over_a": 0.012838661,
      "T14_circ": 0.16466103,
@@ -2087,7 +2087,7 @@
    "teff": 3653.0,
    "radius": 0.505,
    "mass": 0.503,
-   "rp_rearth": 2.5,
+   "rp_rearth": 2.54,
    "fit_k": 0.047758423,
    "fit_b": 0.8932519,
    "fit_a_over_r": 43.616611,
@@ -2202,10 +2202,10 @@
  },
  "planet": {
   "rp_rearth": {
-   "median": 2.5,
-   "minus": 0.1,
+   "median": 2.54,
+   "minus": 0.09,
    "plus": 0.09,
-   "source": "k 0.0455 from the transit fit x R*; radius-ratio error from the bootstrap"
+   "source": "k 0.0462 from the transit fit x R*; radius-ratio error from the bootstrap"
   },
   "a_au": {
    "median": 0.1829,
@@ -2252,7 +2252,7 @@
   "spectral_type": "M1V",
   "star_colour": "red",
   "a_au": 0.1829,
-  "rp_rearth": 2.5,
+  "rp_rearth": 2.54,
   "teq_k": 268.0,
   "insolation_earth": 1.22,
   "hz_inner_au": 0.2159,
@@ -2295,7 +2295,8 @@
     "n_in": 6,
     "n_out": 25,
     "used": true,
-    "reason": null
+    "reason": null,
+    "ses": 6.531214
    },
    {
     "epoch": 1,
@@ -2306,7 +2307,8 @@
     "n_in": 6,
     "n_out": 24,
     "used": true,
-    "reason": null
+    "reason": null,
+    "ses": 7.7297092
    },
    {
     "epoch": 2,
@@ -2317,7 +2319,8 @@
     "n_in": 6,
     "n_out": 24,
     "used": true,
-    "reason": null
+    "reason": null,
+    "ses": 3.7878061
    },
    {
     "epoch": 4,
@@ -2328,7 +2331,8 @@
     "n_in": 6,
     "n_out": 20,
     "used": true,
-    "reason": null
+    "reason": null,
+    "ses": 3.2618524
    },
    {
     "epoch": 5,
@@ -2339,7 +2343,8 @@
     "n_in": 6,
     "n_out": 23,
     "used": true,
-    "reason": null
+    "reason": null,
+    "ses": 2.8412754
    },
    {
     "epoch": 6,
@@ -2350,7 +2355,8 @@
     "n_in": 5,
     "n_out": 23,
     "used": true,
-    "reason": null
+    "reason": null,
+    "ses": 4.2017501
    },
    {
     "epoch": 7,
@@ -2361,7 +2367,8 @@
     "n_in": 4,
     "n_out": 18,
     "used": true,
-    "reason": null
+    "reason": null,
+    "ses": 4.0741743
    },
    {
     "epoch": 8,
@@ -2372,7 +2379,8 @@
     "n_in": 6,
     "n_out": 22,
     "used": false,
-    "reason": "single-event S/N below 2.5 (Holczer et al. 2016)"
+    "reason": "single-event S/N below 2.5 (Holczer et al. 2016)",
+    "ses": 2.0576781
    },
    {
     "epoch": 9,
@@ -2383,7 +2391,8 @@
     "n_in": 6,
     "n_out": 21,
     "used": true,
-    "reason": null
+    "reason": null,
+    "ses": 4.4757454
    },
    {
     "epoch": 11,
@@ -2394,7 +2403,8 @@
     "n_in": 7,
     "n_out": 20,
     "used": true,
-    "reason": null
+    "reason": null,
+    "ses": 6.3743565
    },
    {
     "epoch": 12,
@@ -2405,7 +2415,8 @@
     "n_in": 6,
     "n_out": 21,
     "used": true,
-    "reason": null
+    "reason": null,
+    "ses": 7.4816816
    },
    {
     "epoch": 13,
@@ -2416,7 +2427,8 @@
     "n_in": 3,
     "n_out": 19,
     "used": true,
-    "reason": null
+    "reason": null,
+    "ses": null
    },
    {
     "epoch": 14,
@@ -2427,7 +2439,8 @@
     "n_in": 5,
     "n_out": 24,
     "used": true,
-    "reason": null
+    "reason": null,
+    "ses": 5.0703391
    },
    {
     "epoch": 15,
@@ -2438,7 +2451,8 @@
     "n_in": 4,
     "n_out": 15,
     "used": true,
-    "reason": null
+    "reason": null,
+    "ses": 5.5591589
    },
    {
     "epoch": 16,
@@ -2449,7 +2463,8 @@
     "n_in": 5,
     "n_out": 23,
     "used": true,
-    "reason": null
+    "reason": null,
+    "ses": 5.1338702
    },
    {
     "epoch": 17,
@@ -2460,7 +2475,8 @@
     "n_in": 5,
     "n_out": 19,
     "used": true,
-    "reason": null
+    "reason": null,
+    "ses": 5.9331749
    },
    {
     "epoch": 18,
@@ -2471,7 +2487,8 @@
     "n_in": 6,
     "n_out": 24,
     "used": true,
-    "reason": null
+    "reason": null,
+    "ses": 3.3437428
    },
    {
     "epoch": 19,
@@ -2482,7 +2499,8 @@
     "n_in": 6,
     "n_out": 23,
     "used": true,
-    "reason": null
+    "reason": null,
+    "ses": 3.9165153
    },
    {
     "epoch": 20,
@@ -2493,7 +2511,8 @@
     "n_in": 6,
     "n_out": 24,
     "used": true,
-    "reason": null
+    "reason": null,
+    "ses": 6.0194985
    },
    {
     "epoch": 21,
@@ -2504,7 +2523,8 @@
     "n_in": 5,
     "n_out": 24,
     "used": true,
-    "reason": null
+    "reason": null,
+    "ses": 8.1104977
    },
    {
     "epoch": 22,
@@ -2515,7 +2535,8 @@
     "n_in": 6,
     "n_out": 20,
     "used": true,
-    "reason": null
+    "reason": null,
+    "ses": 5.0837846
    },
    {
     "epoch": 23,
@@ -2526,7 +2547,8 @@
     "n_in": 4,
     "n_out": 18,
     "used": true,
-    "reason": null
+    "reason": null,
+    "ses": 3.7803887
    },
    {
     "epoch": 24,
@@ -2537,7 +2559,8 @@
     "n_in": 6,
     "n_out": 21,
     "used": true,
-    "reason": null
+    "reason": null,
+    "ses": 8.855951
    },
    {
     "epoch": 25,
@@ -2548,7 +2571,8 @@
     "n_in": 6,
     "n_out": 21,
     "used": true,
-    "reason": null
+    "reason": null,
+    "ses": 4.8562062
    },
    {
     "epoch": 27,
@@ -2559,7 +2583,8 @@
     "n_in": 5,
     "n_out": 21,
     "used": true,
-    "reason": null
+    "reason": null,
+    "ses": 7.5771924
    },
    {
     "epoch": 28,
@@ -2570,7 +2595,8 @@
     "n_in": 6,
     "n_out": 24,
     "used": true,
-    "reason": null
+    "reason": null,
+    "ses": 6.6355542
    },
    {
     "epoch": 29,
@@ -2581,7 +2607,8 @@
     "n_in": 5,
     "n_out": 24,
     "used": true,
-    "reason": null
+    "reason": null,
+    "ses": 6.0762833
    },
    {
     "epoch": 30,
@@ -2592,7 +2619,8 @@
     "n_in": 5,
     "n_out": 23,
     "used": true,
-    "reason": null
+    "reason": null,
+    "ses": 7.3495149
    },
    {
     "epoch": 31,
@@ -2603,7 +2631,8 @@
     "n_in": 4,
     "n_out": 21,
     "used": false,
-    "reason": "outlier (6.3 MAD)"
+    "reason": "outlier (6.3 MAD)",
+    "ses": 4.218779
    },
    {
     "epoch": 32,
@@ -2614,7 +2643,8 @@
     "n_in": 5,
     "n_out": 17,
     "used": true,
-    "reason": null
+    "reason": null,
+    "ses": 7.6231532
    },
    {
     "epoch": 33,
@@ -2625,7 +2655,8 @@
     "n_in": 4,
     "n_out": 18,
     "used": true,
-    "reason": null
+    "reason": null,
+    "ses": null
    },
    {
     "epoch": 34,
@@ -2636,7 +2667,8 @@
     "n_in": 6,
     "n_out": 23,
     "used": true,
-    "reason": null
+    "reason": null,
+    "ses": 4.8473856
    },
    {
     "epoch": 35,
@@ -2647,7 +2679,8 @@
     "n_in": 6,
     "n_out": 22,
     "used": true,
-    "reason": null
+    "reason": null,
+    "ses": 9.1945433
    }
   ],
   "template": "fit",
@@ -2656,39 +2689,39 @@
  "shape": {
   "ok": true,
   "reason": null,
-  "method": "bootstrap over transits of the quadratic limb-darkened, exposure-integrated fit (Schmitt et al. 2014)",
+  "method": "bootstrap over transits of the quadratic limb-darkened, exposure-integrated fit, with the density prior's centre drawn from its Gaussian on each resample (Schmitt et al. 2014)",
   "n_boot": 200,
   "n_converged": 200,
   "seed": 20261022,
   "k": {
-   "median": 0.046234648,
-   "minus": 0.0010407602,
-   "plus": 0.00083595013,
-   "point": 0.045466519
+   "median": 0.046171082,
+   "minus": 0.00089550345,
+   "plus": 0.00092021136,
+   "point": 0.045463382
   },
   "b": {
-   "median": 0.46756533,
-   "minus": 0.022742551,
-   "plus": 0.022215952,
-   "point": 0.47013838
+   "median": 0.46161038,
+   "minus": 0.054877466,
+   "plus": 0.059328019,
+   "point": 0.46965798
   },
   "a_over_r": {
-   "median": 77.989495,
-   "minus": 0.041085625,
-   "plus": 0.040404131,
-   "point": 77.941818
+   "median": 78.073638,
+   "minus": 2.0741325,
+   "plus": 2.3607387,
+   "point": 77.96491
   },
   "t14_h": {
-   "median": 3.6940537,
-   "minus": 0.045214529,
-   "plus": 0.044320034,
-   "point": 3.687721
+   "median": 3.6899841,
+   "minus": 0.048809661,
+   "plus": 0.054107932,
+   "point": 3.6875692
   },
   "model_depth_ppm": {
-   "median": 2510.0174,
-   "minus": 123.23987,
-   "plus": 81.034187,
-   "point": 2419.3247
+   "median": 2510.1502,
+   "minus": 120.77034,
+   "plus": 80.773775,
+   "point": 2419.3141
   },
   "box_depth_ppm": {
    "median": 2241.5462,
@@ -2696,7 +2729,7 @@
    "plus": 116.87763
   },
   "box_duration_h": null,
-  "ingress_min": 12.211569,
+  "ingress_min": 12.203558,
   "degenerate": true,
   "degeneracy_reason": "ingress shorter than the cadence: b and a/R* are degenerate with k",
   "fits": {
@@ -2705,37 +2738,37 @@
     "reason": null,
     "variant": "free",
     "k": 0.044163171,
-    "b": 7.1748894e-07,
-    "a_over_r": 88.502423,
+    "b": 9.0298214e-07,
+    "a_over_r": 88.502426,
     "t14_days": 0.15131411,
     "depth_ppm": 2412.264,
-    "chi2_data": 797.43842,
+    "chi2_data": 1310.4547,
     "chi2_prior": 0.0,
-    "chi2_total": 797.43842,
+    "chi2_total": 1310.4547,
     "n_points": 1064,
     "u1": 0.4198392,
     "u2": 0.3101408,
     "exposure_min": 29.424465,
-    "density_gcc": 8.0781308,
+    "density_gcc": 8.0781315,
     "prior_gcc": null
    },
    "prior": {
     "ok": true,
     "reason": null,
     "variant": "prior",
-    "k": 0.045466519,
-    "b": 0.47013838,
-    "a_over_r": 77.941818,
-    "t14_days": 0.15365504,
-    "depth_ppm": 2419.3247,
-    "chi2_data": 797.60422,
-    "chi2_prior": 0.00022712348,
-    "chi2_total": 797.60444,
+    "k": 0.045463382,
+    "b": 0.46965798,
+    "a_over_r": 77.96491,
+    "t14_days": 0.15364872,
+    "depth_ppm": 2419.3141,
+    "chi2_data": 1310.7267,
+    "chi2_prior": 0.00060958125,
+    "chi2_total": 1310.7273,
     "n_points": 1064,
     "u1": 0.4198392,
     "u2": 0.3101408,
     "exposure_min": 29.424465,
-    "density_gcc": 5.517686,
+    "density_gcc": 5.5225917,
     "prior_gcc": [
      5.51,
      0.51
@@ -2745,10 +2778,10 @@
   "comparison": {
    "constrained": false,
    "quoted": "prior",
-   "delta_chi2": 0.16602762,
-   "density_tension_sigma": 5.0355505,
+   "delta_chi2": 0.272598,
+   "density_tension_sigma": null,
    "a_over_r_label": "from the stellar parameters",
-   "reason": "unconstrained at this cadence, consistent with the host's density"
+   "reason": "unconstrained at this cadence (the quoted values follow the host's density)"
   },
   "limb_darkening": {
    "law": "quadratic",
@@ -4799,6 +4832,6 @@
    "rung4_novelty": "4",
    "rung5_pixels": "4"
   },
-  "git_commit": "a4fe457"
+  "git_commit": "efd8e0b"
  }
 }

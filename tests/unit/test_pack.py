@@ -1325,13 +1325,13 @@ def test_note_has_software_facilities_and_the_model_clause_within_the_limits(env
     for data in (env_with_dossier.data, golden):
         tex = render_note(data)
         version = data["signal"]["detector_version"]
-        # the commit the dossier was generated at (the golden's a4fe457, not the checkout's HEAD), and triceratops
+        # the commit the dossier was generated at (the golden's efd8e0b, not the checkout's HEAD), and triceratops
         # only with a stored cross-check (M10), which the golden has (fix round 4)
         commit = data["provenance"]["git_commit"]
         tools = "numpy, scipy, astropy, matplotlib" + (", triceratops" if data.get("cross_check") else "")
         assert (rf"\software{{SkySift {md.version('skysift')} (search version {tex_safe(version)}, commit "
                 rf"{tex_safe(commit)}), {tools}}}") in tex
-        assert (data is golden) == bool(data.get("cross_check")) and (data is not golden or commit == "a4fe457")
+        assert (data is golden) == bool(data.get("cross_check")) and (data is not golden or commit == "efd8e0b")
         crossed = render_note({**data, "cross_check": {"fpp": 0.01, "nfpp": 0.001, "current": False}})
         assert "matplotlib, triceratops}" in crossed
         assert r"\facilities{Kepler, Gaia, MAST, Exoplanet Archive}" in tex
@@ -1950,7 +1950,7 @@ def test_the_live_shape_stays_inside_the_word_limit_with_margin(cross, prior):
     a skipped sector and an uncertain count, with and without a prior claim) stays at or under 1,480 words, 20 under
     the RNAAS limit, and the gate does not refuse it for its length. Measured in round 4: 1,376 and 1,384 without a
     prior claim, 1,439 and 1,447 with one (validated, dominant with two degenerate runs); with the version 5 golden
-    (Task 10): 1,412 and 1,420 without, 1,475 and 1,483 with one. Round 2 adds note words task by task and Task 13
+    (Task 10 fix round 1): 1,413 and 1,421 without, 1,476 and 1,484 with one. Round 2 adds note words and Task 13
     Step 15 makes the cuts (plan, word budget), so until then a count between the margin and the RNAAS limit is an
     expected failure; the RNAAS limit and the gate hold throughout."""
     words = _check_live_shape(cross, prior)
