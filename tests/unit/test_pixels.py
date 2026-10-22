@@ -4,10 +4,13 @@ import math
 import numpy as np
 from scipy.special import erf
 
+from skysift.lc import pixels as pixels_module
 from skysift.lc.ops import season_of
 from skysift.lc.pixels import (
     ALL_MISSING,
     BOX_PIXELS_MIN,
+    CENTROID_FLOOR_MEASURED,
+    CENTROID_FLOOR_PIX,
     N_MC,
     SEPARATION_SIGMA,
     BoxCoverage,
@@ -336,7 +339,8 @@ def test_metrics_carry_the_dashboard_keys_and_strict_json():
             "dist_neighbour_pix", "nearer", "separation_sigma", "depth_target_ppm", "depth_neighbour_ppm", "max_snr",
             "two_source", "pos_target", "pos_neighbour", "voting", "non_voting_reason", "centroid_sigma_axis_pix",
             "shift_pix", "psf_sigma_pix", "box_pixels_target", "box_pixels_neighbour", "box_missing_target",
-            "box_missing_neighbour", "box_partial", "edge_bias_pix", "edge_bias_axis_pix", "separation_sigma_raw"}
+            "box_missing_neighbour", "box_partial", "edge_bias_pix", "edge_bias_axis_pix", "separation_sigma_raw",
+            "centroid_sigma_mc_pix", "floor_pix", "registration_shift_pix"}
     assert all(set(s) == keys for s in m["seasons"]) and len(m["seasons"]) == 4
     assert isinstance(m["seasons"][0]["centroid_colrow"][0], float) and isinstance(m["n_events_used"], int)
     assert m["centroid_sigma_pix_mean"] == np.mean([s["centroid_sigma_pix"] for s in m["seasons"]])
@@ -363,12 +367,24 @@ def test_localise_quarters_co_registers_a_shifted_reshaped_stamp():
     assert math.hypot(s.centroid_colrow[0] - im.pos_target[0], s.centroid_colrow[1] - im.pos_target[1]) < 0.2
 
 
-def test_a_sub_pixel_offset_is_recorded_and_changes_nothing():
+def test_a_sub_pixel_offset_is_recorded_and_the_positions_move_to_the_event_weighted_mean():
+    """Q5's stamp 0.3 px off rounds to the same pixel; the stack then holds Q1's stars at the first quarter's
+    positions and Q5's 0.3 px further along the column, so the season's star positions are the event-weighted mean
+    of the two (spec 2026-10-22 referee pack, section 5.1), and the shift is stored."""
     loc = localise_quarters(make_quarters(layout={5: SUBPIX}), EPH)
     im = next(i for i in loc.images if i.season == 3)
     assert im.offsets_pix == [(0, 0), (0, 0)] and im.diff.shape == SHAPE
     assert math.isclose(im.residual_offsets_pix[1][0], 0.3) and im.residual_offsets_pix[1][1] == 0.0
-    assert loc.verdict == "pass" and _by_season(loc)[3].separation_sigma > 3
+    assert im.n_events == 18 and im.quarter_events == [9, 9]
+    assert math.isclose(im.registration_shift_pix[0], 0.15) and im.registration_shift_pix[1] == 0.0
+    assert math.isclose(im.pos_target[0], POS_TARGET[0] + 0.15) and im.pos_target[1] == POS_TARGET[1]
+    assert math.isclose(im.pos_neighbour[0], POS_NEIGHBOUR[0] + 0.15) and im.pos_neighbour[1] == POS_NEIGHBOUR[1]
+    s3 = _by_season(loc)[3]
+    assert s3.registration_shift_pix == im.registration_shift_pix and s3.pos_target == im.pos_target
+    assert all(s.registration_shift_pix == (0.0, 0.0) for s in loc.seasons if s.season != 3)
+    assert loc.verdict == "pass" and s3.separation_sigma > 3
+    row = next(x for x in loc.metrics()["seasons"] if x["season"] == 3)
+    assert row["registration_shift_pix"] == [s3.registration_shift_pix[0], 0.0]
 
 
 def test_localise_quarters_dip_on_the_neighbour_fails_across_shifted_stamps():
@@ -397,14 +413,47 @@ def test_a_season_without_the_neighbour_does_not_vote():
 
 
 def test_complete_boxes_vote_exactly_as_before():
-    """Numbers of the committed code, taken before localise_quarters changed: complete boxes must not move."""
+    """Numbers of the committed code, taken before localise_quarters changed: on complete boxes the Monte Carlo
+    error and the separation over it must not move; the error the vote uses carries the floor on top."""
     loc = localise(*make_cube("target"))
     by = _by_season(loc)
-    assert all(not s.box_partial and s.edge_bias_pix == 0.0 and s.separation_sigma == s.separation_sigma_raw
-               for s in loc.seasons)
+    assert all(not s.box_partial and s.edge_bias_pix == 0.0 for s in loc.seasons)
     assert all(s.box_target.complete and s.box_neighbour.complete for s in loc.seasons)
-    assert [round(by[s].separation_sigma, 6) for s in (0, 1, 2, 3)] == [12.236112, 4.360287, 16.856287, 13.182444]
-    assert [round(by[s].centroid_sigma_pix, 6) for s in (0, 1, 2, 3)] == [0.136073, 0.253986, 0.21437, 0.17134]
+    assert [round(by[s].separation_sigma_raw, 6) for s in (0, 1, 2, 3)] == [12.236112, 4.360287, 16.856287,
+                                                                            13.182444]
+    assert [round(by[s].centroid_sigma_mc_pix, 6) for s in (0, 1, 2, 3)] == [0.136073, 0.253986, 0.21437, 0.17134]
+    assert all(math.isclose(s.centroid_sigma_pix, math.hypot(s.centroid_sigma_mc_pix, CENTROID_FLOOR_PIX))
+               and abs(s.separation_sigma) < abs(s.separation_sigma_raw) for s in loc.seasons)
+
+
+def _quadrature(s, floor):
+    """The error identities of a season: per axis, the Monte Carlo error, the edge allowance and the floor."""
+    assert abs(s.centroid_sigma_pix ** 2 - (s.centroid_sigma_mc_pix ** 2 + s.edge_bias_pix ** 2 + floor ** 2)) < 1e-9
+    mc_axis = s.separation_sigma * s.centroid_sigma_axis_pix / s.separation_sigma_raw      # bisector / mc axis error
+    assert abs(s.centroid_sigma_axis_pix ** 2 - (mc_axis ** 2 + s.edge_bias_axis_pix ** 2 + floor ** 2)) < 1e-9
+
+
+def test_season_error_carries_the_floor_in_quadrature(monkeypatch):
+    """Spec 2026-10-22 referee pack, section 5.2: in every season, complete or cut, the centroid error is the
+    quadrature sum of the Monte Carlo error, the edge allowance and the measured floor, per axis and along the star
+    axis; the raw Monte Carlo error and the floor are stored, and the separation is over the inflated axis error."""
+    assert 0.0 < CENTROID_FLOOR_PIX < 0.3 and CENTROID_FLOOR_MEASURED == "2026-10-22"
+    qs = make_quarters(layout={1: NO_TARGET, 5: NO_TARGET}, psf_sigma=0.55)
+    loc = localise_quarters(qs, EPH)
+    assert any(s.box_partial and s.edge_bias_pix > 0 for s in loc.seasons)
+    for s in loc.seasons:
+        assert s.floor_pix == CENTROID_FLOOR_PIX
+        _quadrature(s, CENTROID_FLOOR_PIX)
+    m = loc.metrics(); json.dumps(m, allow_nan=False)
+    for row, s in zip(m["seasons"], loc.seasons, strict=True):
+        assert row["floor_pix"] == CENTROID_FLOOR_PIX and row["centroid_sigma_mc_pix"] == s.centroid_sigma_mc_pix
+    # a larger floor is read at call time and shrinks every separation; the Monte Carlo part does not move
+    monkeypatch.setattr(pixels_module, "CENTROID_FLOOR_PIX", 0.2)
+    wide = localise_quarters(qs, EPH)
+    for s, w in zip(loc.seasons, wide.seasons, strict=True):
+        _quadrature(w, 0.2)
+        assert w.floor_pix == 0.2 and w.centroid_sigma_mc_pix == s.centroid_sigma_mc_pix
+        assert abs(w.separation_sigma) < abs(s.separation_sigma)
 
 
 def test_a_season_with_the_target_on_the_stamp_edge_votes_with_an_allowance():

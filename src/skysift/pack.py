@@ -500,8 +500,10 @@ def pixel_sentence(data: dict) -> str:
     dt = [d for s in seasons if (d := _num(s.get("dist_target_pix"))) is not None]
     dn = [d for s in seasons if (d := _num(s.get("dist_neighbour_pix"))) is not None]
     if dt and dn:
+        floor = ds.floor_pix(seasons)
+        carried = "" if floor is None else f", its error carrying a measured systematic floor of {floor:.3f} px"
         text += (f" The centroid sits a median {np.median(dt):.2f} pixels from this star and {np.median(dn):.2f} "
-                 "pixels from the neighbour.")
+                 f"pixels from the neighbour{carried}.")
     cut = ds.partial_box_sentence(seasons)
     if cut:
         text += f" {cut}"

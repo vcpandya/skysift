@@ -81,8 +81,10 @@ N_BOOT_DEFAULT = eph.N_BOOT     # the shape bootstrap's resamples; ``generate`` 
 STATUS_ORDER = ("candidate_stage2", "approved", "candidate_stage1", "undetermined", "pending", "rejected", "superseded")
 CLOSE_SIGMA = 3.5               # a voting season nearer the 3 sigma decision than this gets the Monte Carlo caveat
 MIN_VOTING_SEASONS = 2          # rung 5 passes on two voting seasons at least; below that the FPP keeps the no-pixel rule
-CLOSE_CALL = ("The centroid error comes from 200 Monte Carlo draws, so a season this close to the 3 sigma threshold "
-              "can move by about 5 percent with the seed.")
+# the Monte Carlo caveat; {floor} takes ``floor_clause`` (empty for a row stored before the floor: CLOSE_CALL)
+CLOSE_CALL_TEXT = ("The centroid error comes from 200 Monte Carlo draws{floor}, so a season this close to the 3 sigma "
+                   "threshold can move by about 5 percent with the seed.")
+CLOSE_CALL = CLOSE_CALL_TEXT.format(floor="")
 SERIES_BIN_DAYS = 0.25
 GALLERY_HALF_HOURS = 8.0
 SPECTRUM_BINS = 1500
@@ -773,6 +775,25 @@ def close_call(tests: list[dict]) -> bool:
     return False
 
 
+def floor_pix(seasons: list[dict]) -> float | None:
+    """The systematic floor in the seasons' centroid errors (``floor_pix``, stored from pixel rule version 3 on, the
+    largest when they differ); None for a row stored before it."""
+    vals = [v for s in seasons if isinstance(s, dict) and (v := _num(s, "floor_pix")) is not None and v > 0]
+    return max(vals) if vals else None
+
+
+def floor_clause(seasons: list[dict]) -> str:
+    """", with a measured systematic floor of F px per axis added in quadrature" for a row that stores the floor,
+    "" otherwise: the clause the Monte Carlo caveat carries."""
+    f = floor_pix(seasons)
+    return "" if f is None else f", with a measured systematic floor of {f:.3f} px per axis added in quadrature"
+
+
+def close_call_text(seasons: list[dict]) -> str:
+    """The Monte Carlo caveat, naming the floor when the row stores it (``floor_clause``)."""
+    return CLOSE_CALL_TEXT.format(floor=floor_clause(seasons))
+
+
 def _error_caveats(data: dict) -> list[dict]:
     """The caveats of the version-3 error blocks, in order: no ephemeris error, no shape error, and a k point value
     further from the bootstrap median than the larger half-width. A dossier without the blocks gets none."""
@@ -854,7 +875,8 @@ def caveats(data: dict) -> list[dict]:
         out.append({"title": f"The {name} section could not be built",
                     "text": f"The {name} section could not be built: {err.get('error')}"})
     if close_call(tests):
-        out.append({"key": "close_call", "title": "A season sits close to the 3 sigma line", "text": CLOSE_CALL})
+        out.append({"key": "close_call", "title": "A season sits close to the 3 sigma line",
+                    "text": close_call_text(_pixel_seasons(_metrics(tests, "rung5_pixels")))})
     cut = partial_box_sentence(_pixel_seasons(_metrics(tests, "rung5_pixels")))
     if cut:
         out.append({"key": "partial_box", "title": "A season's box is cut by the stamp edge", "text": cut})

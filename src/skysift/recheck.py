@@ -9,8 +9,9 @@ stage-1 candidate of the current search version that no reviewer has decided on,
 3. the catalogue retry: when rung 4 could not reach a catalogue (``outage:``), rung 4 alone runs again;
 4. the pixel stage (``step_pixels``): ``rung5_pixels`` alone on the Kepler target pixel files, for a stage-1
    candidate or an undetermined signal whose reason only the pixels can settle; a pass promotes to stage 2, a dip on
-   the neighbouring star rejects. Once per signal: a rung 5 row settles it, except an archive outage (retried) and
-   a first crash (retried once).
+   the neighbouring star rejects. Once per signal: a rung 5 row settles it, except an archive outage (retried), a
+   first crash (retried once), and a row that localised under an older pixel rule (``floor_reopens``), which runs
+   again whatever its status: those signals join the queue even from stage 2 or rejected, for this step alone.
 
 A step computes everything first and touches the store not at all: it returns a ``StepWrite`` (its ``rechecks`` row
 with the outcome, "skipped" and why when it could not run, the test rows that point back to it, and the P/2 signal
@@ -77,6 +78,7 @@ logger = logging.getLogger(__name__)
 # (spec 4.3; ``store.db.pixels_settle``, used by ``status_from_tests``)
 PIXEL_REASON_PREFIXES = PIXEL_SETTLED_PREFIXES
 OPEN_STATUSES = ("undetermined", "candidate_stage1")         # what the queue holds; a step that settles it ends it
+SETTLED_BY_PIXELS = ("candidate_stage2", "rejected")         # where a pixel row below the rule version can stand
 PERIOD_BRANCH = "recheck:P/2"
 HALVING_REASON = "equal secondary at phase 0.5"              # rung 2's period-halving reason starts with this
 
@@ -171,41 +173,57 @@ def _crashes(store: Store, signal_id: int, rung: str) -> int:
             TestRow.signal_id == signal_id, TestRow.rung == rung, TestRow.reason.like("exception:%")))
 
 
-def box_rule_reopens(rung5: dict) -> bool:
-    """The rung 5 row is an undetermined "pixels:" row with a "box incomplete" key among its silenced seasons
-    (``seasons_silenced``) and a rule version below ``PIXEL_RULE_VERSION`` (1 when none is stored). Such a row is
-    rerun once, whatever its reason, and the rerun writes the current version, so it is not reopened again."""
-    if rung5["status"] != "undetermined" or not str(rung5["reason"]).startswith("pixels:"):
-        return False
+def floor_reopens(rung5: dict) -> bool:
+    """The rung 5 row localised (its metrics hold the per-season ``seasons``) under a rule version below
+    ``PIXEL_RULE_VERSION`` (1 when none is stored), whatever its status: a pass, a fail or an undetermined row. A
+    new rule changes every season's error (2026-10-22 referee pack, section 5.2: the measured floor; before it, the
+    partial-box rule), so such a row is rerun once, and the rerun writes the current version, so it is not reopened
+    again. A row that never localised (no neighbour, no files, an outage, a crash) has no seasons the rule could
+    change and keeps its own retry rules."""
     metrics = rung5.get("metrics")
-    if not isinstance(metrics, dict):
-        return False
-    silenced = metrics.get("seasons_silenced")
-    return (isinstance(silenced, dict) and any(str(k).startswith("box incomplete") for k in silenced)
+    return (isinstance(metrics, dict) and isinstance(metrics.get("seasons"), list)
             and int(metrics.get("rule_version") or 1) < PIXEL_RULE_VERSION)
 
 
 def wants_pixels(store: Store, sig: StoredSignal, tests: list[dict], status: str | None = None) -> bool:
-    """Step 4 applies: the signal is open and qualifies (``pixels_qualify``) on its rows other than rung 5's, and its
-    pixels are not settled. A rung 5 row settles them unless it could not reach the pixel archive (``outage:``,
-    retried at every recheck) or it is the signal's first crash (``exception:``, retried once, spec 4.2; after a
-    second crash it stays for a person); a verdict, or a reason the pixels gave themselves ("pixels: ..."), is final
-    for the signal, so a signal that stays in the queue is not fetched and localized at every recheck. The one
-    exception among the "pixels:" rows is the undetermined row the complete-box rule silenced (``box_rule_reopens``),
-    which runs again under the current rule (2026-10-22 partial-box design, section 5)."""
+    """Step 4 applies: the signal is open, or its latest rung 5 row localised under an older rule
+    (``floor_reopens``: a stage 2 candidate or a signal the pixels rejected comes back for this step), it qualifies
+    (``pixels_qualify``) on its rows other than rung 5's, and its pixels are not settled. A rung 5 row settles them
+    unless it could not reach the pixel archive (``outage:``, retried at every recheck), it is the signal's first
+    crash (``exception:``, retried once, spec 4.2; after a second crash it stays for a person) or it was made under an
+    older rule (``floor_reopens``, rerun once under the current one); a verdict, or a reason the pixels gave
+    themselves ("pixels: ..."), is otherwise final for the signal, so a signal that stays in the queue is not fetched
+    and localized at every recheck."""
     status = store.signal_status(sig.id) if status is None else status
-    if status not in OPEN_STATUSES:
-        return False
     rung5 = _latest(tests, "rung5_pixels")
-    if rung5 is not None:
+    reopened = rung5 is not None and floor_reopens(rung5)
+    if status not in OPEN_STATUSES and not (reopened and status in SETTLED_BY_PIXELS):
+        return False
+    if rung5 is not None and not reopened:
         reason = str(rung5["reason"])
         if reason.startswith("exception:"):
             if _crashes(store, sig.id, "rung5_pixels") > 1:
                 return False
-        elif not reason.startswith("outage:") and not box_rule_reopens(rung5):
+        elif not reason.startswith("outage:"):
             return False
     others = [t for t in tests if t["rung"] != "rung5_pixels"]
     return pixels_qualify(final_status_for(status_from_tests(others), others), others)
+
+
+def reopened_queue(store: Store, detector_version: str) -> list[dict]:
+    """Signals of this search version that no reviewer decided on, settled by their pixels (``SETTLED_BY_PIXELS``)
+    under an older pixel rule (``floor_reopens`` on the latest rung 5 row), by id: they join the recheck for the
+    pixel step alone (``wants_pixels``)."""
+    with store.session() as s:
+        ids = s.scalars(select(SignalRow.id).outerjoin(DecisionRow, DecisionRow.signal_id == SignalRow.id)
+                        .where(SignalRow.final_status.in_(SETTLED_BY_PIXELS),
+                               SignalRow.detector_version == detector_version, DecisionRow.id.is_(None))
+                        .order_by(SignalRow.id)).all()
+        latest = dict(s.execute(select(TestRow.signal_id, TestRow.metrics).where(
+            TestRow.signal_id.in_(ids), TestRow.rung == "rung5_pixels").order_by(TestRow.id)).all())
+        targets = dict(s.execute(select(SignalRow.id, SignalRow.target_id).where(SignalRow.id.in_(ids))).all())
+    return [{"id": i, "target_id": targets[i]} for i in ids
+            if i in latest and floor_reopens({"metrics": latest[i]})]
 
 
 def _deciding_reason(results: list[TestResult]) -> str:
@@ -421,6 +439,7 @@ def _recheck_one(store: Store, blob, settings: Settings, loader: LightCurveLoade
                                 meta=target["meta"]),
                          with_novelty=with_novelty, tpf_loader=tpf_loader, say=say, _base=cache.get("base"))
     done = SignalDone(status)
+    crashed = False
     for name, step, _wants in STEPS:
         if store.signal_status(sig.id) not in OPEN_STATUSES:
             break
@@ -436,17 +455,18 @@ def _recheck_one(store: Store, blob, settings: Settings, loader: LightCurveLoade
         except Exception as e:              # a broken step leaves the signal as it is for a person
             logger.exception("recheck step %s failed for signal %s", name, sig.id)
             _commit(store, say, sig, _write(sig, name, "skipped", f"exception: {type(e).__name__}"))
+            crashed = True
             break
-    else:
-        if pixels and wants_pixels(store, sig, store.latest_tests(sig.id)):
-            try:
-                write = step_pixels(ctx, sig)
-                if write is not None and _commit(store, say, sig, write).ran:
-                    report.steps["pixels"] += 1
-                    done.pixels_settled = not write.reason.startswith(("outage:", "exception:"))
-            except Exception as e:          # a broken step leaves the signal as it is for a person
-                logger.exception("recheck step pixels failed for signal %s", sig.id)
-                _commit(store, say, sig, _write(sig, "pixels", "skipped", f"exception: {type(e).__name__}"))
+    # a signal a step closed is left alone; one the pixels settled under an older rule takes this step only
+    if not crashed and pixels and wants_pixels(store, sig, store.latest_tests(sig.id)):
+        try:
+            write = step_pixels(ctx, sig)
+            if write is not None and _commit(store, say, sig, write).ran:
+                report.steps["pixels"] += 1
+                done.pixels_settled = not write.reason.startswith(("outage:", "exception:"))
+        except Exception as e:              # a broken step leaves the signal as it is for a person
+            logger.exception("recheck step pixels failed for signal %s", sig.id)
+            _commit(store, say, sig, _write(sig, "pixels", "skipped", f"exception: {type(e).__name__}"))
     cache["base"] = ctx._base
     done.outcome = store.signal_status(sig.id)
     return done
@@ -482,6 +502,10 @@ def recheck(store: Store, blob, settings: Settings, *, fetch=net.fetch, signal_i
         report.seconds = time.time() - started
         return report
     queue = store.recheck_queue(version)
+    if pixels:
+        queued = {q["id"] for q in queue}
+        queue = sorted([*queue, *(q for q in reopened_queue(store, version) if q["id"] not in queued)],
+                       key=lambda q: q["id"])
     if signal_ids is not None:
         wanted = set(signal_ids)
         queue = [q for q in queue if q["id"] in wanted]

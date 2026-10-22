@@ -519,8 +519,11 @@ def test_a_settled_pixel_step_is_not_run_again(env):
     assert len(env.tpf_calls) == 1
 
 
-SILENCED = {"seasons_silenced": {"box incomplete: target": 3}, "n_seasons_voting": 1}
+SEASONS = [{"season": 0, "voting": True}, {"season": 1, "voting": False}]        # a row that localised
+SILENCED = {"seasons_silenced": {"box incomplete: target": 3}, "n_seasons_voting": 1, "seasons": SEASONS}
 ONE_SEASON = "pixels: only one season could vote (season 0: box incomplete: target)"
+PASSED = "the dip is on the target in 3/3 seasons (centroid >= 17.5 sigma nearer)"
+FAILED = "the dip is on a neighbouring star (62.4 sigma, 1/1 seasons)"
 
 
 def _wants(env, status, reason, metrics):
@@ -529,31 +532,73 @@ def _wants(env, status, reason, metrics):
     return recheck_mod.wants_pixels(env.store, SimpleNamespace(id=sid), env.store.latest_tests(sid))
 
 
-def test_the_recheck_reopens_a_pixel_row_the_box_rule_silenced(env):
-    """Spec 2026-10-22 (partial box), section 5: an undetermined "pixels:" row whose silenced seasons include a
-    "box incomplete" key, stored under an older rule version, runs the pixel step again; no other pixel row does."""
+def test_wants_pixels_reopens_any_rung5_row_below_rule_version_3(env):
+    """Spec 2026-10-22 referee pack, section 5.2: the measured floor changes every season's error, so every rung 5
+    row that localised (seasons in its metrics) under an older rule version reopens, whatever its status: a pass, a
+    fail, an undetermined row (the box rule's among them). A row at the current version stays settled, and a row that
+    never localised (no neighbour, an outage, a crash) is not reopened by the version."""
+    assert recheck_mod.PIXEL_RULE_VERSION == 3
+    v2 = {"seasons": SEASONS, "rule_version": 2}
+    assert _wants(env, "pass", PASSED, v2) is True
+    assert _wants(env, "pass", PASSED, {**v2, "rule_version": 3}) is False
+    assert _wants(env, "pass", PASSED, {"seasons": SEASONS}) is True                 # no key: version 1
+    assert _wants(env, "fail", FAILED, v2) is True
+    assert _wants(env, "fail", FAILED, {**v2, "rule_version": 3}) is False
+    assert _wants(env, "undetermined", "pixels: season 2 ambiguous (1.0 sigma)", v2) is True
     assert _wants(env, "undetermined", ONE_SEASON, SILENCED) is True
-    assert _wants(env, "undetermined", ONE_SEASON, {**SILENCED, "rule_version": 2}) is False
-    assert _wants(env, "pass", "", SILENCED) is False
-    assert _wants(env, "undetermined", "pixels: season 2 ambiguous (1.0 sigma)", {"seasons_silenced": {}}) is False
-    row = {"status": "undetermined", "reason": "pixels: x"}
-    assert recheck_mod.box_rule_reopens({**row, "metrics": SILENCED}) is True
-    assert recheck_mod.box_rule_reopens({**row, "metrics": {}}) is False
-    assert recheck_mod.box_rule_reopens({**row, "metrics": None}) is False
-    assert recheck_mod.box_rule_reopens({**row, "metrics": "not a dict"}) is False
-    assert recheck_mod.box_rule_reopens({**row, "metrics": {"seasons_silenced": {"gap": 1}}}) is False
+    assert _wants(env, "undetermined", ONE_SEASON, {**SILENCED, "rule_version": 3}) is False
+    assert _wants(env, "undetermined", "pixels: no neighbour to test against", {}) is False
+    # a signal another rung rejects is not reopened by its pixel row
+    sid = env.seed_signal(tests=[("rung2_shape", "fail", "v-shaped"), ("rung5_pixels", "pass", PASSED)],
+                          metrics={"rung5_pixels": v2})
+    assert env.store.signal_status(sid) == "rejected"
+    assert recheck_mod.wants_pixels(env.store, SimpleNamespace(id=sid), env.store.latest_tests(sid)) is False
+    row = {"status": "pass", "reason": PASSED}
+    assert recheck_mod.floor_reopens({**row, "metrics": v2}) is True
+    assert recheck_mod.floor_reopens({**row, "status": "fail", "metrics": v2}) is True
+    assert recheck_mod.floor_reopens({**row, "metrics": {**v2, "rule_version": 3}}) is False
+    assert recheck_mod.floor_reopens({**row, "metrics": {}}) is False
+    assert recheck_mod.floor_reopens({**row, "metrics": None}) is False
+    assert recheck_mod.floor_reopens({**row, "metrics": "not a dict"}) is False
+    assert recheck_mod.floor_reopens({"status": "undetermined", "reason": "outage:mast: HTTP 503",
+                                      "metrics": {"n_tpf": 3}}) is False
+
+
+def test_the_recheck_reruns_a_settled_pixel_row_below_the_rule_version_once(env):
+    """A stage 2 candidate and a signal rung 5 rejected, both stored under rule version 2, leave the queue as
+    settled; the recheck takes them back for the pixel step alone, writes rung 5 rows of the current version (the
+    target's dip passes again, the neighbour's fails again) and leaves them at the statuses those rows give; the
+    recheck after that writes nothing."""
+    v2 = {"seasons": SEASONS, "rule_version": 2}
+    passed = env.seed_signal(tpfs="target", tests=[("rung5_pixels", "pass", PASSED)], metrics={"rung5_pixels": v2})
+    failed = env.seed_signal(tpfs="neighbour", tests=[("rung5_pixels", "fail", FAILED)],
+                             metrics={"rung5_pixels": v2})
+    assert env.store.signal_status(passed) == "candidate_stage2" and env.store.signal_status(failed) == "rejected"
+    rep = recheck(env.store, env.blob, env.settings, fetch=fake_fetch.fetch, tpf_loader=env.tpf_loader)
+    assert rep.steps == {"ladder": 0, "period": 0, "catalogue": 0, "pixels": 2} and len(env.tpf_calls) == 2
+    for sid, status in ((passed, "pass"), (failed, "fail")):
+        rung5 = env.store.latest_tests(sid)[-1]
+        assert rung5["rung"] == "rung5_pixels" and rung5["status"] == status and rung5["recheck_id"] is not None
+        assert rung5["metrics"]["rule_version"] == 3
+        assert all(x["floor_pix"] > 0 for x in rung5["metrics"]["seasons"])
+        assert [r["step"] for r in env.store.rechecks(sid)] == ["pixels"]
+    assert env.store.signal_status(passed) == "candidate_stage2" and env.store.signal_status(failed) == "rejected"
+    before = env.store.counts()
+    rep = recheck(env.store, env.blob, env.settings, fetch=fake_fetch.fetch, tpf_loader=env.tpf_loader)
+    assert rep.considered == 0 and env.store.counts() == before and len(env.tpf_calls) == 2
 
 
 def test_the_recheck_reruns_a_silenced_pixel_row_once_end_to_end(env):
     """A stage-1 candidate the 21 October recheck left undetermined by the complete-box rule is reopened by the
-    next recheck, which writes a rung 5 row carrying rule version 2; the recheck after that writes nothing."""
+    next recheck, which writes a rung 5 row carrying the current rule version; the recheck after that writes
+    nothing."""
     sid = env.seed_signal(tpfs="target", tests=[("rung5_pixels", "undetermined", ONE_SEASON)],
                           metrics={"rung5_pixels": SILENCED})
     assert env.store.signal_status(sid) == "undetermined" and env.tpf_calls == []
     rep = recheck(env.store, env.blob, env.settings, fetch=fake_fetch.fetch, tpf_loader=env.tpf_loader)
     assert rep.steps["pixels"] == 1 and len(env.tpf_calls) == 1
     rung5 = env.store.latest_tests(sid)[-1]
-    assert rung5["rung"] == "rung5_pixels" and rung5["metrics"]["rule_version"] == 2
+    assert rung5["rung"] == "rung5_pixels" and rung5["metrics"]["rule_version"] == 3
     assert not rung5["reason"].startswith("exception:") and rung5["recheck_id"] is not None
     before, rows = env.store.counts(), env.store.rechecks(sid)
     rep = recheck(env.store, env.blob, env.settings, fetch=fake_fetch.fetch, tpf_loader=env.tpf_loader)

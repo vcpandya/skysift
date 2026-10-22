@@ -573,6 +573,23 @@ def test_a_voting_season_near_three_sigma_gets_the_monte_carlo_caveat(env, seaso
         assert "200 Monte Carlo draws" in found[0]["text"] and "—" not in found[0]["text"]
 
 
+def test_the_close_call_caveat_names_the_floor_when_the_row_stores_it(env):
+    """Spec 2026-10-22 referee pack, section 5.2: a rung 5 row of rule version 3 stores the systematic floor in each
+    season; the Monte Carlo caveat then says the error carries it, in one clause. A row stored before has none."""
+    rep = generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch)
+    seasons = [{"season": 0, "voting": True, "separation_sigma": 3.2, "floor_pix": 0.0164},
+               {"season": 1, "voting": True, "separation_sigma": 9.0, "floor_pix": 0.0164}]
+    found = [c for c in caveats(_with_seasons(_data(rep), seasons)) if c.get("key") == "close_call"]
+    assert found[0]["text"] == (
+        "The centroid error comes from 200 Monte Carlo draws, with a measured systematic floor of 0.016 px per axis "
+        "added in quadrature, so a season this close to the 3 sigma threshold can move by about 5 percent with the "
+        "seed.")
+    assert dossier_module.floor_clause(seasons) == (
+        ", with a measured systematic floor of 0.016 px per axis added in quadrature")
+    assert dossier_module.floor_clause([{"season": 0, "voting": True}]) == ""
+    assert dossier_module.floor_clause([{"season": 0, "floor_pix": None}, "not a dict"]) == ""
+
+
 def _partial(season: int, bias: float, *, target: int = 6, neighbour: int = 9, voting: bool = True) -> dict:
     return {"season": season, "voting": voting, "separation_sigma": 8.0, "box_partial": True,
             "box_pixels_target": target, "box_pixels_neighbour": neighbour, "edge_bias_pix": bias}

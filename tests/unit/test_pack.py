@@ -576,6 +576,20 @@ def test_pixel_sentence_names_a_box_cut_by_the_stamp_edge(env_with_dossier):
     assert EM_DASH not in text
 
 
+def test_pixel_sentence_names_the_floor_when_the_row_stores_it(env_with_dossier):
+    """A rung 5 row of rule version 3: the centroid sentence says in one clause that its error carries the measured
+    systematic floor, and the Research Note keeps within its limits."""
+    data = _with_a_silent_season(env_with_dossier.data)
+    for season in next(t for t in data["tests"] if t["rung"] == "rung5_pixels")["metrics"]["seasons"]:
+        season["floor_pix"] = 0.0164
+    text = pack_module.pixel_sentence(data)
+    assert ("The centroid sits a median 0.15 pixels from this star and 2.80 pixels from the neighbour, its error "
+            "carrying a measured systematic floor of 0.016 px.") in text
+    assert EM_DASH not in text
+    tex = render_note(data)
+    assert "systematic floor of 0.016 px" in tex and note_problems(note_words(tex), tex) == []
+
+
 def test_the_abstract_carries_only_a_short_clause_for_a_cut_box(env_with_dossier):
     abstract = pack_module.abstract_text(_with_a_cut_box(env_with_dossier.data))
     assert "in 2 of 2 seasons that voted, 1 of them with a box cut by the stamp edge." in abstract

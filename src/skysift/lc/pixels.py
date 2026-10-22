@@ -24,15 +24,22 @@ quarter has no pixel. A season votes when both stars' 3x3 boxes lie complete on 
 box cut by the frame edge or a dead pixel keeps its centre and at least ``BOX_PIXELS_MIN`` of its 9 pixels. A cut box
 pulls the centroid towards the frame interior, so the shift a point source would suffer (``edge_allowance``) is added
 in quadrature to the centroid error and the season votes only when it is still decisive; complete boxes are unchanged.
-``localise`` is the single-grid convenience wrapper. "Season" is the Kepler archive SEASON (0 to 3) each
-``QuarterData`` carries from its TPF header (Q0 shares Q1's module and roll, so it shares Q1's season), and the
-same numbering derived from the quarter when it is not known (``quarter_season``).
+Every season's centroid error also carries ``CENTROID_FLOOR_PIX`` in quadrature, per axis: the quarter-to-quarter
+systematic of the 3 x 3 box centroid that the Monte Carlo cannot see, measured on the live pixel files by
+``tools/centroid_floor.py`` (``docs/superpowers/notes/2026-10-22-centroid-floor.md``). The quarters' sub-pixel
+residuals from the integer co-registration move the stacked stars off the first quarter's positions, so the season's
+star positions are the event-weighted mean of the quarters' own positions, the shift stored per season
+(``registration_shift_pix``; the same note gives the ruling). ``localise`` is the single-grid convenience wrapper.
+"Season" is the Kepler archive SEASON (0 to 3) each ``QuarterData`` carries from its TPF header (Q0 shares Q1's
+module and roll, so it shares Q1's season), and the same numbering derived from the quarter when it is not known
+(``quarter_season``).
 
 Known limitation: the Gaussian PSF is not the Kepler PRF, so the two-source depth errors are somewhat optimistic
 when the model does not match the stars' images (on a pixel-integrated synthetic stamp a dip on the neighbour put
 2.7 sigma of depth on the target in one season).
 
-Known limitation, a follow-up: the bisector test takes the stars' WCS positions as they are. The two-source fit's
+Known limitation, a follow-up: the bisector test takes the stars' WCS positions as they are (averaged over the
+season's quarters as above). The two-source fit's
 free common shift (0.05 to 0.15 px in the KIC 6146676 study, about the size of the centroid error) is stored per
 season as ``shift_pix`` (with the fitted ``psf_sigma_pix``) so the dossier can print a caveat, but it is neither
 applied to the positions nor added to the centroid error; and the target's position (a Gaia epoch for a KBonus star)
@@ -63,6 +70,15 @@ BOX_PIXELS_MIN = 6          # a star's 3x3 box cut by the frame edge votes only 
 EDGE_PSF_SIGMA_PIX = 0.6    # point-source width used for the edge allowance when the two-source fit gives none
 EDGE_PAD = 2                # pixels of padding around the frame when the cut box is rendered for the allowance
 PASS_SEASONS_MIN = 2        # a pass needs at least this many voting seasons; one alone leaves it undetermined
+# The systematic floor of the 3 x 3 box centroid, per axis, added in quadrature to every season's error with the Monte
+# Carlo error and the edge allowance: the pooled quarter-to-quarter rms of the direct-image box centroid within a
+# season, over the complete-box seasons with two quarters or more of the 8 live stars (7 seasons, 24 quarters), the
+# larger of the neighbour's (0.0141 px in column, 0.0189 px in row, 0.0167 px their quadratic mean) and the target's
+# (0.0106 px). Measured on 22 October 2026 by tools/centroid_floor.py on the live pixel files; method, table and
+# validation in docs/superpowers/notes/2026-10-22-centroid-floor.md. Rerun the tool when the pixel set changes and
+# update the value and the date.
+CENTROID_FLOOR_PIX = 0.0167
+CENTROID_FLOOR_MEASURED = "2026-10-22"
 NEIGHBOUR_DEPTH_SIGMA = 3.0  # pass: |two-source depth on the neighbour| below this many sigma; fail: above it
 TARGET_DEPTH_SIGMA = 1.0    # fail (two-source route): depth on the target below this many sigma
 DIRECT_WEIGHT_FLOOR = 100.0  # direct-image fit weights 1 / sqrt(|direct| + floor), photon-like (study choice)
@@ -142,7 +158,9 @@ ALL_MISSING = BoxCoverage(0, False, _BOX_OFFSETS)      # the coverage of a star 
 class SeasonImage:
     """A season's stacked images on its union frame. ``offsets_pix`` is each quarter's integer (col, row) offset
     from the season's first usable quarter (round of the target-position difference), ``residual_offsets_pix`` the
-    target's leftover fractional (col, row) offset (at most 0.5 px by construction). ``box_target`` and
+    target's leftover fractional (col, row) offset (at most 0.5 px by construction) and ``quarter_events`` each
+    quarter's usable events. The star positions are the event-weighted mean of the quarters' own positions on the
+    frame; ``registration_shift_pix`` is how far that moved the target from the first quarter's. ``box_target`` and
     ``box_neighbour`` measure how much of that star's 3x3 box lies on valid frame pixels; ``target_on_frame`` and
     ``neighbour_on_frame`` say whether the box is eligible to vote (complete, or cut with its centre and at least
     BOX_PIXELS_MIN pixels)."""
@@ -161,6 +179,8 @@ class SeasonImage:
     box_neighbour: BoxCoverage = ALL_MISSING
     target_on_frame: bool = False
     neighbour_on_frame: bool = False
+    quarter_events: list[int] = field(default_factory=list)
+    registration_shift_pix: tuple[float, float] = (0.0, 0.0)
 
 
 @dataclass
@@ -195,7 +215,10 @@ class SeasonResult:
     box_partial: bool = False                   # on the frame with at least one box cut: the allowance is in the error
     edge_bias_pix: float = 0.0                  # the larger allowance of the cut boxes, in the centroid error
     edge_bias_axis_pix: float = 0.0             # ... and its part along the star-to-star axis, in the axis error
-    separation_sigma_raw: float = math.nan      # ``separation_sigma`` without the allowance
+    separation_sigma_raw: float = math.nan      # ``separation_sigma`` over the Monte Carlo axis error alone
+    centroid_sigma_mc_pix: float = math.nan     # the per-axis Monte Carlo error, before the allowance and the floor
+    floor_pix: float = 0.0                      # the systematic floor in the error (CENTROID_FLOOR_PIX)
+    registration_shift_pix: tuple[float, float] = (0.0, 0.0)    # the season positions' move to the quarters' mean
 
 
 def _f(x) -> float | None:
@@ -238,6 +261,8 @@ class Localisation:
             "box_missing_neighbour": s.box_neighbour.metrics()["missing"],
             "box_partial": bool(s.box_partial), "edge_bias_pix": _f(s.edge_bias_pix),
             "edge_bias_axis_pix": _f(s.edge_bias_axis_pix), "separation_sigma_raw": _f(s.separation_sigma_raw),
+            "centroid_sigma_mc_pix": _f(s.centroid_sigma_mc_pix), "floor_pix": _f(s.floor_pix),
+            "registration_shift_pix": [_f(x) for x in s.registration_shift_pix],
         } for s in self.seasons]
         # the mean centroid error of the voting seasons (of all seasons with one when none votes)
         sig = [s["centroid_sigma_pix"] for s in seasons if s["centroid_sigma_pix"] is not None and s["voting"]]
@@ -357,8 +382,10 @@ def season_images(quarters: list[QuarterData], eph: Ephemeris, *, in_half: float
     ``difference_images``; quarters with non-finite star positions are dropped. Within a season (``quarter_season``)
     each quarter is offset from the season's first usable quarter by round(pos_target - first pos_target) per axis;
     the frame spans the minimum to maximum extent of all the shifted stamps, a quarter's missing pixels are invalid,
-    and the events are stacked with per-pixel inverse-variance weights. Season positions are the first quarter's,
-    carried into the frame."""
+    and the events are stacked with per-pixel inverse-variance weights. Each star's season position is the mean of
+    the quarters' own positions carried into the frame (each less its quarter's integer offset), weighted by the
+    quarters' events, as the stack holds them; ``registration_shift_pix`` is the target's move from the first
+    quarter's position (zero for a season of one quarter)."""
     usable: dict[int, tuple] = {}
     for qd in sorted(quarters, key=lambda x: int(x.quarter)):
         if not (_finite2(qd.pos_target) and _finite2(qd.pos_neighbour)):
@@ -375,11 +402,17 @@ def season_images(quarters: list[QuarterData], eph: Ephemeris, *, in_half: float
         first = usable[qs[0]][0]
         p_t = (float(first.pos_target[0]), float(first.pos_target[1]))
         p_n = (float(first.pos_neighbour[0]), float(first.pos_neighbour[1]))
-        offsets, residuals = [], []
+        offsets, residuals, res_n = [], [], []
         for q in qs:
-            pt = usable[q][0].pos_target
+            pt, pn = usable[q][0].pos_target, usable[q][0].pos_neighbour
             dc, dr = round(float(pt[0]) - p_t[0]), round(float(pt[1]) - p_t[1])
             offsets.append((dc, dr)); residuals.append((float(pt[0]) - dc - p_t[0], float(pt[1]) - dr - p_t[1]))
+            res_n.append((float(pn[0]) - dc - p_n[0], float(pn[1]) - dr - p_n[1]))
+        n_ev = [len(usable[q][1]) for q in qs]
+        # the stack holds each quarter's stars at its own positions less its integer offset: their event-weighted mean
+        w = np.array(n_ev, float) / sum(n_ev)
+        shift_t = tuple(float(x) for x in w @ np.array(residuals))
+        shift_n = tuple(float(x) for x in w @ np.array(res_n))
         # quarter q covers first-quarter columns [-dc, -dc + width) and rows [-dr, -dr + height)
         c_min = min(-dc for dc, _ in offsets); r_min = min(-dr for _, dr in offsets)
         c_max = max(-dc + usable[q][2].shape[1] for q, (dc, _) in zip(qs, offsets))
@@ -400,14 +433,16 @@ def season_images(quarters: list[QuarterData], eph: Ephemeris, *, in_half: float
             n_events += len(events)
         valid = wsum > 0
         safe = np.where(valid, wsum, 1.0)
-        f_t, f_n = (p_t[0] - c_min, p_t[1] - r_min), (p_n[0] - c_min, p_n[1] - r_min)
+        f_t = (p_t[0] + shift_t[0] - c_min, p_t[1] + shift_t[1] - r_min)
+        f_n = (p_n[0] + shift_n[0] - c_min, p_n[1] + shift_n[1] - r_min)
         box_t, box_n = box_coverage(f_t, valid), box_coverage(f_n, valid)
         images.append(SeasonImage(
             season=s, quarters=qs, n_events=n_events, diff=np.where(valid, num / safe, 0.0),
             var=np.where(valid, 1.0 / safe, np.inf),
             direct=np.where(valid & (dn > 0), dsum / np.maximum(dn, 1), np.nan), valid=valid,
             pos_target=f_t, pos_neighbour=f_n, offsets_pix=offsets, residual_offsets_pix=residuals,
-            box_target=box_t, box_neighbour=box_n, target_on_frame=box_t.eligible, neighbour_on_frame=box_n.eligible))
+            box_target=box_t, box_neighbour=box_n, target_on_frame=box_t.eligible, neighbour_on_frame=box_n.eligible,
+            quarter_events=n_ev, registration_shift_pix=shift_t))
     return images
 
 
@@ -740,13 +775,15 @@ def localise(cube, time, quality, quarter, eph: Ephemeris, pos_target, pos_neigh
 def localise_quarters(quarters: list[QuarterData], eph: Ephemeris, *,
                       rng: np.random.Generator | None = None) -> Localisation:
     """Season images on union frames from per-quarter stamps (``season_images``), the S/N-box centroid and the
-    two-source fit in each season frame, and the verdict. A season votes with both stars' 3x3 boxes complete on valid
-    frame pixels, or cut but keeping the centre and BOX_PIXELS_MIN pixels (the box's edge allowance added in
-    quadrature to the centroid errors, and the season voting only when decisive: ``partial_abstention``), and a
+    two-source fit in each season frame, and the verdict. Every season's centroid errors carry CENTROID_FLOOR_PIX in
+    quadrature (per axis, and along the star axis), read at call time. A season votes with both stars' 3x3 boxes
+    complete on valid frame pixels, or cut but keeping the centre and BOX_PIXELS_MIN pixels (the box's edge allowance
+    added in quadrature to the centroid errors, and the season voting only when decisive: ``partial_abstention``), and a
     finite centroid and error; otherwise it is kept with ``nearer="unknown"`` (and without the two-source fit when a
     star's box is not eligible). Quarters with non-finite star positions are unusable. Every Monte Carlo draw comes
     from ``rng`` (default seeded with RNG_SEED), so the result is deterministic."""
     rng = np.random.default_rng(RNG_SEED) if rng is None else rng
+    floor = CENTROID_FLOOR_PIX
     images = season_images(quarters, eph)
     usable = sorted(q for im in images for q in im.quarters)
     unusable = sorted({int(qd.quarter) for qd in quarters} - set(usable))
@@ -770,7 +807,8 @@ def localise_quarters(quarters: list[QuarterData], eph: Ephemeris, *,
                 bias = bias_axis = math.nan
             else:
                 bias, bias_axis = max(b for b, _ in cuts), max(a for _, a in cuts)
-        sigma, sigma_axis = math.hypot(sigma_mc, bias), math.hypot(sigma_axis_mc, bias_axis)
+        # per axis: the Monte Carlo error, the cut box's allowance and the measured systematic floor in quadrature
+        sigma, sigma_axis = math.hypot(sigma_mc, bias, floor), math.hypot(sigma_axis_mc, bias_axis, floor)
         # signed distance of the centroid from the bisector, in units of the centroid error along the star axis
         bisector = (d_n ** 2 - d_t ** 2) / (2.0 * sep_pix) if sep_pix > 0 else math.nan
         sep = bisector / sigma_axis if sigma_axis > 0 else math.nan
@@ -783,7 +821,8 @@ def localise_quarters(quarters: list[QuarterData], eph: Ephemeris, *,
             pos_target=(ct, rt), pos_neighbour=(cn, rn), centroid_sigma_axis_pix=sigma_axis,
             shift_pix=tuple(float(x) for x in fit["shift_pix"]), psf_sigma_pix=float(fit["psf_sigma_pix"]),
             box_target=im.box_target, box_neighbour=im.box_neighbour, box_partial=box_partial,
-            edge_bias_pix=bias, edge_bias_axis_pix=bias_axis, separation_sigma_raw=sep_raw)
+            edge_bias_pix=bias, edge_bias_axis_pix=bias_axis, separation_sigma_raw=sep_raw,
+            centroid_sigma_mc_pix=sigma_mc, floor_pix=floor, registration_shift_pix=im.registration_shift_pix)
         measured = bool(on_frame and math.isfinite(sep) and im.n_events >= SEASON_EVENTS_MIN)
         abstention = partial_abstention(res) if measured and box_partial else None
         res.voting = measured and abstention is None
