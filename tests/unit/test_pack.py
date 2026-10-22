@@ -605,8 +605,8 @@ def test_pixel_sentence_without_box_keys_is_unchanged(env_with_dossier):
         "neighbour in 3 of 3 seasons that voted. The centroid sits a median 0.13 pixels from this star and 2.75 "
         "pixels from the neighbour. Averaged over the seasons that voted, the centroid sits 0.54 ± 0.14 arcsec from "
         "the Gaia position projected through each stamp's WCS, a distance that carries the WCS zero point and the "
-        "registration. A two-source fit gives a median depth of 2,213 ppm on this star and -21 ppm on the neighbour. Season 3 did "
-        "not vote (box incomplete: target).")
+        "registration. A two-source fit gives a median depth of 2,213 ppm on this star and -21 ppm on the "
+        "neighbour. Season 3 did not vote (box incomplete: target).")
 
 
 def test_a_crashed_build_leaves_no_folder_that_blocks_the_retry(env_with_dossier, monkeypatch):
@@ -934,8 +934,8 @@ STELLAR_COLUMNS = ["target", "tel", "telsize", "inst", "sp_type", "teff", "teff_
                    "lum", "lum_unc", "obs_time", "rv", "rv_unc", "dist", "dist_unc", "age", "age_unc", "snr", "fit",
                    "tag", "group", "prop_period", "notes"]
 DEGENERATE = "ingress shorter than the cadence: b and a/R* are degenerate with k, errors not quoted"
-SHAPE_OK = {"ok": True, "reason": None, "method": "bootstrap over transits of the uniform-disc fit (Schmitt et al. 2014)",
-            "n_boot": 200, "n_converged": 196, "seed": 20261022,
+SHAPE_OK = {"ok": True, "reason": None,
+            "method": "bootstrap over transits of the uniform-disc fit (Schmitt et al. 2014)", "n_boot": 200, "n_converged": 196, "seed": 20261022,
             "k": {"median": 0.047, "minus": 0.0011, "plus": 0.0012, "boot_median": 0.0469},
             "b": {"median": 0.31, "minus": None, "plus": None, "boot_median": 0.33},
             "a_over_r": {"median": 74.0, "minus": None, "plus": None, "boot_median": 73.0},
@@ -1056,7 +1056,8 @@ def test_transit_times_and_shape_csvs(env_with_dossier):
     assert list(shape) == ["radius ratio k", "impact parameter b", "a/R*", "T14", "model depth", "box depth"]
     assert float(shape["radius ratio k"]["minus"]) == 0.0011 and float(shape["radius ratio k"]["plus"]) == 0.0012
     assert float(shape["radius ratio k"]["boot_median"]) == 0.0469 and shape["radius ratio k"]["note"] == ""
-    assert shape["impact parameter b"]["minus"] == "" and shape["impact parameter b"]["note"] == "no error; " + DEGENERATE.removesuffix(", errors not quoted")
+    b = shape["impact parameter b"]
+    assert b["minus"] == "" and b["note"] == "no error; " + DEGENERATE.removesuffix(", errors not quoted")
     assert shape["T14"]["unit"] == "h" and float(shape["model depth"]["plus"]) == 110.0
 
 
@@ -1067,7 +1068,8 @@ def test_stellar_provenance_csv_names_the_method_and_the_reference(env_with_doss
     rows = {r["parameter"]: r for r in _rows(rep, "data/stellar_provenance.csv")}
     radius = rows["radius"]
     assert float(radius["value"]) == 0.509 and float(radius["minus"]) == 0.016 and float(radius["plus"]) == 0.017
-    assert radius["method"] == "Mann et al. 2015 R(M_Ks)" and radius["reference"] == "Mann, A. W. et al. 2015, ApJ 804, 64"
+    assert radius["method"] == "Mann et al. 2015 R(M_Ks)"
+    assert radius["reference"] == "Mann, A. W. et al. 2015, ApJ 804, 64"
     assert "Gaia DR3 2101234567890123462" in radius["inputs"] and "2MASS Ks 13.030" in radius["inputs"]
     assert rows["effective temperature"]["reference"].startswith("Pecaut, M. J. and Mamajek")
     assert "Lindegren" in rows["distance"]["reference"] and rows["spectral type"]["value"] == "M1V"
@@ -1175,7 +1177,7 @@ def test_a_star_without_parameters_gets_no_stellar_file(env_with_dossier):
     assert "stellar parameters in ExoFOP's template" not in note and "no stellar parameter file" in note
     assert "stellar parameters in ExoFOP's template" in pack_module._render_plain("exofop_note.txt.j2",
                                                                                   env.data, {})
-    assert "when the star is characterized" in pack_module.STEP_TEXTS["2"]
+    assert "when the star is characterised" in pack_module.STEP_TEXTS["2"]
 
 
 def test_readme_defines_crowdsap_and_psffrac(env_with_dossier):

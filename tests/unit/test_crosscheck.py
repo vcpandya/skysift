@@ -32,7 +32,8 @@ def fake_result(sha: str, fpp: float = 0.012, nfpp: float = 1e-4, n: int = cc.N_
             "scenarios": [{"ID": "169822650", "scenario": "TP", "prob": 1 - fpp}],
             "stars": [{"id": "169822650", "tmag": 15.19, "sep_arcsec": 0.0, "flux_ratio": 0.98, "tdepth": 0.0022}],
             "inputs_sha256": sha,
-            "caveats": ["TRICERATOPS shares the light in the aperture by TIC TESS magnitudes (Tmag), not Kepler magnitudes; its limb darkening comes from its Kepler table."],
+            "caveats": [("TRICERATOPS shares the light in the aperture by TIC TESS magnitudes (Tmag), not Kepler "
+                         "magnitudes; its limb darkening comes from its Kepler table.")],
             "settings": {"N": 1_000_000, "exptime_days": 0.0204}}
 
 

@@ -563,7 +563,7 @@
         ["look-sky", "The star seen from the planet, beside the Sun seen from Earth, at the same angular scale."]]
         .forEach(([n, caption]) => fig(5, n, caption));
     }
-    else para(5, "The star could not be characterized, so the panel is not drawn.");
+    else para(5, "The star could not be characterised, so the panel is not drawn.");
     list(6, (D.caveats || []).map((c) => [`${c.title}.`, c.text]));
     const prov = D.provenance || {};
     sec(7).appendChild(h("pre", "dossier-pre", (prov.commands || []).join("\n")));

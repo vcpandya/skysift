@@ -58,7 +58,7 @@ KOPPARAPU = {
 }
 G_SI, MSUN, RSUN, AU, REARTH = 6.674e-11, 1.98892e30, 6.957e8, 1.495978707e11, 6.3781e6   # as d_stellar_planet.py
 
-NO_STAR = "no Gaia parallax or colour: the star cannot be characterized from photometry"
+NO_STAR = "no Gaia parallax or colour: the star cannot be characterised from photometry"
 KS_MISSING = "Ks missing: Mamajek radius with doubled scatter"
 ZERO_POINT_FALLBACK = ("Gaia parallax zero point: the global offset of -0.017 mas was used because the "
                        "gaiadr3-zeropoint package is not installed")
@@ -491,7 +491,7 @@ def derive(gaia: GaiaRow | None, period: float, fit_k: float | None, depth: floa
         if why is not None:
             if not in_table:
                 last = (f"Mann relations not used: {why}; the colour is off the dwarf table too, so the star cannot be "
-                        "characterized from photometry")
+                        "characterised from photometry")
                 return _unknown(gaia, (*caveats, last), lead=None)
             caveats.append(f"Mann relations not used: {why}; the dwarf-table radius and mass at the colour are shown")
 

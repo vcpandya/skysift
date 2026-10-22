@@ -247,7 +247,7 @@ def test_a_parallax_near_zero_gives_finite_values_and_no_runtime_warning():
 def test_lookup_without_parallax_returns_an_unknown_star():
     star, planet = derive(replace(gaia_row_6146676(), parallax=None), 40.29, 0.048, 2165e-6, np.random.default_rng(1))
     assert star.route == "none" and star.radius is None and planet.rp_rearth is None
-    assert star.caveats == ("no Gaia parallax or colour: the star cannot be characterized from photometry",)
+    assert star.caveats == ("no Gaia parallax or colour: the star cannot be characterised from photometry",)
 
 
 def test_derive_without_a_gaia_row_returns_an_unknown_star():

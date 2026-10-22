@@ -48,7 +48,8 @@ def _places(x: float) -> int:
     return max(0, -int(Decimal(repr(float(x))).normalize().as_tuple().exponent))
 
 
-def _pm_parts(value, minus=None, plus=None, nd: int = 2, comma: bool = False) -> tuple[str, str | None, str | None] | None:
+def _pm_parts(value, minus=None, plus=None, nd: int = 2,
+              comma: bool = False) -> tuple[str, str | None, str | None] | None:
     """(value, minus, plus) as text, all at the decimals of the smaller error (``err_digits``: two significant
     figures), never more than the stored errors carry (an error stored as 0.08 prints as 0.08, not 0.080), the value
     at ``nd`` decimals and both errors None without an error; None without a value. Every number with an error in the

@@ -626,6 +626,27 @@ def test_an_outage_on_a_reopened_settled_row_keeps_its_verdict(env):
     assert env.store.latest_tests(sid)[-1]["metrics"]["rule_version"] == 3
 
 
+def test_a_crash_on_a_reopened_settled_row_keeps_its_verdict_and_stops_after_two(env):
+    """M16: the rung's "exception:" reason on a reopened stage 2 candidate is skipped like an outage (no rung 5 row,
+    the verdict stands); two crash skips in a row leave the signal for a person, as the ordinary path does."""
+    v2 = {"seasons": SEASONS, "rule_version": 2}
+    sid = env.seed_signal(tpfs="target", tests=[("rung5_pixels", "pass", PASSED)], metrics={"rung5_pixels": v2})
+    before = env.store.latest_tests(sid)
+    calls = []
+
+    def broken(kic, **_kw):
+        calls.append(kic)
+        raise RuntimeError("bad header")
+    for _ in range(3):
+        rep = recheck(env.store, env.blob, env.settings, fetch=fake_fetch.fetch, tpf_loader=broken)
+        assert rep.steps["pixels"] == 0 and env.store.signal_status(sid) == "candidate_stage2"
+    assert env.store.latest_tests(sid) == before and len(calls) == 2        # the third recheck leaves it alone
+    rows = env.store.rechecks(sid)
+    assert [(r["step"], r["outcome"]) for r in rows] == [("pixels", "skipped")] * 2
+    assert rows[0]["reason"].startswith("exception: ") and rows[0]["reason"].endswith("(crash 1 of 2 on reopen)")
+    assert rows[1]["reason"].endswith("(crash 2 of 2 on reopen)")
+
+
 def test_a_pixel_archive_outage_is_retried_by_the_next_recheck(env):
     sid = env.seed_signal(tpfs="target")
 

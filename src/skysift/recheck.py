@@ -173,6 +173,27 @@ def _crashes(store: Store, signal_id: int, rung: str) -> int:
             TestRow.signal_id == signal_id, TestRow.rung == rung, TestRow.reason.like("exception:%")))
 
 
+REOPEN_CRASHES_MAX = 2      # crash skips in a row after which a reopened settled signal stays for a person
+
+
+def _reopen_crashes(store: Store, signal_id: int) -> int:
+    """How many of the signal's latest pixel-step recheck rows, in a row, are crash skips (outcome "skipped", reason
+    "exception: ..."): the reopen of a settled signal writes no rung 5 row when it crashes, so these count its
+    attempts."""
+    n = 0
+    for row in reversed([r for r in store.rechecks(signal_id) if r["step"] == "pixels"]):
+        if row["outcome"] != "skipped" or not str(row["reason"] or "").startswith("exception:"):
+            break
+        n += 1
+    return n
+
+
+def _reopen_crash_reason(store: Store, signal_id: int, reason: str) -> str:
+    """A crash skip's reason on a reopened settled signal, numbered ("exception: X (crash 1 of 2 on reopen)") so that
+    the second is written beside the first and counted (``_reopen_crashes``)."""
+    return f"{reason} (crash {_reopen_crashes(store, signal_id) + 1} of {REOPEN_CRASHES_MAX} on reopen)"
+
+
 def floor_reopens(rung5: dict) -> bool:
     """The rung 5 row localised (its metrics hold the per-season ``seasons``) under a rule version below
     ``PIXEL_RULE_VERSION`` (1 when none is stored), whatever its status: a pass, a fail or an undetermined row. A
@@ -191,13 +212,16 @@ def wants_pixels(store: Store, sig: StoredSignal, tests: list[dict], status: str
     (``pixels_qualify``) on its rows other than rung 5's, and its pixels are not settled. A rung 5 row settles them
     unless it could not reach the pixel archive (``outage:``, retried at every recheck), it is the signal's first
     crash (``exception:``, retried once, spec 4.2; after a second crash it stays for a person) or it was made under an
-    older rule (``floor_reopens``, rerun once under the current one); a verdict, or a reason the pixels gave
-    themselves ("pixels: ..."), is otherwise final for the signal, so a signal that stays in the queue is not fetched
-    and localized at every recheck."""
+    older rule (``floor_reopens``, rerun once under the current one; a reopened settled signal whose rerun crashed
+    ``REOPEN_CRASHES_MAX`` times in a row stays for a person, as the ordinary path does after a second crash); a
+    verdict, or a reason the pixels gave themselves ("pixels: ..."), is otherwise final for the signal, so a signal
+    that stays in the queue is not fetched and localised at every recheck."""
     status = store.signal_status(sig.id) if status is None else status
     rung5 = _latest(tests, "rung5_pixels")
     reopened = rung5 is not None and floor_reopens(rung5)
     if status not in OPEN_STATUSES and not (reopened and status in SETTLED_BY_PIXELS):
+        return False
+    if reopened and status in SETTLED_BY_PIXELS and _reopen_crashes(store, sig.id) >= REOPEN_CRASHES_MAX:
         return False
     if rung5 is not None and not reopened:
         reason = str(rung5["reason"])
@@ -335,8 +359,10 @@ def step_pixels(ctx: RecheckContext, sig: StoredSignal) -> StepWrite | None:
     rung = Rung5Pixels(tpf_loader=ctx.tpf_loader or fetch_tpfs, blob=ctx.blob, signal_id=sig.id)
     _outcome, results, timings = ctx.vet(sig.signal, Ladder([rung], DEFAULT_LADDER_VERSION), ctx.flux(sig))
     r = results[0]
-    if settled and r.reason.startswith(("outage:", "exception:")):
+    if settled and r.reason.startswith("outage:"):
         return _write(sig, "pixels", "skipped", r.reason)
+    if settled and r.reason.startswith("exception:"):
+        return _write(sig, "pixels", "skipped", _reopen_crash_reason(ctx.store, sig.id, r.reason))
     return _write(sig, "pixels", r.status.value, r.reason, results, timings)
 
 
@@ -473,7 +499,10 @@ def _recheck_one(store: Store, blob, settings: Settings, loader: LightCurveLoade
                 done.pixels_settled = not write.reason.startswith(("outage:", "exception:"))
         except Exception as e:              # a broken step leaves the signal as it is for a person
             logger.exception("recheck step pixels failed for signal %s", sig.id)
-            _commit(store, say, sig, _write(sig, "pixels", "skipped", f"exception: {type(e).__name__}"))
+            reason = f"exception: {type(e).__name__}"
+            if store.signal_status(sig.id) in SETTLED_BY_PIXELS:
+                reason = _reopen_crash_reason(store, sig.id, reason)
+            _commit(store, say, sig, _write(sig, "pixels", "skipped", reason))
     cache["base"] = ctx._base
     done.outcome = store.signal_status(sig.id)
     return done

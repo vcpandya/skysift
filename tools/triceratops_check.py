@@ -119,7 +119,8 @@ def quarter_images(tpf_paths) -> list[dict]:
     """One dict per pixel file, by quarter, as TRICERATOPS builds them for a Kepler target: "quarter", "image" (the
     time-mean FLUX padded with NaN to ``N_PIX`` square), "col0" and "row0" (the CCD column and row of the padded
     image's first pixel, ``1CRV4P`` / ``2CRV4P`` of the TARGETTABLES header less the padding; a file without them
-    raises ValueError, since the stars could not be placed), "pad" (columns and rows of padding before the stamp) and "wcs" (from the APERTURE header)."""
+    raises ValueError, since the stars could not be placed), "pad" (columns and rows of padding before the stamp)
+    and "wcs" (from the APERTURE header)."""
     out = []
     for path in tpf_paths:
         with fits.open(path, memmap=False) as h:

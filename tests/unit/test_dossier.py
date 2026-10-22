@@ -323,7 +323,7 @@ def test_generate_for_a_star_without_gaia_parameters(env_no_gaia):
     env = env_no_gaia
     data = _data(generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch))
     assert data["star"]["route"] == "none" and data["look"] is None and data["planet"]["rp_rearth"] is None
-    assert any(c["title"].startswith("The star cannot be characterized") for c in data["caveats"])
+    assert any(c["title"].startswith("The star cannot be characterised") for c in data["caveats"])
 
 
 def test_generate_records_a_gaia_outage_and_carries_on(settings, monkeypatch):
@@ -684,7 +684,7 @@ def test_hand_built_values_agree_within_errors():
     # seasons 0 and 3 have a cut 3 x 3 box on the target star, and only those two carry an edge allowance
     assert [s["season"] for s in m5["seasons"] if s["box_partial"]] == [0, 3]
     assert [s["season"] for s in m5["seasons"] if s["edge_bias_pix"] > 0] == [0, 3]
-    # the FPP band of spec 4.2 (1 to 60 percent) did not survive Task 2: with the spec's priors the localized BEB term
+    # the FPP band of spec 4.2 (1 to 60 percent) did not survive Task 2: with the spec's priors the localised BEB term
     # vanishes and the on-target EB term is killed by the secondary and odd/even limits, so KIC 6146676 reads
     # "under 1 percent"; the number is a sign-off item (ledger), and this test pins reproducibility, not the band
     assert gen["fpp"]["value"] == pytest.approx(compute(FppInputs(**gen["fpp"]["inputs"])).value, rel=1e-6)
@@ -715,6 +715,16 @@ def test_the_compare_tool_reads_the_golden_block(monkeypatch, tmp_path, capsys):
     out = tmp_path / "c.md"
     assert dossier_compare.main([*argv, "--out", str(out)]) == 0
     assert capsys.readouterr().out == "" and out.read_text(encoding="utf-8") + "\n" == printed
+
+
+def test_the_golden_block_carries_the_version_3_blocks(monkeypatch):
+    """G1: a golden written by --write-golden keeps the error blocks of version 3 and the pixel offset block."""
+    monkeypatch.syspath_prepend(str(REPO))
+    from tools import dossier_compare
+    blocks = {k: {"ok": True, "key": k} for k in ("timing", "shape", "parity", "secondary", "cross_check",
+                                                  "centroid_offset")}
+    out = dossier_compare.golden_block({"dossier_version": "3", **blocks, "plots": {"fold_bins": []}})
+    assert all(out[k] == v for k, v in blocks.items()) and "plots" not in out
 
 
 # ---------------------------------------------------------------------------------------------------- Task 7 fix round

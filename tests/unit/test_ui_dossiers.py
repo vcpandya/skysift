@@ -753,12 +753,18 @@ def test_the_page_prints_both_parity_numbers_when_they_differ(seeded_dossier, se
 
 
 def test_dossier_export_carries_the_same_errors(seeded_dossier):
-    client, _app, _ids, _data = seeded_dossier
+    """The standalone page draws from the JSON it embeds, so the test reads that JSON (the inlined script holds the
+    words whether or not it draws them): the error blocks are the stored dossier's own."""
+    import re
+    client, _app, _ids, data = seeded_dossier
     export = client.get(f"/dossiers/{STAGE2_TARGET}/export.html").text
-    assert '"period_err_days":' in export and '"timing":{' in export and '"shape":{' in export
-    for words in ("T_ref (BJD_TDB)", "Odd and even", "3-sigma limit", "Shape with errors", "Secondary eclipse",
-                  " ± "):
-        assert words in export, words                    # dossier.js writes them into the standalone page
+    blob = re.search(r'<script id="dossier-data" type="application/json">(.*?)</script>', export, re.DOTALL).group(1)
+    embedded = json.loads(blob)
+    for key in ("timing", "shape", "parity", "secondary", "centroid_offset"):
+        assert embedded.get(key) == data.get(key), key
+    assert embedded["ephemeris"]["period_err_days"] == data["ephemeris"]["period_err_days"] > 0
+    assert embedded["timing"]["ok"] is True and embedded["shape"]["k"]["minus"] > 0
+    assert embedded["parity"]["odd"]["err_ppm"] > 0 and embedded["secondary"]["limit_3sigma_ppm"] > 0
 
 
 def test_dossier_page_shows_the_cross_check_block(seeded_dossier):
@@ -783,7 +789,6 @@ def test_dossier_page_shows_the_cross_check_block(seeded_dossier):
     app.state.store.set_cross_check(STAGE2_TARGET, {**result, "inputs_sha256": "0" * 64, "current": True})
     checks = client.get(f"/dossiers/{STAGE2_TARGET}").text.split('id="checks"')[1].split('id="pixels"')[0]
     assert "made for an earlier dossier" in checks
-
 
 
 def test_the_standalone_page_carries_a_cross_check_imported_after_its_export(seeded_dossier, tmp_path):

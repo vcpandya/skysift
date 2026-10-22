@@ -126,7 +126,8 @@ def _version3_engine(tmp_path):
     that has no cross_check column."""
     old = MetaData()
     for t in Base.metadata.sorted_tables:
-        Table(t.name, old, *[_plain_copy(c) for c in t.columns if not (t.name == "dossiers" and c.name == "cross_check")])
+        Table(t.name, old, *[_plain_copy(c) for c in t.columns
+                             if not (t.name == "dossiers" and c.name == "cross_check")])
     engine = Store(f"sqlite:///{tmp_path.as_posix()}/v3.db").engine
     old.create_all(engine)
     with engine.begin() as c:

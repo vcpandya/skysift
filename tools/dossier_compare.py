@@ -30,7 +30,8 @@ CENTROID_TOL_PIX = 0.1          # the brief's tolerance for the per-season centr
 FIT_DURATION_ERROR = 0.1        # skysift.fpp's fractional fit-duration error, for the T14 row (no error quoted)
 PERIOD_ROUNDING_D = 0.5e-5      # the study prints the period to five decimals
 GOLDEN_RUNGS = ("rung2_shape", "rung3_stability", "rung4_novelty", "rung5_pixels")
-GOLDEN_KEYS = ("dossier_version", "generated", "target", "ephemeris", "fap", "fpp", "star", "planet", "look")
+GOLDEN_KEYS = ("dossier_version", "generated", "target", "ephemeris", "fap", "fpp", "star", "planet", "look",
+               "timing", "shape", "parity", "secondary", "cross_check", "centroid_offset")      # version-3 blocks
 
 
 @dataclass

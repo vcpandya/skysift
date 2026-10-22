@@ -319,7 +319,7 @@
 </section>
 
 <section id="star" class="dossier-section" aria-labelledby="star-title">
-  {{ section_head("05", "star", "The star and the planet", ("Gaia's colour and parallax make the host " ~ (("a " ~ star.spectral_type ~ " star") if star.spectral_type else "a star of unknown type") ~ ". The transit gives the planet's size relative to the star; its size in Earth radii, its orbit and its temperature follow from the star and carry its errors.") if star.route != "none" else "The star could not be characterized from Gaia photometry, so the planet's size, orbit and temperature are not given.") }}
+  {{ section_head("05", "star", "The star and the planet", ("Gaia's colour and parallax make the host " ~ (("a " ~ star.spectral_type ~ " star") if star.spectral_type else "a star of unknown type") ~ ". The transit gives the planet's size relative to the star; its size in Earth radii, its orbit and its temperature follow from the star and carry its errors.") if star.route != "none" else "The star could not be characterised from Gaia photometry, so the planet's size, orbit and temperature are not given.") }}
   {{ notice_list(notices.get("star", [])) }}
   <div class="dossier-pair">
     <dl class="dossier-kv">
@@ -382,7 +382,7 @@
     </ul>
   </div>
   {%- else %}
-  <p class="dossier-notice" role="note">The star could not be characterized, so the panel is not drawn.</p>
+  <p class="dossier-notice" role="note">The star could not be characterised, so the panel is not drawn.</p>
   {%- endif %}
 </section>
 

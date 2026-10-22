@@ -1,6 +1,6 @@
 {# The pack's README (dossiers spec 5.9): the five steps in order, each naming the account it needs, what to attach,
    what to write and what the engine did or cannot do. Plain text from skysift.pack.render_readme; n holds the numbers
-   as text, f the build's own fields. No em-dashes, -ize spellings, "candidate" never "discovery". #}
+   as text, f the build's own fields. No em-dashes, -ise spellings, "candidate" never "discovery". #}
 {% if not f.approved %}
 This candidate is not yet approved by a reviewer. Build the record, but do not freeze or upload it before the approval.
 
@@ -103,7 +103,7 @@ Files: ExoFOP enforces no file name. The pack names its copies `<target>_<UTC da
 - `exofop/{{ name }}`: {{ what }}
 {% endfor %}
 
-What ExoFOP takes now: any registered user can attach files, notes and stellar parameters to a KIC or TIC page, so the files above and the upload note go up now.{% if not f.exofop_stellar %} There is no stellar parameter file: the star could not be characterized from Gaia photometry, so there are no stellar parameters to upload.{% endif %} Planet parameters attach only to a TOI, a community TOI or a confirmed planet, and a community TOI needs a paper in a peer-reviewed journal (a Research Note qualifies only when the method it rests on was published before), so `exofop/{{ f.exofop_planet }}`, the planet parameters in ExoFOP's bulk template, waits until such a paper is accepted; do not upload it now. Its target reads `TIC{{ f.tic or "<TIC-TO-FILL>" }}.01`{% if not f.tic %} until the pack is built with `--tic`{% endif %}, and its paper URL and notes are placeholders to fill in then.{% if f.other_signals %} {{ f.other_signals }}{% endif %}{{ "" }}
+What ExoFOP takes now: any registered user can attach files, notes and stellar parameters to a KIC or TIC page, so the files above and the upload note go up now.{% if not f.exofop_stellar %} There is no stellar parameter file: the star could not be characterised from Gaia photometry, so there are no stellar parameters to upload.{% endif %} Planet parameters attach only to a TOI, a community TOI or a confirmed planet, and a community TOI needs a paper in a peer-reviewed journal (a Research Note qualifies only when the method it rests on was published before), so `exofop/{{ f.exofop_planet }}`, the planet parameters in ExoFOP's bulk template, waits until such a paper is accepted; do not upload it now. Its target reads `TIC{{ f.tic or "<TIC-TO-FILL>" }}.01`{% if not f.tic %} until the pack is built with `--tic`{% endif %}, and its paper URL and notes are placeholders to fill in then.{% if f.other_signals %} {{ f.other_signals }}{% endif %}{{ "" }}
 
 What to write: paste `exofop/note.txt` into the upload's description. It gives the ephemeris with its errors, both probabilities, the pixel result and the Zenodo DOI.
 

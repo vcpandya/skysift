@@ -156,7 +156,8 @@ def test_metadata_without_a_citation_file_names_a_placeholder_creator():
 
 def test_metadata_description_quotes_the_ephemeris_with_errors():
     text = metadata_from(DATA, None)["description"]
-    assert "P = 40.28990 d (no error; this dossier has no per-transit timing)" in text and "T0 = BJD_TDB 2454969.3000" in text
+    assert "P = 40.28990 d (no error; this dossier has no per-transit timing)" in text
+    assert "T0 = BJD_TDB 2454969.3000" in text
     fitted = {**DATA, "ephemeris": {**DATA["ephemeris"], "period_days": 40.289863, "period_err_days": 9.1263086e-05,
                                     "t0_bkjd": 136.30033, "t0_bjd": 2454969.30033, "t0_bkjd_err": 0.0018874406,
                                     "t0_bjd_err": 0.0018874406,

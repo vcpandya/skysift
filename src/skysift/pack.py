@@ -98,14 +98,14 @@ from skysift.pack_text import (
 from skysift.store.db import SignalRow, Store
 from skysift.zenodo import KBONUS_DOI, ZenodoClient, ZenodoError, metadata_from, probability_sentences
 
-PACK_VERSION = "3"         # 3: errors in every text and file, ExoFOP parameter files, provenance, dilution (22 Oct 2026)
+PACK_VERSION = "3"         # 3: errors in every text and file, ExoFOP files, provenance, dilution (22 Oct 2026)
 # the five steps, in the README's order; the dashboard's step list (ui.routes.dossiers.PACK_STEPS) is built from these
 STEPS = (("1", "Freeze the record"), ("2", "Upload to ExoFOP-TESS"), ("3", "Write it up"),
          ("4", "Tell the archive"), ("5", "Answer follow-up questions"))
 STEP_TEXTS = {
     "1": "Deposit the pack on Zenodo for a citable DOI. The engine can make the draft; you publish it.",
     "2": "Attach the dossier, the ephemeris and the note to the star's ExoFOP page now, and the stellar parameters "
-         "when the star is characterized; the planet parameters wait for a community TOI, which needs a peer-reviewed "
+         "when the star is characterised; the planet parameters wait for a community TOI, which needs a peer-reviewed "
          "paper. This needs your own ExoFOP account.",
     "3": "Turn the Research Note draft into a submission to the AAS, with an arXiv endorsement if needed.",
     "4": "Send the NASA Exoplanet Archive help desk the one-paragraph note once a refereed paper on the candidate is "
@@ -639,7 +639,8 @@ def dilution_sentence(data: dict, tex: bool = False) -> str | None:
     if leak:
         whose = f" (KIC {leak['kic']})" if leak["kic"] else ""
         parts += [", and in" if parts else "In",
-                  f" the optimal-aperture flux of the neighbour{whose} the dip at this ephemeris is ", pm_text(leak["value"], leak["minus"], leak["plus"], nd=0, comma=True, tex=tex),
+                  f" the optimal-aperture flux of the neighbour{whose} the dip at this ephemeris is ",
+                  pm_text(leak["value"], leak["minus"], leak["plus"], nd=0, comma=True, tex=tex),
                   " ppm"]
     return _joined(tex, *parts, ".") if parts else None
 
@@ -721,7 +722,8 @@ def numbers(data: dict, tex: bool = False, after_bjd: float | None = None) -> di
         "secondary_pm": pm_text(sec.get("depth_ppm"), sec.get("err_ppm"), sec.get("err_ppm"), nd=0, comma=True),
         "secondary_limit": _f(sec.get("limit_3sigma_ppm"), 0, True),
         "shape_text": shape_sentence(data, tex),
-        "crowdsap": (dilution.get("crowdsap") or {}).get("text"), "psffrac": (dilution.get("psffrac") or {}).get("text"),
+        "crowdsap": (dilution.get("crowdsap") or {}).get("text"),
+        "psffrac": (dilution.get("psffrac") or {}).get("text"),
         "leak_text": leak["text"] if leak else None, "dilution_text": dilution_sentence(data, tex),
         "dilution_rows": list(dilution.values()),
         "software_line": software_line(data), "facilities": FACILITIES, "code_sentence": CODE_SENTENCE,
@@ -758,7 +760,7 @@ def bin_minutes(data: dict) -> str | None:
 
 def abstract_text(data: dict) -> str:
     """The note's abstract (RNAAS requires one, at most 150 words): the signal, where the pixels put it, the planet
-    when the star is characterized, both probabilities and the candidate status, each from the stored numbers."""
+    when the star is characterised, both probabilities and the candidate status, each from the stored numbers."""
     target, eph = data.get("target") or {}, data.get("ephemeris") or {}
     name = target.get("name") or target.get("target_id")
     parts = [(f"This note reports a transit candidate on {name}, a star that Kepler recorded only in the background "

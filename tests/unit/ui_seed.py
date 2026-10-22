@@ -319,7 +319,8 @@ def _seed_errors(period: float, t0: float) -> dict:
     t_ref = t0 + 0.0002 + e_ref * p_fit
     t0_fit = t_ref - e_ref * p_fit
     times = [{"epoch": e, "t_bkjd": t0_fit + e * p_fit, "t_bjd": t0_fit + e * p_fit + 2454833.0, "err_days": 0.0024,
-              "chi2_red": 1.02, "n_in": 4, "n_out": 18, "used": e != 7, "reason": "outlier (6.2 MAD)" if e == 7 else None}
+              "chi2_red": 1.02, "n_in": 4, "n_out": 18, "used": e != 7,
+              "reason": "outlier (6.2 MAD)" if e == 7 else None}
              for e in range(33)]
     timing = {"ok": True, "reason": None, "method": eph.EPHEMERIS_METHOD, "period": p_fit, "period_err": p_err,
               "t_ref": t_ref, "t_ref_bjd": t_ref + 2454833.0, "t_ref_err": t_ref_err, "epoch_ref": e_ref,
@@ -382,7 +383,8 @@ def _seed_plots(period: float, t0: float) -> dict:
                "err_ppm": 250.0, "coverage": 0.97, "ses": 8.7} for e in range(3)]
     return {"series_binned": [[t0 + 0.25 * i, -30.0 * (i % 3), 12] for i in range(8)], "series_bin_days": 0.25,
             "window_h": 9.216, "fold_points": [[-2.0, 10.0], [0.0, -2200.0], [2.0, -5.0]],
-            "fold_bins": [[-1.0, -40.0, 60.0, 20], [0.0, -2190.0, 60.0, 20], [1.0, -30.0, 60.0, 20]], "bin_minutes": 22.5,
+            "fold_bins": [[-1.0, -40.0, 60.0, 20], [0.0, -2190.0, 60.0, 20], [1.0, -30.0, 60.0, 20]],
+            "bin_minutes": 22.5,
             "model": [[-9.216, 0.0], [-1.152, 0.0], [-1.152, -2200.0], [1.152, -2200.0], [1.152, 0.0], [9.216, 0.0]],
             "model_kind": "box", "odd_bins": [[0.0, -2202.0, 90.0, 10]], "even_bins": [[0.0, -2115.0, 90.0, 10]],
             "secondary_bins": [[0.0, 15.0, 60.0, 20]],
@@ -408,7 +410,8 @@ def _seed_pixels() -> list[dict]:
 
 def seed_dossier(store: Store, data_dir, target_id: str = STAGE2_TARGET) -> dict:
     """A hand-made ``dossier_data.json`` for ``target_id``'s best signal (small arrays, every key ``generate`` writes,
-    the star and planet of a cool dwarf, FPP 0.03, FAP 1 in 1,700, the version-3 error blocks of ``_seed_errors``) and its ``dossiers`` row carrying the signal's
+    the star and planet of a cool dwarf, FPP 0.03, FAP 1 in 1,700, the version-3 error blocks of ``_seed_errors``)
+    and its ``dossiers`` row carrying the signal's
     current fingerprint, so the dossier pages have one current dossier to draw. Returns the JSON as written."""
     import dataclasses
     from datetime import datetime

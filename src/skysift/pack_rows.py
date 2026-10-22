@@ -176,7 +176,10 @@ STAR_ROWS = (("effective temperature", "teff", "K"), ("radius", "radius", "solar
 def _split_source(source: str | None) -> tuple[str, str, str]:
     """(method, inputs, reference) of a stored source string such as "Mann et al. 2015 R(M_Ks) (Mann, A. W. et al.
     2015, ApJ 804, 64), 2MASS Ks 13.030, A_Ks 0 to 0.07, Gaia parallax": the reference is the first parenthesis that
-    names a year, the method what comes before it, the inputs what follows. A source without one is all method."""
+    names a year, the method what comes before it, the inputs what follows. A source without one is all method.
+
+    The parse is left on the string on purpose: a structured source would need method, inputs and reference fields
+    on the Value records of skysift.stars, which would change the stored star block of every version-3 dossier."""
     source = source or ""
     m = _REFERENCE.search(source)
     if not m:

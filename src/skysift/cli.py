@@ -337,7 +337,8 @@ def pack_command(target: str = typer.Option(..., "--target", help="The target id
     token = zn.token_from_env() if want_zenodo else None
     client = zn.ZenodoClient(token, sandbox=not zenodo_live, session=zn.new_session()) if token else None
     try:
-        rep = pk.build_pack(store, blob, s, target, out_dir=Path(out) if out else None, tic=tic, observer_tag=tag, tag_seq=tag_seq,
+        rep = pk.build_pack(store, blob, s, target, out_dir=Path(out) if out else None, tic=tic, observer_tag=tag,
+                            tag_seq=tag_seq,
                             zenodo=client, log=lambda text: _plain(console, text))
     except (pk.NoDossier, ds.NoSignal) as e:
         _plain(console, str(e))

@@ -749,7 +749,7 @@ def pixels_section(store: Store, blob, signal_id: int, rung5_metrics: dict) -> l
 # ---------------------------------------------------------------------------------------------------- star and FPP
 
 def look_numbers(star: stars.StarParams, planet: stars.PlanetParams) -> dict | None:
-    """The inputs of section 06 (the illustrated panel), or None when the star could not be characterized."""
+    """The inputs of section 06 (the illustrated panel), or None when the star could not be characterised."""
     if star.route == "none" or star.teff is None or star.radius is None:
         return None
     teff, radius = star.teff.median, star.radius.median
@@ -1015,7 +1015,7 @@ def caveats(data: dict) -> list[dict]:
     route = star.get("route")
     if route == "none":
         why = "; ".join(star.get("caveats") or []) or "no Gaia row for this star"
-        out.append({"title": "The star cannot be characterized from Gaia photometry",
+        out.append({"title": "The star cannot be characterised from Gaia photometry",
                     "text": f"{why[:1].upper()}{why[1:]}. Without the star's radius the planet radius, orbit and "
                             "temperature are not given."})
     teff = (star.get("teff") or {}).get("median")
