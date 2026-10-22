@@ -12,9 +12,16 @@ U-shaped transit. The non-grazing family is a subset of the free one, so a lower
 optimiser stopped in a local minimum (on a shallow, cadence-smeared fold the uniform-disc model is degenerate: a large
 ``k`` with ``b`` near ``1 + k`` and ``a_over_r`` near ``b`` mimics a box), and the better of the two solutions is
 returned as the fit. The non-grazing minimum is kept as ``chi2_nongrazing``, so ``chi2_nongrazing - chi2 >= 0``
-measures how much a grazing or deep geometry is preferred: a grazing verdict needs it to be large."""
+measures how much a grazing or deep geometry is preferred: a grazing verdict needs it to be large.
+
+Rung 2 keeps ``fit_transit``, the binned uniform-disc fit, for the V-shape rule and its tests. The dossier quotes
+``fit_shape`` instead (referee pack spec 11.3): a quadratic limb-darkened star (``quadratic_ld_flux``, the Kepler band
+coefficients of Claret and Bloemen 2011 interpolated in Teff by ``limb_darkening``), the model averaged over the
+exposure (``exposure_flux``) and fitted to the unbinned fold, once free and once with a Gaussian prior on the stellar
+density (``stellar_density``); ``compare_fits`` says which of the two is quoted."""
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 import numpy as np
@@ -213,3 +220,314 @@ def fit_transit(time, fnorm, period, t0, duration_days) -> TransitFit:
         b, chi2, ok = u * (1.0 - k), chi2_ng, True
     depth = float((1.0 - uniform_disc_flux(np.array([0.0]), period, k, b, a)[0]) * 1e6)
     return TransitFit(k, b, a, depth, _t14(period, k, b, a), chi2, n_bins, ok, chi2_ng)
+
+
+# ---------------------------------------------------------------------------------------------------- the shape fit
+#
+# The dossier's shape fit (referee pack spec 11.3): a quadratic limb-darkened star (Kepler band coefficients of
+# Claret and Bloemen 2011), the model averaged over the exposure, fitted to every point of the fold within
+# FIT_WINDOW_DURATIONS of mid-transit, once free and once with a Gaussian prior on the stellar density.
+
+EXPOSURE_RESOLUTION_MIN = 0.1        # minutes, the sampling of a model before it is averaged over the exposure
+LD_LOGG = 4.5
+LD_SOURCE = ("Claret and Bloemen 2011, Kepler band, quadratic law, ATLAS models (method L, log g 4.5, [M/H] 0, "
+             "microturbulence 2 km/s), linear in Teff between the rows, held at the table's edges")
+LD_TABLE = ((3500, 0.4158, 0.3203), (3750, 0.4224, 0.3037), (4000, 0.5516, 0.1880), (4250, 0.6834, 0.0718),
+            (4500, 0.6811, 0.0672), (4750, 0.6270, 0.1082), (5000, 0.5684, 0.1530), (5250, 0.5086, 0.1959),
+            (5500, 0.4526, 0.2327), (5750, 0.4035, 0.2622), (6000, 0.3588, 0.2868), (6250, 0.3239, 0.3029),
+            (6500, 0.2971, 0.3119), (6750, 0.2753, 0.3195), (7000, 0.2567, 0.3263))   # (Teff K, u1, u2)
+LD_NO_TEFF = 5750                    # the row used when the star has no Teff
+LD_NODES = 32                        # Gauss-Legendre nodes of the annulus integral (cosine substitution)
+LD_TABLE_NODES = 256                 # separations per side of the contact |1 - k| in the exposure grid's table
+CONSTRAINED_DELTA_CHI2 = 2.0         # spec 11.3: within 2, the shape does not constrain b and a/R*
+G_CGS = 6.674e-8
+UNCONSTRAINED = "unconstrained at this cadence, consistent with the host's density"
+A_LABEL_STELLAR, A_LABEL_FITTED = "from the stellar parameters", "fitted"
+NO_DENSITY = "no stellar density, so no density prior"
+SHAPE_MIN_POINTS = 20                # fewer points in the window: no shape fit
+SHAPE_MAD_TO_SIGMA = 1.4826
+
+_GL_X, _GL_W = np.polynomial.legendre.leggauss(LD_NODES)
+_THETA = 0.5 * np.pi * (_GL_X + 1.0)          # the nodes on [0, pi]
+_THETA_W = 0.5 * np.pi * _GL_W
+_COS, _SIN = np.cos(_THETA), np.sin(_THETA)
+
+
+def limb_darkening(teff: float | None) -> dict:
+    """The quadratic coefficients of ``LD_TABLE`` at ``teff``, linear in Teff between the rows and held at the
+    table's edges (``np.interp``); the ``LD_NO_TEFF`` row, with ``teff`` stored as None, when the star has none."""
+    known = teff is not None and math.isfinite(float(teff)) and float(teff) > 0
+    t = float(teff) if known else float(LD_NO_TEFF)
+    rows = np.array(LD_TABLE, dtype=float)
+    return {"law": "quadratic", "u1": float(np.interp(t, rows[:, 0], rows[:, 1])),
+            "u2": float(np.interp(t, rows[:, 0], rows[:, 2])), "teff": t if known else None, "logg": LD_LOGG,
+            "source": LD_SOURCE}
+
+
+def _separation(dt: np.ndarray, period: float, b: float, a_over_r: float) -> np.ndarray:
+    """The projected separation in stellar radii, ``a_over_r sqrt(sin(phi)^2 + (b / a_over_r cos(phi))^2)``,
+    infinite behind the star (``cos(phi) <= 0``)."""
+    phi = 2.0 * np.pi * dt / period
+    z = a_over_r * np.sqrt(np.sin(phi) ** 2 + (b / a_over_r * np.cos(phi)) ** 2)
+    return np.where(np.cos(phi) > 0.0, z, np.inf)
+
+
+def _inner_disc(s: np.ndarray, u1: float, u2: float) -> np.ndarray:
+    """``integral of I(r) 2 r dr`` from 0 to ``sqrt(s)`` over pi, in closed form (``s = r^2``, ``mu = sqrt(1 - s)``):
+    the light of the stellar disc of radius ``sqrt(s)``, which the planet covers whole when ``sqrt(s) <= k - z``."""
+    rim = 1.0 - (1.0 - s) ** 1.5
+    return s - u1 * (s - 2.0 / 3.0 * rim) - u2 * (2.0 * s - 0.5 * s * s - 4.0 / 3.0 * rim)
+
+
+def _blocked(z: np.ndarray, k: float, u1: float, u2: float) -> np.ndarray:
+    """The fraction of a quadratic limb-darkened star's light that a dark disc of radius ``k`` blocks at the
+    separations ``z`` (each below ``1 + k``): the intensity-weighted arc ``2 r alpha(r)`` of every annulus the disc
+    crosses, integrated from ``max(0, z - k)`` to ``min(1, z + k)``, over the star's total ``pi (1 - u1/3 - u2/6)``.
+    The radius runs as ``mid - half cos(theta)``, which takes the square-root behaviour at the ends of the range out
+    of the integrand, on ``LD_NODES`` Gauss-Legendre nodes in theta. When the disc covers the star's centre (``z <
+    k``) the annuli inside ``k - z`` are covered whole (``alpha = pi``), and the arc has a square-root kink there, so
+    that part is taken in closed form (``_inner_disc``) and the nodes span ``k - z`` to ``min(1, z + k)`` only."""
+    zz = np.maximum(np.asarray(z, dtype=float), 1e-12)
+    inner = np.clip(k - zz, 0.0, 1.0)                 # the radius out to which every annulus is covered
+    lo, hi = np.maximum(inner, zz - k)[:, None], np.minimum(1.0, zz + k)[:, None]
+    hi = np.maximum(hi, lo)
+    mid, half = 0.5 * (lo + hi), 0.5 * (hi - lo)
+    r = mid - half * _COS[None, :]
+    mu = np.sqrt(np.clip(1.0 - r * r, 0.0, 1.0))
+    intensity = 1.0 - u1 * (1.0 - mu) - u2 * (1.0 - mu) ** 2
+    zc = zz[:, None]
+    with np.errstate(divide="ignore", invalid="ignore"):
+        cos_alpha = np.clip((r * r + zc * zc - k * k) / (2.0 * r * zc), -1.0, 1.0)
+    alpha = np.arccos(np.nan_to_num(cos_alpha, nan=1.0))
+    integrand = intensity * 2.0 * r * alpha * half * _SIN[None, :]
+    covered = np.pi * _inner_disc(inner * inner, u1, u2)
+    return (covered + integrand @ _THETA_W) / (np.pi * (1.0 - u1 / 3.0 - u2 / 6.0))
+
+
+def quadratic_ld_flux(dt_days, period: float, k: float, b: float, a_over_r: float, u1: float,
+                      u2: float) -> np.ndarray:
+    """Relative flux of a star with the quadratic limb darkening ``I(mu) = 1 - u1 (1 - mu) - u2 (1 - mu)^2``
+    transited by a dark disc of radius ``k`` on a circular orbit, at offsets ``dt_days`` from mid-transit (``1 -
+    _blocked``). The separation is that of ``uniform_disc_flux``; the flux is 1 behind the star (``cos(phi) <= 0``)
+    and wherever the disc does not touch it. With ``u1 = u2 = 0`` it is the uniform disc."""
+    dt = np.atleast_1d(np.asarray(dt_days, dtype=float))
+    out = np.ones_like(dt)
+    if not (k > 0 and a_over_r > 0):
+        return out
+    z = _separation(dt, period, b, a_over_r)
+    hit = z < 1.0 + k
+    if hit.any():
+        out[hit] = 1.0 - _blocked(z[hit], k, u1, u2)
+    return out
+
+
+def _cosine_nodes(lo: float, hi: float, n: int) -> np.ndarray:
+    """``n`` nodes from ``lo`` to ``hi``, both included, closest together at the two ends."""
+    return lo + (hi - lo) * 0.5 * (1.0 - np.cos(np.linspace(0.0, np.pi, n)))
+
+
+def _blocked_table(k: float, u1: float, u2: float) -> tuple[np.ndarray, np.ndarray]:
+    """``_blocked`` on ``LD_TABLE_NODES`` separations from 0 to ``|1 - k|`` and as many from there to ``1 + k`` (the
+    contact points, where it has its kinks, are nodes), for linear interpolation in z: an exposure grid holds a
+    thousand or more samples inside the transit, and between the contacts the blocked light is smooth in z."""
+    edge = abs(1.0 - k)
+    z = np.concatenate([_cosine_nodes(0.0, edge, LD_TABLE_NODES), _cosine_nodes(edge, 1.0 + k, LD_TABLE_NODES)[1:]])
+    blocked = _blocked(z, k, u1, u2)
+    blocked[-1] = 0.0                                  # last contact
+    return z, blocked
+
+
+class _ExposureGrid:
+    """The grid that averages a model over one exposure at the offsets ``dt``: ``EXPOSURE_RESOLUTION_MIN`` samples
+    spanning the offsets plus one exposure (symmetric about mid-transit, where the model is, so only one half is
+    computed), a running mean over ``round(exposure / resolution)`` of them and linear interpolation back to ``dt``.
+    Built once per fit, since the offsets do not change between the solver's calls. On the grid the blocked light is
+    read from ``_blocked_table``, linear in z: within 1e-7 of the integral itself for a radius ratio up to 0.1 and
+    within 1e-5 of it at any (``test_transit_model``), which keeps a fit's thousand solver calls at about a
+    millisecond each. An exposure at or below the resolution keeps the plain flux of ``quadratic_ld_flux``."""
+
+    def __init__(self, dt: np.ndarray, period: float, exposure_days: float):
+        self.dt, self.period = dt, period
+        step = EXPOSURE_RESOLUTION_MIN / 1440.0
+        self.n_avg = round(exposure_days / step) if exposure_days > step else 1
+        self.half = None
+        if self.n_avg > 1 and dt.size:
+            m = math.ceil((float(np.max(np.abs(dt))) + exposure_days) / step)
+            self.half = step * np.arange(m + 1)
+            # the running mean of samples i to i + n_avg - 1 sits at the centre of the window; the centres are evenly
+            # spaced, so the linear interpolation at each offset is fixed once: an index and a weight
+            first = -m * step + 0.5 * (self.n_avg - 1) * step
+            n_centres = 2 * m + 1 - self.n_avg + 1
+            pos = np.clip((dt - first) / step, 0.0, n_centres - 1.0)
+            self.index = np.minimum(np.floor(pos).astype(np.int64), n_centres - 2)
+            self.weight = pos - self.index
+
+    def flux(self, k: float, b: float, a_over_r: float, u1: float, u2: float) -> np.ndarray:
+        if self.half is None:
+            return quadratic_ld_flux(self.dt, self.period, k, b, a_over_r, u1, u2)
+        dip = np.zeros(self.half.size)
+        if k > 0 and a_over_r > 0:
+            z = _separation(self.half, self.period, b, a_over_r)
+            hit = z < 1.0 + k
+            if hit.any():
+                dip[hit] = np.interp(z[hit], *_blocked_table(k, u1, u2))
+        csum = np.concatenate([[0.0], np.cumsum(np.concatenate([dip[:0:-1], dip]))])
+        avg = (csum[self.n_avg:] - csum[:-self.n_avg]) / self.n_avg
+        return 1.0 - (avg[self.index] * (1.0 - self.weight) + avg[self.index + 1] * self.weight)
+
+
+def exposure_flux(dt_days, period, k, b, a_over_r, u1, u2, exposure_days: float) -> np.ndarray:
+    """``quadratic_ld_flux`` averaged over an exposure of ``exposure_days`` centred on each offset (Kipping 2010):
+    the model on an ``EXPOSURE_RESOLUTION_MIN`` grid spanning the offsets plus one exposure, a running mean over
+    ``round(exposure / resolution)`` samples, interpolated to ``dt_days``. Only the grid samples where the disc touches
+    the star are integrated (through ``_blocked_table``); the rest are 1. An exposure at or below the resolution gives
+    the plain flux."""
+    dt = np.atleast_1d(np.asarray(dt_days, dtype=float))
+    return _ExposureGrid(dt, float(period), float(exposure_days)).flux(k, b, a_over_r, u1, u2)
+
+
+def stellar_density(a_over_r: float, period_days: float) -> float:
+    """The stellar density that a circular orbit of ``a_over_r`` at ``period_days`` implies, ``3 pi (a/R*)^3 / (G
+    P^2)`` in g/cm3 (the planet's mass neglected)."""
+    p = float(period_days) * 86400.0
+    return float(3.0 * np.pi * float(a_over_r) ** 3 / (G_CGS * p * p))
+
+
+def _jf(x) -> float | None:
+    """A Python float for JSON, None for NaN, inf and missing values."""
+    if x is None:
+        return None
+    x = float(x)
+    return x if math.isfinite(x) else None
+
+
+@dataclass(frozen=True)
+class ShapeFit:
+    ok: bool
+    reason: str | None
+    variant: str                       # "free" | "prior"
+    k: float
+    b: float
+    a_over_r: float
+    t14_days: float
+    depth_ppm: float                   # 1 - the limb-darkened model at mid-transit, before the exposure average
+    chi2_data: float
+    chi2_prior: float                  # the prior term; 0 for "free"
+    chi2_total: float                  # chi2_data + chi2_prior
+    n_points: int
+    u1: float
+    u2: float
+    exposure_min: float
+    density_gcc: float                 # stellar_density(a_over_r, period) of this solution
+    prior_gcc: tuple[float, float] | None   # (mean, sigma) of the prior; None for "free"
+
+    def as_dict(self) -> dict:
+        """Strict JSON: NaN and infinite values as None, the prior as a list."""
+        return {"ok": bool(self.ok), "reason": self.reason, "variant": self.variant, "k": _jf(self.k),
+                "b": _jf(self.b), "a_over_r": _jf(self.a_over_r), "t14_days": _jf(self.t14_days),
+                "depth_ppm": _jf(self.depth_ppm), "chi2_data": _jf(self.chi2_data),
+                "chi2_prior": _jf(self.chi2_prior), "chi2_total": _jf(self.chi2_total),
+                "n_points": int(self.n_points), "u1": _jf(self.u1), "u2": _jf(self.u2),
+                "exposure_min": _jf(self.exposure_min), "density_gcc": _jf(self.density_gcc),
+                "prior_gcc": None if self.prior_gcc is None else [_jf(v) for v in self.prior_gcc]}
+
+
+def _shape_failed(variant, reason, n_points, u1, u2, exposure_days, prior) -> ShapeFit:
+    nan = float("nan")
+    return ShapeFit(False, reason, variant, nan, nan, nan, nan, nan, nan, nan, nan, int(n_points), float(u1),
+                    float(u2), float(exposure_days) * 1440.0, nan, prior)
+
+
+def fit_shape(time, fnorm, period, t0, duration_days, *, u1: float, u2: float, exposure_days: float,
+              density: tuple[float, float] | None = None, start: ShapeFit | None = None) -> ShapeFit:
+    """Least-squares fit of ``exposure_flux`` (times a free baseline level ``c``) to the unbinned fold within
+    ``FIT_WINDOW_DURATIONS`` durations of mid-transit, every point weighted by the window's robust scatter (1.4826
+    times the median absolute deviation). The parameters (k, b, a_over_r, c) stay inside ``K_BOUNDS``, ``B_BOUNDS``,
+    ``A_BOUNDS`` and ``C_BOUNDS``. The solver starts from the nine geometries ``fit_transit`` uses (a central and two
+    grazing ones, each at ``START_DURATION_FACTORS`` times the duration), or from ``start`` alone when it is given and
+    ok (the bootstrap starts each resample at the full-data solution); the converged start with the lowest cost wins.
+
+    With ``density`` (mean and sigma in g/cm3) the residuals gain ``(stellar_density(a_over_r) - mean) / sigma``, a
+    Gaussian prior on the stellar density, and the variant is "prior"; its square is ``chi2_prior``. Returns ``ok``
+    False with NaN values and the reason below ``SHAPE_MIN_POINTS`` points in the window, without a point within half
+    a duration of mid-transit, with a prior whose sigma is not positive, or when no start converged."""
+    variant = "free" if density is None else "prior"
+    prior = None if density is None else (float(density[0]), float(density[1]))
+    time, fnorm = np.asarray(time, dtype=float), np.asarray(fnorm, dtype=float)
+    good = np.isfinite(time) & np.isfinite(fnorm)
+    if not good.any() or not duration_days > 0:
+        return _shape_failed(variant, "no points to fit", 0, u1, u2, exposure_days, prior)
+    dt_all = fold_phase(time[good], period, t0)
+    near = np.abs(dt_all) < FIT_WINDOW_DURATIONS * duration_days
+    dt, y = dt_all[near], fnorm[good][near]
+    n = int(dt.size)
+    if n < SHAPE_MIN_POINTS:
+        return _shape_failed(variant, f"{n} points within {FIT_WINDOW_DURATIONS:g} durations of mid-transit "
+                             f"(fewer than {SHAPE_MIN_POINTS})", n, u1, u2, exposure_days, prior)
+    if prior is not None and not (math.isfinite(prior[0]) and math.isfinite(prior[1]) and prior[1] > 0):
+        return _shape_failed(variant, "the density prior has no positive error", n, u1, u2, exposure_days, prior)
+    inside, outside = np.abs(dt) < 0.5 * duration_days, np.abs(dt) >= duration_days
+    if not inside.any():
+        return _shape_failed(variant, "no point within half a duration of mid-transit", n, u1, u2, exposure_days,
+                             prior)
+    sigma = SHAPE_MAD_TO_SIGMA * float(np.median(np.abs(y - np.median(y)))) or 1e-12
+    grid = _ExposureGrid(dt, float(period), float(exposure_days))
+
+    def residuals(p):
+        k, b, a, c = p
+        r = (y - c * grid.flux(k, b, a, u1, u2)) / sigma
+        if prior is None:
+            return r
+        return np.append(r, (stellar_density(a, period) - prior[0]) / prior[1])
+
+    base = float(np.median(y[outside])) if outside.any() else 1.0
+    c0 = float(np.clip(base, *C_BOUNDS))
+    lower = [K_BOUNDS[0], B_BOUNDS[0], A_BOUNDS[0], C_BOUNDS[0]]
+    upper = [K_BOUNDS[1], B_BOUNDS[1], A_BOUNDS[1], C_BOUNDS[1]]
+    starts = []
+    if start is not None and start.ok and all(math.isfinite(v) for v in (start.k, start.b, start.a_over_r)):
+        p0 = [float(np.clip(v, lo, hi))
+              for v, lo, hi in zip((start.k, start.b, start.a_over_r, c0), lower, upper, strict=True)]
+        starts.append((p0, [0.05, 0.3, max(p0[2], 2.0), 0.01]))
+    else:
+        box_depth = 1.0 - float(np.mean(y[inside])) / base
+        k_box = float(np.clip(np.sqrt(max(box_depth, 1e-6)), *K_BOUNDS))
+        for factor in START_DURATION_FACTORS:
+            for k0, b0 in ((k_box, 0.3), (max(k_box, 0.3), 0.9), (max(2 * k_box, 0.5), 1.2)):
+                a0 = period * np.sqrt(max((1.0 + k0) ** 2 - b0 * b0, 0.05)) / (np.pi * factor * duration_days)
+                a0 = float(np.clip(a0, *A_BOUNDS))
+                starts.append(([k0, b0, a0, c0], [0.05, 0.3, max(a0, 2.0), 0.01]))
+    res = _best_of(residuals, starts, lower, upper)
+    if res is None or not res.success:
+        return _shape_failed(variant, "no start converged", n, u1, u2, exposure_days, prior)
+    k, b, a, _c = (float(v) for v in res.x)
+    chi2_data = float(np.sum(res.fun[:n] ** 2))
+    chi2_prior = float(res.fun[n] ** 2) if prior is not None else 0.0
+    depth = float((1.0 - quadratic_ld_flux(np.array([0.0]), period, k, b, a, u1, u2)[0]) * 1e6)
+    return ShapeFit(True, None, variant, k, b, a, _t14(period, k, b, a), depth, chi2_data, chi2_prior,
+                    chi2_data + chi2_prior, n, float(u1), float(u2), float(exposure_days) * 1440.0,
+                    stellar_density(a, period), prior)
+
+
+def compare_fits(free: ShapeFit, prior: ShapeFit | None) -> dict:
+    """Which fit the dossier quotes (spec 11.3). ``delta_chi2`` is the prior fit's chi-square, its prior term
+    included, less the free fit's: the data term alone moves by under 1 when a wrong prior meets a shape that cannot
+    resist it, so the prior term carries the tension. ``density_tension_sigma`` is the free solution's density less
+    the prior mean, in the prior's sigma. Without a prior fit, or with one that is not ok, the free fit is quoted with
+    ``constrained`` None, a/R* "fitted" and the reason ``NO_DENSITY`` (or the prior fit's own). A free fit that is not
+    ok, beside a prior fit that is, gives the prior fit with ``constrained`` None and the free fit's reason. Within
+    ``CONSTRAINED_DELTA_CHI2`` the shape does not constrain b and a/R*: the prior fit is quoted, a/R* "from the
+    stellar parameters", the reason ``UNCONSTRAINED``; beyond it the free fit is quoted and a/R* "fitted"."""
+    def out(constrained, quoted, delta, tension, label, reason):
+        return {"constrained": constrained, "quoted": quoted, "delta_chi2": _jf(delta),
+                "density_tension_sigma": _jf(tension), "a_over_r_label": label, "reason": reason}
+    if prior is None or not prior.ok:
+        return out(None, "free", None, None, A_LABEL_FITTED, NO_DENSITY if prior is None else prior.reason)
+    if not free.ok:
+        return out(None, "prior", None, None, A_LABEL_STELLAR, free.reason)
+    mean, sigma = prior.prior_gcc
+    delta = prior.chi2_total - free.chi2_total
+    tension = (free.density_gcc - mean) / sigma
+    if delta <= CONSTRAINED_DELTA_CHI2:
+        return out(False, "prior", delta, tension, A_LABEL_STELLAR, UNCONSTRAINED)
+    return out(True, "free", delta, tension, A_LABEL_FITTED, None)

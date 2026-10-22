@@ -91,10 +91,11 @@ def render_exofop_planet(data: dict, date: str, tic: str | None, tag: str) -> st
     """``exofop/params_planet_<date>_001.txt``, ExoFOP's planet template (``EXOFOP_PLANET_COLUMNS``): the target
     ``TIC<tic>.01`` (``TIC<TIC-TO-FILL>.01`` without a TIC id), flag ``newctoi`` with its discovery and candidate
     name, disposition ``PC``, the ephemeris with its errors (epoch in full BJD_TDB), Rp/R*, a/R* and b only when the
-    bootstrap gives them errors, the planet's radius, temperature, insolation and orbit with theirs, ``prop_period``
-    0 and the paper URL and notes as placeholders, or, when the dossier holds a prior claim on the signal, the claim's
-    DOI in both (``prior_fields``). Every uncertainty is the larger half-width; empty fields are what SkySift does not
-    have."""
+    bootstrap gives them errors (a/R* the quoted one: from the stellar parameters, with their errors, when the
+    density-prior fit is quoted, spec 11.3), the planet's radius, temperature, insolation and orbit with theirs,
+    ``prop_period`` 0 and the paper URL and notes as placeholders, or, when the dossier holds a prior claim on the
+    signal, the claim's DOI in both (``prior_fields``). Every uncertainty is the larger half-width; empty fields are
+    what SkySift does not have."""
     eph, planet, shape = data.get("ephemeris") or {}, data.get("planet") or {}, data.get("shape") or {}
     e = _errors(eph)
     period = _plain(eph.get("period_days"), e["period"], e["period"], 5)
@@ -107,10 +108,14 @@ def render_exofop_planet(data: dict, date: str, tic: str | None, tag: str) -> st
               "depth": depth[0], "depth_unc": depth[1], "duration": duration[0], "duration_unc": duration[1],
               "tag": tag, "prop_period": 0, "paper": "<PAPER-URL-TO-FILL>", "notes": "<NOTES-TO-FILL>",
               **prior_fields(data)}
+    stellar_a = (shape.get("comparison") or {}).get("quoted") == "prior"
     if shape.get("ok") is True:
         for name, unc, key, nd in (("imp", "imp_unc", "b", 2), ("r_planet", "r_planet_err", "k", 4),
                                    ("ar_star", "ar_star_err", "a_over_r", 1)):
-            _pair(values, name, unc, shape.get(key), nd, errors_only=True)
+            if not (key == "a_over_r" and stellar_a):
+                _pair(values, name, unc, shape.get(key), nd, errors_only=True)
+    if stellar_a:      # the quoted a/R* (spec 11.3): the stellar one, with its errors, when the prior fit is quoted
+        _pair(values, "ar_star", "ar_star_err", planet.get("a_over_r"), 1, errors_only=True)
     for name, unc, key, nd in (("radius", "radius_unc", "rp_rearth", 2), ("temp", "temp_unc", "teq_k", 0),
                                ("insol", "insol_unc", "insolation_earth", 2), ("sma", "sma_unc", "a_au", 4)):
         _pair(values, name, unc, planet.get(key), nd)

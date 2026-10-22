@@ -12,7 +12,10 @@ the star and its neighbours (``stars``), and computes the two probabilities (``c
 The TRICERATOPS cross-check stored on the row (``crosscheck``) is carried into ``cross_check`` with ``current``
 recomputed; it is never computed here. Since version 4 the ``tess`` block states whether TESS should have seen the
 transit (``skysift.tess.statement``, referee pack spec 10), from the inputs ``tools/tess_inputs.py`` stored in
-``targets.meta["tess"]``, so the dossier stays offline.
+``targets.meta["tess"]``, so the dossier stays offline. Since version 5 (spec 11.3) the transits are timed only above
+the single-event threshold, every fold (depth, events, parity, the shape and its bootstrap, rung 3's ``stability``)
+uses the linear ephemeris when the timing is ok, and the shape is a quadratic limb-darkened, exposure-integrated fit,
+free and with the star's density as a prior, whose radius ratio the planet radius takes.
 ``export_html`` renders the JSON as one standalone file with its own level toggle and no external URL.
 
 Every sentence here is built from stored numbers by a rule (spec 5.7); the hand-written narrative of the KIC 6146676
@@ -50,11 +53,11 @@ from skysift.detectors.base import get_detector
 from skysift.detectors.periodogram import PeriodogramSummary
 from skysift.fpp import FPP_MODEL_VERSION, Fpp, FppInputs, Neighbour, compute
 from skysift.lc.loader import TARGET_FIELDS, LightCurveLoader
-from skysift.lc.ops import event_depths, event_quality, fold_phase, season_of
-from skysift.lc.transit_model import uniform_disc_flux
-from skysift.models import LightCurve, Target
+from skysift.lc.ops import apply_mask, event_depths, event_quality, fold_phase, season_of
+from skysift.lc.transit_model import compare_fits, exposure_flux, fit_shape, limb_darkening
+from skysift.models import LightCurve, Signal, Target
 from skysift.net import ServiceUnavailable
-from skysift.pipeline import search_version
+from skysift.pipeline import revet_flux, search_version
 from skysift.priors import NO_PIXEL_CONFUSION_ARCSEC, NO_PIXEL_FALLOFF_ARCSEC, PIXEL_ARCSEC
 from skysift.store.db import (
     PERIODOGRAM_URL,
@@ -73,12 +76,16 @@ from skysift.store.db import (
 from skysift.ui import explain
 from skysift.ui.planet_svg import star_word
 from skysift.ui.plots import whitened_fnorm
+from skysift.vetting.base import DataBundle
 from skysift.vetting.rung1_detection import SYSTEMATIC_PERIODS
+from skysift.vetting.rung3_stability import Rung3Stability
 from skysift.vetting.rung5_pixels import PIXEL_RULE_VERSION
 
 log = logging.getLogger(__name__)
 
-DOSSIER_VERSION = "4"      # 3: ephemeris, timing, shape, parity and secondary blocks; 4: the TESS block (22 Oct 2026)
+# 3: ephemeris, timing, shape, parity and secondary blocks; 4: the TESS block (22 Oct 2026); 5: limb-darkened free and
+# prior fits, folds on the linear ephemeris, SES-cut timing (spec 11.3)
+DOSSIER_VERSION = "5"
 N_BOOT_DEFAULT = eph.N_BOOT     # the shape bootstrap's resamples; ``generate`` reads it at call time
 # best first; an undetermined signal (the pixel stage could not decide) outranks every closed one, so a target's
 # tile and its dossier name the same signal when a superseded parent or a rejected sibling has the higher SDE
@@ -376,12 +383,18 @@ def _spectrum(periodogram: PeriodogramSummary | None) -> list[list]:
 
 
 def plot_arrays(lc: LightCurve, fnorm: np.ndarray, signal: dict, tests: list[dict], *,
-                periodogram: PeriodogramSummary | None = None) -> dict:
+                periodogram: PeriodogramSummary | None = None, fold: dict | None = None,
+                shape: dict | None = None) -> dict:
     """The arrays sections 01 and 02 draw, in ppm of the whitened flux and hours from mid-transit, thinned as the
     hand-built page was: the full curve in ``SERIES_BIN_DAYS`` bins, the fold with its bins and model, odd and even,
     the phase 0.5 window, every event with its depth and quality and its points within ``GALLERY_HALF_HOURS``, the
-    periodogram envelope (up to ``SPECTRUM_BINS``) and a line per quarter."""
+    periodogram envelope (up to ``SPECTRUM_BINS``) and a line per quarter. Everything folds on ``fold`` ({"period",
+    "t0"}, ``ephemeris_blocks``: the linear ephemeris when the transits were timed), on the search ephemeris when it
+    is None. The model line is ``exposure_flux`` of ``shape`` ({"k", "b", "a_over_r", "u1", "u2", "exposure_days"},
+    the quoted shape fit), the search box without it."""
     period, t0, dur = float(signal["period"]), float(signal["t0"]), float(signal["duration"])
+    if fold is not None:
+        period, t0 = float(fold["period"]), float(fold["t0"])
     time = np.asarray(lc.time, float)
     fnorm = np.asarray(fnorm, float)
     good = np.isfinite(fnorm) & np.isfinite(time)
@@ -400,11 +413,11 @@ def plot_arrays(lc: LightCurve, fnorm: np.ndarray, signal: dict, tests: list[dic
     m = np.abs(ph) < win
     stride = max(1, math.ceil(int(m.sum()) / FOLD_POINTS))
     fold_points = [[_r(a * 24, 3), _r(b, 0)] for a, b in zip(ph[m][::stride], y[m][::stride], strict=True)]
-    shape = _metrics(tests, "rung2_shape")
-    k, b, a_r = (_num(shape, x) for x in ("fit_k", "fit_b", "fit_a_over_r"))
-    if shape.get("fit_ok") is True and None not in (k, b, a_r) and a_r > 0:
+    k, b, a_r = (_num(shape or {}, x) for x in ("k", "b", "a_over_r"))
+    if shape is not None and None not in (k, b, a_r) and a_r > 0:
         model_t = np.linspace(-win, win, MODEL_POINTS)
-        flux = uniform_disc_flux(model_t, period, k, b, a_r)
+        flux = exposure_flux(model_t, period, k, b, a_r, float(shape["u1"]), float(shape["u2"]),
+                             float(shape["exposure_days"]))
         model = [[_r(a * 24, 3), _r((f - 1.0) * 1e6, 1)] for a, f in zip(model_t, flux, strict=True)]
         model_kind = "fit"
     else:
@@ -455,8 +468,9 @@ def plot_arrays(lc: LightCurve, fnorm: np.ndarray, signal: dict, tests: list[dic
 # ---------------------------------------------------------------------------------------------------- errors
 
 def _fit_point(shape: dict) -> dict | None:
-    """Rung 2's uniform-disc fit as the bootstrap's point, or None unless ``fit_ok`` is true and all five values
-    (k, b, a/R*, T14 and the model depth) are finite."""
+    """Rung 2's uniform-disc fit, or None unless ``fit_ok`` is true and all five values (k, b, a/R*, T14 and the model
+    depth) are finite. Since version 5 it decides only whether a shape is fitted at all (``ephemeris_blocks``); the
+    bootstrap's point is the quoted limb-darkened fit."""
     if shape.get("fit_ok") is not True:
         return None
     point = {"k": _num(shape, "fit_k"), "b": _num(shape, "fit_b"), "a_over_r": _num(shape, "fit_a_over_r"),
@@ -472,7 +486,9 @@ def _minus_plus(block: dict | None) -> dict | None:
 
 def _timing(time, fnorm, signal: dict, shape: dict) -> dict:
     """The ``timing`` block: per-transit times against the rung 2 template (the search box when the fit is not ok,
-    or when its geometry does not dip, which ``template_from`` refuses), the linear ephemeris, and the template used."""
+    or when its geometry does not dip, which ``template_from`` refuses), the transits whose single-event S/N on the
+    search ephemeris (``event_quality``) is below ``eph.SES_MIN`` set aside (``eph.drop_low_ses``, spec 11.3), the
+    linear ephemeris of the rest, and the template used."""
     period, t0, dur = float(signal["period"]), float(signal["t0"]), float(signal["duration"])
     depth = float(signal["depth_ppm"])
     note = None
@@ -482,14 +498,39 @@ def _timing(time, fnorm, signal: dict, shape: dict) -> dict:
         template = eph.Template("box", depth * 1e-6, dur)
         note = f"the rung 2 fit does not dip ({e}), so the transits are timed with the search box"
         log.warning("signal %s: %s", signal.get("id"), note)
-    lin = eph.linear_fit(eph.transit_times(time, fnorm, period, t0, dur, template), period, t0)
+    quality = event_quality(time, fnorm, period, t0, dur)
+    ses = {int(e): float(s) for e, s in zip(quality.epochs, quality.ses, strict=True)}
+    times = eph.drop_low_ses(eph.transit_times(time, fnorm, period, t0, dur, template), ses)
+    lin = eph.linear_fit(times, period, t0)
     return {**lin.as_dict(), "template": template.kind, "template_reason": note}
 
 
-def _ephemeris_extra(signal: dict, shape_metrics: dict, timing: dict, shape: dict, fitted: bool) -> dict:
+def shape_model(star: stars.StarParams | None, lc: LightCurve) -> dict:
+    """What the shape fit needs beyond the fold: the quadratic limb darkening at the star's Teff (``limb_darkening``,
+    its 5,750 K row without one), the exposure (the median time step of ``lc.time``) and the Gaussian density prior
+    (the star's density median and the mean of its two half-widths), None when the star has no density."""
+    teff = star.teff.median if star is not None and star.teff is not None else None
+    ld = limb_darkening(teff or None)
+    t = np.sort(np.asarray(lc.time, float)[np.isfinite(np.asarray(lc.time, float))])
+    steps = np.diff(t)
+    exposure = float(np.median(steps)) if steps.size else eph.CADENCE_MIN / 1440.0
+    dens = star.density_gcc if star is not None else None
+    density = None
+    if dens is not None and None not in (dens.median, dens.minus, dens.plus):
+        mean, sigma = float(dens.median), 0.5 * (float(dens.minus) + float(dens.plus))
+        if math.isfinite(mean) and math.isfinite(sigma) and mean > 0 and sigma > 0:
+            density = (mean, sigma)
+    return {"limb_darkening": ld, "u1": ld["u1"], "u2": ld["u2"], "exposure_days": exposure, "density": density}
+
+
+def _ephemeris_extra(signal: dict, depth: dict, timing: dict, shape: dict, fitted_t14_h: float | None,
+                     fold: dict) -> dict:
     """The ephemeris keys of version 3, each value beside its own error: the period and T0 of the linear fit when it
-    is ok (else the search values with no error), the fitted T14 when the fit was bootstrapped (else the bootstrap box
-    width when the shape block is ok, else the search box), rung 2's depth with its error."""
+    is ok (else the search values with no error), the fitted T14 when the fit was bootstrapped (the resample median,
+    or without resamples the full-data T14 of the prior fit, of the free one when the prior fit is not ok; else the
+    bootstrap box width when the shape block is ok, else the search box), and since version 5 the depth on the fold
+    (``eph.fold_depth``) and the ephemeris that folded (``fold_ephemeris``)."""
+    fitted = fitted_t14_h is not None
     ok = timing.get("ok") is True
     out = {"period_days": float(signal["period"]), "t0_bkjd": float(signal["t0"]),
            "t0_bjd": float(signal["t0"]) + BKJD_OFFSET, "period_source": "search"}
@@ -501,42 +542,116 @@ def _ephemeris_extra(signal: dict, shape_metrics: dict, timing: dict, shape: dic
                 "t_ref_bkjd": pick("t_ref"), "t_ref_bjd": pick("t_ref_bjd"), "t_ref_err_days": pick("t_ref_err"),
                 "epoch_ref": pick("epoch_ref")})
     if fitted:
-        duration = (shape.get("t14_h") or {}).get("median")       # rung 2's T14 either way; None when not ok
-        out.update(duration_h=_num(shape_metrics, "fit_t14_h") if duration is None else duration,
+        duration = (shape.get("t14_h") or {}).get("median")       # the full-data T14 without resamples
+        out.update(duration_h=fitted_t14_h if duration is None else duration,
                    duration_h_err=_minus_plus(shape.get("t14_h")), duration_source="fitted T14")
     elif shape.get("ok") and (shape.get("box_duration_h") or {}).get("median") is not None:
         out.update(duration_h=shape["box_duration_h"]["median"], duration_h_err=_minus_plus(shape["box_duration_h"]),
                    duration_source="bootstrap box width")
     else:
         out.update(duration_h=float(signal["duration"]) * 24, duration_h_err=None, duration_source="search box")
-    depth, err = _num(shape_metrics, "depth_ppm"), _num(shape_metrics, "depth_err_ppm")
-    if depth is not None:
-        source = ("box depth of the stacked fold" if shape_metrics.get("stacked") is True
-                  else "per-event weighted mean of the box depth")
-        out.update(depth_ppm=depth, depth_ppm_err=err, depth_source=source)
+    if depth.get("depth_ppm") is not None:
+        out.update(depth_ppm=depth["depth_ppm"], depth_ppm_err=depth["err_ppm"], depth_source=depth["source"])
     else:
         out.update(depth_ppm=float(signal["depth_ppm"]), depth_ppm_err=None, depth_source="search box")
-    out.update(ephemeris_method=timing.get("method"), shape_method=shape.get("method"))
+    out.update(ephemeris_method=timing.get("method"), shape_method=shape.get("method"),
+               fold_ephemeris=fold["source"])
     return out
 
 
-def ephemeris_blocks(lc: LightCurve, fnorm, signal: dict, tests: list[dict], *, n_boot: int = N_BOOT_DEFAULT) -> dict:
-    """The version-3 error blocks (referee pack spec 3): ``timing`` (``_timing``), ``shape`` (the bootstrap over the
-    transits the ephemeris used, of the rung 2 fit when ``_fit_point`` gives one, else of the box), ``parity`` (odd and
-    even from the per-event depths), ``secondary`` (rung 2's phase 0.5 limit, None without it) and
-    ``ephemeris_extra``, the ephemeris keys they give (``_ephemeris_extra``)."""
-    period, t0, dur = float(signal["period"]), float(signal["t0"]), float(signal["duration"])
+FOLD_SEARCH = "search"          # fold["source"] when the transits could not be timed
+
+
+def _fold(signal: dict, timing: dict) -> dict:
+    """The ephemeris every fold uses (spec 11.3): the linear fit of the per-transit times when the timing block is
+    ok, the search period and epoch otherwise (source ``FOLD_SEARCH``)."""
+    if timing.get("ok") is True:
+        return {"period": float(timing["period"]), "t0": float(timing["t0"]),
+                "source": f"linear fit of {timing['n_used']} transit times"}
+    return {"period": float(signal["period"]), "t0": float(signal["t0"]), "source": FOLD_SEARCH}
+
+
+def _point_of(fit) -> dict:
+    """A shape fit as the bootstrap's point: {"k", "b", "a_over_r", "t14_h", "fit_depth_ppm"}."""
+    return {"k": fit.k, "b": fit.b, "a_over_r": fit.a_over_r, "t14_h": fit.t14_days * 24.0,
+            "fit_depth_ppm": fit.depth_ppm}
+
+
+def _stability(lc: LightCurve, fnorm, signal: dict, fold: dict, *, fnorm_alt, thresholds, target) -> dict | None:
+    """Rung 3 again on the fold (spec 11.3: the depth stability on the linear-fit ephemeris when there is one),
+    {"status", "reason", "ephemeris", "metrics"}; None without thresholds."""
+    if thresholds is None:
+        return None
+    fields = {k: signal[k] for k in Signal.model_fields if signal.get(k) is not None}
+    sig = Signal(**{**fields, "period": fold["period"], "t0": fold["t0"]})
+    res = Rung3Stability().run(sig, DataBundle(lc, fnorm, target, thresholds, fnorm_alt=fnorm_alt))
+    return {"status": str(res.status.value), "reason": res.reason, "ephemeris": fold["source"],
+            "metrics": jsonutil.sanitize(res.metrics)}
+
+
+def ephemeris_blocks(lc: LightCurve, fnorm, signal: dict, tests: list[dict], *, n_boot: int = N_BOOT_DEFAULT,
+                     star: stars.StarParams | None = None, fnorm_alt=None, thresholds=None, target=None) -> dict:
+    """The error blocks (referee pack spec 3 and, since version 5, 11.3), in this order: ``timing`` (``_timing``, the
+    SES cut included); ``fold``, the ephemeris every fold below uses (``_fold``: the linear fit when the timing is ok,
+    the search otherwise); on that fold the depth (``eph.fold_depth``), ``parity`` (the per-event odd and even depths
+    with the stacked fold of each beside them) and ``secondary`` (rung 2's phase 0.5 limit, None without it); the
+    shape fits, free and, when the star has a density (``shape_model``), with the density prior, compared by
+    ``compare_fits``; ``shape``, the bootstrap over the transits the ephemeris used of the quoted fit (of the box
+    without a rung 2 fit: ``_fit_point`` still decides whether a shape is fitted), with the two fits, the comparison,
+    the limb darkening and the exposure; ``stability``, rung 3 on the fold (``_stability``); and ``ephemeris_extra``,
+    the ephemeris keys they give (``_ephemeris_extra``)."""
+    dur = float(signal["duration"])
     time, fnorm = np.asarray(lc.time, float), np.asarray(fnorm, float)
+    quarter = np.asarray(lc.quarter)
     metrics = _metrics(tests, "rung2_shape")
     timing = _timing(time, fnorm, signal, metrics)
+    fold = _fold(signal, timing)
+    period, t0 = fold["period"], fold["t0"]
     used = [t["epoch"] for t in timing["times"] if t["used"]] if timing["ok"] else None
-    # a geometry template_from refused (it does not dip) is not bootstrapped either: timing and shape use one model
-    point = _fit_point(metrics) if timing["template"] == "fit" else None
-    shape = eph.bootstrap_shape(time, fnorm, period, t0, dur, point, n_boot=n_boot, used_epochs=used).as_dict()
-    parity = eph.parity_depths(event_depths(time, fnorm, np.asarray(lc.quarter), period, t0, dur)).as_dict()
+    depth = eph.fold_depth(time, fnorm, quarter, period, t0, dur)
+    events = event_depths(time, fnorm, quarter, period, t0, dur)
+    parity = eph.parity_depths(events, time, fnorm, period, t0, dur).as_dict()
+    model = shape_model(star, lc)
+    # a geometry template_from refused (it does not dip) is not fitted either: timing and shape use one model
+    rung2 = _fit_point(metrics) if timing["template"] == "fit" else None
+    fits, comparison, point, boot_model, quoted = {"free": None, "prior": None}, None, None, None, None
+    free = prior = None
+    if rung2 is not None:
+        kw = {"u1": model["u1"], "u2": model["u2"], "exposure_days": model["exposure_days"]}
+        free = fit_shape(time, fnorm, period, t0, dur, **kw)
+        prior = fit_shape(time, fnorm, period, t0, dur, **kw, density=model["density"]) if model["density"] else None
+        comparison = compare_fits(free, prior)
+        fits = {"free": free.as_dict(), "prior": None if prior is None else prior.as_dict()}
+        quoted = prior if comparison["quoted"] == "prior" else free
+        if quoted.ok:
+            point = _point_of(quoted)
+            boot_model = {"u1": model["u1"], "u2": model["u2"], "exposure_days": model["exposure_days"],
+                          "density": model["density"], "free": free, "prior": prior, "quoted": comparison["quoted"]}
+        else:
+            log.warning("signal %s: the shape fit failed (%s); the shape keeps the box", signal.get("id"),
+                        quoted.reason)
+    shape = eph.bootstrap_shape(time, fnorm, period, t0, dur, point, n_boot=n_boot, used_epochs=used,
+                                model=boot_model).as_dict()
+    shape.update(fits=fits, comparison=comparison, limb_darkening=model["limb_darkening"],
+                 exposure_min=model["exposure_days"] * 1440.0)
     secondary = eph.secondary_limit(metrics, degenerate=shape.get("degenerate") is True)
-    return {"ephemeris_extra": _ephemeris_extra(signal, metrics, timing, shape, point is not None), "timing": timing,
-            "shape": shape, "parity": parity, "secondary": None if secondary is None else secondary.as_dict()}
+    # T14, like k, is the prior fit's when it is ok (as the bootstrap takes it), so the duration and shape.csv agree
+    size = prior if prior is not None and prior.ok else free
+    fitted_t14 = size.t14_days * 24.0 if point is not None and size.ok else None
+    return {"ephemeris_extra": _ephemeris_extra(signal, depth, timing, shape, fitted_t14, fold), "timing": timing,
+            "shape": shape, "parity": parity, "secondary": None if secondary is None else secondary.as_dict(),
+            "stability": _stability(lc, fnorm, signal, fold, fnorm_alt=fnorm_alt, thresholds=thresholds,
+                                    target=target),
+            "fold": fold}
+
+
+def quoted_fit(shape: dict | None) -> dict | None:
+    """The stored shape fit the dossier quotes (``shape.comparison.quoted`` of ``shape.fits``) when it is ok, else
+    None."""
+    shape = shape if isinstance(shape, dict) else {}
+    fits, cmp = shape.get("fits") or {}, shape.get("comparison") or {}
+    fit = fits.get(cmp.get("quoted") or "free")
+    return fit if isinstance(fit, dict) and fit.get("ok") is True else None
 
 
 def with_k_error(planet: dict, shape: dict | None) -> dict:
@@ -839,13 +954,14 @@ def _lookup(target: Target, signal: dict, tests: list[dict], *, fetch, store: St
 
 
 def fpp_inputs(signal: dict, tests: list[dict], star: stars.StarParams, planet: stars.PlanetParams,
-               neighbours: list[Neighbour] | None, gmag: float | None) -> FppInputs:
+               neighbours: list[Neighbour] | None, gmag: float | None, depth_ppm: float | None = None) -> FppInputs:
     """The FPP inputs from the signal, rung 2, the star and, when a rung 5 row has at least ``MIN_VOTING_SEASONS``
     voting seasons (the rung's own pass rule; one season decides nothing), the centroid (``centroid_estimate``): each Gaia neighbour's ``centroid_sep_arcsec`` is then its separation less the centroid's
     offset from the target (the nearest the centroid can sit to it, since the cone gives no position angle), floored
     at zero, and the centroid error with the two numbers it was chosen from goes into the inputs record. The
     neighbour list counts as known only when the cone answered (``neighbours`` is not None) and the target has a G;
-    otherwise the FPP is not computed."""
+    otherwise the FPP is not computed. ``depth_ppm`` (the dossier's depth on its fold, ``ephemeris_extra``) is the
+    depth when given and positive; rung 2's, else the search depth (``_depth_fraction``), otherwise."""
     shape = _metrics(tests, "rung2_shape")
     fit_ok = shape.get("fit_ok") is True
     odd, even, parity = _num(shape, "odd_ppm"), _num(shape, "even_ppm"), _num(shape, "parity_sigma")
@@ -861,7 +977,8 @@ def fpp_inputs(signal: dict, tests: list[dict], star: stars.StarParams, planet: 
     if gmag is None:
         neighbours = []         # no target G: no neighbour can be judged bright enough
     return FppInputs(
-        period=float(signal["period"]), depth=_depth_fraction(signal, shape),
+        period=float(signal["period"]),
+        depth=depth_ppm / 1e6 if depth_ppm is not None and depth_ppm > 0 else _depth_fraction(signal, shape),
         gmag=float(gmag) if gmag is not None else float("nan"),
         teff=star.teff.median if star.teff else None, radius=star.radius.median if star.radius else None,
         mass=star.mass.median if star.mass else None,
@@ -917,8 +1034,9 @@ def close_call_text(seasons: list[dict]) -> str:
 
 
 def _error_caveats(data: dict) -> list[dict]:
-    """The caveats of the version-3 error blocks, in order: no ephemeris error, no shape error, and a k point value
-    further from the bootstrap median than the larger half-width. A dossier without the blocks gets none."""
+    """The caveats of the version-3 error blocks, in order: no ephemeris error, no shape error, and a k full-data
+    value (``point``) further from the quoted resample median than the larger half-width. A dossier without the blocks
+    gets none."""
     timing, shape = data.get("timing"), data.get("shape")
     out = []
     if isinstance(timing, dict) and timing.get("ok") is False:
@@ -933,11 +1051,11 @@ def _error_caveats(data: dict) -> list[dict]:
                     "text": f"The radius ratio, impact parameter, a/R* and duration have no bootstrap error "
                             f"({shape.get('reason') or 'no reason stored'})."})
     k = (shape or {}).get("k") if isinstance(shape, dict) and shape.get("ok") else None
-    vals = [(k or {}).get(x) for x in ("median", "boot_median", "minus", "plus")]
+    vals = [(k or {}).get(x) for x in ("median", "point", "minus", "plus")]
     if k and None not in vals and abs(vals[0] - vals[1]) > max(vals[2], vals[3]):
         out.append({"key": "shape_offset", "title": "The shape fit sits off its bootstrap",
-                    "text": "The full-curve radius ratio differs from the bootstrap median by more than its 1-sigma "
-                            "spread; quote the bootstrap median beside it."})
+                    "text": "The full-curve radius ratio differs from the bootstrap median, the quoted value, by more "
+                            "than its 1-sigma spread; quote the full-data value beside it."})
     return out
 
 
@@ -1378,6 +1496,41 @@ def hand_built_localisation(target_id: str, rung5_metrics: dict, root: Path | No
             "source": f"docs/candidates/{target_id}/localisation/results.json"}
 
 
+def _alt_flux(lc: LightCurve, thresholds, signal: dict):
+    """The secondary-aperture flux the signal was vetted on (``pipeline.revet_flux``), with a second-pass signal's
+    mask applied as the sweep applied it (``pipeline._vetting_bundle``); None without a secondary flux."""
+    if lc.flux_alt is None or thresholds is None:
+        return None
+    sig = Signal(**{k: signal[k] for k in Signal.model_fields if signal.get(k) is not None})
+    alt = revet_flux(lc, thresholds, sig)[1]
+    return None if alt is None else apply_mask(lc.time, alt, (signal.get("extra") or {}).get("mask"))
+
+
+def _rederive(gaia, star: stars.StarParams, planet: stars.PlanetParams, blocks: dict | None):
+    """The star and planet again with the shape fit's radius ratio (spec 11.3: from the prior fit when it is ok, else
+    the free fit) at the fold's period and depth, when Gaia answered; the same seed, so the star's draws are those of
+    ``_lookup``. Unchanged without a fit."""
+    shape = (blocks or {}).get("shape") or {}
+    fits = shape.get("fits") or {}
+    fit = next((f for f in (fits.get("prior"), fits.get("free")) if isinstance(f, dict) and f.get("ok") is True), None)
+    if gaia is None or fit is None or fit.get("k") is None:
+        return star, planet
+    extra = blocks.get("ephemeris_extra") or {}
+    depth = (_num(extra, "depth_ppm") or 0.0) / 1e6
+    return stars.derive(gaia, float(extra["period_days"]), float(fit["k"]), depth,
+                        np.random.default_rng(STARS_SEED))
+
+
+def _model_line(shape: dict | None) -> dict | None:
+    """The quoted shape fit with its limb darkening and exposure, as ``plot_arrays`` draws its model line; None
+    without one."""
+    fit = quoted_fit(shape)
+    if fit is None or None in (fit.get("k"), fit.get("b"), fit.get("a_over_r")):
+        return None
+    return {"k": fit["k"], "b": fit["b"], "a_over_r": fit["a_over_r"], "u1": fit["u1"], "u2": fit["u2"],
+            "exposure_days": fit["exposure_min"] / 1440.0}
+
+
 def generate(store: Store, blob, settings, target_id: str, *, signal_id: int | None = None, force: bool = False,
              fetch=net.fetch, log: Callable[[str], None] | None = None, n_boot: int | None = None) -> DossierReport:
     """Write ``<data_dir>/dossiers/<target_id>/dossier_data.json`` and its ``dossiers`` row (spec 5.4). A no-op
@@ -1412,17 +1565,23 @@ def generate(store: Store, blob, settings, target_id: str, *, signal_id: int | N
     fnorm = whitened(lc, signal)
     errors: dict[str, dict] = {}
     periodogram = _section("periodogram", errors, lambda: _periodogram(store, blob, target_id))
-    plots = plot_arrays(lc, fnorm, signal, tests, periodogram=periodogram)
     pixels = _section("pixels", errors, lambda: pixels_section(store, blob, sid, _metrics(tests, "rung5_pixels")))
-    say(f"timing the transits and bootstrapping the shape ({n_boot} resamples)")
-    blocks = _section("ephemeris", errors, lambda: ephemeris_blocks(lc, fnorm, signal, tests, n_boot=n_boot))
+    # the star first: the shape fit's limb darkening and density prior come from it (spec 11.3)
     say("asking Gaia for the star and its neighbours")
     tgt = Target(**{k: target[k] for k in TARGET_FIELDS if target.get(k) is not None}, meta=target.get("meta") or {})
     star, planet, neighbours, gaia, gaia_errors = _lookup(tgt, signal, tests, fetch=fetch, store=store)
     for err in gaia_errors:
         say(f"Gaia query failed: {err}")
+    say(f"timing the transits, fitting the shape and bootstrapping it ({n_boot} resamples)")
+    blocks = _section("ephemeris", errors, lambda: ephemeris_blocks(
+        lc, fnorm, signal, tests, n_boot=n_boot, star=star, fnorm_alt=_alt_flux(lc, settings.thresholds, signal),
+        thresholds=settings.thresholds, target=tgt))
+    star, planet = _rederive(gaia, star, planet, blocks)
+    plots = plot_arrays(lc, fnorm, signal, tests, periodogram=periodogram, fold=(blocks or {}).get("fold"),
+                        shape=_model_line((blocks or {}).get("shape")))
     gmag = target.get("gmag") if target.get("gmag") is not None else (gaia.gmag if gaia is not None else None)
-    inputs = fpp_inputs(signal, tests, star, planet, neighbours, gmag)
+    inputs = fpp_inputs(signal, tests, star, planet, neighbours, gmag,
+                        depth_ppm=((blocks or {}).get("ephemeris_extra") or {}).get("depth_ppm"))
     fpp = compute(inputs)
     calibration = cal.default_path(settings.data_dir, target.get("source") or "kbonus_bkg")
     rows = cal.read_rows(calibration) if calibration.is_file() else []
@@ -1494,7 +1653,7 @@ def _assemble(store, signal, target, tests, decisions, plots, pixels, star, plan
                    "reviewer": verdict.reviewer},
         "summary": explain.summary_sentence(signal, target, tests),
         "ephemeris": ephemeris,
-        **{key: blocks.get(key) for key in ("timing", "shape", "parity", "secondary")},
+        **{key: blocks.get(key) for key in ("timing", "shape", "parity", "secondary", "stability")},
         "plots": plots, "tests": test_rows, "why": [dataclasses.asdict(w) for w in explain.why(tests)],
         "rechecks": store.rechecks(signal["id"]), "children": store.children(signal["id"]),
         "fap": {**dataclasses.asdict(fap), "one_in": fap.one_in(), "words": fap.words(), "sde": float(signal["sde"]),

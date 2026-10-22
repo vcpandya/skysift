@@ -11,9 +11,13 @@ from skysift.ephemeris import (
     CADENCE_MIN,
     DEGENERACY_REASON,
     GRAZING_REASON,
+    LOW_SES_REASON,
+    SES_MIN,
     ParityDepths,
     Template,
     bootstrap_shape,
+    drop_low_ses,
+    fold_depth,
     ingress_minutes,
     linear_fit,
     parity_depths,
@@ -23,9 +27,9 @@ from skysift.ephemeris import (
     template_from,
     transit_times,
 )
-from skysift.lc.ops import detrend, event_depths
-from skysift.lc.transit_model import _t14, fit_transit
-from tests.synthetic import inject_model, inject_transit, make_lightcurve
+from skysift.lc.ops import detrend, event_depths, stacked_depth
+from skysift.lc.transit_model import _t14, exposure_flux, fit_transit
+from tests.synthetic import _with_dip, inject_model, inject_transit, make_lightcurve
 
 P, T0, DUR = 5.4, 134.9, 3.2 / 24
 # a/R* 12.9 makes the injected transit last DUR (3.20 h); the a/R* of 74 of test_dossier's scene belongs to its
@@ -168,15 +172,15 @@ def test_bootstrap_brackets_the_rung2_radius_ratio_and_the_injected_one_lies_wit
     se = bootstrap_shape(lc.time, fn, P, T0, DUR, point, n_boot=20, seed=1)
     # every resample of this clean scene converges, and the k interval brackets the injected k
     assert se.ok and se.n_converged == 20 and se.k["minus"] > 0 and se.k["plus"] > 0
-    assert se.k["boot_median"] - 3 * se.k["minus"] <= K <= se.k["boot_median"] + 3 * se.k["plus"]
-    assert se.k["minus"] < 0.01 and se.k["plus"] < 0.01 and se.t14_h["median"] == point["t14_h"]
-    assert se.k["median"] == fit.k and se.model_depth_ppm["median"] == fit.depth_ppm and se.box_duration_h is None
-    assert se.n_boot == 20 and se.seed == 1 and set(se.b) == {"median", "minus", "plus", "boot_median"}
+    assert se.k["median"] - 3 * se.k["minus"] <= K <= se.k["median"] + 3 * se.k["plus"]
+    assert se.k["minus"] < 0.01 and se.k["plus"] < 0.01 and se.t14_h["point"] == point["t14_h"]
+    assert se.k["point"] == fit.k and se.model_depth_ppm["point"] == fit.depth_ppm and se.box_duration_h is None
+    assert se.n_boot == 20 and se.seed == 1 and set(se.b) == {"median", "minus", "plus", "point"}
     # the ingress (about 10 minutes) is shorter than the cadence: b and a/R* keep their point values, no errors
     assert se.ingress_min == pytest.approx(ingress_minutes(P, fit.k, fit.b, fit.a_over_r)) and se.ingress_min < 20
     assert se.degenerate and se.degeneracy_reason == DEGENERACY_REASON
     for block, value in ((se.b, fit.b), (se.a_over_r, fit.a_over_r)):
-        assert block == {"median": value, "minus": None, "plus": None, "boot_median": None}
+        assert block == {"median": value, "minus": None, "plus": None, "point": value}
     assert se.t14_h["plus"] > 0 and se.model_depth_ppm["minus"] > 0
     d = se.as_dict()
     assert d["degenerate"] is True and d["b"]["minus"] is None and d["ingress_min"] == se.ingress_min
@@ -202,7 +206,11 @@ def test_bootstrap_quotes_b_and_a_over_r_when_the_ingress_is_resolved():
     k, b, dur = 0.1, 0.5, 6.0 / 24
     a = np.sqrt((1 + k) ** 2 - b ** 2) / np.sin(np.pi * dur / P)
     assert _t14(P, k, b, a) == pytest.approx(dur) and ingress_minutes(P, k, b, a) > CADENCE_MIN + 10
-    lc = inject_model(make_lightcurve(noise_ppm=600, seed=3), P, T0, k, b, a)
+    # injected as Kepler records it, averaged over the 29.4 minute exposure the bootstrap's fit integrates over (an
+    # unsmeared dip has a sharper ingress than the smeared model, which the fit then reads as a central transit)
+    lc = make_lightcurve(noise_ppm=600, seed=3)
+    ph = (lc.time - T0 + 0.5 * P) % P - 0.5 * P
+    lc = _with_dip(lc, exposure_flux(ph, P, k, b, a, 0.0, 0.0, CADENCE_MIN / 1440))
     fn = detrend(lc)
     fit = fit_transit(lc.time, fn, P, T0, dur)
     se = bootstrap_shape(lc.time, fn, P, T0, dur, _rung2_point(fit), n_boot=20, seed=1)
@@ -211,7 +219,7 @@ def test_bootstrap_quotes_b_and_a_over_r_when_the_ingress_is_resolved():
         assert None not in block.values() and block["minus"] > 0 and block["plus"] > 0
     # the injected b and a/R* lie within three half-widths of the bootstrap median, on their own side
     for block, true in ((se.b, b), (se.a_over_r, a)):
-        assert block["boot_median"] - 3 * block["minus"] <= true <= block["boot_median"] + 3 * block["plus"]
+        assert block["median"] - 3 * block["minus"] <= true <= block["median"] + 3 * block["plus"]
 
 
 def test_bootstrap_without_a_fit_gives_box_depth_and_duration(scene):
@@ -224,7 +232,9 @@ def test_bootstrap_without_a_fit_gives_box_depth_and_duration(scene):
 
 def test_bootstrap_with_too_few_converged_resamples_says_so(scene):
     lc, fn, _ = scene
-    two = lc.time < T0 + P + 2.0           # the transits at 134.9 and 140.3 only
+    # the unbinned fit converges on two transits (78 points in the window), so the resamples are starved instead:
+    # the transits at 134.9 and 140.3 only, every point within half a duration of mid-transit dropped
+    two = (lc.time < T0 + P + 2.0) & (np.abs((lc.time - T0 + 0.5 * P) % P - 0.5 * P) >= 0.5 * DUR)
     se = bootstrap_shape(lc.time[two], fn[two], P, T0, DUR, POINT, n_boot=20, seed=1)
     assert not se.ok and "converged" in se.reason and se.k is None and se.n_converged < 20
 
@@ -282,3 +292,41 @@ def test_every_block_is_strict_json(scene, eph):
     for block in blocks:
         json.dumps(block, allow_nan=False)
     assert eph.as_dict()["times"][0]["t_bjd"] is None or eph.as_dict()["times"][0]["t_bjd"] > BKJD_OFFSET
+
+
+# ---------------------------------------------------------------------------------------------------- round 2
+
+
+def test_a_transit_below_the_ses_threshold_is_not_timed(scene):
+    _lc, _fn, times = scene
+    timed = [t for t in times if t.used][:2]
+    cut = drop_low_ses(times, {timed[0].epoch: 1.37, timed[1].epoch: SES_MIN})      # 2.5 itself is kept
+    first = next(t for t in cut if t.epoch == timed[0].epoch)
+    assert (first.used, first.t_bkjd, first.err_days, first.reason) == (False, None, None, LOW_SES_REASON)
+    assert next(t for t in cut if t.epoch == timed[1].epoch) == timed[1] and len(cut) == len(times)
+
+
+def test_fold_depth_is_the_per_event_mean_with_its_scaled_error(scene):
+    lc, fn, _times = scene
+    d = fold_depth(lc.time, fn, lc.quarter, P, T0, DUR)
+    ev = event_depths(lc.time, fn, lc.quarter, P, T0, DUR)
+    assert (d["depth_ppm"], d["err_ppm"]) == pytest.approx((ev.mean, ev.err_scaled))
+    assert d["source"] == "per-event weighted mean of the box depth"
+
+
+def test_the_bootstrap_quotes_the_resample_median_and_keeps_the_full_data_value(scene):
+    lc, fn, _times = scene
+    se = bootstrap_shape(lc.time, fn, P, T0, DUR, POINT, n_boot=20, seed=1)
+    assert set(se.k) == {"median", "minus", "plus", "point"} and se.k["point"] == K
+    assert se.k["median"] - 3 * se.k["minus"] <= K <= se.k["median"] + 3 * se.k["plus"]
+    assert se.method == ("bootstrap over transits of the quadratic limb-darkened, exposure-integrated fit "
+                         "(Schmitt et al. 2014)")
+
+
+def test_parity_carries_the_stacked_estimator_beside_the_per_event_one(scene):
+    lc, fn, _times = scene
+    pd = parity_depths(event_depths(lc.time, fn, lc.quarter, P, T0, DUR), lc.time, fn, P, T0, DUR).as_dict()
+    st = pd["stacked"]
+    assert st["odd"]["depth_ppm"] == pytest.approx(stacked_depth(lc.time, fn, P, T0, DUR, epochs="odd").depth_ppm)
+    assert abs(st["difference_sigma"]) < 3 and abs(pd["difference_sigma"]) < 3
+    assert parity_depths(event_depths(lc.time, fn, lc.quarter, P, T0, DUR)).as_dict()["stacked"] is None

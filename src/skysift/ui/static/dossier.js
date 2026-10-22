@@ -566,7 +566,7 @@
       const method = SH.method ? `${SH.method[0].toUpperCase()}${SH.method.slice(1)}` : "Bootstrap over transits";
       para(2, `${method}: ${fmt(SH.n_converged)} of ${fmt(SH.n_boot)} resamples converged. ${SHAPE_WORDS}${SH.ok ? "" : ` No bootstrap errors: ${SH.reason}.`}`, "only-expert");
       if (SH.degenerate) para(2, `The fit is degenerate (${SH.degeneracy_reason}).`, "only-expert dossier-caveat");
-      const row = (name, x, d) => (x && isNum(x.median) ? [`${name}:`, `${fmt(x.median, d)}${pmErr(x, d)}${isNum(x.boot_median) ? `, bootstrap median ${fmt(x.boot_median, d)}` : ""}`] : null);
+      const row = (name, x, d) => (x && isNum(x.median) ? [`${name}:`, `${fmt(x.median, d)}${pmErr(x, d)}${isNum(x.point) && isNum(x.minus) ? `, full-data fit ${fmt(x.point, d)}` : ""}`] : null);
       const rows = [row("k, radius ratio", SH.k, 4), row("b, impact parameter", SH.b, 2), row("a / R★", SH.a_over_r, 1),
         row("T14, hours", SH.t14_h, 2), row("model depth, ppm", SH.model_depth_ppm, 0), row("box depth, ppm", SH.box_depth_ppm, 0),
         row("box duration, hours", SH.box_duration_h, 2), isNum(SH.ingress_min) ? ["ingress, minutes:", fmt(SH.ingress_min, 1)] : null];

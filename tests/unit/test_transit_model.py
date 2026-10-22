@@ -1,9 +1,30 @@
+import json
+
 import numpy as np
+import pytest
 
 from skysift.lc import transit_model
 from skysift.lc.ops import detrend, fold_phase
-from skysift.lc.transit_model import TransitFit, fit_transit, uniform_disc_flux
-from tests.synthetic import inject_model, inject_transit, inject_v_eclipse, make_lightcurve
+from skysift.lc.transit_model import (
+    A_LABEL_FITTED,
+    A_LABEL_STELLAR,
+    LD_TABLE,
+    NO_DENSITY,
+    UNCONSTRAINED,
+    ShapeFit,
+    TransitFit,
+    compare_fits,
+    exposure_flux,
+    fit_shape,
+    fit_transit,
+    limb_darkening,
+    quadratic_ld_flux,
+    stellar_density,
+    uniform_disc_flux,
+)
+from tests.synthetic import _with_dip, inject_model, inject_transit, inject_v_eclipse, make_lightcurve
+
+EXPOSURE = 29.4 / 1440
 
 
 def _t14(period, k, b, a_over_r):
@@ -129,3 +150,111 @@ def test_fit_is_not_ok_when_no_bin_lies_in_transit():
     assert fit.n_bins >= 20                      # enough out-of-transit bins, so only the in-transit rule can fail it
     assert not fit.ok
     assert np.isnan([fit.k, fit.b, fit.a_over_r, fit.depth_ppm, fit.t14_days, fit.chi2]).all()
+
+
+# ---------------------------------------------------------------------------------------------------- the shape fit
+
+
+def _ld_planet(period, t0, k, b, a, u1, u2, noise, seed):
+    lc = make_lightcurve(noise_ppm=noise, seed=seed)
+    ph = (lc.time - t0 + 0.5 * period) % period - 0.5 * period
+    return _with_dip(lc, exposure_flux(ph, period, k, b, a, u1, u2, EXPOSURE))
+
+
+def test_without_limb_darkening_the_quadratic_model_is_the_uniform_disc():
+    dt = np.linspace(-0.1, 0.1, 2001)
+    assert np.max(np.abs(quadratic_ld_flux(dt, 13.77, 0.046, 0.3, 38.0, 0.0, 0.0)
+                         - uniform_disc_flux(dt, 13.77, 0.046, 0.3, 38.0))) < 1e-10
+
+
+def test_the_central_depth_of_a_small_planet_follows_the_limb_darkening():
+    u1, u2, k = 0.4158, 0.3203, 0.046
+    depth = 1.0 - float(quadratic_ld_flux(np.array([0.0]), 13.77, k, 0.0, 38.0, u1, u2)[0])
+    assert depth == pytest.approx(k ** 2 / (1 - u1 / 3 - u2 / 6), rel=1e-3)        # 2,618 ppm, not k^2 = 2,116
+
+
+def test_the_coefficients_interpolate_in_teff_and_hold_the_table_edges():
+    ld = limb_darkening(3582.0)                                   # KIC 5689121's Teff
+    assert ld["u1"] == pytest.approx(0.4158 + 82 / 250 * (0.4224 - 0.4158), abs=1e-6)
+    assert ld["u2"] == pytest.approx(0.3203 + 82 / 250 * (0.3037 - 0.3203), abs=1e-6)
+    assert ld["law"] == "quadratic" and ld["logg"] == 4.5 and "Claret and Bloemen 2011" in ld["source"]
+    assert (limb_darkening(3000.0)["u1"], limb_darkening(9000.0)["u2"]) == (LD_TABLE[0][1], LD_TABLE[-1][2])
+    assert limb_darkening(None)["teff"] is None and limb_darkening(None)["u1"] == 0.4035      # the 5750 K row
+
+
+def test_a_disc_over_the_centre_of_the_star_is_integrated_whole():
+    """Where the disc covers the star's centre (z < k) the annuli inside k - z are covered whole: that part is taken
+    in closed form, so the uniform case matches Mandel and Agol there too, small planets and deep eclipses alike."""
+    for k in (0.046, 0.3, 1.5):
+        dt = np.linspace(-0.02, 0.02, 801)
+        assert np.max(np.abs(quadratic_ld_flux(dt, 13.77, k, 0.0, 38.0, 0.0, 0.0)
+                             - uniform_disc_flux(dt, 13.77, k, 0.0, 38.0))) < 1e-9, k
+
+
+def test_the_exposure_grid_reads_the_integral_from_its_table():
+    """The exposure grid interpolates the blocked light in z on a table of the integral: within 1e-7 of it for a
+    planet and 1e-5 for an eclipsing binary's radius ratio."""
+    for k, tol in ((0.01, 1e-7), (0.046, 1e-7), (0.1, 1e-7), (0.8, 1e-5), (1.5, 1e-5)):
+        z = np.linspace(0.0, 1.0 + k, 20001)[:-1]
+        table = np.interp(z, *transit_model._blocked_table(k, 0.42, 0.31))
+        assert np.max(np.abs(table - transit_model._blocked(z, k, 0.42, 0.31))) < tol, k
+
+
+def test_the_exposure_average_keeps_the_bottom_and_rounds_the_contact():
+    dt = np.array([0.0, 0.5 * _t14(13.77, 0.046, 0.0, 38.0)])     # mid-transit and first contact (T14 2.9 h)
+    plain = quadratic_ld_flux(dt, 13.77, 0.046, 0.0, 38.0, 0.42, 0.31)
+    smeared = exposure_flux(dt, 13.77, 0.046, 0.0, 38.0, 0.42, 0.31, EXPOSURE)
+    assert smeared[0] == pytest.approx(plain[0], abs=2e-5) and smeared[1] < plain[1]
+    assert np.array_equal(exposure_flux(dt, 13.77, 0.046, 0.0, 38.0, 0.42, 0.31, 0.05 / 1440), plain)
+
+
+def test_the_stellar_density_of_kic_5689121s_orbit():
+    assert stellar_density(38.1, 13.769414) == pytest.approx(5.52, abs=0.01)    # the live dossier's 5.52 g/cm3
+
+
+def test_fit_shape_recovers_a_limb_darkened_transit():
+    period, t0, k, b, a = 5.4, 134.9, 0.08, 0.2, 12.9
+    lc = _ld_planet(period, t0, k, b, a, 0.42, 0.315, 300, 7)
+    fit = fit_shape(lc.time, detrend(lc), period, t0, _t14(period, k, b, a), u1=0.42, u2=0.315,
+                    exposure_days=EXPOSURE)
+    assert fit.ok and fit.variant == "free" and fit.chi2_prior == 0.0 and fit.prior_gcc is None
+    assert abs(fit.k - k) < 0.002 and abs(fit.b - b) < 0.1 and abs(fit.a_over_r - a) < 1.0
+    assert fit.n_points > 5000 and fit.exposure_min == pytest.approx(29.4)
+    json.dumps(fit.as_dict(), allow_nan=False)
+
+
+def test_a_cadence_smeared_transit_leaves_b_and_a_over_r_to_the_density():
+    """KIC 5689121's geometry (13.77 d, k 0.046, a/R* 38.1) at 1,500 ppm: the true-density prior moves the chi-square
+    by far less than 2, so the prior fit is quoted and a/R* comes from the stellar parameters."""
+    period, t0, k, b, a = 13.77, 136.3, 0.046, 0.3, 38.1
+    lc = _ld_planet(period, t0, k, b, a, 0.42, 0.315, 1500, 5)
+    args = (lc.time, detrend(lc), period, t0, _t14(period, k, b, a))
+    kw = {"u1": 0.42, "u2": 0.315, "exposure_days": EXPOSURE}
+    free = fit_shape(*args, **kw)
+    prior = fit_shape(*args, **kw, density=(stellar_density(a, period), 0.5))
+    cmp = compare_fits(free, prior)
+    assert prior.variant == "prior" and prior.chi2_total == pytest.approx(prior.chi2_data + prior.chi2_prior)
+    assert cmp["constrained"] is False and cmp["quoted"] == "prior" and cmp["delta_chi2"] <= 2.0
+    assert cmp["a_over_r_label"] == A_LABEL_STELLAR and cmp["reason"] == UNCONSTRAINED
+    assert abs(prior.a_over_r - a) < 2.0
+
+
+def test_a_shape_that_contradicts_the_density_is_quoted_free_with_the_tension():
+    """A prior eight times the injected density (a/R* doubled), at 10 per cent: the prior term costs about 76 in
+    chi-square, so the free values are quoted and the tension is stated in sigma."""
+    period, t0, k, b, a = 5.4, 134.9, 0.08, 0.2, 12.9
+    lc = _ld_planet(period, t0, k, b, a, 0.42, 0.315, 300, 7)
+    args = (lc.time, detrend(lc), period, t0, _t14(period, k, b, a))
+    kw = {"u1": 0.42, "u2": 0.315, "exposure_days": EXPOSURE}
+    wrong = stellar_density(2 * a, period)
+    cmp = compare_fits(fit_shape(*args, **kw), fit_shape(*args, **kw, density=(wrong, 0.1 * wrong)))
+    assert cmp["constrained"] is True and cmp["quoted"] == "free" and cmp["a_over_r_label"] == A_LABEL_FITTED
+    assert cmp["delta_chi2"] > 2.0 and cmp["density_tension_sigma"] < -5
+
+
+def test_without_a_density_the_free_fit_is_quoted():
+    free = ShapeFit(True, None, "free", 0.05, 0.3, 20.0, 0.1, 2600.0, 100.0, 0.0, 100.0, 500, 0.4, 0.3, 29.4, 5.0,
+                    None)
+    assert compare_fits(free, None) == {"constrained": None, "quoted": "free", "delta_chi2": None,
+                                        "density_tension_sigma": None, "a_over_r_label": A_LABEL_FITTED,
+                                        "reason": NO_DENSITY}

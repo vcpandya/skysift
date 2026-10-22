@@ -65,14 +65,17 @@ from skysift.exofop import (
     render_exofop_stellar,
 )
 from skysift.lc.loader import LightCurveLoader
+from skysift.lc.transit_model import A_LABEL_FITTED, A_LABEL_STELLAR, UNCONSTRAINED
 from skysift.pack_rows import (
     CROWDSAP_DEFINITION,
     PSFFRAC_DEFINITION,
     SHAPE_ROWS,
     _metrics,
+    _quoted_values,
     _test,
     dilution_rows,
     ephemeris_rows,
+    event_rows,
     figure_data_rows,
     julian_date,
     next_transits,
@@ -124,8 +127,8 @@ FACILITIES = "Kepler, Gaia, MAST, Exoplanet Archive"
 CODE_SENTENCE = (f"the SkySift code at the stated commit is archived at doi:{SOFTWARE_DOI_PLACEHOLDER} "
                  "(to be minted)")
 # the limits of the transit model, in the words of the referee pack spec (section 6)
-MODEL_CLAUSE = ("a uniform-disc model without limb darkening on a circular orbit, averaged over the 29.4-minute "
-                "cadence")
+MODEL_CLAUSE = "a quadratic limb-darkened model on a circular orbit, integrated over the 29.4-minute exposure"
+MODEL_CITE_AFTER = "limb-darkened model"     # the Claret and Bloemen 2011 citation follows these words
 SANDBOX_DOI_PREFIX = "10.5072/"             # Zenodo sandbox DOIs never resolve
 SANDBOX_DOI_NOTE = "sandbox DOI, replace before submission"
 ZIP_SUFFIX = "_skysift_pack.zip"
@@ -296,6 +299,7 @@ def references(data: dict) -> dict[str, bool]:
             "bryson2013": self_referenced(offset_block(data)),
             # the errors method and its three works are in the README since fix round 3; the note points there
             "deeg2015": False, "holczer2016": False, "schmitt2014": False,
+            "claret2011": shape_sentence(data) is not None and bool((data.get("shape") or {}).get("comparison")),
             "kopparapu2013": star_ok and _hz_where(planet) is not None}
 
 
@@ -305,6 +309,7 @@ BIBLIOGRAPHY = (
     ("bryson2013", r"{Bryson} et~al.(2013)",
      r"Bryson, S.~T., Jenkins, J.~M., Gilliland, R.~L., et~al. 2013, PASP, 125, 889"),
     ("christ2019", r"{Christ} et~al.(2019)", r"Christ, C.~N., Montet, B.~T., \& Fabrycky, D.~C. 2019, AJ, 157, 235"),
+    ("claret2011", r"{Claret} \& {Bloemen}(2011)", r"Claret, A., \& Bloemen, S. 2011, A\&A, 529, A75"),
     ("deeg2015", r"{Deeg}(2015)", r"Deeg, H.~J. 2015, arXiv:1503.05368"),
     ("dressing2015", r"{Dressing} \& {Charbonneau}(2015)",
      r"Dressing, C.~D., \& Charbonneau, D. 2015, ApJ, 807, 45"),
@@ -449,8 +454,9 @@ def methods_sentence(data: dict, tex: bool = False) -> str | None:
     note in Task 8 fix round 3; the note keeps ``errors_pointer``): the linear fit of the
     per-transit mid-times with the reference epoch at the centre of the series (Deeg 2015), the per-transit times by
     template fit (Holczer et al. 2016), the shape errors from a bootstrap over transits quoted as the 16th to 84th
-    percentile spread about the bootstrap median (Schmitt et al. 2014), and that the fold, the per-event depths and
-    the bootstrap use the search period and epoch (M4). None when neither block is ok."""
+    percentile spread about the bootstrap median (Schmitt et al. 2014), and which period and epoch the fold, the
+    per-event depths and the bootstrap use (M4; the linear fit since version 5, ``folded_on_linear_fit``). None when
+    neither block is ok."""
     timed, boot = _timed(data), _bootstrapped(data)
     if not (timed or boot):
         return None
@@ -466,9 +472,27 @@ def methods_sentence(data: dict, tex: bool = False) -> str | None:
         parts += ["; the" if timed else "The", " shape errors come from a bootstrap over transits ",
                   cite("schmitt2014", "Schmitt et al. 2014"),
                   ", quoted as the 16th to 84th percentile spread of the resamples about their median"]
-    parts.append(". The fold, the per-event depths and the bootstrap use the search period and epoch"
-                 + ("; the quoted ephemeris is the linear fit." if timed else "."))
+    if folded_on_linear_fit(data):
+        parts.append(". The fold, the per-event depths, odd and even, the bootstrap and the depth stability test use "
+                     "the linear-fit period and epoch.")
+    else:
+        parts.append(". The fold, the per-event depths and the bootstrap use the search period and epoch"
+                     + ("; the quoted ephemeris is the linear fit." if timed else "."))
     return _joined(tex, *parts)
+
+
+def folded_on_linear_fit(data: dict) -> bool:
+    """Whether the dossier's folds (the depth, the events, parity, the shape and its bootstrap, rung 3 again) use the
+    linear-fit ephemeris (version 5, ``ephemeris.fold_ephemeris``), not the search one."""
+    return str((data.get("ephemeris") or {}).get("fold_ephemeris") or "").startswith("linear fit")
+
+
+def fold_words(data: dict) -> str:
+    """The ephemeris the dossier folded on, as the caption and the signal section name it: "linear-fit ephemeris",
+    "search ephemeris", or "period" for a dossier before version 5, which does not say."""
+    if folded_on_linear_fit(data):
+        return "linear-fit ephemeris"
+    return "search ephemeris" if (data.get("ephemeris") or {}).get("fold_ephemeris") else "period"
 
 
 # the note says once which README its pointers mean, in the first of them (Task 8 fix round 4, M-3)
@@ -550,30 +574,62 @@ def shape_sentence(data: dict, tex: bool = False) -> str | None:
         return None
 
     offset = any(isinstance(c, dict) and c.get("key") == "shape_offset" for c in data.get("caveats") or [])
+    cmp = ((data.get("shape") or {}).get("comparison") or {}) if isinstance(data.get("shape"), dict) else {}
 
     def val(key: str):
         r = rows[key]
         text = pm_text(r["value"], r["minus"], r["plus"], nd=r["nd"], tex=tex)
-        boot = _num(r.get("boot_median"))
-        if offset and key == "k" and boot is not None and r["minus"] is not None:
+        point = _num(r.get("point"))
+        if offset and key == "k" and point is not None and r["minus"] is not None:
             nd = pm_digits(r["minus"], r["plus"])
-            return _joined(tex, text, f" (bootstrap median {boot:.{nd}f})")
+            return _joined(tex, text, f" (full-data fit {point:.{nd}f})")
         return text
+    head = _model_words(tex) if cmp else [f"Fitting {LEGACY_MODEL_CLAUSE}"]
     if (data.get("shape") or {}).get("ok") is not True:
-        parts = [f"Fitting {MODEL_CLAUSE}, gives a radius ratio of ", val("k")]
+        parts = [*head, ", gives a radius ratio of ", val("k")]
         if "b" in rows:
             parts += [" and an impact parameter of ", val("b")]
         return _joined(tex, *parts, ", without errors for the reason given with the duration.")
-    parts = [f"Fitting {MODEL_CLAUSE}, gives a radius ratio of ", val("k")]
+    parts = [*head, ", gives a radius ratio of ", val("k")]
     if "t14_h" in rows:
         parts += [" and a duration (T14) of ", val("t14_h"), " hours"]
     if "b" in rows and "a_over_r" in rows:
-        if rows["b"]["minus"] is None:
-            parts += ["; the impact parameter is ", val("b"), " and a/R* is ", val("a_over_r"),
-                      f" ({rows['b']['note']})"]
-        else:
-            parts += [", with an impact parameter of ", val("b"), " and a/R* of ", val("a_over_r")]
+        parts += _geometry_words(data, rows, val, cmp, tex)
     return _joined(tex, *parts, ".")
+
+
+# the model of a dossier before version 5 (rung 2's uniform disc), in the words of the referee pack spec (section 6)
+LEGACY_MODEL_CLAUSE = ("a uniform-disc model without limb darkening on a circular orbit, averaged over the 29.4-minute "
+                       "cadence")
+
+
+def _model_words(tex: bool) -> list:
+    """"Fitting <MODEL_CLAUSE>" with the Claret and Bloemen 2011 citation after "limb-darkened model"."""
+    before, after = MODEL_CLAUSE.split(MODEL_CITE_AFTER, 1)
+    cite = Raw(r" \citep{claret2011}") if tex else " (Claret and Bloemen 2011)"
+    return [f"Fitting {before}{MODEL_CITE_AFTER}", cite, after]
+
+
+def _geometry_words(data: dict, rows: dict, val, cmp: dict, tex: bool) -> list:
+    """b and one a/R* (spec 11.3). Version 5: a quoted prior fit says b and a/R* are unconstrained at this cadence and
+    gives a/R* from the stellar parameters; a quoted free fit gives the fitted a/R* and its tension with the host's
+    density in sigma (none without a density); a degenerate free b without errors names its reason. Before version 5
+    the old wording: b and a/R* with their errors, or alone with the degeneracy reason."""
+    b_note = f" ({rows['b']['note']})" if rows["b"]["minus"] is None and rows["b"].get("note") else ""
+    if not cmp:
+        if rows["b"]["minus"] is None:
+            return ["; the impact parameter is ", val("b"), " and a/R* is ", val("a_over_r"), b_note]
+        return [", with an impact parameter of ", val("b"), " and a/R* of ", val("a_over_r")]
+    if cmp.get("quoted") == "prior":
+        stellar = value_text((data.get("planet") or {}).get("a_over_r"), tex)
+        a_text = stellar if stellar is not None else val("a_over_r")
+        return [f"; b and a/R* are {UNCONSTRAINED}: b is ", val("b"), " and a/R* ", a_text,
+                f" {A_LABEL_STELLAR}"]
+    tension = _num(cmp.get("density_tension_sigma"))
+    words = ["; b is ", val("b"), " and a/R* ", val("a_over_r"), f" {A_LABEL_FITTED}"]
+    if tension is not None:
+        words.append(f", {abs(tension):.1f} sigma from the host's density")
+    return [*words, b_note]
 
 
 def _odd_even(data: dict, tex: bool) -> tuple[str, str] | None:
@@ -886,12 +942,22 @@ def software_line(data: dict) -> str:
             f"{software_commit(data)}), {tools}")
 
 
+def fit_radius_ratio(data: dict) -> float | None:
+    """The radius ratio the planet radius was derived from: the shape fit's full-data k in version 5 (the prior fit's
+    when it is ok, as ``dossier._rederive`` takes it), before that rung 2's uniform-disc k when its fit is ok."""
+    k = _quoted_values(data.get("shape") or {}).get("k") if isinstance(data.get("shape"), dict) else None
+    if k is not None:
+        return _num(k)
+    sh = _metrics(data, "rung2_shape")
+    return _num(sh.get("fit_k")) if sh.get("fit_ok") is True else None
+
+
 def numbers(data: dict, tex: bool = False, after_bjd: float | None = None) -> dict:
     """Everything the four texts print, as text (``tex``: LaTeX-ready, values with errors as ``Raw`` math). The
     ephemeris keys are ``quantities``; ``next_transits`` are the three after ``after_bjd`` (default now)."""
     target, sig = data.get("target") or {}, data.get("signal") or {}
     star, planet, prov = data.get("star") or {}, data.get("planet") or {}, data.get("provenance") or {}
-    eph, plots, sh = data.get("ephemeris") or {}, data.get("plots") or {}, _metrics(data, "rung2_shape")
+    eph, plots = data.get("ephemeris") or {}, data.get("plots") or {}
     timing = data.get("timing") if isinstance(data.get("timing"), dict) else {}
     timed = timing.get("ok") is True
     window = ((sig.get("extra") or {}).get("search_window") or {})
@@ -944,7 +1010,7 @@ def numbers(data: dict, tex: bool = False, after_bjd: float | None = None) -> di
         "star_ok": star_ok, "spectral_type": star.get("spectral_type"),
         "teff": value_text(star.get("teff"), tex), "radius": value_text(star.get("radius"), tex),
         "mass": value_text(star.get("mass"), tex), "distance": value_text(star.get("distance_pc"), tex),
-        "fit_k": _f(sh.get("fit_k"), 4) if sh.get("fit_ok") is True else None,
+        "fit_k": _f(fit_radius_ratio(data), 4),
         "rp": value_text(rp, tex), "a": value_text(a, tex), "teq": value_text(teq, tex),
         "insolation": value_text(planet.get("insolation_earth"), tex),
         "rp_text": value_text(rp), "a_text": value_text(a), "teq_text": value_text(teq), "host_text": host or "no "
@@ -963,6 +1029,13 @@ def numbers(data: dict, tex: bool = False, after_bjd: float | None = None) -> di
         "caveat_text": " ".join(f"{c['title'].rstrip('.')}." for c in caveats) or "No caveat is recorded.",
         "window_h": _f(plots.get("window_h"), 1), "bin_minutes": bin_minutes(data),
         "model_words": "transit fit" if plots.get("model_kind") == "fit" else "box model of the detection",
+        "fold_words": fold_words(data),
+        # the signal section and the README's depth row say which ephemeris folded (spec 11.3); a dossier before
+        # version 5 does not say, and neither do they
+        "fold_clause": (f"; the depth and the shape below are measured on the {fold_words(data)}"
+                        if eph.get("fold_ephemeris") else ""),
+        "depth_source_text": (f" ({eph['depth_source']}, on the {fold_words(data)})"
+                              if eph.get("fold_ephemeris") and eph.get("depth_source") else ""),
         "param_rows": param_rows(data), "commands": prov.get("commands") or [],
     }
 
@@ -1107,15 +1180,12 @@ FILE_NOTES = {
     "data/ephemeris.csv": "period, mid-transit times, duration, depth, the star and planet parameters and the "
                           "dilution numbers, each with its errors and source",
     "data/ephemeris.json": "the same with the dossier's ephemeris, star and planet blocks",
-    "data/transit_times.csv": "every timed transit: epoch, mid-time in BKJD and BJD_TDB, error in days, reduced "
-                              "chi-square, whether the linear ephemeris used it and why not",
-    "data/shape.csv": "radius ratio, impact parameter, a/R*, T14 and the depths with their bootstrap errors, and why "
-                      "an error is missing",
+    "data/shape.csv": "radius ratio, impact parameter, a/R*, T14 and the depths: the resample median with its "
+                      "bootstrap errors, the full-data fit beside it, and why an error is missing",
     "data/stellar_provenance.csv": "each stellar parameter with its errors, method, inputs and reference",
     "note/figure1_data.csv": "the data behind the note's figure: phase in hours, binned flux, error and count, and "
                              "the model, in ppm",
     f"exofop/{EXOFOP_STELLAR_TEMPLATE}": "the stellar parameters in ExoFOP's bulk template (upload now)",
-    "data/events.csv": "every transit: epoch, mid-time, quarter, depth, error, coverage, single-event statistic",
     "data/periodogram.json": "the periodogram envelope, its peaks and the alias and systematic periods",
     "data/rung_metrics.json": "every vetting rung's status, reason and metrics",
     "data/cross_check.json": "the independent TRICERATOPS cross-check: every run's false-positive probability with "
@@ -1132,6 +1202,19 @@ FILE_NOTES = {
     "provenance/calibration.json": "the null-search counts behind the false-alarm probability",
     "exofop/note.txt": "the text for the ExoFOP upload's description (step 2)",
 }
+
+
+def file_notes(data: dict) -> dict[str, str]:
+    """``FILE_NOTES`` with the two entries that count the dossier's transits (spec 11.6, the row counts the README
+    gives): ``data/events.csv`` (``event_rows``) and ``data/transit_times.csv`` (``timing_rows``), which list the same
+    epochs."""
+    n, used = len(event_rows(data)), sum(1 for r in timing_rows(data) if r.get("used") is True)
+    return {**FILE_NOTES,
+            "data/events.csv": f"the {n} transits with data: epoch, mid-time, quarter, depth, error, coverage, "
+                               "single-event statistic and whether the transit was timed",
+            "data/transit_times.csv": f"the same {len(timing_rows(data))} epochs as `data/events.csv`, {used} of "
+                                      "them used: mid-time in BKJD and BJD_TDB, error, reduced chi-square and why a "
+                                      "transit was not used"}
 
 
 def _safe_target(target_id: str) -> str:
@@ -1299,7 +1382,8 @@ def _fields(data: dict, f: dict) -> dict:
     f.setdefault("exofop", [(name, what) for name, _src, what in
                             _exofop_list(target_id, f["date"], f["png"], f["pixels_figure"])]
                  + ([(stellar, FILE_NOTES[f"exofop/{EXOFOP_STELLAR_TEMPLATE}"])] if stellar else []))
-    f.setdefault("file_notes", [(name, FILE_NOTES.get(name) or _figure_note(name)) for name in sorted(f["files"])
+    notes = file_notes(data)
+    f.setdefault("file_notes", [(name, notes.get(name) or _figure_note(name)) for name in sorted(f["files"])
                                 if not name.startswith("exofop/") or name == "exofop/note.txt"])
     f.setdefault("exofop_url", EXOFOP_URL)
     f.setdefault("exofop_help_url", EXOFOP_HELP_URL)
@@ -1979,13 +2063,16 @@ def _write_pack(out_dir: Path, data: dict, raw: dict, row: dict, lc, fnorm, targ
         folder.mkdir(parents=True, exist_ok=True)
     # data
     _lightcurve_csv(d / "lightcurve.csv", lc, fnorm)
-    eph_rows = ephemeris_rows(data) + param_rows(data) + dilution_rows(data)
+    # both a/R* here, named apart (spec 11.3); the texts quote one
+    eph_rows = ephemeris_rows(data) + param_rows(data, both_a_over_r=True) + dilution_rows(data)
     cols = ["parameter", "value", "minus", "plus", "unit", "source"]
     _csv(d / "ephemeris.csv", cols, [[r[c] for c in cols] for r in eph_rows])
     for name, header, table in (
             ("transit_times.csv", ["epoch", "t_bkjd", "t_bjd", "err_days", "chi2_red", "used", "reason"],
              timing_rows(data)),
-            ("shape.csv", ["parameter", "value", "minus", "plus", "unit", "boot_median", "note"], shape_rows(data)),
+            ("shape.csv", ["parameter", "value", "minus", "plus", "unit", "point", "note"], shape_rows(data)),
+            ("events.csv", ["epoch", "t_mid_bkjd", "quarter", "depth_ppm", "err_ppm", "coverage", "ses", "timed",
+                            "timing_reason"], event_rows(data)),
             ("stellar_provenance.csv", ["parameter", "value", "minus", "plus", "unit", "method", "inputs",
                                         "reference"], provenance_rows(data))):
         _csv(d / name, header, [[r[c] for c in header] for r in table])
@@ -1995,10 +2082,7 @@ def _write_pack(out_dir: Path, data: dict, raw: dict, row: dict, lc, fnorm, targ
     _write(d / "ephemeris.json", jsonutil.dumps({"ephemeris": eph, "star": data.get("star"),
                                                  "planet": data.get("planet"),
                                                  "rows": [{c: r[c] for c in cols} for r in eph_rows]}, indent=1))
-    ev_cols = ["epoch", "t_mid", "quarter", "depth_ppm", "err_ppm", "coverage", "ses"]
     plots = data.get("plots") or {}
-    _csv(d / "events.csv", ["epoch", "t_mid_bkjd", "quarter", "depth_ppm", "err_ppm", "coverage", "ses"],
-         [[e.get(c) for c in ev_cols] for e in plots.get("events") or []])
     _write(d / "periodogram.json", jsonutil.dumps({"sde": (data.get("ephemeris") or {}).get("sde"),
                                                    "period_days": (data.get("ephemeris") or {}).get("period_days"),
                                                    "spectrum": plots.get("spectrum"),

@@ -11,7 +11,7 @@ import numpy as np
 
 from skysift import ephemeris as ephem
 from skysift.ephemeris import BKJD_OFFSET
-from skysift.pack_text import _bjd, _errors, _num, date_words, pm_text, value_text
+from skysift.pack_text import _bjd, _errors, _num, date_words, pm_digits, pm_text, value_text
 
 # the KBonus header keywords of the dilution rows, defined once for the README and the CSV
 CROWDSAP_DEFINITION = ("the fraction of the light in the aperture that belongs to the target (Kepler's CROWDSAP "
@@ -34,8 +34,40 @@ def star_characterized(data: dict) -> bool:
     return star.get("route") not in (None, "none") and value_text(star.get("radius")) is not None
 
 
-def param_rows(data: dict) -> list[dict]:
-    """The fit, star and planet parameters as rows {parameter, value, minus, plus, unit, source, text}."""
+A_OVER_R_STELLAR = "a/R* from the stellar parameters (Kepler's third law)"
+A_OVER_R_FITTED = "a/R* fitted"
+A_OVER_R_FREE = "a/R* fitted (free fit)"
+FIT_SOURCE = "quadratic limb-darkened, exposure-integrated transit fit"
+
+
+def _comparison(data: dict) -> dict:
+    shape = data.get("shape")
+    return (shape.get("comparison") or {}) if isinstance(shape, dict) else {}
+
+
+def a_over_r_fitted(data: dict) -> bool:
+    """Whether the texts quote the fitted a/R* (``shape.comparison.a_over_r_label`` "fitted": the shape constrains it,
+    or there is no density prior) rather than the one from the stellar parameters. A dossier before version 5 quotes
+    the stellar one."""
+    return _comparison(data).get("a_over_r_label") == "fitted"
+
+
+def _with_point(text: str, r: dict) -> str:
+    """``text`` with the row's full-data value beside the resample median (spec 11.3), at the errors' decimals; the
+    text alone for a row without errors or a full-data value."""
+    point = _num(r.get("point"))
+    if point is None or r.get("minus") is None or r.get("plus") is None:
+        return text
+    return f"{text} (full-data fit {point:.{pm_digits(r['minus'], r['plus'])}f})"
+
+
+def param_rows(data: dict, *, both_a_over_r: bool = False) -> list[dict]:
+    """The fit, star and planet parameters as rows {parameter, value, minus, plus, unit, source, text}. The radius
+    ratio, the impact parameter and a fitted a/R* print the full-data value beside the resample median in ``text``.
+    One a/R* row, ``A_OVER_R_STELLAR`` (planet.a_over_r) or ``A_OVER_R_FITTED`` (shape.a_over_r), as
+    ``shape.comparison.a_over_r_label`` says (``a_over_r_fitted``); with ``both_a_over_r`` (``data/ephemeris.csv``
+    and so its ExoFOP copy) both, the stellar one and ``A_OVER_R_FREE``, read from ``shape.fits.free`` (with the
+    bootstrap errors when the free fit is the quoted one)."""
     rows = []
     sh = _metrics(data, "rung2_shape")
 
@@ -54,18 +86,20 @@ def param_rows(data: dict) -> list[dict]:
     if _num(sh.get("depth_ppm")) is not None and "depth_source" not in (data.get("ephemeris") or {}):
         e = _num(sh.get("depth_err_ppm"))           # version 3 quotes rung 2's depth in the ephemeris rows
         add("fitted depth", {"median": sh["depth_ppm"], "minus": e, "plus": e}, "ppm", "rung 2 box depth")
+    v5 = bool(_comparison(data))
+    point_source = FIT_SOURCE if v5 else "rung 2 transit fit (uniform disc)"
     if sh.get("fit_ok") is True and shape:
         ok = (data.get("shape") or {}).get("ok") is True
         for key, name in (("k", "radius ratio"), ("b", "impact parameter")):
             r = shape.get(key)
             if r is None:
                 continue
-            text = pm_text(r["value"], r["minus"], r["plus"], nd=r["nd"])
+            text = _with_point(pm_text(r["value"], r["minus"], r["plus"], nd=r["nd"]), r)
             if ok and r["note"]:            # a degenerate b; without a bootstrap the duration names the reason
                 text += f" ({r['note']})"
             rows.append({"parameter": name, "value": r["value"], "minus": r["minus"], "plus": r["plus"], "unit": "",
                          "source": (data.get("shape") or {}).get("method") if r["minus"] is not None
-                         else "rung 2 transit fit (uniform disc)", "text": text})
+                         else point_source, "text": text})
     elif sh.get("fit_ok") is True:
         add("radius ratio", sh.get("fit_k"), "", "rung 2 transit fit (uniform disc)")
         add("impact parameter", sh.get("fit_b"), "", "rung 2 transit fit (uniform disc)")
@@ -81,7 +115,24 @@ def param_rows(data: dict) -> list[dict]:
     add("distance", star.get("distance_pc"), "pc")
     add("planet radius", planet.get("rp_rearth"), "Earth radii")
     add("semi-major axis", planet.get("a_au"), "AU")
-    add("scaled semi-major axis a/R*", planet.get("a_over_r"), "")
+    fitted = shape.get("a_over_r")
+    if both_a_over_r or not a_over_r_fitted(data):
+        add(A_OVER_R_STELLAR, planet.get("a_over_r"), "")
+    if a_over_r_fitted(data) and not both_a_over_r and fitted is not None:
+        text = _with_point(pm_text(fitted["value"], fitted["minus"], fitted["plus"], nd=fitted["nd"]), fitted)
+        rows.append({"parameter": A_OVER_R_FITTED, "value": fitted["value"], "minus": fitted["minus"],
+                     "plus": fitted["plus"], "unit": "", "source": (data.get("shape") or {}).get("method")
+                     if fitted["minus"] is not None else FIT_SOURCE, "text": text})
+    if both_a_over_r:
+        free = ((data.get("shape") or {}).get("fits") or {}).get("free") or {}
+        if free.get("ok") is True and _num(free.get("a_over_r")) is not None:
+            quoted_free = _comparison(data).get("quoted") == "free" and fitted is not None
+            lo, hi = (fitted["minus"], fitted["plus"]) if quoted_free else (None, None)
+            value = fitted["value"] if quoted_free else _num(free["a_over_r"])
+            rows.append({"parameter": A_OVER_R_FREE, "value": value, "minus": lo, "plus": hi, "unit": "",
+                         "source": (data.get("shape") or {}).get("method") if lo is not None else
+                         f"{FIT_SOURCE}, free of the density prior",
+                         "text": pm_text(value, lo, hi, nd=fitted["nd"] if fitted else 1)})
     add("equilibrium temperature", planet.get("teq_k"), "K")
     add("insolation", planet.get("insolation_earth"), "Earth = 1")
     add("transit probability", planet.get("transit_probability"), "")
@@ -124,21 +175,43 @@ SHAPE_ROWS = (("radius ratio k", "k", "", 4, "fit_k"), ("impact parameter b", "b
               ("box depth", "box_depth_ppm", "ppm", 0, None), ("box duration", "box_duration_h", "h", 2, None))
 
 
+def _quoted_values(shape: dict) -> dict:
+    """The quoted shape fit's full-data values by shape key (version 5: ``shape.fits`` and ``shape.comparison``; k,
+    T14 and the model depth from the prior fit when it is ok, as the bootstrap takes them), {} before version 5 or
+    without an ok fit."""
+    fits, cmp = shape.get("fits") or {}, shape.get("comparison") or {}
+    prior, free = fits.get("prior"), fits.get("free")
+    prior = prior if isinstance(prior, dict) and prior.get("ok") is True else None
+    free = free if isinstance(free, dict) and free.get("ok") is True else None
+    geo = prior if cmp.get("quoted") == "prior" and prior else free
+    size = prior or free
+    if size is None or geo is None:
+        return {}
+    t14 = _num(size.get("t14_days"))
+    return {"k": size.get("k"), "b": geo.get("b"), "a_over_r": geo.get("a_over_r"),
+            "t14_h": None if t14 is None else t14 * 24.0, "model_depth_ppm": size.get("depth_ppm")}
+
+
 def shape_rows(data: dict) -> list[dict]:
-    """The shape block as rows {key, parameter, value, minus, plus, unit, boot_median, note, nd}: k, b, a/R*, T14,
-    the model depth, the box depth and the box duration with their bootstrap errors. A parameter the block has no
-    value for takes rung 2's point value when the fit is ok; a row without errors says why in ``note`` ("no error;
-    <the degeneracy reason>" for b and a/R* of a degenerate fit, else the block's reason). [] without the block."""
+    """The shape block as rows {key, parameter, value, minus, plus, unit, point, note, nd}: k, b, a/R*, T14, the
+    model depth, the box depth and the box duration, each the resample median with its bootstrap errors and the
+    full-data value (``point``) beside it. A parameter the block has no value for takes the quoted fit's full-data
+    value (version 5), else rung 2's point value when the fit is ok; a row without errors says why in ``note`` ("no
+    error; <the degeneracy reason>" for b and a/R* of a degenerate fit, else the block's reason). [] without the
+    block."""
     shape = data.get("shape")
     if not isinstance(shape, dict):
         return []
     sh = _metrics(data, "rung2_shape")
     fit = sh.get("fit_ok") is True
+    quoted = _quoted_values(shape)
     rows = []
     for name, key, unit, nd, point in SHAPE_ROWS:
         block = shape.get(key)
         if isinstance(block, dict) and _num(block.get("median")) is not None:
-            value, lo, hi, boot = (_num(block.get(x)) for x in ("median", "minus", "plus", "boot_median"))
+            value, lo, hi, boot = (_num(block.get(x)) for x in ("median", "minus", "plus", "point"))
+        elif fit and _num(quoted.get(key)) is not None:
+            value, lo, hi, boot = _num(quoted[key]), None, None, _num(quoted[key])
         elif fit and point and _num(sh.get(point)) is not None:
             value, lo, hi, boot = _num(sh.get(point)), None, None, None
         else:
@@ -149,8 +222,34 @@ def shape_rows(data: dict) -> list[dict]:
             why = (shape.get("degeneracy_reason") if degenerate else shape.get("reason")) or "no reason stored"
             note = f"no error; {why.removesuffix(', errors not quoted')}"       # an older reason said it again
         rows.append({"key": key, "parameter": name, "value": value, "minus": lo, "plus": hi, "unit": unit,
-                     "boot_median": boot, "note": note, "nd": nd})
+                     "point": boot, "note": note, "nd": nd})
     return rows
+
+
+def event_rows(data: dict) -> list[dict]:
+    """One row per epoch of ``timing.times`` (of ``plots.events`` for a dossier without a timing block), {epoch,
+    t_mid_bkjd, quarter, depth_ppm, err_ppm, coverage, ses, timed, timing_reason}: the predicted mid-time on the
+    ephemeris the dossier folded on, the quarter, depth, error, coverage and single-event statistic from
+    ``plots.events`` by epoch (blank when that event has no depth), and whether the transit was timed (the timing
+    row's ``used``) with the reason it was not, so ``events.csv`` and ``transit_times.csv`` list the same epochs."""
+    events = {int(e["epoch"]): e for e in (data.get("plots") or {}).get("events") or []
+              if isinstance(e, dict) and e.get("epoch") is not None}
+    timing = data.get("timing")
+    eph = data.get("ephemeris") or {}
+    period, t0 = _num(eph.get("period_days")), _num(eph.get("t0_bkjd"))
+
+    def row(epoch: int, timed, reason) -> dict:
+        ev = events.get(epoch) or {}
+        t_mid = ev.get("t_mid")
+        if t_mid is None and period is not None and t0 is not None:
+            t_mid = round(t0 + epoch * period, 3)
+        return {"epoch": epoch, "t_mid_bkjd": t_mid, "quarter": ev.get("quarter"), "depth_ppm": ev.get("depth_ppm"),
+                "err_ppm": ev.get("err_ppm"), "coverage": ev.get("coverage"), "ses": ev.get("ses"), "timed": timed,
+                "timing_reason": reason}
+    if isinstance(timing, dict) and isinstance(timing.get("times"), list):
+        return [row(int(t["epoch"]), t.get("used"), t.get("reason")) for t in timing["times"]
+                if isinstance(t, dict) and t.get("epoch") is not None]
+    return [row(e, None, None) for e in events]
 
 
 def timing_rows(data: dict) -> list[dict]:

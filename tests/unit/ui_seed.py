@@ -312,9 +312,9 @@ def _seed_star() -> tuple[dict, dict, dict]:
 
 
 def _seed_errors(period: float, t0: float) -> dict:
-    """The version-3 blocks of a dossier (the timing, shape, parity and secondary blocks of ``dossier.ephemeris_blocks``
-    and the ephemeris keys they give), hand-made for a 40.29 d candidate: 32 of 33 timed transits, a degenerate shape
-    fit (ingress shorter than the cadence) with 20 of 20 resamples converged."""
+    """The version-3 blocks of a dossier (the timing, shape, parity, secondary and, since version 5, stability blocks
+    of ``dossier.ephemeris_blocks`` and the ephemeris keys they give), hand-made for a 40.29 d candidate: 32 of 33
+    timed transits, a degenerate shape fit (ingress shorter than the cadence) with 20 of 20 resamples converged."""
     from skysift import ephemeris as eph
     p_fit, p_err, e_ref, t_ref_err, t0_err = period + 4e-6, 9.1e-5, 16, 0.00041, 0.0016
     t_ref = t0 + 0.0002 + e_ref * p_fit
@@ -329,11 +329,11 @@ def _seed_errors(period: float, t0: float) -> dict:
               "inflation": 1.023, "rms_min": 7.9, "n_used": 32, "n_measured": 33, "n_outliers": 1, "times": times,
               "template": "fit", "template_reason": None}
 
-    def spread(median, minus, plus, boot):
-        return {"median": median, "minus": minus, "plus": plus, "boot_median": boot}
+    def spread(median, minus, plus, point):
+        return {"median": median, "minus": minus, "plus": plus, "point": point}
     shape = {"ok": True, "reason": None, "method": eph.SHAPE_METHOD, "n_boot": 20, "n_converged": 20,
              "seed": eph.BOOT_SEED, "k": spread(0.047, 0.0004, 0.0003, 0.0471),
-             "b": spread(0.31, None, None, None), "a_over_r": spread(74.0, None, None, None),
+             "b": spread(0.31, None, None, 0.31), "a_over_r": spread(74.0, None, None, 74.0),
              "t14_h": spread(4.16, 0.06, 0.07, 4.17), "model_depth_ppm": spread(2150.0, 36.0, 26.0, 2160.0),
              "box_depth_ppm": {"median": 2166.0, "minus": 52.0, "plus": 52.0}, "box_duration_h": None,
              "ingress_min": 12.3, "degenerate": True, "degeneracy_reason": eph.DEGENERACY_REASON}
@@ -346,8 +346,12 @@ def _seed_errors(period: float, t0: float) -> dict:
              "t_ref_err_days": t_ref_err, "epoch_ref": e_ref, "period_source": "linear fit of 32 transit times",
              "duration_h": 4.16, "duration_h_err": {"minus": 0.06, "plus": 0.07}, "duration_source": "fitted T14",
              "depth_ppm": 2180.0, "depth_ppm_err": 60.0, "depth_source": "per-event weighted mean of the box depth",
+             "fold_ephemeris": "linear fit of 32 transit times",
              "ephemeris_method": eph.EPHEMERIS_METHOD, "shape_method": eph.SHAPE_METHOD}
-    return {"ephemeris_extra": extra, "timing": timing, "shape": shape, "parity": parity, "secondary": secondary}
+    stability = {"status": "pass", "reason": None, "ephemeris": "linear fit of 32 transit times",
+                 "metrics": {"stacked": False, "chi2": 0.3, "dof": 3, "p_value": 0.9, "n_events": 32}}
+    return {"ephemeris_extra": extra, "timing": timing, "shape": shape, "parity": parity, "secondary": secondary,
+            "stability": stability}
 
 
 def _seed_probabilities(period: float, sde: float) -> tuple[dict, dict]:
@@ -456,7 +460,7 @@ def seed_dossier(store: Store, data_dir, target_id: str = STAGE2_TARGET) -> dict
         "ephemeris": {"period_days": period, "t0_bkjd": t0, "t0_bjd": t0 + 2454833.0, "duration_h": dur * 24,
                       "depth_ppm": float(sig["depth_ppm"]), "sde": float(sig["sde"]), "snr": float(sig["snr"]),
                       "n_events": int(sig["n_events"]), **errors["ephemeris_extra"]},
-        **{key: errors[key] for key in ("timing", "shape", "parity", "secondary")},
+        **{key: errors[key] for key in ("timing", "shape", "parity", "secondary", "stability")},
         "plots": _seed_plots(period, t0),
         "tests": [{"rung": x["rung"], "status": x["status"], "reason": x["reason"], "metrics": x["metrics"],
                    "created": x["created"].isoformat()} for x in tests],

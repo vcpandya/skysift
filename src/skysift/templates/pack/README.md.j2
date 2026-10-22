@@ -30,7 +30,7 @@ This pack was built on {{ f.built_words }} by SkySift (pack format {{ f.pack_ver
 | transit times | {{ n.n_used }} of {{ n.n_measured }} timed transits fit the linear ephemeris, rms {{ n.rms_min }} min |
 {% endif %}
 | duration | {{ n.duration_pm }} h{{ n.duration_note }} |
-| depth | {{ n.depth_pm }} ppm{{ n.depth_note }} |
+| depth | {{ n.depth_pm }} ppm{{ n.depth_note }}{{ n.depth_source_text }} |
 | transits | {{ n.n_events }} |
 | signal detection efficiency (SDE) | {{ n.sde }} |
 | signal-to-noise ratio | {{ n.snr }} |

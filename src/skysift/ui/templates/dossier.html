@@ -300,8 +300,8 @@
     {%- if shape_rows or sh.ingress_min is number %}
     <div class="table-wrap"><table class="dossier-table">
       <caption>Shape with errors</caption>
-      <thead><tr><th scope="col">parameter</th><th scope="col" class="num">value</th><th scope="col" class="num">minus</th><th scope="col" class="num">plus</th><th scope="col" class="num">bootstrap median</th></tr></thead>
-      <tbody>{% for name, v, nd in shape_rows %}<tr><th scope="row">{{ name }}</th><td class="num mono">{{ v.median | fmt(nd) }}</td><td class="num mono">{{ v.minus | fmt(nd) }}</td><td class="num mono">{{ v.plus | fmt(nd) }}</td><td class="num mono">{{ v.boot_median | fmt(nd) }}</td></tr>{% endfor %}
+      <thead><tr><th scope="col">parameter</th><th scope="col" class="num">value</th><th scope="col" class="num">minus</th><th scope="col" class="num">plus</th><th scope="col" class="num">full-data fit</th></tr></thead>
+      <tbody>{% for name, v, nd in shape_rows %}<tr><th scope="row">{{ name }}</th><td class="num mono">{{ v.median | fmt(nd) }}</td><td class="num mono">{{ v.minus | fmt(nd) }}</td><td class="num mono">{{ v.plus | fmt(nd) }}</td><td class="num mono">{{ v.point | fmt(nd) }}</td></tr>{% endfor %}
       {%- if sh.ingress_min is number %}<tr><th scope="row">ingress, minutes</th><td class="num mono">{{ sh.ingress_min | fmt(1) }}</td><td class="num">–</td><td class="num">–</td><td class="num">–</td></tr>{% endif %}</tbody>
     </table></div>
     {%- endif %}

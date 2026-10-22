@@ -15,14 +15,19 @@ grows with the distance from that centre (Deeg 2015). Events more than five medi
 line are dropped and the line is fitted again (Holczer et al. 2016).
 
 The radius ratio, impact parameter, a/R*, duration and model depth carry errors from a bootstrap over whole transits:
-the events are drawn with replacement, their points are concatenated and the uniform-disc fit is run on each
-resample (Schmitt et al. 2014, the Planet Hunters practice). The point value stays the rung 2 fit; the errors are the
-resample spread, the 50th minus the 16th and the 84th minus the 50th percentile, and the bootstrap median is kept
-beside the point value, their offset a bias indicator (a full-curve fit at the edge of the resample distribution
-would otherwise read an error of zero on one side). Without a fit the box depth keeps its per-event
-error and the box duration gets percentiles from the width that maximises the depth over its error on each resample.
+the events are drawn with replacement, their points are concatenated and the quadratic limb-darkened,
+exposure-integrated fit (``transit_model.fit_shape``) is run on each resample (Schmitt et al. 2014, the Planet Hunters
+practice), free and, when the star has a density, with the density prior, each resample started at the full-data
+solution. The quoted centre is the resample median (spec 11.3), the errors the 50th minus the 16th and the 84th minus
+the 50th percentile, and the full-data value is kept beside them as ``point``, their offset a bias indicator.
+Without a fit the box depth keeps its per-event error and the box duration gets percentiles from the width that
+maximises the depth over its error on each resample.
 
-Odd and even depths are the weighted means of the per-event box depths of each parity, and the secondary block turns
+Per-transit timing keeps only the transits whose single-event statistic reaches ``SES_MIN`` (Holczer et al. 2016;
+``drop_low_ses``), and the dossier's depth is ``fold_depth`` on the fold it quotes.
+
+Odd and even depths are the weighted means of the per-event box depths of each parity, with the stacked fold of
+each parity beside them (``lc.ops.stacked_depth``), and the secondary block turns
 rung 2's phase 0.5 depth into a 3-sigma limit and a geometric-albedo limit. Pure numerics; no I/O."""
 from __future__ import annotations
 
@@ -31,8 +36,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from skysift.lc.ops import event_depths, measure_at
-from skysift.lc.transit_model import _t14, fit_transit, uniform_disc_flux
+from skysift.lc.ops import event_depths, measure_at, stacked_depth
+from skysift.lc.transit_model import EXPOSURE_RESOLUTION_MIN, ShapeFit, _t14, fit_shape, uniform_disc_flux
 
 BKJD_OFFSET = 2454833.0
 EVENT_IN_MIN, EVENT_OUT_MIN, EVENT_OUT_SIDE_MIN = 3, 6, 2     # the pixel rung's event rules
@@ -44,7 +49,7 @@ N_BOOT, BOOT_MIN_CONVERGED, BOOT_SEED = 200, 20, 20261022
 BOX_DURATION_FACTORS = (0.5, 2.0)      # the box-duration grid, times the search duration, 40 steps in log
 EPHEMERIS_METHOD = ("weighted linear fit of per-transit mid-times, reference epoch at the centre of the series "
                     "(Deeg 2015; Holczer et al. 2016)")
-SHAPE_METHOD = "bootstrap over transits of the uniform-disc fit (Schmitt et al. 2014)"
+SHAPE_METHOD = "bootstrap over transits of the quadratic limb-darkened, exposure-integrated fit (Schmitt et al. 2014)"
 CADENCE_MIN = 29.4             # Kepler long cadence, minutes: a shorter ingress leaves b and a/R* degenerate with k
 DEGENERACY_REASON = "ingress shorter than the cadence: b and a/R* are degenerate with k"
 GRAZING_REASON = "grazing point solution: b and a/R* are degenerate with k"
@@ -52,8 +57,12 @@ ALBEDO_NO_CONSTRAINT = "no constraint"
 
 WINDOW_DURATIONS = 3.0         # an event's window: the points within this many durations of the predicted mid-time
 BOX_DURATION_STEPS = 40
-EXPOSURE_RESOLUTION_MIN = 0.1  # minutes, the sampling of the template before it is averaged over the exposure
 MAD_TO_SIGMA = 1.4826
+SES_MIN = 2.5                  # a transit below this single-event S/N is not timed (Holczer et al. 2016)
+LOW_SES_REASON = "single-event S/N below 2.5 (Holczer et al. 2016)"
+FOLD_DEPTH_MIN_EVENTS = 4      # fewer usable per-event depths: the stacked fold's box depth, as rung 3
+EVENT_DEPTH_SOURCE = "per-event weighted mean of the box depth"
+STACKED_DEPTH_SOURCE = "box depth of the stacked fold"
 
 
 def _f(x) -> float | None:
@@ -316,6 +325,38 @@ def linear_fit(times: list[TransitTime], period: float, t0: float) -> LinearEphe
                            int(ep.size), n_measured, n_outliers, tuple(times))
 
 
+def drop_low_ses(times: list[TransitTime], ses_by_epoch: dict[int, float],
+                 min_ses: float | None = None) -> list[TransitTime]:
+    """``times`` with every event whose single-event S/N is finite and below ``min_ses`` (``SES_MIN``, read at call
+    time, when None) marked not used, with no mid-time, error or reduced chi-square and the reason
+    ``LOW_SES_REASON`` (Holczer et al. 2016 time only the transits a single-event statistic can see). An epoch
+    without an SES, or with a non-finite one, is kept as it is."""
+    limit = SES_MIN if min_ses is None else float(min_ses)
+    out = []
+    for t in times:
+        ses = ses_by_epoch.get(int(t.epoch))
+        if ses is not None and math.isfinite(float(ses)) and float(ses) < limit:
+            t = TransitTime(t.epoch, None, None, None, t.n_in, t.n_out, False, LOW_SES_REASON)
+        out.append(t)
+    return out
+
+
+def fold_depth(time, fnorm, quarter, period, t0, duration_days) -> dict:
+    """The transit depth on a fold, {"depth_ppm", "err_ppm", "source"}: the weighted mean of the per-event box depths
+    with its scaled error (``event_depths``), or, below ``FOLD_DEPTH_MIN_EVENTS`` usable events (a finite depth and a
+    positive error, as rung 3 counts them), the box depth of the stacked fold (``stacked_depth``). None values and
+    the source None when neither measures."""
+    time, fnorm = np.asarray(time, float), np.asarray(fnorm, float)
+    ev = event_depths(time, fnorm, np.asarray(quarter), period, t0, duration_days)
+    usable = np.isfinite(ev.depths) & np.isfinite(ev.errors) & (ev.errors > 0)
+    if int(usable.sum()) >= FOLD_DEPTH_MIN_EVENTS and _finite(ev.mean, ev.err_scaled):
+        return {"depth_ppm": float(ev.mean), "err_ppm": float(ev.err_scaled), "source": EVENT_DEPTH_SOURCE}
+    st = stacked_depth(time, fnorm, period, t0, duration_days)
+    if st.n_in and _finite(st.depth_ppm, st.err_ppm):
+        return {"depth_ppm": float(st.depth_ppm), "err_ppm": float(st.err_ppm), "source": STACKED_DEPTH_SOURCE}
+    return {"depth_ppm": None, "err_ppm": None, "source": None}
+
+
 def predict_from(timing: dict, epoch: int) -> tuple[float, float | None]:
     """``LinearEphemeris.predict`` from a stored ``as_dict()`` block."""
     if not timing.get("ok"):
@@ -333,17 +374,17 @@ class ShapeErrors:
     n_boot: int
     n_converged: int
     seed: int
-    # each {"median": the rung 2 point value, "minus": p50 - p16, "plus": p84 - p50, "boot_median": p50} of the
-    # resamples; None without a fit or when not ok
+    # each {"median": the resample p50, "minus": p50 - p16, "plus": p84 - p50, "point": the full-data value};
+    # None without a fit or when not ok
     k: dict | None
     b: dict | None
     a_over_r: dict | None
     t14_h: dict | None
     model_depth_ppm: dict | None
     box_depth_ppm: dict | None          # {"median": depth_ppm, "minus": err, "plus": err} from event_depths
-    box_duration_h: dict | None         # only without a fit: {"median", "minus", "plus"} over the resamples
-    ingress_min: float | None = None    # (T14 - T23) / 2 of the rung 2 geometry, minutes; None without a fit
-    degenerate: bool = False            # ingress shorter than CADENCE_MIN: b and a/R* carry no errors
+    box_duration_h: dict | None         # only without a fit: {"median", "minus", "plus", "point"} over the resamples
+    ingress_min: float | None = None    # (T14 - T23) / 2 of the point geometry, minutes; None without a fit
+    degenerate: bool = False            # ingress shorter than CADENCE_MIN: a quoted free b and a/R* carry no errors
     degeneracy_reason: str | None = None
 
     def as_dict(self) -> dict:
@@ -369,14 +410,24 @@ def ingress_minutes(period: float, k: float, b: float, a_over_r: float) -> float
     return 0.5 * (t14 - t23) * 1440.0
 
 
-def _spread(samples, median: float, with_boot: bool = True) -> dict:
-    """``median`` (the point value) with the resample spread ``p50 - p16`` and ``p84 - p50`` (never negative) and,
-    when ``with_boot``, the resample median ``p50``."""
+def _spread(samples, point: float | None) -> dict:
+    """The resample median ``p50`` as the quoted value (spec 11.3), the spread ``p50 - p16`` and ``p84 - p50`` (never
+    negative) and ``point``, the full-data value, beside them."""
     p16, p50, p84 = np.percentile(np.asarray(samples, float), [16, 50, 84])
-    out = {"median": float(median), "minus": float(p50 - p16), "plus": float(p84 - p50)}
-    if with_boot:
-        out["boot_median"] = float(p50)
-    return out
+    return {"median": float(p50), "minus": float(p50 - p16), "plus": float(p84 - p50),
+            "point": None if point is None else float(point)}
+
+
+def _fit_row(fit: ShapeFit) -> tuple:
+    """(k, b, a/R*, T14 in hours, model depth in ppm) of a shape fit."""
+    return fit.k, fit.b, fit.a_over_r, fit.t14_days * 24.0, fit.depth_ppm
+
+
+def _point_fit(point: dict) -> ShapeFit:
+    """The start a resample's free fit takes without a model: the point geometry as an ok ``ShapeFit``."""
+    nan = float("nan")
+    return ShapeFit(True, None, "free", float(point["k"]), float(point["b"]), float(point["a_over_r"]), nan, nan, nan,
+                    0.0, nan, 0, 0.0, 0.0, CADENCE_MIN, nan, None)
 
 
 def _best_box_duration(t, f, period, t0, durations) -> float | None:
@@ -389,18 +440,29 @@ def _best_box_duration(t, f, period, t0, durations) -> float | None:
 
 
 def bootstrap_shape(time, fnorm, period, t0, duration_days, point: dict | None, *, n_boot: int = N_BOOT,
-                    seed: int = BOOT_SEED, used_epochs=None) -> ShapeErrors:
+                    seed: int = BOOT_SEED, used_epochs=None, model: dict | None = None) -> ShapeErrors:
     """Errors on the transit shape from ``n_boot`` resamples of the events, drawn with replacement among
     ``used_epochs`` (every epoch with a point within three durations, or six without a fit, when None). With
-    ``point`` (rung 2's {"k", "b", "a_over_r", "t14_h", "fit_depth_ppm"} when its fit is ok) each resample is fitted
-    with ``fit_transit``; without it, the box duration that maximises the depth over its error on a grid from half
-    to twice ``duration_days`` is kept per resample. The box depth always comes from ``event_depths`` over the same
-    epochs, with its scaled error. Fewer than ``BOOT_MIN_CONVERGED`` converged resamples give no shape errors.
+    ``point`` ({"k", "b", "a_over_r", "t14_h", "fit_depth_ppm"} of the quoted full-data fit) each resample is fitted
+    with ``transit_model.fit_shape``; without it, the box duration that maximises the depth over its error on a grid
+    from half to twice ``duration_days`` is kept per resample. The box depth always comes from ``event_depths`` over
+    the same epochs, with its scaled error. Fewer than ``BOOT_MIN_CONVERGED`` converged resamples give no shape
+    errors. Every block quotes the resample median beside the full-data value (``_spread``).
 
-    When the rung 2 geometry is degenerate between k, b and a/R* (``point_degeneracy``: an ingress shorter than
+    ``model`` is {"u1", "u2", "exposure_days", "density": (mean, sigma) | None, "free": ShapeFit, "prior": ShapeFit |
+    None, "quoted": "free" | "prior"}: the fits run with its limb darkening and exposure, each started at its own
+    full-data solution. k, T14 and the model depth come from the prior variant when there is one (spec 11.3: the radius
+    ratio from the prior fit), b and a/R* from the quoted one, and each block's ``point`` is the full-data value of
+    the variant its resamples come from. A variant none of the five values comes from is not fitted (a quoted prior
+    leaves the free fit unused), and a resample counts as converged when the fits it uses are ok. Without ``model``
+    (the module's own tests): no limb darkening, the ``CADENCE_MIN`` exposure, the free variant only, started at
+    ``point`` and with ``point``'s values as the full-data ones.
+
+    When the point geometry is degenerate between k, b and a/R* (``point_degeneracy``: an ingress shorter than
     ``CADENCE_MIN``, spec 3.4, ruling of 22 October 2026, or a grazing point solution) the block is marked
-    ``degenerate`` with the reason, and b and a/R* keep their point values with no errors, while k, T14 and the model
-    depth, which the depth and the box width constrain, keep theirs."""
+    ``degenerate`` with the reason. A quoted free b and a/R* then keep their full-data values with no errors, while k,
+    T14 and the model depth, which the depth and the box width constrain, keep theirs; a quoted prior b and a/R* keep
+    their errors, since the density prior removes the degeneracy."""
     time, fnorm = np.asarray(time, float), np.asarray(fnorm, float)
     good = np.isfinite(time) & np.isfinite(fnorm)
     t, f = time[good], fnorm[good]
@@ -425,13 +487,37 @@ def bootstrap_shape(time, fnorm, period, t0, duration_days, point: dict | None, 
     rng = np.random.default_rng(seed)
     durations = np.geomspace(BOX_DURATION_FACTORS[0] * duration_days, BOX_DURATION_FACTORS[1] * duration_days,
                              BOX_DURATION_STEPS)
+    quoted = "free"
+    if point is not None:
+        if model is None:
+            u1 = u2 = 0.0
+            exposure, density, free_start, prior_start = CADENCE_MIN / 1440.0, None, _point_fit(point), None
+            full = tuple(float(point[key]) for key in ("k", "b", "a_over_r", "t14_h", "fit_depth_ppm"))
+        else:
+            u1, u2, exposure = float(model["u1"]), float(model["u2"]), float(model["exposure_days"])
+            density, free_start, prior_start = model.get("density"), model["free"], model.get("prior")
+            if density is None or prior_start is None or not prior_start.ok:
+                density, prior_start = None, None
+            quoted = "prior" if model.get("quoted") == "prior" and prior_start is not None else "free"
+            shape_fit, geo_fit = prior_start or free_start, prior_start if quoted == "prior" else free_start
+            k0, _b, _a, t14_0, d0 = _fit_row(shape_fit)
+            full = (k0, geo_fit.b, geo_fit.a_over_r, t14_0, d0)
+        need_free = prior_start is None or quoted == "free"
     samples = []
     for _ in range(n_boot if pool.size else 0):
         sel = np.concatenate([members[int(e)] for e in rng.choice(pool, size=pool.size, replace=True)])
         if point is not None:
-            fit = fit_transit(t[sel], f[sel], period, t0, duration_days)
-            row = (fit.k, fit.b, fit.a_over_r, fit.t14_days * 24.0, fit.depth_ppm)
-            if fit.ok and _finite(*row):
+            kw = {"u1": u1, "u2": u2, "exposure_days": exposure}
+            free = (fit_shape(t[sel], f[sel], period, t0, duration_days, **kw, start=free_start) if need_free
+                    else None)
+            prior = (fit_shape(t[sel], f[sel], period, t0, duration_days, **kw, density=density, start=prior_start)
+                     if prior_start is not None else None)
+            if (free is not None and not free.ok) or (prior is not None and not prior.ok):
+                continue
+            k, _b, _a, t14, depth = _fit_row(prior or free)
+            geo = prior if quoted == "prior" else free
+            row = (k, geo.b, geo.a_over_r, t14, depth)
+            if _finite(*row):
                 samples.append(row)
         else:
             best = _best_box_duration(t[sel], f[sel], period, t0, durations)
@@ -443,12 +529,12 @@ def bootstrap_shape(time, fnorm, period, t0, duration_days, point: dict | None, 
                            SHAPE_METHOD, n_boot, n_conv, seed, None, None, None, None, None, box_depth, None, *flags)
     s = np.array(samples)
     if point is None:
+        whole = _best_box_duration(t[near & in_pool], f[near & in_pool], period, t0, durations)
         return ShapeErrors(True, None, SHAPE_METHOD, n_boot, n_conv, seed, None, None, None, None, None, box_depth,
-                           _spread(s[:, 0], float(np.median(s[:, 0])), with_boot=False))
-    keys = ("k", "b", "a_over_r", "t14_h", "fit_depth_ppm")
-    k, b, a, t14, depth = (_spread(s[:, i], float(point[key])) for i, key in enumerate(keys))
-    if degenerate:      # the bootstrap scatters around one solution in the k-b-a/R* valley, not across it
-        b, a = ({"median": d["median"], "minus": None, "plus": None, "boot_median": None} for d in (b, a))
+                           _spread(s[:, 0], None if whole is None else whole * 24.0))
+    k, b, a, t14, depth = (_spread(s[:, i], full[i]) for i in range(5))
+    if degenerate and quoted == "free":     # the resamples scatter around one solution in the k-b-a/R* valley
+        b, a = ({"median": d["point"], "minus": None, "plus": None, "point": d["point"]} for d in (b, a))
     return ShapeErrors(True, None, SHAPE_METHOD, n_boot, n_conv, seed, k, b, a, t14, depth, box_depth, None, *flags)
 
 
@@ -457,12 +543,16 @@ class ParityDepths:
     odd: dict                  # {"depth_ppm", "err_ppm", "n", "inflation"}
     even: dict
     difference_sigma: float | None      # |odd - even| over the two errors in quadrature
+    # the stacked fold of each parity (lc.ops.stacked_depth): {"odd": {"depth_ppm", "err_ppm"}, "even": {...},
+    # "difference_sigma"}; None without the fold arguments
+    stacked: dict | None = None
 
     def as_dict(self) -> dict:
         def block(d):
             return {"depth_ppm": _f(d["depth_ppm"]), "err_ppm": _f(d["err_ppm"]), "n": int(d["n"]),
                     "inflation": _f(d["inflation"])}
-        return {"odd": block(self.odd), "even": block(self.even), "difference_sigma": _f(self.difference_sigma)}
+        return {"odd": block(self.odd), "even": block(self.even), "difference_sigma": _f(self.difference_sigma),
+                "stacked": self.stacked}
 
 
 def _parity(depths: np.ndarray, errors: np.ndarray) -> dict:
@@ -477,9 +567,27 @@ def _parity(depths: np.ndarray, errors: np.ndarray) -> dict:
     return {"depth_ppm": mean, "err_ppm": infl / math.sqrt(float(np.sum(w))), "n": int(d.size), "inflation": infl}
 
 
-def parity_depths(events) -> ParityDepths:
+def _stacked_parity(time, fnorm, period, t0, duration_days) -> dict:
+    """The odd and even box depths of the stacked fold (``stacked_depth`` with ``epochs="odd"`` and ``"even"``) and
+    their difference over the two errors in quadrature; None values where a parity's window is too sparse."""
+    time, fnorm = np.asarray(time, float), np.asarray(fnorm, float)
+    sides = {}
+    for name in ("odd", "even"):
+        st = stacked_depth(time, fnorm, period, t0, duration_days, epochs=name)
+        sides[name] = {"depth_ppm": _f(st.depth_ppm), "err_ppm": _f(st.err_ppm)}
+    o, e = sides["odd"], sides["even"]
+    sigma = None
+    if None not in (o["depth_ppm"], o["err_ppm"], e["depth_ppm"], e["err_ppm"]):
+        err = math.hypot(o["err_ppm"], e["err_ppm"])
+        sigma = abs(o["depth_ppm"] - e["depth_ppm"]) / err if err > 0 else None
+    return {**sides, "difference_sigma": sigma}
+
+
+def parity_depths(events, time=None, fnorm=None, period=None, t0=None, duration_days=None) -> ParityDepths:
     """Odd and even depths of ``events`` (``lc.ops.EventDepths``): the weighted mean of the per-event box depths of
-    each parity, its error inflated by the square root of the parity's reduced chi-square when above one."""
+    each parity, its error inflated by the square root of the parity's reduced chi-square when above one. With the
+    fold arguments the stacked fold of each parity is measured beside them (``stacked``, spec 11.5); without them
+    ``stacked`` is None."""
     epochs = np.asarray(events.epochs, dtype=np.int64)
     depths, errors = np.asarray(events.depths, float), np.asarray(events.errors, float)
     odd = _parity(depths[epochs % 2 == 1], errors[epochs % 2 == 1])
@@ -488,7 +596,10 @@ def parity_depths(events) -> ParityDepths:
     if odd["n"] and even["n"]:
         err = math.hypot(odd["err_ppm"], even["err_ppm"])
         sigma = abs(odd["depth_ppm"] - even["depth_ppm"]) / err if err > 0 else None
-    return ParityDepths(odd, even, sigma)
+    stacked = None
+    if all(x is not None for x in (time, fnorm, period, t0, duration_days)):
+        stacked = _stacked_parity(time, fnorm, float(period), float(t0), float(duration_days))
+    return ParityDepths(odd, even, sigma, stacked)
 
 
 def point_degeneracy(point: dict | None, ingress: float | None) -> str | None:

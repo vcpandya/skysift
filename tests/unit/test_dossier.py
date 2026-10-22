@@ -41,8 +41,9 @@ from skysift.dossier import (
     status_label,
     whitened,
 )
+from skysift.ephemeris import LOW_SES_REASON
 from skysift.fpp import FppInputs, compute
-from skysift.lc.transit_model import _t14
+from skysift.lc.transit_model import NO_DENSITY, _t14
 from skysift.models import Signal, TestResult, TestStatus
 from skysift.net import ServiceUnavailable
 from skysift.pipeline import search_version
@@ -122,8 +123,9 @@ def _periodogram(store, blob, target_id):
 
 def _complete_the_fit(store, signal_id: int) -> None:
     """The stage-2 rung 2 row of the seed with the a/R* and T14 of the injected geometry, so the timing template and
-    the shape bootstrap use the uniform-disc fit (the seed row carries k and b only). Its k and b are the injected
-    values, not a fit of this curve, so the bootstrap median of k sits off it and the shape_offset caveat fires."""
+    the shape is fitted at all (``_fit_point``; the seed row carries k and b only). Its k and b are the injected
+    values, not a fit of this curve; before version 5 the bootstrap median of k sat off them and the shape_offset
+    caveat fired, and since version 5 the bootstrap point is the limb-darkened fit of this curve, so it does not."""
     with store.session() as s:
         row = s.scalars(select(TestRow).where(TestRow.signal_id == signal_id, TestRow.rung == "rung2_shape")
                         .order_by(TestRow.id.desc())).first()
@@ -545,10 +547,10 @@ def test_an_unchanged_dossier_reports_its_stored_fap_and_a_version_bump_regenera
     rep = generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch)
     assert not rep.generated and rep.fap.words() == "1 in 1,700" == seeded["fap"]["words"]
     assert rep.fpp.value == pytest.approx(compute(FppInputs(**seeded["fpp"]["inputs"])).value)
-    monkeypatch.setattr(dossier_module, "DOSSIER_VERSION", "5")
+    monkeypatch.setattr(dossier_module, "DOSSIER_VERSION", "6")
     again = generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch)
     assert again.generated and "format changed" in again.stale_reason
-    assert env.store.dossier(STAGE2_TARGET)["dossier_version"] == "5"
+    assert env.store.dossier(STAGE2_TARGET)["dossier_version"] == "6"
 
 
 def test_rank_key_orders_stage_two_approved_stage_one_and_rejected_last():
@@ -672,8 +674,8 @@ def test_hand_built_values_agree_within_errors():
     assert abs(planet["a_au"]["median"] - pb["a_AU"]["median"]) <= pb["a_AU"]["plus"]
     assert abs(planet["teq_k"]["median"] - teq["median"]) <= teq["plus"]
     assert planet["in_habitable_zone"] is False and planet["in_optimistic_habitable_zone"] is True
-    # the golden is the version 4 run (a56d8c8: the cross-check, the TESS statement and pixel rule 4; spec 10.8)
-    assert gen["dossier_version"] == "4" and dossier_module.DOSSIER_VERSION == "4"
+    # the golden is the version 5 run (spec 11.3: the limb-darkened shape, the linear-ephemeris folds and the SES cut)
+    assert gen["dossier_version"] == DOSSIER_VERSION == dossier_module.DOSSIER_VERSION
     eph = gen["ephemeris"]
     assert eph["duration_source"] == "fitted T14" and eph["period_source"] == "linear fit of 32 transit times"
     assert eph["period_err_days"] > 0 and eph["t_ref_err_days"] > 0 and eph["epoch_ref"] == 19
@@ -971,7 +973,7 @@ def test_generate_writes_the_timing_shape_parity_and_secondary_blocks(env):
     rep = generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch, n_boot=20, force=True)
     d = _data(rep)
     e, timing, shape = d["ephemeris"], d["timing"], d["shape"]
-    assert d["dossier_version"] == "4" == DOSSIER_VERSION and timing["ok"] and e["period_err_days"] > 0
+    assert d["dossier_version"] == DOSSIER_VERSION and timing["ok"] and e["period_err_days"] > 0
     # the quoted period and T0 are the linear fit's, beside their own errors; the search values stay in signal
     assert e["period_days"] == timing["period"] and e["t0_bkjd"] == timing["t0"]
     assert e["t0_bkjd_err"] == timing["t0_err"] and e["period_err_days"] == timing["period_err"]
@@ -983,10 +985,10 @@ def test_generate_writes_the_timing_shape_parity_and_secondary_blocks(env):
     assert e["ephemeris_method"] == timing["method"] and e["shape_method"] == shape["method"]
     assert timing["template"] == "fit" and timing["template_reason"] is None
     assert shape["ok"] and shape["n_boot"] == 20 and shape["n_converged"] >= 20 and d["parity"]["odd"]["err_ppm"] > 0
-    # the duration is the fitted T14 with its bootstrap spread, the depth rung 2's per-event mean with its error
+    # the duration is the fitted T14 with its bootstrap spread, the depth the per-event mean on the linear-fit fold
     assert e["duration_source"] == "fitted T14" and e["duration_h"] == shape["t14_h"]["median"]
     assert e["duration_h_err"] == {"minus": shape["t14_h"]["minus"], "plus": shape["t14_h"]["plus"]}
-    assert (e["depth_ppm"], e["depth_ppm_err"]) == (2180.0, 60.0)
+    assert (e["depth_ppm"], e["depth_ppm_err"]) == (2166.5579, 52.345237)
     assert e["depth_source"] == "per-event weighted mean of the box depth"
     sec = d["secondary"]
     assert sec["limit_3sigma_ppm"] == pytest.approx(15.0 + 3 * 65.0)
@@ -1001,7 +1003,7 @@ def test_generate_writes_the_timing_shape_parity_and_secondary_blocks(env):
     assert rp["source"] == stellar["source"] + "; radius-ratio error from the bootstrap"
     keys = [c.get("key") for c in d["caveats"]]
     assert "no_ephemeris_error" not in keys and "no_shape_error" not in keys
-    assert "shape_offset" in keys               # the seed's k is the injected value, not a fit of this curve
+    assert "shape_offset" not in keys           # version 5: the point is the limb-darkened fit of this curve
     json.dumps(d, allow_nan=False)
 
 
@@ -1052,11 +1054,11 @@ def test_the_error_caveats_follow_the_pixel_caveats_in_order():
     i = titles.index("The false-positive estimate has no pixel exclusion")
     assert titles[i + 1:i + 4] == ["The ephemeris carries no error", "The transit shape carries no error",
                                    "The false-positive probability is not computed"]
-    ok_shape = {"ok": True, "reason": None, "k": {"median": 0.047, "minus": 0.0004, "plus": 0.0003,
-                                                   "boot_median": 0.0478}}
+    ok_shape = {"ok": True, "reason": None, "k": {"median": 0.0478, "minus": 0.0004, "plus": 0.0003,
+                                                   "point": 0.047}}
     hit = [c for c in caveats({**data, "shape": ok_shape}) if c.get("key") == "shape_offset"]
     assert hit and hit[0]["title"] == "The shape fit sits off its bootstrap"
-    close = {**ok_shape, "k": {**ok_shape["k"], "boot_median": 0.0472}}
+    close = {**ok_shape, "k": {**ok_shape["k"], "point": 0.0475}}
     assert not [c for c in caveats({**data, "shape": close}) if c.get("key") == "shape_offset"]
     # a version-2 dossier has no timing or shape block, and so none of the three caveats
     assert not {"no_ephemeris_error", "no_shape_error", "shape_offset"} & {
@@ -1071,7 +1073,8 @@ def test_a_fit_that_does_not_dip_times_the_events_with_the_box(env):
     assert blocks["timing"]["template"] == "box" and "does not dip" in blocks["timing"]["template_reason"]
     # the refused geometry is not bootstrapped either, so the duration is not called a fitted T14
     assert blocks["shape"]["k"] is None and blocks["ephemeris_extra"]["duration_source"] == "search box"
-    assert blocks["timing"]["ok"] and set(blocks) == {"ephemeris_extra", "timing", "shape", "parity", "secondary"}
+    assert blocks["timing"]["ok"] and set(blocks) == {"ephemeris_extra", "timing", "shape", "parity", "secondary",
+                                                      "stability", "fold"}
 
 
 def test_a_version_2_dossier_renders_and_regenerates(env):
@@ -1095,7 +1098,7 @@ def test_a_version_2_dossier_renders_and_regenerates(env):
     r = client.get(f"/dossiers/{STAGE2_TARGET}")
     assert r.status_code == 200 and "Shape with errors" not in r.text and "T_ref" not in r.text
     again = generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch)     # no --force
-    assert again.generated and again.stale_reason == "the dossier format changed (2 to 4)"
+    assert again.generated and again.stale_reason == f"the dossier format changed (2 to {DOSSIER_VERSION})"
     assert _data(again)["timing"] is not None
 
 
@@ -1246,7 +1249,7 @@ def test_generate_stores_the_prior_claims(env):
     data = json.loads(generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch, force=True)
                       .data_path.read_text(encoding="utf-8"))
     stored = {k: PRIOR_CLAIM[k] for k in ("doi", "date", "author", "title")}  # status and note stay in the file
-    assert data["prior_claims"] == [stored] and data["dossier_version"] == "4"
+    assert data["prior_claims"] == [stored] and data["dossier_version"] == DOSSIER_VERSION
     assert "prior_claims_unchecked" not in [c.get("key") for c in data["caveats"]]
 
 
@@ -1320,7 +1323,8 @@ def test_without_tess_inputs_the_block_says_so_and_nothing_is_fetched(env):
         calls.append(url)
         return env.fetch(url, **kw)
     d = _data(generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=fetch))
-    assert d["dossier_version"] == "4" and d["tess"] == {"available": False, "caveats": ["TESS inputs not fetched"]}
+    assert d["dossier_version"] == DOSSIER_VERSION
+    assert d["tess"] == {"available": False, "caveats": ["TESS inputs not fetched"]}
     assert not [u for u in calls if "mast.stsci.edu" in u]
 
 
@@ -1387,3 +1391,43 @@ def test_the_export_embeds_only_the_public_fields_of_a_prior_claim():
     assert "reported not accepted" not in page and "sweep a week later" not in page
     assert dossier_module.public_claims({"prior_claims": None})["prior_claims"] is None
     assert data["prior_claims"] == [PRIOR_CLAIM]                              # the caller's dict is not changed
+
+
+# ---------------------------------------------------------------------------------------------------- version 5
+
+
+def test_version_5_folds_on_the_linear_ephemeris_and_stores_both_fits(env):
+    d = json.loads(generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch,
+                            force=True).data_path.read_text(encoding="utf-8"))
+    assert d["dossier_version"] == "5" == DOSSIER_VERSION
+    e, timing, shape = d["ephemeris"], d["timing"], d["shape"]
+    assert e["fold_ephemeris"] == f"linear fit of {timing['n_used']} transit times"
+    assert d["stability"]["ephemeris"] == e["fold_ephemeris"] and "season_depths" in d["stability"]["metrics"]
+    assert e["depth_source"] == "per-event weighted mean of the box depth" and e["depth_ppm_err"] > 0
+    assert set(shape["fits"]) == {"free", "prior"} and shape["fits"]["prior"]["variant"] == "prior"
+    assert shape["limb_darkening"]["law"] == "quadratic" and shape["exposure_min"] == pytest.approx(29.4, abs=0.1)
+    assert shape["comparison"]["quoted"] in ("free", "prior")
+    assert f"k {shape['fits']['prior']['k']:.4f} from the transit fit" in d["planet"]["rp_rearth"]["source"]
+    assert d["plots"]["model_kind"] == "fit"
+
+
+def test_without_enough_ses_the_fold_stays_on_the_search_ephemeris(env, monkeypatch):
+    from skysift import ephemeris as eph_module
+    monkeypatch.setattr(eph_module, "SES_MIN", 1e6)            # every transit falls below the threshold
+    d = json.loads(generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch,
+                            force=True).data_path.read_text(encoding="utf-8"))
+    assert d["timing"]["ok"] is False and d["ephemeris"]["fold_ephemeris"] == "search"
+    # every event with a single-event statistic falls below it; one cut by a gap has none and keeps its own reason
+    reasons = {t["reason"] for t in d["timing"]["times"]}
+    assert not any(t["used"] for t in d["timing"]["times"]) and LOW_SES_REASON in reasons
+    assert reasons <= {LOW_SES_REASON, "too few in-transit points", "too few out-of-transit points"}
+    assert d["stability"]["ephemeris"] == "search"
+
+
+def test_shape_without_a_stellar_density_quotes_the_free_fit(settings, monkeypatch):
+    env = _make_env(settings, monkeypatch, responses={**RESPONSES, "WHERE g.source_id": GAIA_HEADER})
+    d = json.loads(generate(env.store, env.blob, env.settings, STAGE2_TARGET,
+                            fetch=env.fetch).data_path.read_text(encoding="utf-8"))
+    assert d["star"]["density_gcc"] is None and d["shape"]["fits"]["prior"] is None
+    cmp = d["shape"]["comparison"]
+    assert (cmp["quoted"], cmp["reason"], cmp["a_over_r_label"]) == ("free", NO_DENSITY, "fitted")
