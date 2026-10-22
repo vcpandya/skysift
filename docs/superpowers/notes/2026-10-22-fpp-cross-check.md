@@ -28,7 +28,7 @@ The medians and ranges, with SkySift's own FPP from the live dossier, are summar
 | KIC 6146676, 40.29 d | 0.076 (0.067 to 0.100) | 0.025 (0.016 to 0.035) | 0.023 (0.015 to 0.033) | 0.0035 | candidate |
 | KIC 5689121, 13.77 d | 0.127 (0.110 to 0.141) | 0.047 (0.034 to 0.054) | 0.043 (0.030 to 0.049) | 0.0016 | candidate |
 | KIC 6699887, 15.11 d (3479) | 0.030 (0.024 to 0.037) | 0.014 (0.011 to 0.016) | 0.010 (0.008 to 0.012) | 0.0039 | candidate |
-| KIC 6699887, 47.69 d (3480) | 0.042 (0.034 to 0.046) | 0.020 (0.016 to 0.024) | 0.017 (0.012 to 0.020) | 0.064 (provisional) | candidate |
+| KIC 6699887, 47.69 d (3480) | 0.042 (0.034 to 0.046) | 0.020 (0.016 to 0.024) | 0.017 (0.012 to 0.020) | 0.064 | candidate |
 
 Every FPP is below 0.5 and every NFPP sits between 1e-3 and 0.1, so all four are candidates: not likely planets and not likely nearby false positives. The shares behind the NFPP are given in the table below:
 
@@ -52,7 +52,7 @@ The PlanetHunt pack (Kuber Mehta, DOI 10.5281/zenodo.23325261, 13 October 2026) 
 
 Both periods share the star, the budget and the dominant neighbour (TIC 270864061, 2.8 times brighter in G). At 15.11 d the NFPP of 0.010 is a planet on that neighbour (NTP, 0.008 in the median run) and STP is 0.016. At 47.69 d the NFPP is 0.017 (NTP 0.020) and STP 0.021. Under the old protocol the single 15.11 d run gave an NFPP of 0.135 (all of it NTP on TIC 270864061), which would have put the star in the "likely nearby false positive" class: the old box gave that neighbour 0.303 of the light, so a 0.27 per cent transit on it would do, while its share of the 0.130 budget leaves it a flux ratio of 0.114 and needs 0.90 per cent.
 
-SkySift's FPP for 3480 (0.064) comes from a dossier generated for that signal on a database copy (version 3, not yet regenerated at the final commit), so it is provisional. It is the one case where SkySift's number is the higher: over 28 transits its secondary (89 +- 77 ppm) and odd-even difference (236 +- 168 ppm) cannot yet rule out an eclipsing binary at P or 2P.
+SkySift's FPP for 3480 (0.064) comes from a dossier generated for that signal on a database copy and regenerated at version 4 from the branch's final code, where it stays at 0.064. It is the one case where SkySift's number is the higher: over 28 transits its secondary (89 +- 77 ppm) and odd-even difference (236 +- 168 ppm) cannot yet rule out an eclipsing binary at P or 2P.
 
 ## 3. Why the full FPP sits far above SkySift's own
 
