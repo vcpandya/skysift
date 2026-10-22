@@ -1,0 +1,1428 @@
+{
+ "tool": "triceratops",
+ "tool_version": "1.1.0",
+ "run_utc": "2026-10-22T08:31:43+00:00",
+ "n_runs": 20,
+ "n_degenerate": 0,
+ "fpp": 0.041928466839779854,
+ "fpp_p16": 0.03446528755511114,
+ "fpp_p84": 0.04598903320764422,
+ "fpp_no_stp": 0.020013809149941407,
+ "fpp_no_stp_p16": 0.015775885303398476,
+ "fpp_no_stp_p84": 0.02355043472930579,
+ "nfpp": 0.01674673218877457,
+ "nfpp_p16": 0.011970488751223862,
+ "nfpp_p84": 0.019780342687510707,
+ "p_stp": 0.0212511486,
+ "p_stp_p16": 0.01770435444,
+ "p_stp_p84": 0.026670007052,
+ "p_ptp": 0.20426388855,
+ "p_ptp_p16": 0.183029288072,
+ "p_ptp_p84": 0.217680871968,
+ "runs": [
+  {
+   "seed": 1,
+   "fpp": 0.03995542407602326,
+   "fpp_no_stp": 0.024002223431997004,
+   "nfpp": 0.020189352997940137,
+   "p_stp": 0.0163455297,
+   "p_ptp": 0.2202820666,
+   "best_scenario": {
+    "id": "270864056",
+    "scenario": "TP",
+    "prob": 0.7186209391
+   },
+   "degenerate": false
+  },
+  {
+   "seed": 2,
+   "fpp": 0.0424025186579855,
+   "fpp_no_stp": 0.02187822120856733,
+   "nfpp": 0.017853019974387797,
+   "p_stp": 0.0209833764,
+   "p_ptp": 0.2191816322,
+   "best_scenario": {
+    "id": "270864056",
+    "scenario": "TP",
+    "prob": 0.7179971945
+   },
+   "degenerate": false
+  },
+  {
+   "seed": 3,
+   "fpp": 0.042737633187796,
+   "fpp_no_stp": 0.022362453469913755,
+   "nfpp": 0.01684429545879253,
+   "p_stp": 0.020841241,
+   "p_ptp": 0.2030331455,
+   "best_scenario": {
+    "id": "270864056",
+    "scenario": "TP",
+    "prob": 0.735575691
+   },
+   "degenerate": false
+  },
+  {
+   "seed": 4,
+   "fpp": 0.04421088983052923,
+   "fpp_no_stp": 0.016552356881142757,
+   "nfpp": 0.013693413716107857,
+   "p_stp": 0.0281240523,
+   "p_ptp": 0.1797685313,
+   "best_scenario": {
+    "id": "270864056",
+    "scenario": "TP",
+    "prob": 0.7601449761
+   },
+   "degenerate": false
+  },
+  {
+   "seed": 5,
+   "fpp": 0.031002104357693572,
+   "fpp_no_stp": 0.019744159419196126,
+   "nfpp": 0.016783799999388282,
+   "p_stp": 0.0114847007,
+   "p_ptp": 0.193595201,
+   "best_scenario": {
+    "id": "270864056",
+    "scenario": "TP",
+    "prob": 0.7547365203
+   },
+   "degenerate": false
+  },
+  {
+   "seed": 6,
+   "fpp": 0.034422312033401736,
+   "fpp_no_stp": 0.01559408720689367,
+   "nfpp": 0.011829874217189784,
+   "p_stp": 0.0191264849,
+   "p_ptp": 0.2174045616,
+   "best_scenario": {
+    "id": "270864056",
+    "scenario": "TP",
+    "prob": 0.7286217715
+   },
+   "degenerate": false
+  },
+  {
+   "seed": 7,
+   "fpp": 0.03834269602035678,
+   "fpp_no_stp": 0.016746149159539817,
+   "nfpp": 0.013846017777765039,
+   "p_stp": 0.0219643654,
+   "p_ptp": 0.166180862,
+   "best_scenario": {
+    "id": "270864056",
+    "scenario": "TP",
+    "prob": 0.7775804965
+   },
+   "degenerate": false
+  },
+  {
+   "seed": 8,
+   "fpp": 0.04213831606285279,
+   "fpp_no_stp": 0.02354723832521839,
+   "nfpp": 0.01978989316013848,
+   "p_stp": 0.0190394031,
+   "p_ptp": 0.2054946316,
+   "best_scenario": {
+    "id": "270864056",
+    "scenario": "TP",
+    "prob": 0.7349768075
+   },
+   "degenerate": false
+  },
+  {
+   "seed": 9,
+   "fpp": 0.03549670007613692,
+   "fpp_no_stp": 0.015743532320992466,
+   "nfpp": 0.011898700211020363,
+   "p_stp": 0.0200691267,
+   "p_ptp": 0.2119226942,
+   "best_scenario": {
+    "id": "270864056",
+    "scenario": "TP",
+    "prob": 0.7355792438
+   },
+   "degenerate": false
+  },
+  {
+   "seed": 10,
+   "fpp": 0.05058443850142336,
+   "fpp_no_stp": 0.02791738497768944,
+   "nfpp": 0.02300259933784756,
+   "p_stp": 0.023318032,
+   "p_ptp": 0.2176923849,
+   "best_scenario": {
+    "id": "270864056",
+    "scenario": "TP",
+    "prob": 0.7095378198
+   },
+   "degenerate": false
+  },
+  {
+   "seed": 11,
+   "fpp": 0.04171861761670692,
+   "fpp_no_stp": 0.023915545213056572,
+   "nfpp": 0.020041648060110086,
+   "p_stp": 0.0182392746,
+   "p_ptp": 0.198444573,
+   "best_scenario": {
+    "id": "270864056",
+    "scenario": "TP",
+    "prob": 0.7394381077
+   },
+   "degenerate": false
+  },
+  {
+   "seed": 12,
+   "fpp": 0.04601231735820477,
+   "fpp_no_stp": 0.019431694894564516,
+   "nfpp": 0.01581287704574211,
+   "p_stp": 0.0271073645,
+   "p_ptp": 0.2203395832,
+   "best_scenario": {
+    "id": "270864056",
+    "scenario": "TP",
+    "prob": 0.7160734927
+   },
+   "degenerate": false
+  },
+  {
+   "seed": 13,
+   "fpp": 0.04543021359419108,
+   "fpp_no_stp": 0.023000782788842926,
+   "nfpp": 0.01922898920310441,
+   "p_stp": 0.0229574706,
+   "p_ptp": 0.1619551551,
+   "best_scenario": {
+    "id": "270864056",
+    "scenario": "TP",
+    "prob": 0.7774172027
+   },
+   "degenerate": false
+  },
+  {
+   "seed": 14,
+   "fpp": 0.04136590153548314,
+   "fpp_no_stp": 0.02028345888068669,
+   "nfpp": 0.016709664378160856,
+   "p_stp": 0.0215189208,
+   "p_ptp": 0.1991954915,
+   "best_scenario": {
+    "id": "270864056",
+    "scenario": "TP",
+    "prob": 0.7413532106
+   },
+   "degenerate": false
+  },
+  {
+   "seed": 15,
+   "fpp": 0.04455409532629684,
+   "fpp_no_stp": 0.022375833538191902,
+   "nfpp": 0.019551131344444157,
+   "p_stp": 0.0226858772,
+   "p_ptp": 0.215269024,
+   "best_scenario": {
+    "id": "270864056",
+    "scenario": "TP",
+    "prob": 0.7216524837
+   },
+   "degenerate": false
+  },
+  {
+   "seed": 16,
+   "fpp": 0.02867395925606475,
+   "fpp_no_stp": 0.011189751074201325,
+   "nfpp": 0.008362436269521649,
+   "p_stp": 0.0176820661,
+   "p_ptp": 0.1825890417,
+   "best_scenario": {
+    "id": "270864056",
+    "scenario": "TP",
+    "prob": 0.7729246177
+   },
+   "degenerate": false
+  },
+  {
+   "seed": 17,
+   "fpp": 0.04652808928299912,
+   "fpp_no_stp": 0.019738641805614344,
+   "nfpp": 0.016094175697360963,
+   "p_stp": 0.0273288825,
+   "p_ptp": 0.2100131804,
+   "best_scenario": {
+    "id": "270864056",
+    "scenario": "TP",
+    "prob": 0.7252973337
+   },
+   "degenerate": false
+  },
+  {
+   "seed": 18,
+   "fpp": 0.0301145102311422,
+   "fpp_no_stp": 0.01718753144346964,
+   "nfpp": 0.014117225281703501,
+   "p_stp": 0.0131530472,
+   "p_ptp": 0.2023708854,
+   "best_scenario": {
+    "id": "270864056",
+    "scenario": "TP",
+    "prob": 0.7520929411
+   },
+   "degenerate": false
+  },
+  {
+   "seed": 19,
+   "fpp": 0.048974164906644746,
+   "fpp_no_stp": 0.023550567912809434,
+   "nfpp": 0.01944199220725719,
+   "p_stp": 0.0260367779,
+   "p_ptp": 0.2004920956,
+   "best_scenario": {
+    "id": "270864056",
+    "scenario": "TP",
+    "prob": 0.7318370291
+   },
+   "degenerate": false
+  },
+  {
+   "seed": 20,
+   "fpp": 0.04050534057869948,
+   "fpp_no_stp": 0.014187709630913434,
+   "nfpp": 0.011434157892588157,
+   "p_stp": 0.0266963916,
+   "p_ptp": 0.2092558165,
+   "best_scenario": {
+    "id": "270864056",
+    "scenario": "TP",
+    "prob": 0.7326828227
+   },
+   "degenerate": false
+  }
+ ],
+ "scenarios": [
+  {
+   "ID": 270864056,
+   "scenario": "TP",
+   "prob": 0.7349768075
+  },
+  {
+   "ID": 270864056,
+   "scenario": "EB",
+   "prob": 2.23740299e-75
+  },
+  {
+   "ID": 270864056,
+   "scenario": "EBx2P",
+   "prob": 1.34690346e-39
+  },
+  {
+   "ID": 270864056,
+   "scenario": "PTP",
+   "prob": 0.2054946316
+  },
+  {
+   "ID": 270864056,
+   "scenario": "PEB",
+   "prob": 2.734780627e-68
+  },
+  {
+   "ID": 270864056,
+   "scenario": "PEBx2P",
+   "prob": 3.60889205e-44
+  },
+  {
+   "ID": 270864056,
+   "scenario": "STP",
+   "prob": 0.0190394031
+  },
+  {
+   "ID": 270864056,
+   "scenario": "SEB",
+   "prob": 3.2e-09
+  },
+  {
+   "ID": 270864056,
+   "scenario": "SEBx2P",
+   "prob": 5e-09
+  },
+  {
+   "ID": 270864056,
+   "scenario": "DTP",
+   "prob": 0.0173902448
+  },
+  {
+   "ID": 270864056,
+   "scenario": "DEB",
+   "prob": 1.921382662e-69
+  },
+  {
+   "ID": 270864056,
+   "scenario": "DEBx2P",
+   "prob": 1.697279562e-23
+  },
+  {
+   "ID": 270864056,
+   "scenario": "BTP",
+   "prob": 0.0028965656
+  },
+  {
+   "ID": 270864056,
+   "scenario": "BEB",
+   "prob": 0.000412325
+  },
+  {
+   "ID": 270864056,
+   "scenario": "BEBx2P",
+   "prob": 1.209e-07
+  },
+  {
+   "ID": 270864061,
+   "scenario": "NTP",
+   "prob": 0.0197883554
+  },
+  {
+   "ID": 270864061,
+   "scenario": "NEB",
+   "prob": 2e-09
+  },
+  {
+   "ID": 270864061,
+   "scenario": "NEBx2P",
+   "prob": 1.5358e-06
+  }
+ ],
+ "stars": [
+  {
+   "id": "270864056",
+   "tmag": 15.5468,
+   "gmag": 16.219015,
+   "sep_arcsec": 0.0,
+   "flux_ratio": 0.88485904,
+   "tdepth": 0.0009898835699999999,
+   "g_package": 0.695271514509708,
+   "g_kepler": 0.7003836396154604,
+   "kepler_flux": 1.0,
+   "band": "Gaia G",
+   "box_factor": 1.0,
+   "share": null,
+   "share_source": "contamination budget",
+   "teff": 4614.0,
+   "rad": 0.760711,
+   "mass": 0.73,
+   "params_source": {
+    "Teff": "TIC",
+    "rad": "TIC",
+    "mass": "TIC"
+   },
+   "gaia_source_id": null,
+   "tmag_estimated": false
+  },
+  {
+   "id": "270864061",
+   "tmag": 14.393,
+   "gmag": 15.092828,
+   "sep_arcsec": 9.997,
+   "flux_ratio": 0.11422837244630181,
+   "tdepth": 0.007668037342243781,
+   "g_package": 0.30267274165690794,
+   "g_kepler": 0.2972416523625527,
+   "kepler_flux": 2.8214658623769617,
+   "band": "Gaia G",
+   "box_factor": 1.0,
+   "share": 0.12909216867615636,
+   "share_source": "contamination budget",
+   "teff": 4487.0,
+   "rad": 0.777898,
+   "mass": 0.704,
+   "params_source": {
+    "Teff": "TIC",
+    "rad": "TIC",
+    "mass": "TIC"
+   },
+   "gaia_source_id": "2077554781499349120",
+   "tmag_estimated": false
+  },
+  {
+   "id": "1880854624",
+   "tmag": 18.9726,
+   "gmag": 19.55597,
+   "sep_arcsec": 11.725,
+   "flux_ratio": 0.000738057064367808,
+   "tdepth": 0.0,
+   "g_package": 0.0017567342285110532,
+   "g_kepler": 0.0019205500056798258,
+   "kepler_flux": 0.0462613178080562,
+   "band": "Gaia G",
+   "box_factor": 1.0,
+   "share": 0.0008340956367104618,
+   "share_source": "contamination budget",
+   "teff": 5217.0,
+   "rad": 0.52591,
+   "mass": 0.89,
+   "params_source": {
+    "Teff": "TIC",
+    "rad": "TIC",
+    "mass": "TIC"
+   },
+   "gaia_source_id": "2077554777196977280",
+   "tmag_estimated": false
+  },
+  {
+   "id": "1880854613",
+   "tmag": 20.3964,
+   "gmag": 20.592985,
+   "sep_arcsec": 13.29,
+   "flux_ratio": 7.173711395669814e-05,
+   "tdepth": 0.0,
+   "g_package": 0.00011957655092436244,
+   "g_kepler": 0.000186672171121353,
+   "kepler_flux": 0.017799672020272075,
+   "band": "Gaia G",
+   "box_factor": 1.0,
+   "share": 8.107179868637398e-05,
+   "share_source": "contamination budget",
+   "teff": 5659.0,
+   "rad": 0.977,
+   "mass": 0.98,
+   "params_source": {
+    "Teff": "Mamajek dwarf table at BP-RP 0.850 (Pecaut, M. J. and Mamajek, E. E. 2013, ApJS 208, 9)",
+    "rad": "Mamajek dwarf table at BP-RP 0.850 (Pecaut, M. J. and Mamajek, E. E. 2013, ApJS 208, 9)",
+    "mass": "Mamajek dwarf table at BP-RP 0.850 (Pecaut, M. J. and Mamajek, E. E. 2013, ApJS 208, 9)"
+   },
+   "gaia_source_id": "2077554747134280320",
+   "tmag_estimated": false
+  },
+  {
+   "id": "1880854629",
+   "tmag": 17.7521,
+   "gmag": 18.169798,
+   "sep_arcsec": 15.234,
+   "flux_ratio": 6.954487896735193e-05,
+   "tdepth": 0.0,
+   "g_package": 0.00014210602038894826,
+   "g_kepler": 0.00018096760283726408,
+   "kepler_flux": 0.16583904951864648,
+   "band": "Gaia G",
+   "box_factor": 1.0,
+   "share": 7.859430239572612e-05,
+   "share_source": "contamination budget",
+   "teff": 6115.0,
+   "rad": 0.752084,
+   "mass": 1.15,
+   "params_source": {
+    "Teff": "TIC",
+    "rad": "TIC",
+    "mass": "TIC"
+   },
+   "gaia_source_id": "2077554811556733184",
+   "tmag_estimated": false
+  },
+  {
+   "id": "1880854612",
+   "tmag": 20.7555,
+   "gmag": 20.662828,
+   "sep_arcsec": 15.767,
+   "flux_ratio": 8.5920504942166e-06,
+   "tdepth": 0.0,
+   "g_package": 1.09722613206467e-05,
+   "g_kepler": 2.235797666892271e-05,
+   "kepler_flux": 0.016690709563180275,
+   "band": "Gaia G",
+   "box_factor": 1.0,
+   "share": 9.710078222421277e-06,
+   "share_source": "contamination budget",
+   "teff": 7218.0,
+   "rad": 1.727,
+   "mass": 1.609,
+   "params_source": {
+    "Teff": "Mamajek dwarf table at BP-RP 0.378 (Pecaut, M. J. and Mamajek, E. E. 2013, ApJS 208, 9)",
+    "rad": "Mamajek dwarf table at BP-RP 0.378 (Pecaut, M. J. and Mamajek, E. E. 2013, ApJS 208, 9)",
+    "mass": "Mamajek dwarf table at BP-RP 0.378 (Pecaut, M. J. and Mamajek, E. E. 2013, ApJS 208, 9)"
+   },
+   "gaia_source_id": "2077554747134279552",
+   "tmag_estimated": false
+  },
+  {
+   "id": "1880854609",
+   "tmag": 18.0494,
+   "gmag": 18.612608,
+   "sep_arcsec": 17.513,
+   "flux_ratio": 1.8571913812119117e-06,
+   "tdepth": 0.0,
+   "g_package": 4.3391831492085205e-06,
+   "g_kepler": 4.832727833572425e-06,
+   "kepler_flux": 0.11029677140352963,
+   "band": "Gaia G",
+   "box_factor": 1.0,
+   "share": 2.098855633787628e-06,
+   "share_source": "contamination budget",
+   "teff": 5196.0,
+   "rad": 0.859734,
+   "mass": 0.88,
+   "params_source": {
+    "Teff": "TIC",
+    "rad": "TIC",
+    "mass": "TIC"
+   },
+   "gaia_source_id": "2077554742837249024",
+   "tmag_estimated": false
+  },
+  {
+   "id": "1880854633",
+   "tmag": 20.1261,
+   "gmag": 16.9937,
+   "sep_arcsec": 18.206,
+   "flux_ratio": 1.3559617830272872e-05,
+   "tdepth": 0.0,
+   "g_package": 1.0533084570076851e-06,
+   "g_kepler": 3.528443173056458e-05,
+   "kepler_flux": 0.48992093741695036,
+   "band": "Gaia G",
+   "box_factor": 1.0,
+   "share": 1.5324042833164554e-05,
+   "share_source": "contamination budget",
+   "teff": 5466.0,
+   "rad": 0.906,
+   "mass": 0.935,
+   "params_source": {
+    "Teff": "Mamajek dwarf table at BP-RP 0.907 (Pecaut, M. J. and Mamajek, E. E. 2013, ApJS 208, 9)",
+    "rad": "Mamajek dwarf table at BP-RP 0.907 (Pecaut, M. J. and Mamajek, E. E. 2013, ApJS 208, 9)",
+    "mass": "Mamajek dwarf table at BP-RP 0.907 (Pecaut, M. J. and Mamajek, E. E. 2013, ApJS 208, 9)"
+   },
+   "gaia_source_id": "2077554811556745344",
+   "tmag_estimated": false
+  },
+  {
+   "id": "270864046",
+   "tmag": 16.4384,
+   "gmag": 16.9142,
+   "sep_arcsec": 18.544,
+   "flux_ratio": 7.45230048393084e-06,
+   "tdepth": 0.0,
+   "g_package": 1.606491675690879e-05,
+   "g_kepler": 1.9392153300504896e-05,
+   "kepler_flux": 0.5271400336961279,
+   "band": "Gaia G",
+   "box_factor": 1.0,
+   "share": 8.422019945607201e-06,
+   "share_source": "contamination budget",
+   "teff": 5454.999999999997,
+   "rad": 0.8987499999999984,
+   "mass": 0.9299999999999988,
+   "params_source": {
+    "Teff": "TRICERATOPS estimate from photometry",
+    "rad": "TRICERATOPS estimate from photometry",
+    "mass": "TRICERATOPS estimate from photometry"
+   },
+   "gaia_source_id": null,
+   "tmag_estimated": false
+  },
+  {
+   "id": "1880854625",
+   "tmag": 18.4918,
+   "gmag": 19.228954,
+   "sep_arcsec": 18.808,
+   "flux_ratio": 1.780486029337441e-06,
+   "tdepth": 0.0,
+   "g_package": 4.882792761561594e-06,
+   "g_kepler": 4.633127462421755e-06,
+   "kepler_flux": 0.06252078178874727,
+   "band": "Gaia G",
+   "box_factor": 1.0,
+   "share": 2.0121691126503504e-06,
+   "share_source": "contamination budget",
+   "teff": 4334.0,
+   "rad": 0.487874,
+   "mass": 0.68,
+   "params_source": {
+    "Teff": "TIC",
+    "rad": "TIC",
+    "mass": "TIC"
+   },
+   "gaia_source_id": "2077554777196982144",
+   "tmag_estimated": false
+  },
+  {
+   "id": "1880854617",
+   "tmag": 20.1138,
+   "gmag": 20.5237,
+   "sep_arcsec": 20.781,
+   "flux_ratio": 3.2952678499814807e-09,
+   "tdepth": 0.0,
+   "g_package": 6.6852683230307476e-09,
+   "g_kepler": 8.574847384489748e-09,
+   "kepler_flux": 0.018972562842187894,
+   "band": "Gaia G",
+   "box_factor": 1.0,
+   "share": 3.724059653593504e-09,
+   "share_source": "contamination budget",
+   "teff": 6243.753499999988,
+   "rad": 1.2866661049999877,
+   "mass": 1.1991260499999963,
+   "params_source": {
+    "Teff": "TRICERATOPS estimate from photometry",
+    "rad": "TRICERATOPS estimate from photometry",
+    "mass": "TRICERATOPS estimate from photometry"
+   },
+   "gaia_source_id": null,
+   "tmag_estimated": false
+  },
+  {
+   "id": "270864053",
+   "tmag": 17.3535,
+   "gmag": 17.8522,
+   "sep_arcsec": 23.883,
+   "flux_ratio": 2.624776693833002e-10,
+   "tdepth": 0.0,
+   "g_package": 5.778837507910175e-10,
+   "g_kepler": 6.830115363189689e-10,
+   "kepler_flux": 0.2221907628349486,
+   "band": "Gaia G",
+   "box_factor": 1.0,
+   "share": 2.966321837920085e-10,
+   "share_source": "contamination budget",
+   "teff": 5689.0,
+   "rad": 1.03239,
+   "mass": 1.01,
+   "params_source": {
+    "Teff": "TIC",
+    "rad": "TIC",
+    "mass": "TIC"
+   },
+   "gaia_source_id": null,
+   "tmag_estimated": false
+  },
+  {
+   "id": "270864037",
+   "tmag": 16.8844,
+   "gmag": 17.4047,
+   "sep_arcsec": 24.002,
+   "flux_ratio": 2.2861090552633285e-09,
+   "tdepth": 0.0,
+   "g_package": 5.134345214332241e-09,
+   "g_kepler": 5.94884456912759e-09,
+   "kepler_flux": 0.33552586139564944,
+   "band": "Gaia G",
+   "box_factor": 1.0,
+   "share": 2.5835855790808538e-09,
+   "share_source": "contamination budget",
+   "teff": 5185.9259259259225,
+   "rad": 0.7995481481481477,
+   "mass": 0.8631851851851845,
+   "params_source": {
+    "Teff": "TRICERATOPS estimate from photometry",
+    "rad": "TRICERATOPS estimate from photometry",
+    "mass": "TRICERATOPS estimate from photometry"
+   },
+   "gaia_source_id": null,
+   "tmag_estimated": false
+  },
+  {
+   "id": "270864038",
+   "tmag": 17.0485,
+   "gmag": 17.5766,
+   "sep_arcsec": 24.086,
+   "flux_ratio": 3.5694466713535616e-10,
+   "tdepth": 0.0,
+   "g_package": 8.074376934375517e-10,
+   "g_kepler": 9.288307308343307e-10,
+   "kepler_flux": 0.2863953748224712,
+   "band": "Gaia G",
+   "box_factor": 1.0,
+   "share": 4.0339155842873704e-10,
+   "share_source": "contamination budget",
+   "teff": 5509.0,
+   "rad": 1.16517,
+   "mass": 0.97,
+   "params_source": {
+    "Teff": "TIC",
+    "rad": "TIC",
+    "mass": "TIC"
+   },
+   "gaia_source_id": null,
+   "tmag_estimated": false
+  },
+  {
+   "id": "1880854635",
+   "tmag": 17.8767,
+   "gmag": 18.3067,
+   "sep_arcsec": 24.234,
+   "flux_ratio": 6.197267780934577e-10,
+   "tdepth": 0.0,
+   "g_package": 1.2807618535114969e-09,
+   "g_kepler": 1.6126344759084784e-09,
+   "kepler_flux": 0.14619280534163226,
+   "band": "Gaia G",
+   "box_factor": 1.0,
+   "share": 7.003677988004255e-10,
+   "share_source": "contamination budget",
+   "teff": null,
+   "rad": null,
+   "mass": null,
+   "params_source": {
+    "Teff": "none (the package assumes solar values)",
+    "rad": "none (the package assumes solar values)",
+    "mass": "none (the package assumes solar values)"
+   },
+   "gaia_source_id": null,
+   "tmag_estimated": false
+  },
+  {
+   "id": "1880854618",
+   "tmag": 20.6083,
+   "gmag": 21.0383,
+   "sep_arcsec": 25.316,
+   "flux_ratio": 4.4877017867042097e-13,
+   "tdepth": 0.0,
+   "g_package": 9.274534297240523e-13,
+   "g_kepler": 1.1677763289653928e-12,
+   "kepler_flux": 0.011810981792135123,
+   "band": "Gaia G",
+   "box_factor": 1.0,
+   "share": 5.071657274026618e-13,
+   "share_source": "contamination budget",
+   "teff": null,
+   "rad": null,
+   "mass": null,
+   "params_source": {
+    "Teff": "none (the package assumes solar values)",
+    "rad": "none (the package assumes solar values)",
+    "mass": "none (the package assumes solar values)"
+   },
+   "gaia_source_id": null,
+   "tmag_estimated": false
+  },
+  {
+   "id": "270864043",
+   "tmag": 16.8348,
+   "gmag": 17.6384,
+   "sep_arcsec": 25.322,
+   "flux_ratio": 2.5923510110977032e-11,
+   "tdepth": 0.0,
+   "g_package": 7.557913681574399e-11,
+   "g_kepler": 6.745738221952252e-11,
+   "kepler_flux": 0.2705490417151256,
+   "band": "Gaia G",
+   "box_factor": 1.0,
+   "share": 2.929676811684834e-11,
+   "share_source": "contamination budget",
+   "teff": 4211.0,
+   "rad": 0.675916,
+   "mass": 0.66,
+   "params_source": {
+    "Teff": "TIC",
+    "rad": "TIC",
+    "mass": "TIC"
+   },
+   "gaia_source_id": null,
+   "tmag_estimated": false
+  },
+  {
+   "id": "270864058",
+   "tmag": 17.1836,
+   "gmag": 17.97,
+   "sep_arcsec": 27.406,
+   "flux_ratio": 2.319217981232154e-12,
+   "tdepth": 0.0,
+   "g_package": 6.655331482511094e-12,
+   "g_kepler": 6.034999625460458e-12,
+   "kepler_flux": 0.19934529968787754,
+   "band": "Gaia G",
+   "box_factor": 1.0,
+   "share": 2.6210027545541642e-12,
+   "share_source": "contamination budget",
+   "teff": 4299.0,
+   "rad": 0.816511,
+   "mass": 0.67,
+   "params_source": {
+    "Teff": "TIC",
+    "rad": "TIC",
+    "mass": "TIC"
+   },
+   "gaia_source_id": null,
+   "tmag_estimated": false
+  },
+  {
+   "id": "1880854628",
+   "tmag": 20.1765,
+   "gmag": 20.5224,
+   "sep_arcsec": 27.975,
+   "flux_ratio": 2.377899055278558e-13,
+   "tdepth": 0.0,
+   "g_package": 4.548011310997281e-13,
+   "g_kepler": 6.187697760244461e-13,
+   "kepler_flux": 0.01899529313646157,
+   "band": "Gaia G",
+   "box_factor": 1.0,
+   "share": 2.687319615651504e-13,
+   "share_source": "contamination budget",
+   "teff": 6630.577725853663,
+   "rad": 1.5132888629268313,
+   "mass": 1.363574052439026,
+   "params_source": {
+    "Teff": "TRICERATOPS estimate from photometry",
+    "rad": "TRICERATOPS estimate from photometry",
+    "mass": "TRICERATOPS estimate from photometry"
+   },
+   "gaia_source_id": null,
+   "tmag_estimated": false
+  },
+  {
+   "id": "270864035",
+   "tmag": 15.7391,
+   "gmag": 16.3578,
+   "sep_arcsec": 28.32,
+   "flux_ratio": 7.293083618035287e-13,
+   "tdepth": 0.0,
+   "g_package": 1.7933262878220651e-12,
+   "g_kepler": 1.8977843936821816e-12,
+   "kepler_flux": 0.8800067431643573,
+   "band": "Gaia G",
+   "box_factor": 1.0,
+   "share": 8.242085223015054e-13,
+   "share_source": "contamination budget",
+   "teff": 4926.0,
+   "rad": 0.73293,
+   "mass": 0.81,
+   "params_source": {
+    "Teff": "TIC",
+    "rad": "TIC",
+    "mass": "TIC"
+   },
+   "gaia_source_id": null,
+   "tmag_estimated": false
+  },
+  {
+   "id": "1880854627",
+   "tmag": 19.4726,
+   "gmag": 20.2361,
+   "sep_arcsec": 30.084,
+   "flux_ratio": 2.524493557524036e-15,
+   "tdepth": 0.0,
+   "g_package": 7.093202990456199e-15,
+   "g_kepler": 6.5691615869762616e-15,
+   "kepler_flux": 0.024726690905557458,
+   "band": "Gaia G",
+   "box_factor": 1.0,
+   "share": 2.852989508389987e-15,
+   "share_source": "contamination budget",
+   "teff": 4362.558144600001,
+   "rad": 0.6832990044800001,
+   "mass": 0.6944684389,
+   "params_source": {
+    "Teff": "TRICERATOPS estimate from photometry",
+    "rad": "TRICERATOPS estimate from photometry",
+    "mass": "TRICERATOPS estimate from photometry"
+   },
+   "gaia_source_id": null,
+   "tmag_estimated": false
+  },
+  {
+   "id": "270864045",
+   "tmag": 16.3746,
+   "gmag": 16.8671,
+   "sep_arcsec": 31.057,
+   "flux_ratio": 1.9939468163981198e-16,
+   "tdepth": 0.0,
+   "g_package": 4.364974311586701e-16,
+   "g_kepler": 5.188588734448147e-16,
+   "kepler_flux": 0.550510998451479,
+   "band": "Gaia G",
+   "box_factor": 1.0,
+   "share": 2.2534061655719986e-16,
+   "share_source": "contamination budget",
+   "teff": 5729.0,
+   "rad": 1.84206,
+   "mass": 1.02,
+   "params_source": {
+    "Teff": "TIC",
+    "rad": "TIC",
+    "mass": "TIC"
+   },
+   "gaia_source_id": null,
+   "tmag_estimated": false
+  },
+  {
+   "id": "1880854608",
+   "tmag": 18.0732,
+   "gmag": 18.6453,
+   "sep_arcsec": 31.992,
+   "flux_ratio": 5.100967224041791e-18,
+   "tdepth": 0.0,
+   "g_package": 1.2016020339241349e-17,
+   "g_kepler": 1.327358425801062e-17,
+   "kepler_flux": 0.10702518815108972,
+   "band": "Gaia G",
+   "box_factor": 1.0,
+   "share": 5.764722959762937e-18,
+   "share_source": "contamination budget",
+   "teff": 5259.0,
+   "rad": 0.694405,
+   "mass": 0.9,
+   "params_source": {
+    "Teff": "TIC",
+    "rad": "TIC",
+    "mass": "TIC"
+   },
+   "gaia_source_id": null,
+   "tmag_estimated": false
+  },
+  {
+   "id": "1880854634",
+   "tmag": 20.5242,
+   "gmag": 20.9642,
+   "sep_arcsec": 33.728,
+   "flux_ratio": 1.5366054252820023e-21,
+   "tdepth": 0.0,
+   "g_package": 3.2050180815163248e-21,
+   "g_kepler": 3.998508652960088e-21,
+   "kepler_flux": 0.012645208657633142,
+   "band": "Gaia G",
+   "box_factor": 1.0,
+   "share": 1.736553909515353e-21,
+   "share_source": "contamination budget",
+   "teff": 5687.111111111105,
+   "rad": 0.9929555555555538,
+   "mass": 0.9858888888888881,
+   "params_source": {
+    "Teff": "TRICERATOPS estimate from photometry",
+    "rad": "TRICERATOPS estimate from photometry",
+    "mass": "TRICERATOPS estimate from photometry"
+   },
+   "gaia_source_id": null,
+   "tmag_estimated": false
+  },
+  {
+   "id": "1880854610",
+   "tmag": 17.5094,
+   "gmag": 18.1177,
+   "sep_arcsec": 33.826,
+   "flux_ratio": 0.0,
+   "tdepth": 0.0,
+   "g_package": 0.0,
+   "g_kepler": 0.0,
+   "kepler_flux": 0.17399068582938365,
+   "band": "Gaia G",
+   "box_factor": 1.0,
+   "share": 0.0,
+   "share_source": "contamination budget",
+   "teff": 5066.0,
+   "rad": 0.892537,
+   "mass": 0.85,
+   "params_source": {
+    "Teff": "TIC",
+    "rad": "TIC",
+    "mass": "TIC"
+   },
+   "gaia_source_id": null,
+   "tmag_estimated": false
+  },
+  {
+   "id": "1880854616",
+   "tmag": 19.8448,
+   "gmag": 20.4356,
+   "sep_arcsec": 33.974,
+   "flux_ratio": 8.64445436630322e-21,
+   "tdepth": 0.0,
+   "g_package": 2.0716944748473638e-20,
+   "g_kepler": 2.249434045661955e-20,
+   "kepler_flux": 0.02057623920129996,
+   "band": "Gaia G",
+   "box_factor": 1.0,
+   "share": 9.769301070036216e-21,
+   "share_source": "contamination budget",
+   "teff": 5160.0,
+   "rad": 0.795,
+   "mass": 0.8542857142857143,
+   "params_source": {
+    "Teff": "TIC",
+    "rad": "TRICERATOPS estimate from photometry",
+    "mass": "TRICERATOPS estimate from photometry"
+   },
+   "gaia_source_id": null,
+   "tmag_estimated": false
+  },
+  {
+   "id": "1880854606",
+   "tmag": 18.1484,
+   "gmag": 18.8095,
+   "sep_arcsec": 34.491,
+   "flux_ratio": 0.0,
+   "tdepth": 0.0,
+   "g_package": 0.0,
+   "g_kepler": 0.0,
+   "kepler_flux": 0.09200384973620034,
+   "band": "Gaia G",
+   "box_factor": 1.0,
+   "share": 0.0,
+   "share_source": "contamination budget",
+   "teff": 4814.0,
+   "rad": 1.05941,
+   "mass": 0.78,
+   "params_source": {
+    "Teff": "TIC",
+    "rad": "TIC",
+    "mass": "TIC"
+   },
+   "gaia_source_id": null,
+   "tmag_estimated": false
+  },
+  {
+   "id": "514526462",
+   "tmag": 18.6157,
+   "gmag": 19.0457,
+   "sep_arcsec": 34.839,
+   "flux_ratio": 0.0,
+   "tdepth": 0.0,
+   "g_package": 0.0,
+   "g_kepler": 0.0,
+   "kepler_flux": 0.07401606628114728,
+   "band": "Gaia G",
+   "box_factor": 1.0,
+   "share": 0.0,
+   "share_source": "contamination budget",
+   "teff": null,
+   "rad": null,
+   "mass": null,
+   "params_source": {
+    "Teff": "none (the package assumes solar values)",
+    "rad": "none (the package assumes solar values)",
+    "mass": "none (the package assumes solar values)"
+   },
+   "gaia_source_id": null,
+   "tmag_estimated": false
+  },
+  {
+   "id": "270864039",
+   "tmag": 15.9865,
+   "gmag": 16.4917,
+   "sep_arcsec": 35.511,
+   "flux_ratio": 0.0,
+   "tdepth": 0.0,
+   "g_package": 0.0,
+   "g_kepler": 0.0,
+   "kepler_flux": 0.7779039916766507,
+   "band": "Gaia G",
+   "box_factor": 1.0,
+   "share": 0.0,
+   "share_source": "contamination budget",
+   "teff": 5300.666666666664,
+   "rad": 0.8241515151515142,
+   "mass": 0.8855757575757571,
+   "params_source": {
+    "Teff": "TRICERATOPS estimate from photometry",
+    "rad": "TRICERATOPS estimate from photometry",
+    "mass": "TRICERATOPS estimate from photometry"
+   },
+   "gaia_source_id": null,
+   "tmag_estimated": false
+  },
+  {
+   "id": "1880854600",
+   "tmag": 19.58,
+   "gmag": 20.2495,
+   "sep_arcsec": 36.977,
+   "flux_ratio": 1.0023757836224177e-23,
+   "tdepth": 0.0,
+   "g_package": 2.5828470423647155e-23,
+   "g_kepler": 2.6083522668783523e-23,
+   "kepler_flux": 0.02442339312328789,
+   "band": "Gaia G",
+   "box_factor": 1.0,
+   "share": 1.1328084342365058e-23,
+   "share_source": "contamination budget",
+   "teff": 4759.0,
+   "rad": 0.7420347826086956,
+   "mass": 0.7645652173913043,
+   "params_source": {
+    "Teff": "TIC",
+    "rad": "TRICERATOPS estimate from photometry",
+    "mass": "TRICERATOPS estimate from photometry"
+   },
+   "gaia_source_id": null,
+   "tmag_estimated": false
+  },
+  {
+   "id": "1880854619",
+   "tmag": 18.7282,
+   "gmag": 19.2067,
+   "sep_arcsec": 37.031,
+   "flux_ratio": 0.0,
+   "tdepth": 0.0,
+   "g_package": 0.0,
+   "g_kepler": 0.0,
+   "kepler_flux": 0.06381547409122705,
+   "band": "Gaia G",
+   "box_factor": 1.0,
+   "share": 0.0,
+   "share_source": "contamination budget",
+   "teff": 5798.646536499989,
+   "rad": 1.0272781527999943,
+   "mass": 1.0095488454999966,
+   "params_source": {
+    "Teff": "TRICERATOPS estimate from photometry",
+    "rad": "TRICERATOPS estimate from photometry",
+    "mass": "TRICERATOPS estimate from photometry"
+   },
+   "gaia_source_id": null,
+   "tmag_estimated": false
+  },
+  {
+   "id": "1880854623",
+   "tmag": 19.3599,
+   "gmag": 19.9531,
+   "sep_arcsec": 37.421,
+   "flux_ratio": 1.1462038667034768e-25,
+   "tdepth": 0.0,
+   "g_package": 2.753023958997813e-25,
+   "g_kepler": 2.982617400448822e-25,
+   "kepler_flux": 0.03208972534515348,
+   "band": "Gaia G",
+   "box_factor": 1.0,
+   "share": 1.2953519316517089e-25,
+   "share_source": "contamination budget",
+   "teff": 5143.0,
+   "rad": 0.7916000000000001,
+   "mass": 0.8445714285714285,
+   "params_source": {
+    "Teff": "TIC",
+    "rad": "TRICERATOPS estimate from photometry",
+    "mass": "TRICERATOPS estimate from photometry"
+   },
+   "gaia_source_id": null,
+   "tmag_estimated": false
+  },
+  {
+   "id": "1880854626",
+   "tmag": 18.8199,
+   "gmag": 19.5149,
+   "sep_arcsec": 38.024,
+   "flux_ratio": 3.6496984701965986e-26,
+   "tdepth": 0.0,
+   "g_package": 9.627756710314298e-26,
+   "g_kepler": 9.497136137664019e-26,
+   "kepler_flux": 0.048044756871959464,
+   "band": "Gaia G",
+   "box_factor": 1.0,
+   "share": 4.124610028504199e-26,
+   "share_source": "contamination budget",
+   "teff": 4649.0,
+   "rad": 0.478655,
+   "mass": 0.74,
+   "params_source": {
+    "Teff": "TIC",
+    "rad": "TIC",
+    "mass": "TIC"
+   },
+   "gaia_source_id": null,
+   "tmag_estimated": false
+  },
+  {
+   "id": "1880854630",
+   "tmag": 18.7727,
+   "gmag": 19.3229,
+   "sep_arcsec": 38.7,
+   "flux_ratio": 2.671606004938555e-26,
+   "tdepth": 0.0,
+   "g_package": 6.167661534510868e-26,
+   "g_kepler": 6.95197319512683e-26,
+   "kepler_flux": 0.057338456770848055,
+   "band": "Gaia G",
+   "box_factor": 1.0,
+   "share": 3.019244743138472e-26,
+   "share_source": "contamination budget",
+   "teff": 5379.0,
+   "rad": 0.8526363636363636,
+   "mass": 0.8998181818181819,
+   "params_source": {
+    "Teff": "TIC",
+    "rad": "TRICERATOPS estimate from photometry",
+    "mass": "TRICERATOPS estimate from photometry"
+   },
+   "gaia_source_id": null,
+   "tmag_estimated": false
+  }
+ ],
+ "inputs_sha256": "76faee5cba3cdeffa4e98bebda914b69e5dab4d83ae4e713523759256d355d3e",
+ "caveats": [
+  "The light is shared in the Kepler band with Gaia G as the proxy: the package's own shares use TIC TESS magnitudes (Tmag), which understate a G-type neighbour's share beside a red target in the Kepler band. The package's bound-companion and background-star dilution stay in the TESS band, a known approximation with a direction each way: a bound companion of a cool dwarf is cooler still, so the TESS band overstates its light and the dilution it causes, while background field stars are mostly bluer than the target, so the TESS band understates theirs. The limb darkening comes from the package's Kepler table.",
+  "No high-resolution imaging exists, so the package lets an unresolved bound companion sit anywhere within 2.2 arcsec of the target; a planet transiting such a companion (STP) counts towards the full FPP and is the open false-positive channel. SkySift's model has no such scenario, so the FPP without STP, (FPP - P_STP) / (1 - P_STP), is quoted beside the full FPP.",
+  "Giacalone et al. 2021's classes are labels only: the paper found no validation region at 30-minute cadence (its section 4.2), which Kepler long cadence is, so no candidate is called validated by this tool.",
+  "The priors are the package's own, not SkySift's, and the field-star population is the Gaia DR3 field-star population TRICERATOPS 1.1.0 uses by default, not the 2021 paper's TRILEGAL one.",
+  "The result varies from run to run, so the median and the 16th to 84th percentiles over the runs that are not degenerate are quoted, and every run is kept.",
+  "The dossier's Gaia neighbours are matched to the TIC stars by their separation from the target only, since the dossier stores no position for them.",
+  "No star is removed on the strength of SkySift's own centroid test, which would make the cross-check circular.",
+  "Gaia DR3 2077554747134280320: Teff, rad, mass set from Mamajek dwarf table at BP-RP 0.850 (Pecaut, M. J. and Mamajek, E. E. 2013, ApJS 208, 9), since the TIC row lacks them.",
+  "Gaia DR3 2077554747134279552: Teff, rad, mass set from Mamajek dwarf table at BP-RP 0.378 (Pecaut, M. J. and Mamajek, E. E. 2013, ApJS 208, 9), since the TIC row lacks them.",
+  "Gaia DR3 2077554811556745344: Teff, rad, mass set from Mamajek dwarf table at BP-RP 0.907 (Pecaut, M. J. and Mamajek, E. E. 2013, ApJS 208, 9), since the TIC row lacks them.",
+  "CROWDSAP 0.8849 of the target's KBonus file is the target's fraction of the aperture light, so the light the neighbours leak into its KBonus PSF light curve is at most (1 - CROWDSAP) / CROWDSAP = 0.1301 of the target's own (the target's flux ratio is CROWDSAP), shared among them by the package's Gaussian-box fractions in the Kepler band (Gaia G as the proxy). The PSF fit removes that light to first order, so each share, and the nearby false-positive probability with it, is an upper bound.",
+  "SkySift's leak test measures the dip in the neighbour's own aperture (40 +- 33 ppm in KIC 6699878), the opposite direction to the leak into this star's light curve, so it is a consistency check and not a share.",
+  "10 points further than 5 raw median absolute deviations (about 3.4 sigma) from a box model of the transit were clipped from the exported window (1 in transit, 9 out of transit).",
+  "The target's KIC Kp is not stored, so the Gaia G proxy for the Kepler band is not checked against it.",
+  "The per-point error given to TRICERATOPS is 1.4826 times the median absolute deviation of the whitened flux out of transit (more than one duration from mid-transit), 0.000678 in relative flux, not the KBonus pipeline error (0.000727), which is smaller than the scatter of the flux it fits.",
+  "The serial loop against the parallel path: At 20,000 draws and seed 1, the FPPs (0.02412 serial, 0.02412 parallel) are equal to 3 decimals, and the NFPPs (0.0227 serial, 0.0227 parallel) differ by 0.0 standard deviations of the Monte Carlo noise (0.015, the seed-to-seed scatter of the parallel NFPP over 4 seeds at 20,000 draws), so the gap is within that noise."
+ ],
+ "settings": {
+  "N": 1000000,
+  "exptime_days": 0.0204,
+  "search_radius_pix": 10,
+  "aperture": "3 x 3 around the target",
+  "dilution_corrected": true,
+  "parallel": true,
+  "parallel_failure": null,
+  "parallel_check": {
+   "seed": 1,
+   "N": 20000,
+   "fpp_serial": 0.024117022408398636,
+   "fpp_parallel": 0.02411712094212226,
+   "nfpp_serial": 0.022715855057503235,
+   "nfpp_parallel": 0.02271585276390803,
+   "fpp_difference": 9.853372362478297e-08,
+   "nfpp_difference": 2.2935952061209353e-09,
+   "nfpp_parallel_seeds": [
+    0.02271585276390803,
+    0.03161367030178939,
+    3.633471677655983e-05,
+    0.03282239252410413
+   ],
+   "nfpp_noise_sd": 0.015190974733693784,
+   "nfpp_difference_in_sd": 1.5098407089268015e-07,
+   "comparison": "At 20,000 draws and seed 1, the FPPs (0.02412 serial, 0.02412 parallel) are equal to 3 decimals, and the NFPPs (0.0227 serial, 0.0227 parallel) differ by 0.0 standard deviations of the Monte Carlo noise (0.015, the seed-to-seed scatter of the parallel NFPP over 4 seeds at 20,000 draws), so the gap is within that noise."
+  },
+  "mission": "Kepler",
+  "limb_darkening": "the package's Kepler table",
+  "field_star_population": "Gaia DR3 (package default)",
+  "field_stars": {
+   "file": "C:\\Research\\skysift\\.worktrees\\referee-pack\\.superpowers\\sdd\\2026-10-22-skysift-referee-pack\\live\\results\\kic-006699887-3480.population.csv",
+   "n_rows": 6782,
+   "sha256": "e580fe6fb1ffae8ab958f35b93f88af5ac30ccd5f754f25a6d55229142fb3988",
+   "source_file": "6699887_gaia_background.csv"
+  },
+  "resume_note": "--resume was given but no checkpoint existed, so the run started fresh",
+  "quarters": [
+   1,
+   2,
+   3,
+   4,
+   5,
+   6,
+   7,
+   8,
+   9,
+   10,
+   11,
+   12,
+   13,
+   14,
+   15,
+   16,
+   17
+  ],
+  "matched_neighbours": [
+   {
+    "source_id": "2077554781499349120",
+    "tic_id": "270864061",
+    "dsep_arcsec": 0.2945712999999994
+   },
+   {
+    "source_id": "2077554777196977280",
+    "tic_id": "1880854624",
+    "dsep_arcsec": 0.024029000000000522
+   },
+   {
+    "source_id": "2077554747134280320",
+    "tic_id": "1880854613",
+    "dsep_arcsec": 0.003087000000000728
+   },
+   {
+    "source_id": "2077554811556733184",
+    "tic_id": "1880854629",
+    "dsep_arcsec": 0.06075399999999931
+   },
+   {
+    "source_id": "2077554747134279552",
+    "tic_id": "1880854612",
+    "dsep_arcsec": 0.021222999999999104
+   },
+   {
+    "source_id": "2077554742837249024",
+    "tic_id": "1880854609",
+    "dsep_arcsec": 0.03283699999999712
+   },
+   {
+    "source_id": "2077554811556745344",
+    "tic_id": "1880854633",
+    "dsep_arcsec": 0.16871599999999987
+   },
+   {
+    "source_id": "2077554777196982144",
+    "tic_id": "1880854625",
+    "dsep_arcsec": 0.04689000000000121
+   }
+  ],
+  "flux_err_rel_robust": 0.0006783339779998936,
+  "flux_err_rel_pipeline": 0.00072659,
+  "flux_err_source": "out of transit (more than one duration from mid-transit)",
+  "flux_shares": {
+   "source": "contamination budget",
+   "budget": 0.13012350532125427,
+   "contaminating_fraction": 0.11514095999999996,
+   "crowdsap": 0.88485904
+  },
+  "allow_old_export": false,
+  "export_problems": [],
+  "resumed_at_runs": [],
+  "psffrac": 0.73284196,
+  "leak": {
+   "depth_ppm": 39.725546,
+   "err_ppm": 32.95211,
+   "kic": 6699878
+  },
+  "lightcurve_clipped": 10,
+  "kepmag_target": null,
+  "g_minus_kp_target": null,
+  "target_params": {
+   "used": {
+    "Teff": 4614.0,
+    "rad": 0.760711,
+    "mass": 0.73,
+    "plx": 1.1593
+   },
+   "source": {
+    "Teff": "TIC",
+    "rad": "TIC",
+    "mass": "TIC"
+   },
+   "skysift": {
+    "teff": 4582.0,
+    "radius": 0.712,
+    "mass": 0.727
+   }
+  },
+  "seeds": [
+   1,
+   2,
+   3,
+   4,
+   5,
+   6,
+   7,
+   8,
+   9,
+   10,
+   11,
+   12,
+   13,
+   14,
+   15,
+   16,
+   17,
+   18,
+   19,
+   20
+  ],
+  "median_run_seed": 8
+ }
+}
