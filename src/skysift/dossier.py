@@ -18,6 +18,7 @@ from __future__ import annotations
 import base64
 import copy
 import dataclasses
+import functools
 import hashlib
 import html
 import io
@@ -197,9 +198,10 @@ def _metrics(tests: list[dict], rung: str) -> dict:
     return (_rung(tests, rung) or {}).get("metrics") or {}
 
 
+@functools.lru_cache(maxsize=1)
 def git_commit() -> str:
     """The short commit of the code that built the dossier, with "-dirty" when the tree has uncommitted changes to
-    tracked files (``git describe --always --dirty``); "unknown" outside a checkout."""
+    tracked files (``git describe --always --dirty``); "unknown" outside a checkout. Cached: one call per process."""
     try:
         out = subprocess.run(["git", "describe", "--always", "--dirty", "--abbrev=7", "--match=NO-TAGS"],
                              capture_output=True, text=True, timeout=10, cwd=Path(__file__).resolve().parents[2],

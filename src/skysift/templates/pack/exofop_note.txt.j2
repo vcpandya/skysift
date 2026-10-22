@@ -18,6 +18,6 @@ Pixels: {{ n.pixel_plain }}
 {{ n.fap_text }}
 {{ n.fpp_text }}
 
-Files: the detrended light curve (CSV: time BKJD, relative flux and error in ppm, quarter), the ephemeris and parameters with errors (CSV), the stellar parameters in ExoFOP's template, the folded, odd and even, periodogram{% if f.pixels_figure %} and centroid{% endif %} figures, and the standalone dossier (HTML, all vetting numbers).
+Files: the detrended light curve (CSV: time BKJD, relative flux and error in ppm, quarter), the ephemeris and parameters with errors (CSV), {% if f.exofop_stellar %}the stellar parameters in ExoFOP's template{% else %}no stellar parameter file (the star could not be characterized from Gaia photometry){% endif %}, the folded, odd and even, periodogram{% if f.pixels_figure %} and centroid{% endif %} figures, and the standalone dossier (HTML, all vetting numbers).
 
 Frozen record: doi:{{ f.doi_shown }}. This is a candidate until independent follow-up confirms it.

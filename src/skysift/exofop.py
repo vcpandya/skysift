@@ -38,9 +38,13 @@ def _cell(value) -> str:
     return "" if value is None else re.sub(r"[|\r\n]+", " ", str(value)).strip()
 
 
-def _pipe_file(columns: tuple[str, ...], values: dict) -> str:
-    """ExoFOP's pipe-delimited bulk layout: a comment line naming the columns, then the one row."""
-    return "# " + "|".join(columns) + "\n" + "|".join(_cell(values.get(c)) for c in columns) + "\n"
+def _pipe_file(columns: tuple[str, ...], values: dict, what: str, date: str) -> str:
+    """ExoFOP's pipe-delimited bulk layout, as its template files lay it out: comment lines starting with a
+    backslash (what the file is, the data tag, the pack date), the bare column header, then the one row."""
+    comments = [f"SkySift {what} for ExoFOP's bulk upload", f"Data Tag: {_cell(values.get('tag'))}",
+                f"pack date: {date}"]
+    return ("".join(f"\\ {c}\n" for c in comments) + "|".join(columns) + "\n"
+            + "|".join(_cell(values.get(c)) for c in columns) + "\n")
 
 
 def _plain(value, minus=None, plus=None, nd: int = 2) -> tuple[str | None, str | None]:
@@ -93,7 +97,7 @@ def render_exofop_planet(data: dict, date: str, tic: str | None, tag: str) -> st
     for name, unc, key, nd in (("radius", "radius_unc", "rp_rearth", 2), ("temp", "temp_unc", "teq_k", 0),
                                ("insol", "insol_unc", "insolation_earth", 2), ("sma", "sma_unc", "a_au", 4)):
         _pair(values, name, unc, planet.get(key), nd)
-    return _pipe_file(EXOFOP_PLANET_COLUMNS, values)
+    return _pipe_file(EXOFOP_PLANET_COLUMNS, values, "planet parameters", date)
 
 
 def stellar_note(data: dict) -> str:
@@ -130,4 +134,4 @@ def render_exofop_stellar(data: dict, date: str, tic: str | None, tag: str) -> s
                             ("radius", star.get("radius"), 3), ("mass", star.get("mass"), 3),
                             ("dens", star.get("density_gcc"), 2), ("dist", star.get("distance_pc"), 0)):
         _pair(values, name, f"{name}_unc", block, nd)
-    return _pipe_file(EXOFOP_STELLAR_COLUMNS, values)
+    return _pipe_file(EXOFOP_STELLAR_COLUMNS, values, "stellar parameters", date)

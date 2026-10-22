@@ -101,9 +101,9 @@ STEPS = (("1", "Freeze the record"), ("2", "Upload to ExoFOP-TESS"), ("3", "Writ
          ("4", "Tell the archive"), ("5", "Answer follow-up questions"))
 STEP_TEXTS = {
     "1": "Deposit the pack on Zenodo for a citable DOI. The engine can make the draft; you publish it.",
-    "2": "Attach the dossier, the ephemeris, the stellar parameters and the note to the star's ExoFOP page now; the "
-         "planet parameters wait for a community TOI, which needs a peer-reviewed paper. This needs your own ExoFOP "
-         "account.",
+    "2": "Attach the dossier, the ephemeris and the note to the star's ExoFOP page now, and the stellar parameters "
+         "when the star is characterized; the planet parameters wait for a community TOI, which needs a peer-reviewed "
+         "paper. This needs your own ExoFOP account.",
     "3": "Turn the Research Note draft into a submission to the AAS, with an arXiv endorsement if needed.",
     "4": "Send the NASA Exoplanet Archive help desk the one-paragraph note once a refereed paper on the candidate is "
          "accepted; the Research Note alone does not open this route.",
@@ -755,8 +755,6 @@ FILE_NOTES = {
     "note/figure1_data.csv": "the data behind the note's figure: phase in hours, binned flux, error and count, and "
                              "the model, in ppm",
     f"exofop/{EXOFOP_STELLAR_TEMPLATE}": "the stellar parameters in ExoFOP's bulk template (upload now)",
-    f"exofop/{EXOFOP_PLANET_TEMPLATE}": "the planet parameters in ExoFOP's bulk template, for the community TOI "
-                                        "route once a peer-reviewed paper exists",
     "data/events.csv": "every transit: epoch, mid-time, quarter, depth, error, coverage, single-event statistic",
     "data/periodogram.json": "the periodogram envelope, its peaks and the alias and systematic periods",
     "data/rung_metrics.json": "every vetting rung's status, reason and metrics",

@@ -1036,11 +1036,13 @@ def test_stellar_provenance_csv_names_the_method_and_the_reference(env_with_doss
 
 
 def _parse_pipe(text: str, columns: list[str]) -> dict:
-    """An ExoFOP bulk file: the comment header names exactly the columns, one row of as many fields, and no
-    uncertainty without its value."""
-    lines = text.splitlines()
-    assert len(lines) == 2 and lines[0].startswith("# ")
-    assert lines[0][2:].split("|") == columns
+    """An ExoFOP bulk file: comment lines starting with a backslash, then the bare header naming exactly the columns,
+    one row of as many fields, and no uncertainty without its value."""
+    comments = [line for line in text.splitlines() if line.startswith("\\")]
+    lines = [line for line in text.splitlines() if not line.startswith("\\")]
+    assert comments and all(c.startswith("\\ ") for c in comments) and not any(x.startswith("#") for x in lines)
+    assert text.splitlines()[:len(comments)] == comments                       # the comments come first
+    assert len(lines) == 2 and lines[0].split("|") == columns
     values = lines[1].split("|")
     assert len(values) == len(columns)
     row = dict(zip(columns, values, strict=True))
@@ -1073,6 +1075,9 @@ def test_exofop_parameter_files_follow_the_templates(env_with_dossier):
     stellar = _parse_pipe((rep.out_dir / "exofop" / f"params_stellar_{date}_001.txt").read_text(encoding="utf-8"),
                           STELLAR_COLUMNS)
     assert stellar["target"] == "KIC6146676" and stellar["sp_type"] == "M1V" and stellar["prop_period"] == "0"
+    head = (rep.out_dir / "exofop" / f"params_stellar_{date}_001.txt").read_text(encoding="utf-8").splitlines()[:3]
+    assert head == ["\\ SkySift stellar parameters for ExoFOP's bulk upload",
+                    f"\\ Data Tag: {date}_<username>_skysift-{STAGE2_TARGET}", f"\\ pack date: {date}"]
     assert (stellar["teff"], stellar["teff_unc"]) == ("3653", "90") and stellar["group"] == stellar["age"] == ""
     assert (stellar["radius"], stellar["radius_unc"]) == ("0.509", "0.017") and stellar["logg_unc"]
     assert (stellar["dist"], stellar["dist_unc"]) == ("303", "4") and stellar["mass_unc"] == "0.013"
@@ -1123,6 +1128,11 @@ def test_a_star_without_parameters_gets_no_stellar_file(env_with_dossier):
     step2 = (rep.out_dir / "README.md").read_text(encoding="utf-8").split("## Step 2.")[1].split("## Step 3.")[0]
     assert "params_stellar" not in step2 and "There is no stellar parameter file" in step2
     assert "upload now" not in step2
+    note = (rep.out_dir / "exofop" / "note.txt").read_text(encoding="utf-8")
+    assert "stellar parameters in ExoFOP's template" not in note and "no stellar parameter file" in note
+    assert "stellar parameters in ExoFOP's template" in pack_module._render_plain("exofop_note.txt.j2",
+                                                                                  env.data, {})
+    assert "when the star is characterized" in pack_module.STEP_TEXTS["2"]
 
 
 def test_readme_defines_crowdsap_and_psffrac(env_with_dossier):
@@ -1309,3 +1319,5 @@ def test_figure_data_csv_matches_the_fold_bins(env_with_dossier):
     readme = (rep.out_dir / "README.md").read_text(encoding="utf-8")
     for name in ("note/figure1_data.csv", "data/transit_times.csv", "data/shape.csv", "data/stellar_provenance.csv"):
         assert f"- `{name}`: " in readme and pack_module.FILE_NOTES[name] in readme
+    assert all(not k.startswith("exofop/") or k == "exofop/note.txt" or "params_stellar" in k
+               for k in pack_module.FILE_NOTES)                              # no entry the README never shows
