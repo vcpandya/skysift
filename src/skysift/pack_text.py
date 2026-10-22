@@ -7,6 +7,7 @@ from __future__ import annotations
 import math
 import re
 from datetime import datetime
+from decimal import Decimal
 
 from skysift.ephemeris import BKJD_OFFSET
 
@@ -25,12 +26,14 @@ def _num(x) -> float | None:
     return x if math.isfinite(x) else None
 
 
-def _decimals(err: float | None, default: int = 2) -> int:
-    """Decimals that show an error to one significant figure, two when it starts with 1 or 2 (0.016, 0.08, 73)."""
+def err_digits(err: float | None, default: int = 2) -> int:
+    """The decimals that print ``err`` to two significant figures (0.016, 0.083, 73), ``default`` for a missing or
+    non-positive error: the one precision rule of every text and file (referee pack ruling j). A value printed at the
+    same decimals ends where its error does. The page's Jinja helper is this function and ``dossier.js`` ``errDigits``
+    is its copy."""
     if err is None or err <= 0:
         return default
-    lead = err / 10 ** math.floor(math.log10(err))
-    return max(0, -math.floor(math.log10(err)) + (1 if lead < 3 else 0))
+    return max(0, 1 - math.floor(math.log10(err)))
 
 
 def _f(x, nd: int = 2, comma: bool = False) -> str | None:
@@ -40,10 +43,16 @@ def _f(x, nd: int = 2, comma: bool = False) -> str | None:
     return f"{x:,.{nd}f}" if comma else f"{x:.{nd}f}"
 
 
+def _places(x: float) -> int:
+    """The decimals a stored float carries (2.61 has 2, 9.1e-05 has 6, 269.0 has none)."""
+    return max(0, -int(Decimal(repr(float(x))).normalize().as_tuple().exponent))
+
+
 def _pm_parts(value, minus=None, plus=None, nd: int = 2, comma: bool = False) -> tuple[str, str | None, str | None] | None:
-    """(value, minus, plus) as text, all at the decimals of the smaller error (``_decimals``), the value at ``nd``
-    decimals and both errors None without an error; None without a value. Every number with an error in the pack's
-    texts and files goes through here, so they all round alike."""
+    """(value, minus, plus) as text, all at the decimals of the smaller error (``err_digits``: two significant
+    figures), never more than the stored errors carry (an error stored as 0.08 prints as 0.08, not 0.080), the value
+    at ``nd`` decimals and both errors None without an error; None without a value. Every number with an error in the
+    pack's texts and files goes through here, so they all round alike."""
     m = _num(value)
     if m is None:
         return None
@@ -54,7 +63,7 @@ def _pm_parts(value, minus=None, plus=None, nd: int = 2, comma: bool = False) ->
         return f"{x:,.{d}f}" if comma else f"{x:.{d}f}"
     if not errs:
         return fmt(m, nd), None, None
-    d = _decimals(min(errs))
+    d = min(err_digits(min(errs)), max(_places(e) for e in errs))
     return fmt(m, d), fmt(lo or 0.0, d), fmt(hi or 0.0, d)
 
 
@@ -119,10 +128,14 @@ def date_words(when) -> str:
 
 
 def _bjd(eph: dict, key: str) -> float | None:
-    """BJD_TDB of ``<key>_bkjd`` plus the Kepler offset (the stored ``<key>_bjd`` keeps eight significant figures,
-    tenths of a day), else the stored ``<key>_bjd``; ``key`` is "t0" or "t_ref"."""
-    bkjd = _num(eph.get(f"{key}_bkjd"))
-    return round(bkjd + BKJD_OFFSET, 6) if bkjd is not None else _num(eph.get(f"{key}_bjd"))
+    """The BJD_TDB of ``key`` ("t0" or "t_ref"): the stored ``<key>_bjd``, which the dossier keeps at six decimals
+    (``dossier.BJD_DECIMALS``; a BKJD above 1000 keeps only four at the dossier's eight significant figures), else
+    ``<key>_bkjd`` plus the Kepler offset. A dossier stored before the BJD decimals were kept holds the BJD at eight
+    significant figures, tenths of a day, so the BKJD wins when it carries more decimals; None without either."""
+    bjd, bkjd = _num(eph.get(f"{key}_bjd")), _num(eph.get(f"{key}_bkjd"))
+    if bjd is not None and (bkjd is None or _places(bjd) >= _places(bkjd)):
+        return bjd
+    return round(bkjd + BKJD_OFFSET, 6) if bkjd is not None else None
 
 
 def missing_error_reasons(data: dict) -> dict[str, str]:

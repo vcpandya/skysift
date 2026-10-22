@@ -43,7 +43,10 @@
     const p = fmt(err.plus, d), m = fmt(err.minus, d);
     return p === m ? ` ± ${p}` : ` +${p} −${m}`;
   };
-  // the decimals that print an error to two significant figures (as the dashboard's err_digits)
+  // the decimals that print an error to two significant figures: skysift.pack_text.err_digits, the one precision
+  // rule of the page (its Jinja helper err_digits) and the pack
+  // what the shape table's columns mean (the dashboard prints the same words)
+  const SHAPE_WORDS = "For the fitted rows (k, b, a/R*, T14 and the model depth) the value is the fit to the whole light curve and minus and plus are the spread of the resamples (16th to 50th and 50th to 84th percentile) about their own median. The box depth carries the per-event scaled error, and the box duration's value is the median of the resamples.";
   const errDigits = (err) => (isNum(err) && err > 0 ? Math.max(0, 1 - Math.floor(Math.log10(err))) : 2);
   const el = (tag, attrs, parent) => {
     const n = document.createElementNS(NS, tag);
@@ -518,7 +521,7 @@
     if (SH) {
       sec(2).appendChild(h("h3", "only-expert", "Shape with errors"));
       const method = SH.method ? `${SH.method[0].toUpperCase()}${SH.method.slice(1)}` : "Bootstrap over transits";
-      para(2, `${method}: ${fmt(SH.n_converged)} of ${fmt(SH.n_boot)} resamples converged. The value is the fit to the whole light curve; minus and plus are the spread of the resamples about their own median.${SH.ok ? "" : ` No bootstrap errors: ${SH.reason}.`}`, "only-expert");
+      para(2, `${method}: ${fmt(SH.n_converged)} of ${fmt(SH.n_boot)} resamples converged. ${SHAPE_WORDS}${SH.ok ? "" : ` No bootstrap errors: ${SH.reason}.`}`, "only-expert");
       if (SH.degenerate) para(2, `The fit is degenerate (${SH.degeneracy_reason}).`, "only-expert dossier-caveat");
       const row = (name, x, d) => (x && isNum(x.median) ? [`${name}:`, `${fmt(x.median, d)}${pmErr(x, d)}${isNum(x.boot_median) ? `, bootstrap median ${fmt(x.boot_median, d)}` : ""}`] : null);
       const rows = [row("k, radius ratio", SH.k, 4), row("b, impact parameter", SH.b, 2), row("a / R★", SH.a_over_r, 1),

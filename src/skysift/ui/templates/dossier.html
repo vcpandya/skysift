@@ -259,7 +259,7 @@
     {%- set sh = data.shape %}
     {%- if sh %}
     <h3>Shape with errors</h3>
-    <p>{{ sh.method[:1] | upper }}{{ sh.method[1:] }}: {{ sh.n_converged | fmt }} of {{ sh.n_boot | fmt }} resamples converged. The value is the fit to the whole light curve; minus and plus are the spread of the resamples (16th to 50th and 50th to 84th percentile) about their own median.{% if not sh.ok %} No bootstrap errors: {{ sh.reason }}.{% endif %}</p>
+    <p>{{ sh.method[:1] | upper }}{{ sh.method[1:] }}: {{ sh.n_converged | fmt }} of {{ sh.n_boot | fmt }} resamples converged. For the fitted rows (k, b, a/R*, T14 and the model depth) the value is the fit to the whole light curve and minus and plus are the spread of the resamples (16th to 50th and 50th to 84th percentile) about their own median. The box depth carries the per-event scaled error, and the box duration's value is the median of the resamples.{% if not sh.ok %} No bootstrap errors: {{ sh.reason }}.{% endif %}</p>
     {%- if sh.degenerate %}
     <p class="dossier-caveat">The fit is degenerate ({{ sh.degeneracy_reason }}).</p>
     {%- endif %}

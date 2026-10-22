@@ -89,6 +89,7 @@ from skysift.pack_text import (
     _num,
     date_words,
     ephemeris_sentence,
+    err_digits,
     pm_text,
     quantities,
     tex_escape,
@@ -115,7 +116,8 @@ DOI_PLACEHOLDER = "10.5281/zenodo.XXXXXXX"
 RNAAS_DOI_PLACEHOLDER = "10.3847/2515-5172/XXXXX"
 PAPER_DOI_PLACEHOLDER = "PAPER-DOI-TO-FILL"         # the refereed paper the archive email waits for
 SOFTWARE_DOI_PLACEHOLDER = "10.5281/zenodo.SOFTWARE"
-SOFTWARE = "numpy, scipy, astropy, matplotlib, triceratops"
+SOFTWARE = "numpy, scipy, astropy, matplotlib"
+CROSS_CHECK_SOFTWARE = "triceratops"         # named only when a cross-check is stored
 FACILITIES = "Kepler, Gaia, MAST, Exoplanet Archive"
 CODE_SENTENCE = (f"the SkySift code at the stated commit is archived at doi:{SOFTWARE_DOI_PLACEHOLDER} "
                  "(to be minted)")
@@ -279,17 +281,20 @@ def references(data: dict) -> dict[str, bool]:
             "lindegren2021": star_ok and star.get("distance_pc") is not None,
             "giacalone2021": cross_check_sentence(data) is not None,
             "bryson2013": _num((offset_block(data) or {}).get("sigma")) is not None,
+            "deeg2015": _timed(data), "holczer2016": _timed(data), "schmitt2014": _bootstrapped(data),
             "kopparapu2013": star_ok and _hz_where(planet) is not None}
 
 
 BIBLIOGRAPHY = (
     ("bryson2013", r"{Bryson} et~al.(2013)",
      r"Bryson, S.~T., Jenkins, J.~M., Gilliland, R.~L., et~al. 2013, PASP, 125, 889"),
+    ("deeg2015", r"{Deeg}(2015)", r"Deeg, H.~J. 2015, arXiv:1503.05368"),
     ("dressing2015", r"{Dressing} \& {Charbonneau}(2015)",
      r"Dressing, C.~D., \& Charbonneau, D. 2015, ApJ, 807, 45"),
     ("fressin2013", r"{Fressin} et~al.(2013)", r"Fressin, F., Torres, G., Charbonneau, D., et~al. 2013, ApJ, 766, 81"),
     ("giacalone2021", r"{Giacalone} et~al.(2021)",
      r"Giacalone, S., Dressing, C.~D., Jensen, E.~L.~N., et~al. 2021, AJ, 161, 24"),
+    ("holczer2016", r"{Holczer} et~al.(2016)", r"Holczer, T., et~al. 2016, ApJS, 225, 9"),
     ("kbonus", r"{Mart{\'\i}nez-Palomera} et~al.(2023a)",
      r"Mart{\'\i}nez-Palomera, J., Hedges, C., \& Dotson, J. 2023a, AJ, 166, 265, doi:10.3847/1538-3881/ad0727"),
     ("kbonushlsp", r"{Mart{\'\i}nez-Palomera} et~al.(2023b)",
@@ -304,7 +309,46 @@ BIBLIOGRAPHY = (
     ("mann2019", r"{Mann} et~al.(2019)", r"Mann, A.~W., Dupuy, T., Kraus, A.~L., et~al. 2019, ApJ, 871, 63"),
     ("morton2012", r"{Morton}(2012)", r"Morton, T.~D. 2012, ApJ, 761, 6"),
     ("pecaut2013", r"{Pecaut} \& {Mamajek}(2013)", r"Pecaut, M.~J., \& Mamajek, E.~E. 2013, ApJS, 208, 9"),
+    ("schmitt2014", r"{Schmitt} et~al.(2014)", r"Schmitt, J.~R., et~al. 2014, AJ, 148, 28"),
 )
+
+
+def _timed(data: dict) -> bool:
+    """Whether the period and epoch come from the linear fit of the per-transit times (the timing block is ok)."""
+    timing = data.get("timing")
+    return isinstance(timing, dict) and timing.get("ok") is True
+
+
+def _bootstrapped(data: dict) -> bool:
+    """Whether the shape errors come from the bootstrap over transits (the shape block is ok)."""
+    shape = data.get("shape")
+    return isinstance(shape, dict) and shape.get("ok") is True
+
+
+def methods_sentence(data: dict, tex: bool = False) -> str | None:
+    """How the errors were made, in one sentence for the note's signal section (ruling h): the linear fit of the
+    per-transit mid-times with the reference epoch at the centre of the series (Deeg 2015), the per-transit times by
+    template fit (Holczer et al. 2016), the shape errors from a bootstrap over transits quoted as the 16th to 84th
+    percentile spread about the bootstrap median (Schmitt et al. 2014), and that the fold, the per-event depths and
+    the bootstrap use the search period and epoch (M4). None when neither block is ok."""
+    timed, boot = _timed(data), _bootstrapped(data)
+    if not (timed or boot):
+        return None
+
+    def cite(key: str, words: str):
+        return Raw(rf"\citep{{{key}}}") if tex else f"({words})"
+    parts: list = []
+    if timed:
+        parts += [("The period and the reference time come from a weighted linear fit of the per-transit "
+                   "mid-times, its reference epoch at the centre of the series "), cite("deeg2015", "Deeg 2015"),
+                  ", each transit timed by a fit of the transit template ", cite("holczer2016", "Holczer et al. 2016")]
+    if boot:
+        parts += ["; the" if timed else "The", " shape errors come from a bootstrap over transits ",
+                  cite("schmitt2014", "Schmitt et al. 2014"),
+                  ", quoted as the 16th to 84th percentile spread of the resamples about their median"]
+    parts.append(". The fold, the per-event depths and the bootstrap use the search period and epoch"
+                 + ("; the quoted ephemeris is the linear fit." if timed else "."))
+    return _joined(tex, *parts)
 
 
 def cross_check_sentence(data: dict, tex: bool = False) -> str | None:
@@ -327,9 +371,16 @@ def shape_sentence(data: dict, tex: bool = False) -> str | None:
     if "k" not in rows:
         return None
 
+    offset = any(isinstance(c, dict) and c.get("key") == "shape_offset" for c in data.get("caveats") or [])
+
     def val(key: str):
         r = rows[key]
-        return pm_text(r["value"], r["minus"], r["plus"], nd=r["nd"], tex=tex)
+        text = pm_text(r["value"], r["minus"], r["plus"], nd=r["nd"], tex=tex)
+        boot = _num(r.get("boot_median"))
+        if offset and key == "k" and boot is not None and r["minus"] is not None:
+            nd = err_digits(min(e for e in (r["minus"], r["plus"]) if e))
+            return _joined(tex, text, f" (bootstrap median {boot:.{nd}f})")
+        return text
     if (data.get("shape") or {}).get("ok") is not True:
         parts = [f"Fitting {MODEL_CLAUSE}, gives a radius ratio of ", val("k")]
         if "b" in rows:
@@ -614,9 +665,11 @@ def search_version(data: dict) -> str | None:
 
 def software_line(data: dict) -> str:
     """The note's software statement: "SkySift <version> (search version <v>, commit <sha>), numpy, ...", the
-    version from the package metadata, the search version and the commit from the dossier."""
+    version from the package metadata, the search version and the commit from the dossier; triceratops only when a
+    cross-check is stored."""
+    tools = SOFTWARE + (f", {CROSS_CHECK_SOFTWARE}" if data.get("cross_check") else "")
     return (f"SkySift {skysift_version()} (search version {search_version(data) or 'unknown'}, commit "
-            f"{software_commit(data)}), {SOFTWARE}")
+            f"{software_commit(data)}), {tools}")
 
 
 def numbers(data: dict, tex: bool = False, after_bjd: float | None = None) -> dict:
@@ -631,7 +684,6 @@ def numbers(data: dict, tex: bool = False, after_bjd: float | None = None) -> di
     lo, hi = _num(window.get("min_period_days")), _num(window.get("max_period_days"))
     fap_text, fpp_text = probability_sentences(data)
     caveats = [c for c in data.get("caveats") or [] if isinstance(c, dict) and c.get("title")]
-    duration = _num(eph.get("duration_h"))
     rp, a, teq = planet.get("rp_rearth"), planet.get("a_au"), planet.get("teq_k")
     host = ", ".join(x for x in (
         f"{star['spectral_type']} dwarf" if star.get("spectral_type") else None,
@@ -654,6 +706,7 @@ def numbers(data: dict, tex: bool = False, after_bjd: float | None = None) -> di
         "ladder_version": prov.get("ladder_version") or sig.get("ladder_version"),
         **q, "period_title": _f(eph.get("period_days"), 3), "t0_err": q["t0_bjd_err"], "t_ref_err": q["t_ref_bjd_err"],
         "ephemeris_text": ephemeris_sentence(data),
+        "timed": timed, "methods_text": methods_sentence(data, tex),
         "rms_min": _f(timing.get("rms_min"), 1) if timed else None,
         "n_used": timing.get("n_used") if timed else None, "n_measured": timing.get("n_measured") if timed else None,
         "next_transits": next_transits(data, julian_date(datetime.now(UTC)) if after_bjd is None else after_bjd),
@@ -687,10 +740,20 @@ def numbers(data: dict, tex: bool = False, after_bjd: float | None = None) -> di
         "cross_check_block": cc.verdict(data.get("cross_check"))[1],
         "abstract": abstract_text(data),
         "caveat_text": " ".join(f"{c['title'].rstrip('.')}." for c in caveats) or "No caveat is recorded.",
-        "window_h": _f(plots.get("window_h"), 1), "bin_minutes": _f(duration * 60 / 8, 0) if duration else None,
+        "window_h": _f(plots.get("window_h"), 1), "bin_minutes": bin_minutes(data),
         "model_words": "transit fit" if plots.get("model_kind") == "fit" else "box model of the detection",
         "param_rows": param_rows(data), "commands": prov.get("commands") or [],
     }
+
+
+def bin_minutes(data: dict) -> str | None:
+    """The fold's bin width in minutes as the caption prints it: the stored ``plots.bin_minutes`` (an eighth of the
+    search duration), else, for a dossier made before it, the same eighth of the signal's search duration."""
+    stored = _num((data.get("plots") or {}).get("bin_minutes"))
+    if stored is None:
+        dur = _num((data.get("signal") or {}).get("duration"))
+        stored = dur * 1440.0 / 8 if dur else None
+    return None if stored is None else f"{stored:.1f}".removesuffix(".0")
 
 
 def abstract_text(data: dict) -> str:
@@ -883,7 +946,8 @@ def gate_problems(raw: dict) -> list[str]:
     """Why a live Zenodo draft is refused on the stored dossier JSON (with its stored cross-check merged in as
     ``cross_check``), one sentence per problem: the ephemeris carries no error (no timing block, or its fit is not
     ok), the transit shape carries no error (no shape block, or it is not ok), and ``crosscheck.verdict``'s reason
-    (no cross-check, one made for an earlier dossier, or a likely false positive on its own scale). Empty when the
+    (no cross-check, one made for an earlier dossier, or a likely false positive on its own scale), and a stored
+    commit that is dirty or unknown (the software statement could not name archived code; ruling g). Empty when the
     dossier may go to zenodo.org."""
     out = []
     for key, what in (("timing", "the ephemeris"), ("shape", "the transit shape")):
@@ -895,6 +959,9 @@ def gate_problems(raw: dict) -> list[str]:
     blocked, reason = cc.verdict(raw.get("cross_check"))
     if blocked:
         out.append(reason)
+    commit = str((raw.get("provenance") or {}).get("git_commit") or "unknown")
+    if commit == "unknown" or commit.endswith("-dirty"):
+        out.append("the stored commit is dirty or unknown")
     return out
 
 
@@ -966,7 +1033,8 @@ def _fields(data: dict, f: dict) -> dict:
         f["note_words"], f["note_problems"] = note_words(tex), note_problems(note_words(tex), tex)
     f.setdefault("note_problems", note_problems(f["note_words"]))
     f.setdefault("limits", NOTE_LIMITS)
-    f.setdefault("data_tag", data_tag(f["date"], f["tag"], _safe_target(target_id)))
+    f.setdefault("tag_seq", 1)
+    f.setdefault("data_tag", data_tag(f["date"], f["tag"], _safe_target(target_id), f["tag_seq"]))
     day = datetime.strptime(f["date"], "%Y%m%d").replace(tzinfo=UTC)
     f.setdefault("after_bjd", julian_date(day))
     f.setdefault("after_words", date_words(day))
@@ -1547,7 +1615,7 @@ def _write_texts(out_dir: Path, zip_path: Path, data: dict, fields: dict, citati
 
 
 def build_pack(store, blob, settings, target_id: str, *, out_dir: Path | None = None, tic: str | None = None,
-               observer_tag: str = "skysift", zenodo: ZenodoClient | None = None,
+               observer_tag: str = "skysift", tag_seq: int = 1, zenodo: ZenodoClient | None = None,
                log: Callable[[str], None] | None = None) -> PackReport:
     """Write the submission pack of ``target_id`` from its stored dossier and zip it inside the folder as
     ``<target>_<yyyymmdd>_skysift_pack.zip``; the default folder is ``<data_dir>/packs/<target_id>/<UTC yyyymmdd>/`` (an
@@ -1568,6 +1636,8 @@ def build_pack(store, blob, settings, target_id: str, *, out_dir: Path | None = 
     unfinished draft when Zenodo fails."""
     say = log or (lambda _text: None)
     tic, observer_tag = check_tic(tic), check_tag(observer_tag)
+    if not (isinstance(tag_seq, int) and 1 <= tag_seq <= 99999):
+        raise PackError(f"the Data Tag sequence is a number from 1 to 99999, not {tag_seq!r}")
     _safe_target(target_id)
     row = store.dossier(target_id)
     if row is None or not row.get("data_path") or not Path(row["data_path"]).is_file():
@@ -1611,7 +1681,7 @@ def build_pack(store, blob, settings, target_id: str, *, out_dir: Path | None = 
     try:
         zip_file, metadata, fields, words = _write_pack(
             out_dir, data, raw, row, lc, fnorm, target_id, date, now, settings, citation, creators_source,
-            {"approved": approved, "stale_reason": stale, "tic": tic, "tag": observer_tag,
+            {"approved": approved, "stale_reason": stale, "tic": tic, "tag": observer_tag, "tag_seq": tag_seq,
              "other_signals": other_signals_sentence(others)}, say)
     except BaseException:
         shutil.rmtree(out_dir, ignore_errors=True)
@@ -1708,7 +1778,7 @@ def _write_pack(out_dir: Path, data: dict, raw: dict, row: dict, lc, fnorm, targ
     _write(out_dir / "zenodo_metadata.json", jsonutil.dumps(metadata, indent=1))
     for name, source, _what in _exofop_list(target_id, date, png, pixels_figure):
         shutil.copyfile(out_dir / source, out_dir / "exofop" / name)
-    tag = data_tag(date, review["tag"], _safe_target(target_id))
+    tag = data_tag(date, review["tag"], _safe_target(target_id), review.get("tag_seq", 1))
     _write(out_dir / "exofop" / EXOFOP_PLANET_TEMPLATE.format(date=date),
            render_exofop_planet(data, date, review["tic"], tag))
     stellar = render_exofop_stellar(data, date, review["tic"], tag)

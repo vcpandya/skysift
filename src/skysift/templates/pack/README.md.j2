@@ -21,7 +21,7 @@ This pack was built on {{ f.built_words }} by SkySift (pack format {{ f.pack_ver
 |---|---|
 | period | {{ n.period_pm }} d{{ n.period_note }} |
 | first mid-transit (epoch 0) | BJD_TDB {{ n.t0_bjd_pm }} (BKJD {{ n.t0_bkjd }}) |
-{% if n.t_ref_bjd %}
+{% if n.timed %}
 | reference mid-transit (epoch {{ n.epoch_ref }}, the centre of the series) | BJD_TDB {{ n.t_ref_bjd_pm }} |
 | transit times | {{ n.n_used }} of {{ n.n_measured }} timed transits fit the linear ephemeris, rms {{ n.rms_min }} min |
 {% endif %}
@@ -93,7 +93,7 @@ What you do: open the draft, read every field, check that the uploaded zip holds
 
 Account: an ExoFOP registered-user login (request one on the ExoFOP site, {{ f.exofop_url }}; the ExoFOP team approves it, which can take a few days). The engine cannot upload for you. The site's own help page is {{ f.exofop_help_url }}.
 
-Where: the Kepler, K2 and TESS sites of ExoFOP are merged, and a KIC id is accepted directly, so search for {{ n.name }}{% if n.gaia_id %}, Gaia DR3 {{ n.gaia_id }}{% endif %} or the coordinates RA {{ n.ra }} deg, Dec {{ n.dec }} deg (J2000) and attach the files to the star's page.{% if f.tic %} The pack was built with TIC {{ f.tic }}, which the upload note names.{% endif %}{{ "" }}
+Where: the Kepler, K2 and TESS sites of ExoFOP are merged, and a KIC id is accepted directly, so search for {{ n.name }}{% if n.gaia_id %}, Gaia DR3 {{ n.gaia_id }}{% endif %} or the coordinates RA {{ n.ra }} deg, Dec {{ n.dec }} deg (J2000) and attach the files to the star's page.{% if f.tic %} The pack was built with TIC {{ f.tic }}, which the upload note names.{% else %} The star's TIC id is on its ExoFOP target page, or in the MAST TIC search by the KIC coordinates above (catalogs.mast.stsci.edu, TESS Input Catalog, a cone of a few arcsec); build the pack again with `--tic` to name it in the upload note and the planet file.{% endif %}{{ "" }}
 
 Data Tag: every ExoFOP upload needs one, set on the upload form in the form `YYYYMMDD_username_description_nnnnn` (the description takes letters, numbers and hyphens). For this pack, something like `{{ f.data_tag }}`.
 
@@ -138,7 +138,7 @@ When: only once a refereed paper on this candidate is accepted. The archive take
 
 Account: whatever the person asks through (ExoFOP messages, email). The engine cannot reply for you.
 
-{% if n.t_ref_bjd %}
+{% if n.timed %}
 Observers who plan a transit ask for the ephemeris first. Send `data/ephemeris.csv` and `data/transit_times.csv` and say: mid-transit times are T = {{ n.t_ref_bjd }} + (E - {{ n.epoch_ref }}) x {{ n.period }} (BJD_TDB, E a whole number of orbits, E = 0 at BJD_TDB {{ n.t0_bjd }}), with 1-sigma errors of {{ n.t_ref_err }} d on the reference time and {{ n.period_err }} d on the period, and the transit lasts {{ n.duration_pm }} h. The prediction error grows with the distance from epoch {{ n.epoch_ref }}: the reference error and the period error times the number of orbits, in quadrature. The next three transits after {{ f.after_words }}, each with its 1-sigma window:
 
 {% for t in n.next_transits %}

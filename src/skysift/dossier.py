@@ -419,6 +419,7 @@ def plot_arrays(lc: LightCurve, fnorm: np.ndarray, signal: dict, tests: list[dic
              "peaks": list(periodogram.peaks) if periodogram is not None else []}
     return {"series_binned": series, "series_bin_days": SERIES_BIN_DAYS, "window_h": _r(win * 24, 3),
             "fold_points": fold_points, "fold_bins": _hours_bins(ph[m], y[m], dur / 8, win),
+            "bin_minutes": _r(dur / 8 * 1440.0, 2),
             "model": model, "model_kind": model_kind,
             "odd_bins": _hours_bins(ph[odd], y[odd], dur / 4, win),
             "even_bins": _hours_bins(ph[even], y[even], dur / 4, win),

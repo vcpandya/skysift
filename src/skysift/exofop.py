@@ -27,10 +27,11 @@ EXOFOP_NOTES_MAX = 120
 TIC_PLACEHOLDER = "<TIC-TO-FILL>"
 
 
-def data_tag(date: str, tag: str, target: str) -> str:
-    """The suggested ExoFOP Data Tag, ``YYYYMMDD_username_description``, with the username to fill in; ``target`` is
-    the pack's checked target name (``pack._safe_target``)."""
-    return f"{date}_<username>_{tag}-{target}"
+def data_tag(date: str, tag: str, target: str, seq: int = 1) -> str:
+    """The suggested ExoFOP Data Tag, ``YYYYMMDD_username_description_nnnnn``, with the username to fill in;
+    ``target`` is the pack's checked target name (``pack._safe_target``) and ``seq`` the five-digit sequence
+    (00001 for the first upload of the day)."""
+    return f"{date}_<username>_{tag}-{target}_{int(seq):05d}"
 
 
 def _cell(value) -> str:

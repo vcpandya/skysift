@@ -303,7 +303,7 @@ def test_readme_lists_the_five_steps_and_the_approval_warning(env_with_dossier):
     for account in ("Zenodo account", "ExoFOP", "AAS journals account", "arXiv", "help desk"):
         assert account in text
     assert "Gaia DR3 2101234567890123462" in text and "KIC id is accepted directly" in text
-    assert "\n\nData Tag: " in text and f"{_today()}_<username>_skysift-{STAGE2_TARGET}" in text
+    assert "\n\nData Tag: " in text and f"{_today()}_<username>_skysift-{STAGE2_TARGET}_00001" in text
     assert "password" not in text.lower() and "public at once" in text and "TFOP" in text
     assert "TIC-unknown" not in text and "never publishes" in text and "takes a KIC id directly" in text
     assert "under the star's TIC id" not in text
@@ -1009,10 +1009,10 @@ def test_ephemeris_csv_carries_the_errors_and_the_dilution_rows(env_with_dossier
     assert float(period["minus"]) == float(period["plus"]) == eph["period_err_days"]
     assert "linear fit of 34 transit times" in period["source"] and "Deeg 2015" in period["source"]
     t0 = by[("mid-transit time", "BJD_TDB")]
-    assert float(t0["value"]) == pytest.approx(eph["t0_bkjd"] + BKJD, abs=1e-6)        # from BKJD, not 8 figures
+    assert float(t0["value"]) == eph["t0_bjd"]               # the stored BJD at six decimals, not BKJD at 8 figures
     assert float(t0["minus"]) == eph["t0_bjd_err"]
     ref = by[("reference mid-transit time", "BJD_TDB")]
-    assert float(ref["value"]) == pytest.approx(eph["t_ref_bkjd"] + BKJD, abs=1e-6)
+    assert float(ref["value"]) == eph["t_ref_bjd"]
     assert float(ref["plus"]) == eph["t_ref_err_days"] and "epoch 18" in ref["source"]
     depth = by[("depth", "ppm")]
     assert float(depth["value"]) == 2180.0 and float(depth["minus"]) == 60.0
@@ -1056,7 +1056,7 @@ def test_transit_times_and_shape_csvs(env_with_dossier):
     assert list(shape) == ["radius ratio k", "impact parameter b", "a/R*", "T14", "model depth", "box depth"]
     assert float(shape["radius ratio k"]["minus"]) == 0.0011 and float(shape["radius ratio k"]["plus"]) == 0.0012
     assert float(shape["radius ratio k"]["boot_median"]) == 0.0469 and shape["radius ratio k"]["note"] == ""
-    assert shape["impact parameter b"]["minus"] == "" and shape["impact parameter b"]["note"] == f"no error; {DEGENERATE}"
+    assert shape["impact parameter b"]["minus"] == "" and shape["impact parameter b"]["note"] == "no error; " + DEGENERATE.removesuffix(", errors not quoted")
     assert shape["T14"]["unit"] == "h" and float(shape["model depth"]["plus"]) == 110.0
 
 
@@ -1113,17 +1113,17 @@ def test_exofop_parameter_files_follow_the_templates(env_with_dossier):
     assert planet["temp"] == "269" and planet["temp_unc"] == "8" and planet["sma_unc"] == "0.0016"
     assert planet["r_planet"] == planet["imp"] == planet["ar_star"] == ""        # no bootstrap error yet
     assert planet["mass"] == planet["ecc"] == planet["inc"] == planet["group"] == "" and planet["prop_period"] == "0"
-    assert planet["tag"] == f"{date}_<username>_skysift-{STAGE2_TARGET}"
+    assert planet["tag"] == f"{date}_<username>_skysift-{STAGE2_TARGET}_00001"
     assert planet["paper"] == "<PAPER-URL-TO-FILL>" and planet["notes"] == "<NOTES-TO-FILL>"
     stellar = _parse_pipe((rep.out_dir / "exofop" / f"params_stellar_{date}_001.txt").read_text(encoding="utf-8"),
                           STELLAR_COLUMNS)
     assert stellar["target"] == "KIC6146676" and stellar["sp_type"] == "M1V" and stellar["prop_period"] == "0"
     head = (rep.out_dir / "exofop" / f"params_stellar_{date}_001.txt").read_text(encoding="utf-8").splitlines()[:3]
     assert head == ["\\ SkySift stellar parameters for ExoFOP's bulk upload",
-                    f"\\ Data Tag: {date}_<username>_skysift-{STAGE2_TARGET}", f"\\ pack date: {date}"]
+                    f"\\ Data Tag: {date}_<username>_skysift-{STAGE2_TARGET}_00001", f"\\ pack date: {date}"]
     assert (stellar["teff"], stellar["teff_unc"]) == ("3653", "90") and stellar["group"] == stellar["age"] == ""
     assert (stellar["radius"], stellar["radius_unc"]) == ("0.509", "0.017") and stellar["logg_unc"]
-    assert (stellar["dist"], stellar["dist_unc"]) == ("303", "4") and stellar["mass_unc"] == "0.013"
+    assert (stellar["dist"], stellar["dist_unc"]) == ("303.0", "3.6") and stellar["mass_unc"] == "0.013"
     assert stellar["notes"] == ("Teff: Mamajek dwarf table; R: Mann et al. 2015 R(M_Ks); M: Mann et al. 2019 M(M_Ks); "
                                 "dist: 1000 / Gaia DR3 parallax")
     assert len(stellar["notes"]) <= 120
@@ -1222,16 +1222,16 @@ def test_every_text_quotes_the_period_and_epoch_with_errors(env_with_dossier):
     commit = env.data["provenance"]["git_commit"]
     for name in ("README.md", "exofop/note.txt", "archive_email.txt"):
         text = (rep.out_dir / name).read_text(encoding="utf-8")
-        assert "40.28986 ± 0.00009 d" in text and "2454969.3003 ± 0.0019" in text, name
+        assert "40.289863 ± 0.000091 d" in text and "2454969.3003 ± 0.0019" in text, name
         assert "4.16 +0.06/-0.05 h" in text and "2,180 ± 60 ppm" in text and NO_BOOT not in text, name
     for name in ("exofop/note.txt", "archive_email.txt"):
         text = (rep.out_dir / name).read_text(encoding="utf-8")
         assert "search version 1+abcdef01" in text and f"commit {commit}" in text, name
     tex = (rep.out_dir / "note" / "note.tex").read_text(encoding="utf-8")
-    assert r"40.28986 $\pm$ 0.00009 days" in tex and r"2455694.5179 $\pm$ 0.0009" in tex
+    assert r"40.289863 $\pm$ 0.000091 days" in tex and r"2455694.51787 $\pm$ 0.00092" in tex
     assert "4.16$^{+0.06}_{-0.05}$ hours" in tex and "8.0 minutes" in tex and "34 of 34" in tex
     meta = json.loads((rep.out_dir / "zenodo_metadata.json").read_text(encoding="utf-8"))
-    assert "40.28986 ± 0.00009 d" in meta["description"] and "2454969.3003 ± 0.0019" in meta["description"]
+    assert "40.289863 ± 0.000091 d" in meta["description"] and "2454969.3003 ± 0.0019" in meta["description"]
     _store(env, env.data)                                                 # the fixture's own: no shape error
     text = _unquoted((_build(env).out_dir / "README.md").read_text(encoding="utf-8"))
     assert text.count(f"(no error; {NO_BOOT})") == 1 and "4.16 h (no error;" in text
@@ -1240,7 +1240,8 @@ def test_every_text_quotes_the_period_and_epoch_with_errors(env_with_dossier):
 def test_a_missing_ephemeris_error_is_named_once_and_never_paired_with_a_search_value(env_with_dossier):
     data = json.loads(json.dumps(env_with_dossier.data))
     data["timing"] = {**data["timing"], "ok": False, "reason": "fewer than 3 transits timed"}
-    data["ephemeris"].update(period_days=40.2899, t0_bkjd=136.3, period_err_days=None, t0_bkjd_err=None,
+    data["ephemeris"].update(period_days=40.2899, t0_bkjd=136.3, t0_bjd=136.3 + BKJD, period_err_days=None,
+                             t0_bkjd_err=None,
                              t0_bjd_err=None, t_ref_bkjd=None, t_ref_bjd=None, t_ref_err_days=None, epoch_ref=None,
                              period_source="search")
     for text in (_unquoted(render_readme(data, {})), pack_module._render_plain("exofop_note.txt.j2", data, {}),
@@ -1261,9 +1262,12 @@ def test_note_has_software_facilities_and_the_model_clause_within_the_limits(env
     for data in (env_with_dossier.data, golden):
         tex = render_note(data)
         version = data["signal"]["detector_version"]
+        # triceratops is named only with a stored cross-check (M10), and neither of these has one
         assert (rf"\software{{SkySift {md.version('skysift')} (search version {tex_safe(version)}, commit "
-                rf"{tex_safe(data['provenance']['git_commit'])}), numpy, scipy, astropy, matplotlib, triceratops}}"
+                rf"{tex_safe(data['provenance']['git_commit'])}), numpy, scipy, astropy, matplotlib}}"
                 ) in tex
+        crossed = render_note({**data, "cross_check": {"fpp": 0.01, "nfpp": 0.001, "current": False}})
+        assert "matplotlib, triceratops}" in crossed
         assert r"\facilities{Kepler, Gaia, MAST, Exoplanet Archive}" in tex
         assert "the SkySift code at the stated commit is archived at doi:10.5281/zenodo.SOFTWARE (to be minted)" in tex
         assert "CROWDSAP" in tex and "PSFFRAC" in tex
@@ -1273,7 +1277,9 @@ def test_note_has_software_facilities_and_the_model_clause_within_the_limits(env
     tex = render_note(_with_errors(env_with_dossier.data))
     assert ("a uniform-disc model without limb darkening on a circular orbit, averaged over the 29.4-minute "
             "cadence") in tex
-    assert "0.0470$^{+0.0012}_{-0.0011}$" in tex and DEGENERATE in tex
+    # the degenerate b says "no error" once, also for a reason stored before it stopped saying "errors not quoted"
+    assert "0.0470$^{+0.0012}_{-0.0011}$" in tex and DEGENERATE not in tex
+    assert "(no error; ingress shorter than the cadence: b and a/R* are degenerate with k)" in tex
     assert r"2,211 $\pm$ 76 ppm" in tex and r"2,126 $\pm$ 83 ppm" in tex and "0.8 sigma apart" in tex
     assert "3-sigma upper limit of 210 ppm" in tex and "14 $\\pm$ 31 ppm" in tex
     assert note_problems(note_words(tex), tex) == []
@@ -1294,7 +1300,7 @@ def test_readme_says_the_archive_needs_a_refereed_paper(env_with_dossier):
     assert "refereed paper" in first and "Research Note" in first
     assert "once it is published" not in pack_module.STEP_TEXTS["4"] and "refereed" in pack_module.STEP_TEXTS["4"]
     provenance = text.split("## Provenance")[1]
-    assert "doi:10.5281/zenodo.SOFTWARE (to be minted)" in provenance and "triceratops" in provenance
+    assert "doi:10.5281/zenodo.SOFTWARE (to be minted)" in provenance and "triceratops" not in provenance
 
 
 def test_independent_periods():
@@ -1336,7 +1342,7 @@ def test_a_live_draft_refuses_a_dossier_without_ephemeris_errors(env_with_dossie
     assert fake_session.calls == [] and env.store.dossier(STAGE2_TARGET)["pack_path"] == ""
     assert pack_module.gate_problems({}) == ["the ephemeris carries no error (no timing block)",
                                              "the transit shape carries no error (no shape block)",
-                                             "no independent cross-check"]
+                                             "no independent cross-check", "the stored commit is dirty or unknown"]
     assert pack_module.gate_problems(_with_errors(_stored(env))) == [
         "the ephemeris carries no error (fewer than 3 transits timed)", "no independent cross-check"]
     monkeypatch.setattr(net, "fetch", env.fetch)
@@ -1403,3 +1409,98 @@ def test_pack_prints_the_cross_check_and_the_gate_refuses_without_one(env_with_d
     assert note_problems(note_words(tex), tex) == []
     stored = json.loads((rep.out_dir / "data" / "cross_check.json").read_text(encoding="utf-8"))
     assert stored == block and "data/cross_check.json" in rep.files and "data/cross_check.json" in readme
+
+
+# ---------------------------------------------------------------------------------------------------- final fix wave
+
+def test_the_note_names_its_methods_and_cites_them(env_with_dossier):
+    """I3: one method sentence (Deeg 2015, Holczer et al. 2016, Schmitt et al. 2014) with its three bibliography
+    entries, and the bootstrap median beside the point value when the shape_offset caveat fires; M4: the fold and
+    the bootstrap use the search ephemeris."""
+    _store_errors(env_with_dossier)
+    data = _stored(env_with_dossier)
+    data["caveats"] = [*data["caveats"], {"key": "shape_offset", "title": "The shape fit sits off its bootstrap",
+                                          "text": "quote the bootstrap median beside it."}]
+    tex = render_note(data)
+    signal = tex.split(r"\section{The signal}")[1].split(r"\section{")[0]
+    assert r"weighted linear fit of the per-transit mid-times" in signal and r"\citep{deeg2015}" in signal
+    assert r"\citep{holczer2016}" in signal and r"bootstrap over transits \citep{schmitt2014}" in signal
+    assert "16th to 84th percentile spread of the resamples about their median" in signal
+    assert "use the search period and epoch; the quoted ephemeris is the linear fit." in signal
+    for item in (r"Deeg, H.~J. 2015, arXiv:1503.05368", r"Holczer, T., et~al. 2016, ApJS, 225, 9",
+                 r"Schmitt, J.~R., et~al. 2014, AJ, 148, 28"):
+        assert item in tex
+    assert "0.0470$^{+0.0012}_{-0.0011}$ (bootstrap median 0.0469)" in tex
+    items = set(re.findall(r"\\bibitem\[[^\]]*\]\{([^}]+)\}", tex))
+    keys = {k.strip() for c in re.findall(r"\\cite[pt]?\{([^}]+)\}", tex) for k in c.split(",")}
+    assert keys == items and note_problems(note_words(tex), tex) == []
+    # no bootstrap median without the caveat; no method sentence without either block
+    assert "bootstrap median" not in render_note(_with_errors(_stored(env_with_dossier)))
+    bare = {**data, "timing": {"ok": False, "reason": "x"}, "shape": {"ok": False, "reason": "y"}}
+    assert pack_module.methods_sentence(bare) is None and "deeg2015" not in render_note(bare)
+
+
+def test_the_caption_quotes_the_stored_fold_bin(env_with_dossier):
+    """I4: the bin of the fold (an eighth of the search duration), not one worked out from the fitted T14."""
+    data = _with_errors(env_with_dossier.data)
+    dur = data["signal"]["duration"]
+    assert data["plots"]["bin_minutes"] == pytest.approx(dur * 1440 / 8, abs=0.01)
+    data["ephemeris"]["duration_h"] = 4.16                    # the fitted T14 would give 31 minutes
+    tex = render_note({**data, "plots": {**data["plots"], "bin_minutes": 22.5}})
+    assert "bins of 22.5 minutes" in tex
+    old = {**data, "plots": {k: v for k, v in data["plots"].items() if k != "bin_minutes"}}
+    assert f"bins of {dur * 1440 / 8:.1f}".removesuffix(".0") in render_note(old)
+
+
+def test_the_live_gate_refuses_a_dirty_or_unknown_commit(env_with_dossier):
+    """I6 (ruling g): the software statement must name archived code."""
+    ok = {**_stored_with_cross_check(env_with_dossier), "provenance": {"git_commit": "8f9b249"}}
+    dirty = "the stored commit is dirty or unknown"
+    assert dirty not in pack_module.gate_problems(ok)
+    for commit in ("8f9b249-dirty", "unknown", None):
+        assert dirty in pack_module.gate_problems({**ok, "provenance": {"git_commit": commit}}), commit
+
+
+def test_the_data_tag_carries_its_sequence(env_with_dossier):
+    """M7: YYYYMMDD_username_description_nnnnn, 00001 by default, --tag-seq on the command line."""
+    assert exofop.data_tag("20261022", "skysift", "kic-006146676") == "20261022_<username>_skysift-kic-006146676_00001"
+    rep = _build(env_with_dossier, tag_seq=12)
+    note = (rep.out_dir / "README.md").read_text(encoding="utf-8")
+    assert f"_<username>_skysift-{STAGE2_TARGET}_00012" in note
+    with pytest.raises(PackError, match="sequence"):
+        _build(env_with_dossier, tag_seq=0)
+
+
+def test_a_dossier_without_timing_prints_no_empty_timing_numbers(env_with_dossier):
+    """G2: a version-2-shaped JSON (the golden's keys, no timing block) never prints "of  timed transits"."""
+    golden = json.loads(GOLDEN.read_text(encoding="utf-8"))
+    v2 = {k: v for k, v in golden.items() if k not in ("timing", "shape", "parity", "secondary")}
+    v2["ephemeris"] = {**golden["ephemeris"]}
+    for text in (pack_module._render_plain("exofop_note.txt.j2", v2, {}), _unquoted(render_readme(v2, {})),
+                 render_note(v2)):
+        assert "timed transits" not in text and "rms of  " not in text and " of  " not in text
+        assert "Timed one by one" not in text
+    assert "Allow at least one duration either side of a predicted time." in pack_module._render_plain(
+        "exofop_note.txt.j2", v2, {})
+    assert note_problems(note_words(render_note(v2)), render_note(v2)) == []
+
+
+def test_one_precision_rule_for_the_pack_and_the_page():
+    """M2 (ruling j): the error to two significant figures, the value to its last decimal, never more decimals than
+    the stored error carries; the page's helper is the pack's."""
+    from skysift.ui.routes import dossiers as routes
+    assert pack_text.pm_text(40.2898631, 9.1263e-05, 9.1263e-05, nd=5) == "40.289863 ± 0.000091"
+    assert pack_text.pm_text(4.1612, 0.0512, 0.0634) == "4.161 +0.063/-0.051"
+    assert pack_text.pm_text(2.61, 0.08, 0.09) == "2.61 +0.09/-0.08"
+    assert [routes.err_digits(x) for x in (9.1263e-05, 0.016, 73.0, None, "x")] == [
+        pack_text.err_digits(x) for x in (9.1263e-05, 0.016, 73.0, None, None)] == [6, 3, 0, 2, 2]
+    js = (Path(pack_module.__file__).parent / "ui" / "static" / "dossier.js").read_text(encoding="utf-8")
+    assert "skysift.pack_text.err_digits" in js and "Math.max(0, 1 - Math.floor(Math.log10(err)))" in js
+
+
+def test_the_readme_says_where_to_find_the_tic(env_with_dossier):
+    """M14: without --tic, step 2 names the ExoFOP target page and the MAST TIC search by the KIC coordinates."""
+    step2 = render_readme(env_with_dossier.data, {}).split("## Step 2.")[1].split("## Step 3.")[0]
+    assert "TIC id is on its ExoFOP target page" in step2 and "MAST TIC search by the KIC coordinates" in step2
+    named = render_readme(env_with_dossier.data, {"tic": "169822650"}).split("## Step 2.")[1].split("## Step 3.")[0]
+    assert "MAST TIC search" not in named and "TIC 169822650" in named

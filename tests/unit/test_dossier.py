@@ -150,6 +150,9 @@ def _make_env(settings, monkeypatch, responses=None, calibration=True, calibrati
     # the shape bootstrap costs about 0.8 s a resample: a fixture dossier carries none ("0 of 0 resamples
     # converged") unless a test passes n_boot itself
     monkeypatch.setattr(dossier_module, "N_BOOT_DEFAULT", 0)
+    # a fixture dossier stores a clean commit whatever the state of the checkout the tests run in, since the live
+    # gate refuses a dirty or unknown one
+    monkeypatch.setattr(dossier_module, "git_commit", lambda: "abc1234")
     path = cal.default_path(settings.data_dir, "kbonus_bkg")
     if calibration:
         path.parent.mkdir(parents=True, exist_ok=True)

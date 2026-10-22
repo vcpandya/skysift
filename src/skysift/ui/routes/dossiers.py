@@ -17,6 +17,7 @@ from markupsafe import Markup
 from skysift import dossier as ds
 from skysift import jsonutil
 from skysift.pack import STEP_TEXTS, STEPS, offset_sentence
+from skysift.pack_text import err_digits as _err_digits
 from skysift.ui import queries
 from skysift.ui.app import render, require_token
 from skysift.ui.jobs import DossierJobs, DossierRequest, JobBusy, valid_target_id
@@ -169,10 +170,9 @@ def pixel_seasons(data: dict) -> tuple[list[dict], str | None]:
 
 
 def err_digits(err) -> int:
-    """The decimals that print ``err`` to two significant figures (2 for a missing or non-positive error), so a value
-    printed at the same decimals ends where its error does."""
-    e = _num(err)
-    return 2 if e is None or e <= 0 else max(0, 1 - math.floor(math.log10(e)))
+    """``pack_text.err_digits`` for a stored value of any type: the decimals that print ``err`` to two significant
+    figures (2 for a missing or non-positive error), the one precision rule of the page and the pack."""
+    return _err_digits(_num(err))
 
 
 def _section_notices(data: dict) -> dict[str, list[tuple[str, str]]]:

@@ -158,9 +158,10 @@ def test_metadata_description_quotes_the_ephemeris_with_errors():
     text = metadata_from(DATA, None)["description"]
     assert "P = 40.28990 d (no error; this dossier has no per-transit timing)" in text and "T0 = BJD_TDB 2454969.3000" in text
     fitted = {**DATA, "ephemeris": {**DATA["ephemeris"], "period_days": 40.289863, "period_err_days": 9.1263086e-05,
-                                    "t0_bkjd": 136.30033, "t0_bkjd_err": 0.0018874406, "t0_bjd_err": 0.0018874406,
+                                    "t0_bkjd": 136.30033, "t0_bjd": 2454969.30033, "t0_bkjd_err": 0.0018874406,
+                                    "t0_bjd_err": 0.0018874406,
                                     "duration_h_err": {"minus": 0.05, "plus": 0.06}, "depth_ppm_err": 60.0},
               "timing": {"ok": True}, "shape": {"ok": True}}
     text = metadata_from(fitted, None)["description"]
-    assert "P = 40.28986 ± 0.00009 d, T0 = BJD_TDB 2454969.3003 ± 0.0019, duration 2.30 +0.06/-0.05 h" in text
+    assert "P = 40.289863 ± 0.000091 d, T0 = BJD_TDB 2454969.3003 ± 0.0019, duration 2.30 +0.06/-0.05 h" in text
     assert "no error" not in text and chr(0x2014) not in text

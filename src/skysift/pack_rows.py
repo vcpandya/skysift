@@ -146,7 +146,8 @@ def shape_rows(data: dict) -> list[dict]:
         note = ""
         if lo is None or hi is None:
             degenerate = shape.get("ok") and shape.get("degenerate") and key in ("b", "a_over_r")
-            note = f"no error; {(shape.get('degeneracy_reason') if degenerate else shape.get('reason')) or 'no reason stored'}"
+            why = (shape.get("degeneracy_reason") if degenerate else shape.get("reason")) or "no reason stored"
+            note = f"no error; {why.removesuffix(', errors not quoted')}"       # an older reason said it again
         rows.append({"key": key, "parameter": name, "value": value, "minus": lo, "plus": hi, "unit": unit,
                      "boot_median": boot, "note": note, "nd": nd})
     return rows
