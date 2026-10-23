@@ -8,10 +8,10 @@
 
 \BLOCK{for a in authors}
 \author\BLOCK{if a.orcid}[\VAR{a.orcid}]\BLOCK{endif}{\VAR{a.name}}
-\affiliation{AFFILIATION TO FILL IN}
+\affiliation{\BLOCK{if a.affiliation}\VAR{a.affiliation}\BLOCK{else}AFFILIATION TO FILL IN\BLOCK{endif}}
 \BLOCK{endfor}
 \correspondingauthor{\VAR{authors[0].name}}
-\email{EMAIL TO FILL IN}
+\email{\BLOCK{if authors[0].email}\VAR{authors[0].email}\BLOCK{else}EMAIL TO FILL IN\BLOCK{endif}}
 
 \begin{abstract}
 \VAR{n.abstract}
@@ -21,11 +21,11 @@
 
 \section{The signal}
 
-In the KBonus Kepler Background light curve \citep{kbonus} of \VAR{n.name}\BLOCK{if n.gaia_id} (Gaia DR3 \VAR{n.gaia_id}\BLOCK{if n.gmag}, $G = \VAR{n.gmag}$\BLOCK{endif})\BLOCK{endif}, a dip of \VAR{n.depth_pm} ppm\VAR{n.depth_note} lasting \VAR{n.duration_pm} hours\VAR{n.duration_note} repeats every \VAR{n.period_pm} days\VAR{n.period_note}\BLOCK{if n.timed}, with the reference mid-transit at BJD$_{\rm TDB}$ \VAR{n.t_ref_bjd_pm} at epoch \VAR{n.epoch_ref}, the centre of the series. Timed one by one, \VAR{n.n_used} of \VAR{n.n_measured} transits fit this linear ephemeris with an rms of \VAR{n.rms_min} minutes\BLOCK{else}, with the first mid-transit at BJD$_{\rm TDB}$ \VAR{n.t0_bjd_pm} (BKJD \VAR{n.t0_bkjd})\BLOCK{endif}\VAR{n.fold_clause}.\BLOCK{if n.methods_text} \VAR{n.methods_text}\BLOCK{endif}\BLOCK{if n.prior_text} \VAR{n.prior_text}\BLOCK{endif}\BLOCK{if n.comparison_text} \VAR{n.comparison_text}\BLOCK{endif}
+In the KBonus Kepler Background light curve \citep{kbonus} of \VAR{n.name}\BLOCK{if n.gaia_id} (Gaia DR3 \VAR{n.gaia_id}\BLOCK{if n.gmag}, $G = \VAR{n.gmag}$\BLOCK{endif})\BLOCK{endif}, recorded by Kepler \citep{borucki2010} only in other targets' pixels, a dip of \VAR{n.depth_pm} ppm\VAR{n.depth_note} lasting \VAR{n.duration_pm} hours\VAR{n.duration_note} repeats every \VAR{n.period_pm} days\VAR{n.period_note}\BLOCK{if n.timed}, with the reference mid-transit at BJD$_{\rm TDB}$ \VAR{n.t_ref_bjd_pm} at epoch \VAR{n.epoch_ref}, the centre of the series. Timed one by one, \VAR{n.n_used} of \VAR{n.n_measured} transits fit this linear ephemeris with an rms of \VAR{n.rms_min} minutes\BLOCK{else}, with the first mid-transit at BJD$_{\rm TDB}$ \VAR{n.t0_bjd_pm} (BKJD \VAR{n.t0_bkjd})\BLOCK{endif}\VAR{n.fold_clause}.\BLOCK{if n.methods_text} \VAR{n.methods_text}\BLOCK{endif}\BLOCK{if n.prior_text} \VAR{n.prior_text}\BLOCK{endif}\BLOCK{if n.comparison_text} \VAR{n.comparison_text}\BLOCK{endif}
 
 \section{Detection and vetting}
 
-The SkySift engine (search version \VAR{n.search_version}, ladder version \VAR{n.ladder_version}) found the signal with a box search\BLOCK{if n.window} over periods of \VAR{n.window}\BLOCK{endif}. The peak has a signal detection efficiency of \VAR{n.sde} and a signal-to-noise ratio of \VAR{n.snr} over \VAR{n.n_events} transits.
+The SkySift engine (search version \VAR{n.search_version}, ladder version \VAR{n.ladder_version}) found the signal with a box search\BLOCK{if n.window} over periods of \VAR{n.window}\BLOCK{endif}, at a signal detection efficiency of \VAR{n.sde} and a signal-to-noise ratio of \VAR{n.snr} over \VAR{n.n_events} transits.
 \BLOCK{for s in n.vetting}
 \VAR{s}
 \BLOCK{endfor}
@@ -38,12 +38,9 @@ The SkySift engine (search version \VAR{n.search_version}, ladder version \VAR{n
 \section{The star and the planet}
 
 \BLOCK{if n.star_ok}
-No Kepler stellar catalogue covers a background star, so the parameters come from Gaia colour and parallax. \BLOCK{if n.teff}The star's colour \BLOCK{if refs.pecaut2013}on the dwarf sequence of \citet{pecaut2013} \BLOCK{endif}gives \BLOCK{if n.spectral_type}a spectral type of \VAR{n.spectral_type} and \BLOCK{endif}an effective temperature of \VAR{n.teff} K. \BLOCK{endif}\BLOCK{if refs.lindegren2021}The Gaia parallax, corrected for its zero point \citep{lindegren2021}, puts it at \VAR{n.distance} pc. \BLOCK{endif}\BLOCK{if refs.mann2015}From the absolute $K_s$ magnitude the relations of \citet{mann2015}\BLOCK{if refs.mann2019} and \citet{mann2019}\BLOCK{endif} give \BLOCK{else}The star has \BLOCK{endif}a radius of \VAR{n.radius} $R_\odot$\BLOCK{if n.mass} and a mass of \VAR{n.mass} $M_\odot$\BLOCK{endif}.
+No Kepler stellar catalogue covers a background star, so the parameters come from Gaia DR3 \citep{gaia2016,gaia2023} colour and parallax\BLOCK{if n.gaia_flags_text}; \VAR{n.gaia_flags_text}\BLOCK{endif}. \BLOCK{if n.teff}The colour gives \BLOCK{if n.spectral_type}a spectral type of \VAR{n.spectral_type} and \BLOCK{endif}an effective temperature of \VAR{n.teff} K\BLOCK{if n.distance}, and the zero-point-corrected parallax a distance of \VAR{n.distance} pc\BLOCK{endif}. \BLOCK{elif n.distance}The zero-point-corrected parallax gives a distance of \VAR{n.distance} pc. \BLOCK{endif}\BLOCK{if refs.mann2015}From the absolute $K_s$ magnitude the relations of \citet{mann2015}\BLOCK{if refs.mann2019} and \citet{mann2019}\BLOCK{endif} give \BLOCK{else}The star has \BLOCK{endif}a radius of \VAR{n.radius} $R_\odot$\BLOCK{if n.mass} and a mass of \VAR{n.mass} $M_\odot$\BLOCK{endif}.
 \BLOCK{if n.rp}
 \BLOCK{if n.fit_k}With the fitted radius ratio of \VAR{n.fit_k} the\BLOCK{else}The\BLOCK{endif} planet radius is \VAR{n.rp} $R_\oplus$, on an orbit of \VAR{n.a} AU\BLOCK{if n.teq} with an equilibrium temperature of \VAR{n.teq} K at a Bond albedo of 0.3\BLOCK{endif}\BLOCK{if n.insolation} and \VAR{n.insolation} times the insolation of Earth\BLOCK{endif}.
-\BLOCK{endif}
-\BLOCK{if refs.kopparapu2013 and n.hz_where}
-The orbit lies \VAR{n.hz_where} of \citet{kopparapu2013}, whose conservative edges for this star sit at \VAR{n.hz_inner} and \VAR{n.hz_outer} AU.
 \BLOCK{endif}
 \BLOCK{else}
 The star could not be characterised from Gaia photometry, so the planet radius, orbit and temperature are not given here.
@@ -51,20 +48,20 @@ The star could not be characterised from Gaia photometry, so the planet radius, 
 
 \section{How likely is a false positive}
 
-\VAR{n.fap_text}\BLOCK{if n.cross_check_sentence} \VAR{n.cross_check_sentence} \VAR{n.in_house_capital}.\BLOCK{else} \VAR{n.fpp_text}\BLOCK{endif} The estimate weighs a planet, a background eclipsing binary and an eclipsing binary on the target, after \citet{morton2012}, with planet occurrence from \BLOCK{if refs.dressing2015 and refs.fressin2013}\citet{dressing2015} and \citet{fressin2013}\BLOCK{elif refs.dressing2015}\citet{dressing2015}\BLOCK{else}\citet{fressin2013}\BLOCK{endif}. It has no radial-velocity or imaging input.\BLOCK{if n.both_tools} \VAR{n.both_tools}\BLOCK{endif} \VAR{n.tess_text}
+\VAR{n.fap_text}\BLOCK{if n.cross_check_sentence} \VAR{n.cross_check_sentence} \VAR{n.in_house_capital}.\BLOCK{else} \VAR{n.fpp_text}\BLOCK{endif}\BLOCK{if n.both_tools} \VAR{n.both_tools}\BLOCK{endif} \VAR{n.tess_text}
 
 \section{What is not yet known}
 
-\VAR{n.caveat_text}
+\VAR{n.caveat_text}\BLOCK{if n.followup_text} \VAR{n.followup_text}\BLOCK{endif}
 
 \begin{figure}[ht!]
 \includegraphics[width=\linewidth]{figure1}
-\caption{The light curve of \VAR{n.name} folded on the \VAR{n.period} day \VAR{n.fold_words}, within \VAR{n.window_h} hours of mid-transit, in parts per million: bins of \VAR{n.bin_minutes} minutes with their standard errors (dots) and the \VAR{n.model_words} (line).}
+\caption{\BLOCK{if panels}(a) the light\BLOCK{else}The light\BLOCK{endif} curve folded on the \VAR{n.period} day \VAR{n.fold_words}, within \VAR{n.window_h} hours of mid-transit, in parts per million: bins of \VAR{n.bin_minutes} minutes with their standard errors (dots) and the \VAR{n.model_words} (line)\BLOCK{if panels}; (b) odd and (c) even transits on the same scale\BLOCK{if n.pixel_panels}; (d) per-season difference images: this star (circle), the neighbour (square), the centroid (cross)\BLOCK{endif}\BLOCK{endif}.}
 \end{figure}
 
 \section{Data availability}
 
-The submission pack (the detrended light curve, the ephemeris and parameters with their errors, the per-event depths, the vetting metrics, the figures and the query log) is on Zenodo at \dataset[doi:\VAR{doi}]{https://doi.org/\VAR{doi}}\VAR{doi_note}. The light curves are from the KBonus Kepler Background high-level science product at MAST \citep{kbonushlsp}, and \VAR{n.code_sentence}.
+Every number, error and file behind this note is on Zenodo at \dataset[doi:\VAR{doi}]{https://doi.org/\VAR{doi}}\VAR{doi_note}. The light curves are from the KBonus Kepler Background high-level science product at MAST \citep{kbonushlsp}, and \VAR{code_sentence}.
 
 \software{\VAR{n.software_line}}
 

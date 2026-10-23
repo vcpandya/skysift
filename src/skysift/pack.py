@@ -87,7 +87,6 @@ from skysift.pack_rows import (
     timing_rows,
 )
 from skysift.pack_text import (
-    CROWDSAP_WORDS,
     RELATIONSHIP_VERBS,
     RELATIONSHIP_WORDS,
     Raw,
@@ -116,7 +115,7 @@ from skysift.zenodo import (
     probability_sentences,
 )
 
-PACK_VERSION = "3"         # 3: errors in every text and file, ExoFOP files, provenance, dilution (22 Oct 2026)
+PACK_VERSION = "4"      # 4: round 2 (spec 11): the vetting texts, the limb-darkened shape, author.json, --final
 # the five steps, in the README's order; the dashboard's step list (ui.routes.dossiers.PACK_STEPS) is built from these
 STEPS = (("1", "Freeze the record"), ("2", "Upload to ExoFOP-TESS"), ("3", "Write it up"),
          ("4", "Tell the archive"), ("5", "Answer follow-up questions"))
@@ -134,11 +133,22 @@ DOI_PLACEHOLDER = "10.5281/zenodo.XXXXXXX"
 RNAAS_DOI_PLACEHOLDER = "10.3847/2515-5172/XXXXX"
 PAPER_DOI_PLACEHOLDER = "PAPER-DOI-TO-FILL"         # the refereed paper the archive email waits for
 SOFTWARE_DOI_PLACEHOLDER = "10.5281/zenodo.SOFTWARE"
-SOFTWARE = "numpy, scipy, astropy, matplotlib"
+SOFTWARE_PACKAGES = ("numpy", "scipy", "astropy", "matplotlib")    # each named with its version (spec 11.6)
 CROSS_CHECK_SOFTWARE = "triceratops"         # named only when a cross-check is stored
 FACILITIES = "Kepler, Gaia, MAST, Exoplanet Archive"
-CODE_SENTENCE = (f"the SkySift code at the stated commit is archived at doi:{SOFTWARE_DOI_PLACEHOLDER} "
-                 "(to be minted)")
+CODE_SENTENCE = "the SkySift code at the stated commit is archived at doi:{doi}"
+CODE_DOI_PENDING = " (to be minted)"
+# the author block (spec 11.6): docs/author.json, which Vikram fills in; nobody types the fields for him
+AUTHOR_FILE = Path(__file__).resolve().parents[2] / "docs" / "author.json"
+AUTHOR_FIELDS = ("name", "affiliation", "email", "orcid")
+_ORCID = re.compile(r"\d{4}-\d{4}-\d{4}-\d{3}[\dX]")
+# a pack built with --final carries none of these in its public texts
+FINAL_PLACEHOLDERS = ("XXXXXXX", "to be minted", "TO FILL IN", SOFTWARE_DOI_PLACEHOLDER)
+FINAL_TEXTS = ("note/note.tex", "README.md", "exofop/note.txt", "archive_email.txt", "zenodo_metadata.json")
+FINAL_NEEDS_LIVE = "--final needs --zenodo-live: the record's DOI is reserved on zenodo.org"
+# the follow-up clause names the telescope class only for a deep enough dip on a bright enough star
+FOLLOWUP_REACH = ", within reach of a 1 to 2 m telescope"
+FOLLOWUP_REACH_DEPTH_PPM, FOLLOWUP_REACH_GMAG = 1000.0, 17.0
 # the limits of the transit model, in the words of the referee pack spec (section 6)
 MODEL_CLAUSE = "a quadratic limb-darkened model on a circular orbit, integrated over the {exposure}-minute exposure"
 KEPLER_EXPOSURE_MIN = 29.4      # the clause's exposure when the shape block does not record one
@@ -228,6 +238,7 @@ _CITE = re.compile(r"\\cite[pt]?((?:\[[^\]]*\]){0,2})\{([^}]*)\}")     # natbib'
 _DATASET = re.compile(r"\\dataset\[([^\]]*)\]\{[^}]*\}")
 _BIBITEM = re.compile(r"\\bibitem\[[^\]]*\]\{[^}]*\}")
 _COMMAND = re.compile(r"\\[a-zA-Z]+\*?(\[[^\]]*\])?")
+_SOFTWARE_TAG = re.compile(r"\\software\{[^}]*\}")
 
 
 def _cite_words(m: re.Match) -> str:
@@ -260,8 +271,9 @@ def note_words(tex: str) -> dict:
     """The rendered note's words between ``\\begin{document}`` and ``\\end{document}`` (comments stripped first, so a
     mention in the frame's comment is never the start): ``abstract``, ``body`` (title, headings, text, caption),
     ``references`` (the reference list) and ``total``, the number the RNAAS limit of 1,500 applies to. The author
-    block and keywords are not counted."""
+    block, the keywords and the ``\\software{}`` tag are not counted (AAS counts text, not the tag; spec 11.6)."""
     text = "\n".join(_TEX_COMMENT.sub("", line) for line in tex.splitlines())
+    text = _SOFTWARE_TAG.sub(" ", text)
     m = re.search(r"\\begin\{document\}(.*?)\\end\{document\}", text, re.DOTALL)
     text = _FRONT_LINE.sub(" ", m.group(1) if m else text)
     abstract, text = _between(text, "abstract")
@@ -296,30 +308,32 @@ def _fpp_class(data: dict) -> str | None:
 
 def references(data: dict) -> dict[str, bool]:
     """Which works the dossier's numbers rest on, so the note cites exactly those."""
-    star, planet = data.get("star") or {}, data.get("planet") or {}
+    star = data.get("star") or {}
     route = star.get("route") or "none"
     star_ok = star_characterized(data)
-    cls = _fpp_class(data)
-    notes = json.dumps((data.get("fpp") or {}).get("scenarios") or [])
     tess = set(tess_module.note_cites(data.get("tess")))       # Christ et al. 2019 alone (fix round 2, N1)
-    return {"kbonus": True, "kbonushlsp": True, "morton2012": True,
-            "dressing2015": cls == "M", "fressin2013": cls != "M" or "Fressin" in notes,
-            "pecaut2013": star_ok and route in ("mann", "mamajek") and value_text(star.get("teff")) is not None,
+    return {"kbonus": True, "kbonushlsp": True,
+            # the in-house method and its three works are the README's since Task 13 (the word limit; addendum cut 1)
+            "morton2012": False, "dressing2015": False, "fressin2013": False,
+            # the colour table and the parallax zero point are the README's since Task 13 (addendum cut 9)
+            "pecaut2013": False, "lindegren2021": False,
             "mann2015": star_ok and route == "mann",
             "mann2019": star_ok and route == "mann" and value_text(star.get("mass")) is not None,
-            "lindegren2021": star_ok and star.get("distance_pc") is not None,
             "giacalone2021": cross_check_sentence(data) is not None,
             **{key: key in tess for key, _words in tess_module.METHOD_CITES if key != "giacalone2021"},
             "bryson2013": self_referenced(offset_block(data)),
             # the errors method and its three works are in the README since fix round 3; the note points there
             "deeg2015": False, "holczer2016": False, "schmitt2014": False,
             "claret2011": shape_sentence(data) is not None and bool((data.get("shape") or {}).get("comparison")),
-            "kopparapu2013": star_ok and _hz_where(planet) is not None}
+            # spec 11.6: Kepler in the signal sentence, Gaia DR3 in the star sentence; the habitable zone and its
+            # Kopparapu et al. edges are the README's
+            "borucki2010": True, "gaia2016": star_ok, "gaia2023": star_ok}
 
 
 BIBLIOGRAPHY = (
     ("battley2021", r"{Battley} et~al.(2021)",
      r"Battley, M.~P., Kunimoto, M., Armstrong, D.~J., \& Pollacco, D. 2021, MNRAS, 503, 4092"),
+    ("borucki2010", r"{Borucki} et~al.(2010)", r"Borucki, W.~J., Koch, D., Basri, G., et~al. 2010, Science, 327, 977"),
     ("bryson2013", r"{Bryson} et~al.(2013)",
      r"Bryson, S.~T., Jenkins, J.~M., Gilliland, R.~L., et~al. 2013, PASP, 125, 889"),
     ("christ2019", r"{Christ} et~al.(2019)", r"Christ, C.~N., Montet, B.~T., \& Fabrycky, D.~C. 2019, AJ, 157, 235"),
@@ -328,11 +342,18 @@ BIBLIOGRAPHY = (
     ("dressing2015", r"{Dressing} \& {Charbonneau}(2015)",
      r"Dressing, C.~D., \& Charbonneau, D. 2015, ApJ, 807, 45"),
     ("fressin2013", r"{Fressin} et~al.(2013)", r"Fressin, F., Torres, G., Charbonneau, D., et~al. 2013, ApJ, 766, 81"),
+    ("fulton2017", r"{Fulton} et~al.(2017)",
+     r"Fulton, B.~J., Petigura, E.~A., Howard, A.~W., et~al. 2017, AJ, 154, 109"),
+    ("gaia2016", r"{Gaia Collaboration} et~al.(2016)",
+     r"Gaia Collaboration, Prusti, T., de Bruijne, J.~H.~J., et~al. 2016, A\&A, 595, A1"),
+    ("gaia2023", r"{Gaia Collaboration} et~al.(2023)",
+     r"Gaia Collaboration, Vallenari, A., Brown, A.~G.~A., et~al. 2023, A\&A, 674, A1"),
     ("giacalone2021", r"{Giacalone} et~al.(2021)",
      r"Giacalone, S., Dressing, C.~D., Jensen, E.~L.~N., et~al. 2021, AJ, 161, 24"),
     ("guerrero2021", r"{Guerrero} et~al.(2021)",
      r"Guerrero, N.~M., Seager, S., Huang, C.~X., et~al. 2021, ApJS, 254, 39"),
     ("holczer2016", r"{Holczer} et~al.(2016)", r"Holczer, T., et~al. 2016, ApJS, 225, 9"),
+    ("kirk2016", r"{Kirk} et~al.(2016)", r"Kirk, B., Conroy, K., Pr{\v s}a, A., et~al. 2016, AJ, 151, 68"),
     ("kbonus", r"{Mart{\'\i}nez-Palomera} et~al.(2023a)",
      r"Mart{\'\i}nez-Palomera, J., Hedges, C., \& Dotson, J. 2023a, AJ, 166, 265, doi:10.3847/1538-3881/ad0727"),
     ("kbonushlsp", r"{Mart{\'\i}nez-Palomera} et~al.(2023b)",
@@ -349,13 +370,18 @@ BIBLIOGRAPHY = (
     ("pecaut2013", r"{Pecaut} \& {Mamajek}(2013)", r"Pecaut, M.~J., \& Mamajek, E.~E. 2013, ApJS, 208, 9"),
     ("ricker2015", r"{Ricker} et~al.(2015)",
      r"Ricker, G.~R., Winn, J.~N., Vanderspek, R., et~al. 2015, JATIS, 1, 014003"),
+    ("rogers2015", r"{Rogers}(2015)", r"Rogers, L.~A. 2015, ApJ, 801, 41"),
     ("schmitt2014", r"{Schmitt} et~al.(2014)", r"Schmitt, J.~R., et~al. 2014, AJ, 148, 28"),
+    ("skrutskie2006", r"{Skrutskie} et~al.(2006)",
+     r"Skrutskie, M.~F., Cutri, R.~M., Stiening, R., et~al. 2006, AJ, 131, 1163"),
     ("stassun2018", r"{Stassun} et~al.(2018)",
      r"Stassun, K.~G., Oelkers, R.~J., Pepper, J., et~al. 2018, AJ, 156, 102"),
     ("stassun2019", r"{Stassun} et~al.(2019)",
      r"Stassun, K.~G., Oelkers, R.~J., Paegert, M., et~al. 2019, AJ, 158, 138"),
     ("sullivan2015", r"{Sullivan} et~al.(2015)",
      r"Sullivan, P.~W., Winn, J.~N., Berta-Thompson, Z.~K., et~al. 2015, ApJ, 809, 77"),
+    ("thompson2018", r"{Thompson} et~al.(2018)",
+     r"Thompson, S.~E., Coughlin, J.~L., Hoffman, K., et~al. 2018, ApJS, 235, 38"),
     ("twicken2025", r"{Twicken} et~al.(2025)",
      r"Twicken, J.~D., Jenkins, J.~M., Caldwell, D.~A., et~al. 2025, RNAAS, 9, 132, doi:10.3847/2515-5172/addec4"),
 )
@@ -521,7 +547,8 @@ def comparison_text(data: dict, tex: bool = False) -> str | None:
     ``prior_comparison``): each difference in sigma to one decimal, the claim's depth and false-positive probability
     as the claim gives them (another work's numbers, so not rounded by ``pm_text``'s two-figure rule), which
     differences use our error alone, and our false-positive probability beside the claim's. None without a claim or
-    without anything to compare. With ``tex`` a ``Raw``."""
+    without anything to compare. With ``tex`` a ``Raw`` without the false-positive clause, which the README keeps
+    (Task 13, the word limit)."""
     cmp = prior_comparison(data)
     if cmp is None:
         return None
@@ -540,11 +567,14 @@ def comparison_text(data: dict, tex: bool = False) -> str | None:
             notes.append(f"{d['theirs']:,g}{err} ppm there")
         if cmp["one_sided"]:
             names = [f"the {k}" for k in cmp["one_sided"]]
-            uses = "those use" if len(names) > 1 else "that uses"
-            notes.append(f"the claim gives no error on {_listed(names, 'or')}, so {uses} ours alone")
+            if tex:         # the note's form (Task 13, the word limit): "the period and the epoch use our error alone"
+                notes.append(f"{_listed(names)} use{'' if len(names) > 1 else 's'} our error alone")
+            else:
+                uses = "those use" if len(names) > 1 else "that uses"
+                notes.append(f"the claim gives no error on {_listed(names, 'or')}, so {uses} ours alone")
         which = "that claim" if len(prior_claims(data)) == 1 else "the first claim"
         sentence = f"Against {which} {_listed(said)}" + (f" ({'; '.join(notes)})" if notes else "")
-    if "fpp" in cmp:
+    if "fpp" in cmp and not tex:      # the note leaves the FPP clause to the README (Task 13, brief Step 15 item 3)
         f = cmp["fpp"]
         theirs = f"{f['theirs']:,g}" + (f" ({f['tool']})" if f["tool"] else "")
         ours = None if f["ours"] is None else cc.probability_text(f["ours"])
@@ -662,8 +692,8 @@ def errors_pointer(data: dict) -> str | None:
     pointer says "the README" alone. None when neither block is ok."""
     timed, boot = _timed(data), _bootstrapped(data)
     if timed and boot:
-        return ("The ephemeris and transit-parameter errors come from per-transit fits, a weighted linear fit and a "
-                f"bootstrap over transits (methods in {PACK_README}).")
+        return ("The errors come from per-transit fits, a weighted linear fit and a bootstrap over transits (methods "
+                f"in {PACK_README}).")
     if timed:
         return f"The ephemeris errors come from per-transit fits and a weighted linear fit (method in {PACK_README})."
     if boot:
@@ -686,7 +716,7 @@ def cross_check_sentence(data: dict, tex: bool = False) -> str | None:
     """The TRICERATOPS cross-check (``crosscheck.comparison_sentence``) in full, for the Research Note (the plain texts
     print the headline first and the form that refers back to it, ``cross_check_after``); None without a cross-check
     made for this dossier's inputs, which the texts then leave out."""
-    return cc.comparison_sentence(data, tex=tex)
+    return cc.comparison_sentence(data, tex=tex, short=tex)      # the note's short class clause (addendum cut 8)
 
 
 def both_tools(data: dict) -> str | None:
@@ -711,10 +741,83 @@ def tess_text(data: dict, tex: bool = False) -> str:
     return tess_module.note_sentence(data.get("tess"), tex, first=errors_pointer(data) is None)
 
 
+def _plain_tex(text: str) -> str:
+    return (str(text).replace(r"\&", "&").replace("~", " ").replace(r"{\'\i}", "í").replace(r"{\v s}", "š"))
+
+
 def plain_reference(key: str) -> str:
     """A ``BIBLIOGRAPHY`` entry as plain text, for the README."""
-    text = next(text for k, _label, text in BIBLIOGRAPHY if k == key)
-    return text.replace(r"\&", "&").replace("~", " ")
+    return _plain_tex(next(text for k, _label, text in BIBLIOGRAPHY if k == key))
+
+
+def _occurrence_keys(data: dict) -> list[str]:
+    """The planet-occurrence works the in-house estimate rests on: Dressing and Charbonneau 2015 for an M dwarf,
+    Fressin et al. 2013 otherwise or when the stored scenarios name it."""
+    cls = _fpp_class(data)
+    notes = json.dumps((data.get("fpp") or {}).get("scenarios") or [])
+    return [k for k, used in (("dressing2015", cls == "M"), ("fressin2013", cls != "M" or "Fressin" in notes))
+            if used]
+
+
+IN_HOUSE_METHOD = ("The in-house estimate weighs a planet, a background eclipsing binary and an eclipsing binary on "
+                   "the target, after Morton (2012), with planet occurrence from {occurrence}. It has no "
+                   "radial-velocity or imaging input.")
+OCCURRENCE_WORDS = {"dressing2015": "Dressing and Charbonneau (2015)", "fressin2013": "Fressin et al. (2013)"}
+
+
+def in_house_method_text(data: dict) -> str:
+    """The README's method of the in-house estimate (the note's until Task 13's word budget, addendum cut 1)."""
+    return IN_HOUSE_METHOD.format(occurrence=" and ".join(OCCURRENCE_WORDS[k] for k in _occurrence_keys(data)))
+
+
+def readme_works(data: dict) -> list[str]:
+    """The works the README cites where the note does not: the in-house method (Morton 2012 and the occurrence
+    rates, ``in_house_method_text``); the habitable zone (Kopparapu et al. 2013) and its sub-Neptune caveat (Rogers
+    2015; Fulton et al. 2017), when ``hz_text`` is printed."""
+    return (["morton2012", *_occurrence_keys(data)] + [k for k, _w in _star_method_keys(data)]
+            + (["kopparapu2013", "rogers2015", "fulton2017"] if hz_text(data) else []))
+
+
+def _star_method_keys(data: dict) -> list[tuple[str, str]]:
+    """(key, what) of the star's methods the README names in the note's place (addendum cut 9): the dwarf colour
+    table of Pecaut and Mamajek 2013 for the temperature and spectral type, and the Lindegren et al. 2021 parallax
+    zero point for the distance."""
+    star = data.get("star") or {}
+    if not star_characterized(data):
+        return []
+    out = []
+    if star.get("route") in ("mann", "mamajek") and value_text(star.get("teff")) is not None:
+        out.append(("pecaut2013", ("the temperature and spectral type are read from the colour on the dwarf "
+                                   "sequence of Pecaut and Mamajek (2013)")))
+    if star.get("distance_pc") is not None:
+        out.append(("lindegren2021", "the Gaia parallax is corrected for its zero point (Lindegren et al. 2021)"))
+    return out
+
+
+def star_method_text(data: dict) -> str | None:
+    """The README's sentence on the star's colour table and parallax zero point (the note's until addendum cut 9)."""
+    parts = [what for _k, what in _star_method_keys(data)]
+    return (parts[0][:1].upper() + parts[0][1:] + (f"; {parts[1]}" if len(parts) > 1 else "") + ".") if parts else None
+
+
+# what each of the README's own references is for (spec 11.6: 2MASS, the matched catalogues, the TIC)
+README_REFERENCES = (("skrutskie2006", "2MASS, the Ks magnitude"),
+                     ("thompson2018", "the Kepler cumulative KOI table and the Q1 to Q17 DR25 TCE list"),
+                     ("guerrero2021", "the TESS TOI list"), ("kirk2016", "the Kepler eclipsing binary catalogue"),
+                     ("stassun2019", "the TESS Input Catalog"))
+
+
+def readme_references(data: dict) -> list[str]:
+    """The README's reference list (spec 11.6): the note's bibliography in plain text (``references`` and the prior
+    claims), the works the README cites in its place (the habitable zone with Kopparapu et al. 2013, Rogers 2015 and
+    Fulton et al. 2017 when it is printed, ``readme_works``), then 2MASS, the matched catalogues and the TIC
+    (``README_REFERENCES``), each with what it is for."""
+    refs = references(data)
+    keys = {k for k, used in refs.items() if used} | set(readme_works(data))
+    out = [plain_reference(k) for k, _label, _text in BIBLIOGRAPHY if k in keys]
+    out += [_plain_tex(text) for _key, _label, text in prior_bib(data)]
+    out += [f"{plain_reference(k)} ({what})" for k, what in README_REFERENCES]
+    return out
 
 
 def tess_methods_text(data: dict) -> str | None:
@@ -760,7 +863,8 @@ def shape_sentence(data: dict, tex: bool = False) -> str | None:
             parts += [" and an impact parameter of ", val("b")]
         return _joined(tex, *parts, ", without errors for the reason given with the duration.")
     parts = [*head, ", gives a radius ratio of ", val("k")]
-    if "t14_h" in rows:
+    # the note's signal sentence quotes the same duration with the same errors, so the note gives T14 once (Task 13)
+    if "t14_h" in rows and not (tex and str(val("t14_h")) == str(quantities(data, tex)["duration_pm"])):
         parts += [" and a duration (T14) of ", val("t14_h"), " hours"]
     if "b" in rows and "a_over_r" in rows:
         parts += _geometry_words(data, rows, val, cmp, tex)
@@ -796,7 +900,9 @@ def _geometry_words(data: dict, rows: dict, val, cmp: dict, tex: bool) -> list:
         stellar = value_text((data.get("planet") or {}).get("a_over_r"), tex)
         a_text = stellar if stellar is not None else val("a_over_r")
         why = UNCONSTRAINED if cmp.get("constrained") is False else FREE_FAILED
-        return [f"; b and a/R* are {why}: b is ", val("b"), " and a/R* ", a_text, f" {A_LABEL_STELLAR}"]
+        # UNCONSTRAINED already names the host's density, so the note leaves out the label (Task 13)
+        label = "" if tex and why == UNCONSTRAINED else f" {A_LABEL_STELLAR}"
+        return [f"; b and a/R* are {why}: b is ", val("b"), " and a/R* ", a_text, label]
     tension = _num(cmp.get("density_tension_sigma")) if cmp.get("constrained") is True else None
     words = ["; b is ", val("b"), " and a/R* ", val("a_over_r"), f" {A_LABEL_FITTED}"]
     if tension is not None:
@@ -819,11 +925,28 @@ def _odd_even(data: dict, tex: bool) -> tuple[str, str] | None:
     return _joined(tex, texts[0], " ppm"), _joined(tex, texts[1], " ppm")
 
 
-def parity_sentence(data: dict, tex: bool = False) -> str | None:
+def stacked_parity_text(data: dict, tex: bool = False, where: str = "") -> str | None:
+    """The stacked fold of each parity (spec 11.5): "X ± e and Y ± e ppm (Z sigma apart)"; None without it. The
+    README's table prints it since Task 13 (the word limit; addendum cut 4), the note the per-event pair."""
+    parity = data.get("parity")
+    stacked = parity.get("stacked") if isinstance(parity, dict) else None
+    if not isinstance(stacked, dict):
+        return None
+    texts = [pm_text((stacked.get(k) or {}).get("depth_ppm"), (stacked.get(k) or {}).get("err_ppm"),
+                     (stacked.get(k) or {}).get("err_ppm"), nd=0, comma=True, tex=tex) for k in ("odd", "even")]
+    if None in texts:
+        return None
+    sd = _num(stacked.get("difference_sigma"))
+    return _joined(tex, texts[0], " and ", texts[1], f" ppm{where}",
+                   f" ({sd:.1f} sigma apart)" if sd is not None else "")
+
+
+def parity_sentence(data: dict, tex: bool = False, stacked: bool = True) -> str | None:
     """The odd and even depths of the parity block, the per-event estimator with its errors and the difference in
-    sigma, then the stacked fold of each parity the same way when the block stores it (spec 11.5): "The odd and even
-    depths are X ± e and Y ± e ppm per event (Z sigma apart) and X' ± e and Y' ± e ppm on the stacked folds (Z' sigma
-    apart)."; rung 2's depths without errors for an older dossier."""
+    sigma, then (``stacked``) the stacked fold of each parity the same way when the block stores it (spec 11.5): "The
+    odd and even depths are X ± e and Y ± e ppm per event (Z sigma apart) and X' ± e and Y' ± e ppm on the stacked
+    folds (Z' sigma apart)."; rung 2's depths without errors for an older dossier. The note leaves the stacked pair to
+    the README (addendum cut 4)."""
     sh = _metrics(data, "rung2_shape")
     pair = _odd_even(data, tex)
     if pair is None:
@@ -839,15 +962,9 @@ def parity_sentence(data: dict, tex: bool = False) -> str | None:
     parts = ["The odd and even depths are ", odd, " and ", pair[1], " per event"]
     if diff is not None:
         parts.append(f" ({diff:.1f} sigma apart)")
-    stacked = parity.get("stacked")
-    if isinstance(stacked, dict):
-        texts = [pm_text((stacked.get(k) or {}).get("depth_ppm"), (stacked.get(k) or {}).get("err_ppm"),
-                         (stacked.get(k) or {}).get("err_ppm"), nd=0, comma=True, tex=tex) for k in ("odd", "even")]
-        if None not in texts:
-            parts += [" and ", texts[0], " and ", texts[1], " ppm on the stacked folds"]
-            sd = _num(stacked.get("difference_sigma"))
-            if sd is not None:
-                parts.append(f" ({sd:.1f} sigma apart)")
+    folds = stacked_parity_text(data, tex, " on the stacked folds") if stacked else None
+    if folds:
+        parts += [" and ", folds]
     return _joined(tex, *parts, ".")
 
 
@@ -866,14 +983,15 @@ def albedo_text(data: dict) -> str:
     return "" if a is None else f", which keeps the geometric albedo below {a:.2f}"
 
 
-def secondary_sentence(data: dict, tex: bool = False) -> str | None:
+def secondary_sentence(data: dict, tex: bool = False, short: bool = False) -> str | None:
     """The phase 0.5 depth with its error, its 3-sigma upper limit, the albedo clause and the strongest dip at any
     other phase (the secondary block); rung 2's depth against the scatter for an older dossier; None without
     either. "The phase 0.5 depth is X ± e ppm (3-sigma upper limit L ppm), <albedo>; the strongest dip elsewhere is
     D ppm at phase F (S sigma)." since Task 8 fix round 4 (the word limit). Beside the strongest dip, rung 2's
     model-shift margins (``sigma_pos``, the largest positive excursion, and ``sigma_ter``, the tertiary dip) show the
     red noise (spec 11.5): ", against model-shift margins of P sigma for the largest positive excursion and T sigma
-    for the tertiary dip"."""
+    for the tertiary dip"; ``short``, the note's form since Task 13 (addendum cut 6), says ", and positive excursions
+    in the same fold reach P sigma" and leaves the tertiary to the README."""
     sec = data.get("secondary")
     if not isinstance(sec, dict) or _num(sec.get("depth_ppm")) is None:
         sh = _metrics(data, "rung2_shape")
@@ -884,24 +1002,31 @@ def secondary_sentence(data: dict, tex: bool = False) -> str | None:
              pm_text(sec["depth_ppm"], sec.get("err_ppm"), sec.get("err_ppm"), nd=0, comma=True, tex=tex), " ppm"]
     limit = _f(sec.get("limit_3sigma_ppm"), 0, True)
     if limit:
-        parts.append(f" (3-sigma upper limit {limit} ppm){albedo_text(data)}")
+        albedo = albedo_text(data)
+        if short and albedo == f", {ALBEDO_NONE}":      # the note keeps an albedo limit, not its absence (Task 13)
+            albedo = ""
+        parts.append(f" (3-sigma upper limit {limit} ppm){albedo}")
     top, phase, sigma = (_f(sec.get("strongest_ppm"), 0, True), _f(sec.get("strongest_phase"), 2),
                          _f(sec.get("strongest_sigma"), 1))
     if top and phase and sigma:
         parts.append(f"; the strongest dip elsewhere is {top} ppm at phase {phase} ({sigma} sigma)")
         sh = _metrics(data, "rung2_shape")
         pos, ter = _f(sh.get("sigma_pos"), 1), _f(sh.get("sigma_ter"), 1)
-        if pos and ter:
+        if pos and short:
+            parts.append(f", and positive excursions in the same fold reach {pos} sigma")
+        elif pos and ter:
             parts.append(f", against model-shift margins of {pos} sigma for the largest positive excursion and {ter} "
                          "sigma for the tertiary dip")
     return _joined(tex, *parts, ".")
 
 
-def trend_sentence(data: dict, tex: bool = False) -> str | None:
+def trend_sentence(data: dict, tex: bool = False, clause: bool = False) -> str | None:
     """The per-event depths' trend against time (the ``depth_trend`` block, spec 11.5), only when it is printed (above
     ``ephemeris.DEPTH_TREND_SIGMA`` with errors scaled by the scatter): "The per-event depth deepens by S ± e ppm per
     year (Z sigma, errors scaled by the scatter)." ("shallows" for a negative slope; a positive slope is a dip that
-    grows deeper with time, Task 12 review M-2); None otherwise."""
+    grows deeper with time, Task 12 review M-2); None otherwise. ``clause`` is the note's form, a clause that ends
+    the quarter-group sentence: ", though the per-event depth deepens by S ± e ppm per year (Z sigma, scaled
+    errors)." (addendum cut 7)."""
     trend = data.get("depth_trend")
     if not isinstance(trend, dict) or trend.get("printed") is not True:
         return None
@@ -909,6 +1034,10 @@ def trend_sentence(data: dict, tex: bool = False) -> str | None:
     if None in (slope, err, sigma):
         return None
     verb = "deepens" if slope >= 0 else "shallows"
+    if clause:
+        return _joined(tex, f", though the per-event depth {verb} by ",
+                       pm_text(abs(slope), err, err, nd=0, comma=True, tex=tex), f" ppm per year ({sigma:.1f} sigma, "
+                       "scaled errors).")
     return _joined(tex, f"The per-event depth {verb} by ", pm_text(abs(slope), err, err, nd=0, comma=True, tex=tex),
                    f" ppm per year ({sigma:.1f} sigma, errors scaled by the scatter).")
 
@@ -923,19 +1052,26 @@ def _vetting_sentences(data: dict, tex: bool = False) -> list[str]:
     if n_cov is not None and n_data:
         s = f"Of the {n_data} predicted transits with data, {n_cov} are well covered"
         share = _num(ev.get("ses_max_over_mes"))
-        s += (f", and no single transit carries more than {share * 100:.0f} percent of the signal." if share is not None
-              else ".")
+        s += (f", and the largest single-event statistic is {share:.2f} of the multiple-event statistic."
+              if share is not None else ".")
         out.append(s)
-    out += [s for s in (shape_sentence(data, tex), parity_sentence(data, tex), secondary_sentence(data, tex)) if s]
-    st = _metrics(data, "rung3_stability")
+    out += [s for s in (shape_sentence(data, tex), parity_sentence(data, tex, stacked=not tex),
+                        secondary_sentence(data, tex, short=tex)) if s]
+    # rung 3 on the fold (the stability block, Task 10), else rung 3's own row; its groups are quarters modulo 4,
+    # "quarter groups", "season" being the Kepler roll season of the pixel check (spec 11.6)
+    stab = data.get("stability")
+    st = (stab.get("metrics") or {}) if isinstance(stab, dict) and stab.get("metrics") else _metrics(
+        data, "rung3_stability")
     if st:
-        n_seasons = st.get("n_seasons", len(st.get("season_depths") or {}))
+        n_groups = st.get("n_seasons", len(st.get("season_depths") or {}))
         chi2, dof, p = _f(st.get("chi2"), 1), st.get("dof"), _f(st.get("p_value"), 2)
-        if n_seasons and chi2 is not None and dof is not None:
-            out.append(f"The depth agrees across {n_seasons} seasons (chi-squared {chi2} for {dof} degrees of freedom"
-                       + (f", p = {p})." if p else ")."))
-    trend = trend_sentence(data, tex)
-    if trend:
+        if n_groups and chi2 is not None and dof is not None:
+            out.append(f"The depth agrees across {n_groups} quarter groups (quarters taken modulo 4; chi-squared "
+                       f"{chi2} for {dof} degrees of freedom" + (f", p = {p})." if p else ")."))
+    trend = trend_sentence(data, tex, clause=tex and bool(out) and out[-1].startswith("The depth agrees"))
+    if trend and tex and out and out[-1].startswith("The depth agrees"):
+        out[-1] = _joined(tex, out[-1][:-1], trend)            # one clause of that sentence (addendum cut 7)
+    elif trend:
         out.append(trend)
     nv = _metrics(data, "rung4_novelty")
     if nv:
@@ -945,7 +1081,7 @@ def _vetting_sentences(data: dict, tex: bool = False) -> list[str]:
         if hits:
             out.append(f"Catalogue matches: {', '.join(hits)}.")
         elif any(k in nv for k in names):
-            out.append("It matches no entry in " + ", ".join(list(names.values())[:-1]) + f" or {names['kepler_eb']}.")
+            out.append("It matches no Kepler KOI, DR25 TCE, TESS TOI or Kepler eclipsing binary entry.")
     words = {w.get("rung"): w for w in data.get("why") or [] if isinstance(w, dict)}
     for t in data.get("tests") or []:
         if t.get("rung") != "rung5_pixels" and t.get("status") != "pass":
@@ -1006,7 +1142,6 @@ def self_referenced(block: dict | None) -> bool:
 
 JITTER_FLOOR = "pointing-jitter floor"       # spec 11.5: the measured quarter-to-quarter term of the centroid error
 SAME_ERROR_RULE = "Both errors are the larger of the seasons' combined error and their scatter."
-SAME_ERROR_SHORT = "Each error is the larger of the seasons' combined error and scatter."
 
 
 def _exclusion_words(block: dict, short: bool) -> list[str]:
@@ -1021,7 +1156,8 @@ def _exclusion_words(block: dict, short: bool) -> list[str]:
     sep = _num(nb.get("centroid_sep_arcsec")) if isinstance(nb, dict) else None
     if sep is not None and nb.get("source_id"):
         g = _num(nb.get("gmag"))
-        out.append(f"; the nearest Gaia source beyond it is Gaia DR3 {nb['source_id']} at {sep:.1f} arcsec"
+        named = "" if short else f" is Gaia DR3 {nb['source_id']}"      # the note: distance and G (Task 13)
+        out.append(f"; the nearest Gaia source beyond it{named} {'lies ' if short else ''}at {sep:.1f} arcsec"
                    + ("" if short else " from the centroid") + (f" (G = {g:.1f})" if g is not None else ""))
     return out
 
@@ -1040,14 +1176,15 @@ def offset_sentence(data: dict, tex: bool = False, short: bool = False) -> str |
         return None
     cat, cat_err = block.get("catalogue_referenced_arcsec"), block.get("catalogue_referenced_err_arcsec")
     if short:
-        lead = [("Against the Gaia position, which carries the WCS zero point and registration, the difference-image "
-                "centroid sits "), pm_text(cat, cat_err, cat_err, tex=tex), " arcsec away"]
+        # the README's long form says what the reference carries (Task 13, the word limit)
+        lead = ["Against the Gaia position the difference-image centroid sits ",
+                pm_text(cat, cat_err, cat_err, tex=tex), " arcsec away"]
     else:
         lead = [("Against the Gaia position projected through each stamp's WCS, a reference that carries the WCS zero "
                 "point and the registration, the difference-image centroid sits "),
                 pm_text(cat, cat_err, cat_err, tex=tex), " arcsec away"]
     lead += _exclusion_words(block, short)
-    same = SAME_ERROR_SHORT if short else SAME_ERROR_RULE
+    same = "" if short else SAME_ERROR_RULE     # the note leaves the error rule to the README (Task 13)
     off, err, sigma = (_num(block.get(k)) for k in ("self_referenced_arcsec", "self_referenced_err_arcsec", "sigma"))
     if off is None or err is None or sigma is None:
         return _joined(tex, *lead, ".")
@@ -1055,22 +1192,22 @@ def offset_sentence(data: dict, tex: bool = False, short: bool = False) -> str |
         return _joined(tex, *lead, f". Against {block.get('reference') or 'the fitted position of the star'} (the "
                        "star's direct-image centroid is not stored for every season) the difference-image centroid is "
                        "offset by ", pm_text(off, err, err, tex=tex), f" arcsec ({sigma:.1f} sigma), not assessed "
-                       "from the star's own image. ", same)
+                       "from the star's own image.", f" {same}" if same else "")
     cite = Raw(r"\citet{bryson2013}") if tex else "Bryson et al. (2013)"
     level, k = _num(block.get("level_arcsec")) or 0.2, _num(block.get("sigma_level")) or 3.0
     verdict = "an offset" if block.get("counts") else "not an offset"
-    if short:
-        own = [". Against the star's own out-of-transit image the offset is ", pm_text(off, err, err, tex=tex),
-               f" arcsec ({sigma:.1f} sigma), {verdict} by the rule of ", cite, (f" (over {k:g} sigma and {level:g} "
-               "arcsec)")]
+    if short:                   # one clause since Task 13 (the word limit; addendum cut 7)
+        own = ["; against the star's own out-of-transit image the offset is ", pm_text(off, err, err, tex=tex),
+               f" arcsec ({sigma:.1f} sigma), {verdict} by the rule of ", cite, f" ({k:g} sigma, {level:g} arcsec)"]
     else:
         own = [". Against the star's own out-of-transit image the difference-image centroid is offset by ",
                pm_text(off, err, err, tex=tex), f" arcsec ({sigma:.1f} sigma), {verdict} by the rule of ", cite,
                f", which asks for more than {k:g} sigma and more than {level:g} arcsec"]
     pull = _num(block.get("direct_pull_pix"))
     if block.get("pulled") is True and pull is not None:
-        own.append(f"; its reference is pulled by the neighbour, up to {pull:.2f} px from the Gaia position")
-    return _joined(tex, *lead, *own, ". ", same)
+        own.append(f", its reference pulled by the neighbour up to {pull:.2f} px" if short else
+                   f"; its reference is pulled by the neighbour, up to {pull:.2f} px from the Gaia position")
+    return _joined(tex, *lead, *own, ". " if same else ".", same)
 
 
 def pixel_sentence(data: dict, tex: bool = False) -> str:
@@ -1088,7 +1225,8 @@ def pixel_sentence(data: dict, tex: bool = False) -> str:
     if not voting:
         return f"The pixel check {'passed' if row.get('status') == 'pass' else 'failed'} without per-season numbers."
     near = sum(1 for s in voting if s.get("nearer") == "target")
-    text = f"In difference images (out of transit minus in transit) {_seasons_phrase(near, voting, silent)}."
+    what = "" if tex else " (out of transit minus in transit)"          # the README defines it (Task 13)
+    text = f"In difference images{what} {_seasons_phrase(near, voting, silent)}."
     seasons = voting
     dt = [d for s in seasons if (d := _num(s.get("dist_target_pix"))) is not None]
     dn = [d for s in seasons if (d := _num(s.get("dist_neighbour_pix"))) is not None]
@@ -1097,7 +1235,7 @@ def pixel_sentence(data: dict, tex: bool = False) -> str:
         carried = "" if floor is None else f", its error carrying a {JITTER_FLOOR} of {floor:.3f} px"
         text += (f" The centroid sits a median {np.median(dt):.2f} pixels from this star and {np.median(dn):.2f} "
                  f"pixels from the neighbour{carried}.")
-    cut = ds.partial_box_sentence(seasons)
+    cut = ds.partial_box_sentence(seasons, short=tex)
     if cut:
         text += f" {cut}"
     offset = offset_sentence(data, tex, short=tex)          # the note (tex) takes the short form
@@ -1116,6 +1254,73 @@ def pixel_sentence(data: dict, tex: bool = False) -> str:
     if row.get("status") == "fail":
         text += " The pixel check failed: the dip may sit on the neighbour."
     return _joined(tex, *parts, text)
+
+
+def gaia_flags_text(data: dict) -> str | None:
+    """The star sentence's Gaia clause (spec 11.6): "Gaia gives a RUWE of R and no non-single-star solution" (or "a
+    non-single-star solution (flag N)" when the flag is above 0), with ", and a GSP-Phot E(BP-RP) of E" when Gaia
+    fitted one; None when the star block carries none of the three (a dossier made before them)."""
+    star = data.get("star") or {}
+    ruwe, nss, red = _num(star.get("ruwe")), _num(star.get("non_single_star")), _num(star.get("ebpminrp_gspphot"))
+    parts = []
+    if ruwe is not None:
+        parts.append(f"a RUWE of {ruwe:.2f}")
+    if nss is not None:
+        parts.append(f"a non-single-star solution (flag {nss:.0f})" if nss > 0 else "no non-single-star solution")
+    if not parts and red is None:
+        return None
+    if red is not None:
+        parts.append(f"a GSP-Phot E(BP-RP) of {red:.2f}")
+    return "Gaia gives " + (parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + " and " + parts[-1])
+
+
+def flame_text(data: dict) -> str | None:
+    """The README's systematic on the stellar radius (spec 11.6): "The Gaia FLAME radius of F Rsun differs from the
+    adopted radius by P percent; read it as a systematic on the stellar radius, and so on the planet radius."; None
+    without the FLAME radius or the adopted one."""
+    star = data.get("star") or {}
+    flame = _num((star.get("gaia_cross_check") or {}).get("radius_flame"))
+    radius = _num((star.get("radius") or {}).get("median"))
+    if flame is None or not radius:
+        return None
+    pct = abs(flame - radius) / radius * 100
+    return (f"The Gaia FLAME radius of {flame:.3f} Rsun differs from the adopted radius by {pct:.0f} percent; read it "
+            "as a systematic on the stellar radius, and so on the planet radius.")
+
+
+def hz_text(data: dict) -> str | None:
+    """The README's habitable-zone lines (spec 11.6; the note leaves them out): where the orbit lies against the
+    conservative edges of Kopparapu et al. (2013), and the sub-Neptune caveat at the planet's radius; None without
+    the edges."""
+    planet = data.get("planet") or {}
+    where = _hz_where(planet)
+    if where is None or not star_characterized(data):
+        return None
+    text = (f"Habitable zone: the orbit lies {where} of Kopparapu et al. (2013), whose conservative edges for this "
+            f"star sit at {_f(planet.get('hz_inner_au'), 3)} and {_f(planet.get('hz_outer_au'), 3)} AU.")
+    rp = _num((planet.get("rp_rearth") or {}).get("median")) if isinstance(planet.get("rp_rearth"), dict) else None
+    if rp is not None:
+        text += (f" A planet of {rp:.1f} Earth radii is more likely a sub-Neptune with a gaseous envelope than a rocky "
+                 "world (Rogers 2015; Fulton et al. 2017).")
+    return text
+
+
+def followup_text(data: dict, after_bjd: float) -> str | None:
+    """One clause for observers (spec 11.6): "A transit in <year> is predicted to within W minutes (1 sigma) and needs
+    photometry at about D ppm on a G <g> star[, within reach of a 1 to 2 m telescope]." from the first transit after
+    ``after_bjd`` (``pack_rows.next_transits``) and the depth at two significant figures; the telescope class only
+    for a depth of at least ``FOLLOWUP_REACH_DEPTH_PPM`` on a star of G at most ``FOLLOWUP_REACH_GMAG``. None
+    without a timing fit."""
+    nxt = next_transits(data, after_bjd, n=1)
+    depth, gmag = _num((data.get("ephemeris") or {}).get("depth_ppm")), _num((data.get("target") or {}).get("gmag"))
+    if not nxt or depth is None:
+        return None
+    rounded = float(f"{depth:.2g}")
+    star = f" on a G {gmag:.1f} star" if gmag is not None else ""
+    reach = (FOLLOWUP_REACH if depth >= FOLLOWUP_REACH_DEPTH_PPM and gmag is not None and gmag <= FOLLOWUP_REACH_GMAG
+             else "")
+    return (f"A transit in {nxt[0]['date'][-4:]} is predicted to within {nxt[0]['window_min']:.0f} minutes (1 sigma) "
+            f"and needs photometry at about {rounded:,.0f} ppm{star}{reach}.")
 
 
 def _hz_where(planet: dict) -> str | None:
@@ -1141,10 +1346,9 @@ def aperture_sentence(data: dict, tex: bool = False) -> str | None:
 
 def leak_sentence(data: dict, tex: bool = False) -> str | None:
     """Rung 5's measured dip in the neighbour's optimal aperture beside the dip this star's own light predicts there
-    (the ``predicted_leak`` block, spec 11.5): "KIC N's optimal aperture dims by D ± e ppm, where this star's light
-    alone (S percent of that aperture under the PSF model of the pixel check) predicts P ppm." ("shows no dip (D ± e
-    ppm)" for a negative measurement); None without a
-    prediction (no kept pixel file, no PSF width), when the texts keep the measured dip alone."""
+    (the ``predicted_leak`` block, spec 11.5): "The target's light predicts P ppm in KIC N's optimal aperture against
+    D ± e ppm measured."; None without a prediction (no kept pixel file, no PSF width), when the texts keep the
+    measured dip alone. The share and the method are the README's (``leak_method_text``; addendum cut 5)."""
     block = data.get("predicted_leak")
     if not isinstance(block, dict):
         return None
@@ -1153,29 +1357,34 @@ def leak_sentence(data: dict, tex: bool = False) -> str | None:
     if None in (pred, share, measured):
         return None
     kic = block.get("kic")
-    whose = f"KIC {kic}'s" if kic else "The neighbour's"
+    whose = f"KIC {kic}'s" if kic else "the neighbour's"
     digits = pm_digits(err) if err is not None and err > 0 else 0
-    pct = share * 100
-    pct_text = f"{pct:.1f}" if pct >= 0.1 else f"{pct:.2g}"
     dip = pm_text(measured, err, err, nd=0, comma=True, tex=tex)
-    seen = [f"{whose} optimal aperture dims by ", dip, " ppm"] if measured >= 0 else [
-        f"{whose} optimal aperture shows no dip (", dip, " ppm)"]
-    return _joined(tex, *seen, f", where this star's light alone ({pct_text} percent of that aperture under the PSF "
-                   f"model of the pixel check) predicts {pred:,.{digits}f} ppm.")
+    return _joined(tex, f"The target's light predicts {pred:,.{digits}f} ppm in {whose} optimal aperture against ",
+                   dip, " ppm measured.")
 
 
 LEAK_FLOOR = "the Gaussian has no PRF wings, so the prediction is a floor"
 
 
 def leak_method_text(data: dict) -> str | None:
-    """The README's method of the predicted leak (Task 12 review M-1): "Predicted leak: <dossier.LEAK_MODEL>, the mean
-    over the pixel files the pixel check used; the Gaussian has no PRF wings, so the prediction is a floor."; None
-    without a prediction."""
+    """The README's method of the predicted leak (Task 12 review M-1; the note's until addendum cut 5): "Predicted
+    leak: this star's light is S percent of the light in KIC N's optimal aperture, from <dossier.LEAK_MODEL>, the
+    mean over the pixel files the pixel check used; the Gaussian has no PRF wings, so the prediction is a floor.";
+    None without a prediction."""
     block = data.get("predicted_leak")
-    if not isinstance(block, dict) or _num(block.get("predicted_ppm")) is None:
+    share = _num(block.get("share")) if isinstance(block, dict) else None
+    if share is None or _num(block.get("predicted_ppm")) is None:
         return None
-    return (f"Predicted leak: {block.get('model') or ds.LEAK_MODEL}, the mean over the pixel files the pixel check "
-            f"used; {LEAK_FLOOR}.")
+    pct = share * 100
+    kic = block.get("kic")
+    return (f"Predicted leak: this star's light is {_pct_text(pct)} percent of the light in "
+            f"{f'KIC {kic}' if kic else 'the neighbour'}'s optimal aperture, from "
+            f"{block.get('model') or ds.LEAK_MODEL}, the mean over the pixel files the pixel check used; {LEAK_FLOOR}.")
+
+
+def _pct_text(pct: float) -> str:
+    return f"{pct:.1f}" if pct >= 0.1 else f"{pct:.2g}"
 
 
 def dilution_sentence(data: dict, tex: bool = False) -> str | None:
@@ -1188,15 +1397,18 @@ def dilution_sentence(data: dict, tex: bool = False) -> str | None:
     words = {"crowdsap": "a target light fraction in the aperture (CROWDSAP)",
              "psffrac": "a PSF flux fraction inside the aperture (PSFFRAC)"}
     sentences: list[list] = []
+    ratio = aperture_clause(data.get("aperture"), tex, short=tex)
+    psf = rows.get("psffrac") if tex and ratio else None      # the note names PSFFRAC in the ratio clause (Task 13)
     if (data.get("target") or {}).get("source") in (None, "kbonus_bkg"):
-        sentences.append([f"The depth is {ds.PSF_PHOTOMETRY}."])
-    ratio = aperture_sentence(data, tex)
-    if ratio:
-        sentences.append([ratio])
-    # CROWDSAP is printed once (Task 12 review M-5): in the ratio sentence when that carries it
-    told = ratio is not None and CROWDSAP_WORDS in ratio
+        # the ratio is one clause of the photometry sentence in the note (addendum cut 7)
+        sentences.append([f"The depth is {ds.PSF_PHOTOMETRY}", *(["; ", ratio] if ratio else []),
+                          f", with {words['psffrac']} of {psf['text']}" if psf else "", "."])
+    elif ratio:
+        sentences.append([aperture_sentence(data, tex)])
+    # CROWDSAP is printed once (Task 12 review M-5): in the ratio clause when that carries it
+    told = ratio is not None and "CROWDSAP" in ratio
     named = [f"{words[k]} of {rows[k]['text']}" for k in ("crowdsap", "psffrac") if k in rows
-             and not (k == "crowdsap" and told)]
+             and not (k == "crowdsap" and told) and not (k == "psffrac" and psf)]
     parts = [f"The KBonus light curve gives this star {' and '.join(named)}"] if named else []
     predicted = leak_sentence(data, tex)
     leak = rows.get("leak")
@@ -1237,13 +1449,37 @@ def search_version(data: dict) -> str | None:
     return (data.get("signal") or {}).get("detector_version") or (data.get("provenance") or {}).get("search_version")
 
 
-def software_line(data: dict) -> str:
-    """The note's software statement: "SkySift <version> (search version <v>, commit <sha>), numpy, ...", the
-    version from the package metadata, the search version and the commit from the dossier; triceratops only when a
-    cross-check is stored."""
-    tools = SOFTWARE + (f", {CROSS_CHECK_SOFTWARE}" if data.get("cross_check") else "")
+def software_versions() -> dict[str, str | None]:
+    """{package: installed version, or None}, for ``SOFTWARE_PACKAGES``: the versions the software line prints and
+    ``provenance/versions.json`` records, so the two print one set."""
+    from importlib import metadata as md
+    out: dict[str, str | None] = {}
+    for name in SOFTWARE_PACKAGES:
+        try:
+            out[name] = md.version(name)
+        except md.PackageNotFoundError:
+            out[name] = None
+    return out
+
+
+def software_line(data: dict, versions: dict | None = None) -> str:
+    """The note's software statement: "SkySift <v> (search version <s>, commit <c>), numpy <v>, scipy <v>, astropy
+    <v>, matplotlib <v>[, triceratops]", SkySift's version from the package metadata, the search version and the
+    commit from the dossier, each package's from ``versions`` (default ``software_versions()``; a package without a
+    version is named alone); triceratops only when a cross-check is stored."""
+    versions = software_versions() if versions is None else versions
+    tools = ", ".join(f"{p} {versions[p]}" if versions.get(p) else p for p in SOFTWARE_PACKAGES)
+    tools += f", {CROSS_CHECK_SOFTWARE}" if data.get("cross_check") else ""
     return (f"SkySift {skysift_version()} (search version {search_version(data) or 'unknown'}, commit "
             f"{software_commit(data)}), {tools}")
+
+
+def code_sentence(citation: dict | None) -> str:
+    """"the SkySift code at the stated commit is archived at doi:<doi>" with the DOI of ``CITATION.cff``
+    (``load_citation``), or with ``SOFTWARE_DOI_PLACEHOLDER`` and "(to be minted)" without one."""
+    doi = str((citation or {}).get("doi") or "").strip()
+    return CODE_SENTENCE.format(doi=doi) if doi else CODE_SENTENCE.format(doi=SOFTWARE_DOI_PLACEHOLDER) + (
+        CODE_DOI_PENDING)
 
 
 def fit_radius_ratio(data: dict) -> float | None:
@@ -1267,7 +1503,7 @@ def numbers(data: dict, tex: bool = False, after_bjd: float | None = None) -> di
     timed = timing.get("ok") is True
     window = ((sig.get("extra") or {}).get("search_window") or {})
     lo, hi = _num(window.get("min_period_days")), _num(window.get("max_period_days"))
-    fap_text, fpp_text = probability_sentences(data)
+    fap_text, fpp_text = probability_sentences(data, short=tex)      # the note's short form (addendum cut 2)
     caveats = [c for c in data.get("caveats") or [] if isinstance(c, dict) and c.get("title")]
     rp, a, teq = planet.get("rp_rearth"), planet.get("a_au"), planet.get("teq_k")
     host = ", ".join(x for x in (
@@ -1306,7 +1542,9 @@ def numbers(data: dict, tex: bool = False, after_bjd: float | None = None) -> di
         "pixel_plain": pixel_sentence(data),
         "odd_text": pair[0] if pair else None, "even_text": pair[1] if pair else None,
         "parity_sigma_text": _f((data.get("parity") or {}).get("difference_sigma"), 1) if pair else None,
+        "stacked_parity_text": stacked_parity_text(data),
         "secondary_text": secondary_sentence(data, tex), "albedo_text": albedo_text(data),
+        "secondary_plain": secondary_sentence(data),
         "secondary_pm": pm_text(sec.get("depth_ppm"), sec.get("err_ppm"), sec.get("err_ppm"), nd=0, comma=True),
         "secondary_limit": _f(sec.get("limit_3sigma_ppm"), 0, True),
         "shape_text": shape_sentence(data, tex),
@@ -1314,7 +1552,12 @@ def numbers(data: dict, tex: bool = False, after_bjd: float | None = None) -> di
         "psffrac": (dilution.get("psffrac") or {}).get("text"),
         "leak_text": leak["text"] if leak else None, "dilution_text": dilution_sentence(data, tex),
         "dilution_rows": list(dilution.values()),
-        "software_line": software_line(data), "facilities": FACILITIES, "code_sentence": CODE_SENTENCE,
+        "software_line": software_line(data), "facilities": FACILITIES,
+        "gaia_flags_text": gaia_flags_text(data), "flame_text": flame_text(data), "hz_text": hz_text(data),
+        "star_method_text": star_method_text(data),
+        "followup_text": followup_text(data, julian_date(datetime.now(UTC)) if after_bjd is None else after_bjd),
+        "references_plain": readme_references(data), "in_house_method": in_house_method_text(data),
+        "pixel_panels": bool(data.get("pixels")),
         "commit": software_commit(data),
         "star_ok": star_ok, "spectral_type": star.get("spectral_type"),
         "teff": value_text(star.get("teff"), tex), "radius": value_text(star.get("radius"), tex),
@@ -1323,9 +1566,9 @@ def numbers(data: dict, tex: bool = False, after_bjd: float | None = None) -> di
         "rp": value_text(rp, tex), "a": value_text(a, tex), "teq": value_text(teq, tex),
         "insolation": value_text(planet.get("insolation_earth"), tex),
         "rp_text": value_text(rp), "a_text": value_text(a), "teq_text": value_text(teq), "host_text": host or "no "
-        "stellar parameters", "hz_where": _hz_where(planet), "hz_inner": _f(planet.get("hz_inner_au"), 3),
-        "hz_outer": _f(planet.get("hz_outer_au"), 3),
-        "fap_text": fap_text, "fpp_text": fpp_text, "caveats": caveats,
+        "stellar parameters",
+        "fap_text": fap_text, "fpp_text": fpp_text,
+        "caveats": [{**c, "title": _caveat_title(c, star)} for c in caveats],
         "in_house_text": in_house_text(data), "in_house_capital": _capital(in_house_text(data)),
         "both_tools": both_tools(data),
         "cross_check_sentence": cross_check_sentence(data, tex),
@@ -1340,18 +1583,32 @@ def numbers(data: dict, tex: bool = False, after_bjd: float | None = None) -> di
         "prior_text": prior_claim_sentence(data, tex), "prior_plain": prior_claim_sentence(data),
         "comparison_text": comparison_text(data, tex), "comparison_plain": comparison_text(data),
         "priority_text": priority_sentence(data),
-        "caveat_text": " ".join(f"{c['title'].rstrip('.')}." for c in caveats) or "No caveat is recorded.",
+        "caveat_text": " ".join(f"{_caveat_title(c, star).rstrip('.')}." for c in caveats
+                                if c.get("key") not in NOTE_STATED_CAVEATS
+                                and c.get("title") != ds.CANDIDATE_CAVEAT) or "No caveat is recorded.",
         "window_h": window_hours(data), "bin_minutes": bin_minutes(data),
-        "model_words": "transit fit" if plots.get("model_kind") == "fit" else "box model of the detection",
+        "model_words": "transit fit" if plots.get("model_kind") == "fit" else "detection's box model",
         "fold_words": fold_words(data),
         # the signal section and the README's depth row say which ephemeris folded (spec 11.3); a dossier before
         # version 5 does not say, and neither do they
-        "fold_clause": (f"; the depth and the shape below are measured on the {fold_words(data)}"
+        "fold_clause": (f"; the depth and shape below are measured on the {fold_words(data)}"
                         if eph.get("fold_ephemeris") else ""),
         "depth_source_text": (f" ({eph['depth_source']}, on the {fold_words(data)})"
                               if eph.get("fold_ephemeris") and eph.get("depth_source") else ""),
         "param_rows": param_rows(data), "commands": prov.get("commands") or [],
     }
+
+
+# caveats the note's body already states, so its "What is not yet known" leaves their titles out (Task 13)
+NOTE_STATED_CAVEATS = ("partial_box",)
+
+
+def _caveat_title(caveat: dict, star: dict) -> str:
+    """A caveat's title as the texts print it: the stellar-radius caveat follows the star block it sits beside
+    (``dossier.no_spectrum_title``: the reddening named while Gaia gives no E(BP-RP)), every other its stored one."""
+    if caveat.get("key") == "no_spectrum" or str(caveat.get("title") or "").startswith(ds.NO_SPECTRUM):
+        return ds.no_spectrum_title(star)
+    return caveat["title"]
 
 
 def window_hours(data: dict) -> str | None:
@@ -1389,7 +1646,7 @@ def abstract_text(data: dict) -> str:
     # to stay inside the RNAAS 150 words; the body carries the radius source, the orbit and the light curve's name
     parts = [f"{opening} on {name}, a star Kepler recorded only in other targets' pixels.",
              (f"Its KBonus light curve shows a {_f(eph.get('duration_h'), 2)} hour, "
-              f"{_f(eph.get('depth_ppm'), 0, True)} ppm dip every {_f(eph.get('period_days'), 5)} days over "
+              f"{_f(eph.get('depth_ppm'), 0, True)} ppm dip every {quantities(data)['period']} days over "
               f"{eph.get('n_events')} transits.")]
     row = _test(data, "rung5_pixels")
     voting, silent = _pixel_votes(row)
@@ -1409,7 +1666,7 @@ def abstract_text(data: dict) -> str:
     against = (f" against {fap['n']:,} null searches of other KBonus stars" if fap.get("calibrated") and fap.get("n")
                else "")
     # spec 11.2: the TRICERATOPS headline first when a current cross-check exists, the in-house estimate after it
-    head = cc.headline(data)
+    head = cc.headline(data, short=True)          # the note's short class clause (addendum cut 8)
     fpp_part = f"{head}; {in_house_text(data)}" if head else in_house_text(data)
     parts.append(f"The false-alarm probability{against} is {fap.get('words') or 'not computed'}; {fpp_part}.")
     parts.append("It remains a candidate until follow-up confirms it.")
@@ -1449,7 +1706,52 @@ def archive_paragraph(data: dict, doi: str, tic: str | None) -> str:
 
 # ---------------------------------------------------------------------------------------------------- the texts
 
+def load_author(path: Path | None = None) -> dict | None:
+    """``docs/author.json`` (``AUTHOR_FILE``) as {name, affiliation, email, orcid}, each a stripped string ("" when
+    empty or missing); None without the file or when it does not read as a JSON object."""
+    path = AUTHOR_FILE if path is None else Path(path)
+    try:
+        raw = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(raw, dict):
+        return None
+    return {k: str(raw.get(k) or "").strip() for k in AUTHOR_FIELDS}
+
+
+def author_problems(author: dict | None) -> list[str]:
+    """What keeps the author block from a final pack (spec 11.6): "no docs/author.json"; "docs/author.json has no
+    <field>" for each empty field; "docs/author.json has the ORCID '<value>', not 0000-0000-0000-000X" for one that
+    is not an ORCID iD. Empty when the block is complete."""
+    if author is None:
+        return ["no docs/author.json"]
+    out = [f"docs/author.json has no {k}" for k in AUTHOR_FIELDS if not author.get(k)]
+    orcid = author.get("orcid")
+    if orcid and not _ORCID.fullmatch(orcid):
+        out.append(f"docs/author.json has the ORCID {orcid!r}, not 0000-0000-0000-000X")
+    return out
+
+
+def final_problems(out_dir: Path) -> list[str]:
+    """``f"{name} still says {placeholder!r}"`` for every placeholder of ``FINAL_PLACEHOLDERS`` that a public text
+    of the pack (``FINAL_TEXTS``) still carries; empty when a ``--final`` pack may be uploaded."""
+    out = []
+    for name in FINAL_TEXTS:
+        path = Path(out_dir) / name
+        text = path.read_text(encoding="utf-8") if path.is_file() else ""
+        out += [f"{name} still says {p!r}" for p in FINAL_PLACEHOLDERS if p in text]
+    return out
+
+
 def _authors(citation: dict | None) -> list[dict]:
+    """The note's authors: the one of ``docs/author.json`` when the file exists (``load_author``), else the
+    citation's, each {name, orcid, affiliation, email} (an empty field stays empty, and the template prints its
+    placeholder)."""
+    author = load_author()
+    if author is not None:
+        orcid = _ORCID.search(author["orcid"])
+        return [{"name": author["name"] or "AUTHOR NAME TO FILL IN", "orcid": orcid.group(0) if orcid else None,
+                 "affiliation": author["affiliation"], "email": author["email"]}]
     out = []
     for a in (citation or {}).get("authors") or []:
         if not isinstance(a, dict):
@@ -1458,8 +1760,9 @@ def _authors(citation: dict | None) -> list[dict]:
         name = " ".join(x for x in (given, family) if x) or a.get("name")
         orcid = re.search(r"\d{4}-\d{4}-\d{4}-\d{3}[\dX]", str(a.get("orcid") or ""))
         if name:
-            out.append({"name": str(name), "orcid": orcid.group(0) if orcid else None})
-    return out or [{"name": "AUTHOR NAME TO FILL IN", "orcid": None}]
+            out.append({"name": str(name), "orcid": orcid.group(0) if orcid else None, "affiliation": "",
+                        "email": ""})
+    return out or [{"name": "AUTHOR NAME TO FILL IN", "orcid": None, "affiliation": "", "email": ""}]
 
 
 def doi_shown(doi: str | None) -> str:
@@ -1470,17 +1773,21 @@ def doi_shown(doi: str | None) -> str:
     return f"{doi}, a {SANDBOX_DOI_NOTE}" if doi.startswith(SANDBOX_DOI_PREFIX) else doi
 
 
-def render_note(data: dict, doi_placeholder: str = DOI_PLACEHOLDER, *, citation: dict | None = None) -> str:
+def render_note(data: dict, doi_placeholder: str = DOI_PLACEHOLDER, *, citation: dict | None = None,
+                panels: bool = True) -> str:
     """The Research Note draft: the AASTeX v7 frame in ``data/rnaas/aastex_template.tex`` and the body from
     ``note.tex.j2`` (title, abstract, sections, one figure, references), citing exactly the works the dossier used.
-    A sandbox DOI is printed with the words that it must be replaced before submission."""
+    A sandbox DOI is printed with the words that it must be replaced before submission. ``panels`` is whether the
+    figure is matplotlib's panelled ``figure1`` (the caption names the panels) or the fold alone of ``figure1.svg``;
+    the code DOI comes from ``citation`` (``code_sentence``)."""
     refs = references(data)
     bib = sorted([(key, Raw(label), Raw(text)) for key, label, text in BIBLIOGRAPHY if refs.get(key)]
                  + prior_bib(data), key=lambda item: item[0])
     doi = doi_placeholder or DOI_PLACEHOLDER
     note = f", a {SANDBOX_DOI_NOTE}" if doi.startswith(SANDBOX_DOI_PREFIX) else ""
     body = _env(tex=True).get_template("note.tex.j2").render(
-        n=numbers(data, tex=True), refs=refs, bib=bib, doi=doi, doi_note=note, authors=_authors(citation))
+        n=numbers(data, tex=True), refs=refs, bib=bib, doi=doi, doi_note=note, authors=_authors(citation),
+        code_sentence=code_sentence(citation), panels=panels)
     return AASTEX_FRAME.read_text(encoding="utf-8") + "\n" + body
 
 
@@ -1498,9 +1805,11 @@ BEB_RADIUS = ("The background-binary term uses the pixel exclusion radius, max(3
 FILE_NOTES = {
     "README.md": "these instructions",
     "note/note.tex": "the Research Note draft (AASTeX v7)",
-    "note/figure1.svg": "the note's figure (the folded transit)",
-    "note/figure1.pdf": "the note's figure as PDF, for pdflatex",
-    "note/figure1.png": "the note's figure as PNG",
+    "note/figure1.svg": "the fold panel of the note's figure alone (the folded transit); the PDF and PNG carry "
+                        "all panels",
+    "note/figure1.pdf": "the note's figure as PDF, for pdflatex: (a) the fold, (b) odd and (c) even transits, (d) "
+                        "the per-season difference images",
+    "note/figure1.png": "the note's figure as PNG, the same panels",
     "data/lightcurve.csv": "the whitened light curve the search ran on: time BKJD, relative flux in ppm, error in "
                            "ppm, quarter",
     "data/ephemeris.csv": "period, mid-transit times, duration, depth, the star and planet parameters and the "
@@ -1740,6 +2049,7 @@ def _fields(data: dict, f: dict) -> dict:
     f.setdefault("exofop_url", EXOFOP_URL)
     f.setdefault("exofop_help_url", EXOFOP_HELP_URL)
     f.setdefault("helpdesk_url", HELPDESK_URL)
+    f.setdefault("code_sentence", code_sentence(None))
     return f
 
 
@@ -2045,15 +2355,7 @@ def _png_figures(Figure, data: dict, figures: Path, note: Path) -> None:
         ax.set_ylabel("relative flux (ppm)")
         ax.legend(loc="lower right", fontsize=8, frameon=False)
 
-    fig = Figure(figsize=(7, 3.6), dpi=150, layout="constrained")
-    fold(fig.add_subplot())
-    fig.savefig(figures / "fold.png")
-    fig.savefig(note / "figure1.png")
-    fig.savefig(note / "figure1.pdf")
-
-    fig = Figure(figsize=(8, 3.4), dpi=150, layout="constrained")
-    axes = fig.subplots(1, 2, sharey=True)
-    for ax, kind, colour in ((axes[0], "odd", POINT), (axes[1], "even", EVEN)):
+    def parity(ax, kind, colour):
         bx, by, be = _arr(plots.get(f"{kind}_bins"), (0, 1, 2))
         ax.errorbar(bx, by, be, fmt="o", color=colour, ms=3, lw=1)
         ax.plot(mx, my, color=MODEL, lw=1.4)
@@ -2061,6 +2363,56 @@ def _png_figures(Figure, data: dict, figures: Path, note: Path) -> None:
         ax.set_title(f"{kind.capitalize()} transits" + (f": {depth} ppm" if depth else ""), fontsize=10)
         ax.set_xlim(-w, w)
         ax.set_xlabel("hours from mid-transit")
+
+    pixels = data.get("pixels") or []
+    vmax = max([1.0] + [v for s in pixels for row in s.get("snr") or [] for v in row if _num(v) is not None])
+
+    def season(ax, s):
+        snr = np.array([[np.nan if v is None else float(v) for v in row] for row in s.get("snr") or [[None]]])
+        nr, nc = snr.shape
+        ax.imshow(snr, origin="lower", extent=(0, nc, 0, nr), cmap="Blues", vmin=0, vmax=vmax)
+        pt, pn, cen = s.get("pos_target") or [], s.get("pos_neighbour") or [], s.get("centroid") or []
+        if len(pn) == 2 and None not in pn:
+            ax.plot(pn[0] + 0.5, pn[1] + 0.5, "s", mfc="none", mec=INK, ms=9)
+        if len(pt) == 2 and None not in pt:
+            ax.plot(pt[0] + 0.5, pt[1] + 0.5, "o", mfc="none", mec=MODEL, ms=10, mew=2)
+        if len(cen) == 2 and None not in cen:
+            ax.plot(cen[0] + 0.5, cen[1] + 0.5, "x", color=INK, ms=8, mew=2)
+        ax.set_title(f"Season {s.get('season')}", fontsize=10)
+        ax.set_xticks([])
+        ax.set_yticks([])
+
+    fig = Figure(figsize=(7, 3.6), dpi=150, layout="constrained")
+    fold(fig.add_subplot())
+    fig.savefig(figures / "fold.png")
+
+    # the note's one figure (spec 11.6): (a) the fold across the top, (b) odd and (c) even below it on one scale,
+    # (d) one difference image per season in the third row; each panel drawn by the code of its own figure
+    cols = max(2, len(pixels))
+    fig = Figure(figsize=(7, 8.4 if pixels else 6.4), dpi=150, layout="constrained")
+    grid = fig.add_gridspec(3 if pixels else 2, cols)
+    top = fig.add_subplot(grid[0, :])
+    fold(top)
+    top.set_title("(a)", loc="left", fontsize=10)
+    half = cols // 2
+    odd = fig.add_subplot(grid[1, :half])
+    even = fig.add_subplot(grid[1, half:], sharey=odd)
+    for ax, kind, colour, label in ((odd, "odd", POINT, "(b)"), (even, "even", EVEN, "(c)")):
+        parity(ax, kind, colour)
+        ax.set_title(label, loc="left", fontsize=10)
+    odd.set_ylabel("relative flux (ppm)")
+    for i, s in enumerate(pixels):
+        ax = fig.add_subplot(grid[2, i])
+        season(ax, s)
+        if i == 0:
+            ax.set_title("(d)", loc="left", fontsize=10)
+    fig.savefig(note / "figure1.png")
+    fig.savefig(note / "figure1.pdf")
+
+    fig = Figure(figsize=(8, 3.4), dpi=150, layout="constrained")
+    axes = fig.subplots(1, 2, sharey=True)
+    for ax, kind, colour in ((axes[0], "odd", POINT), (axes[1], "even", EVEN)):
+        parity(ax, kind, colour)
     axes[0].set_ylabel("relative flux (ppm)")
     fig.savefig(figures / "oddeven.png")
 
@@ -2077,25 +2429,11 @@ def _png_figures(Figure, data: dict, figures: Path, note: Path) -> None:
     ax.set_ylabel("SDE")
     fig.savefig(figures / "periodogram.png")
 
-    pixels = data.get("pixels") or []
     if pixels:
         fig = Figure(figsize=(2.6 * len(pixels), 3.0), dpi=150, layout="constrained")
         axes = np.atleast_1d(fig.subplots(1, len(pixels)))
-        vmax = max([1.0] + [v for s in pixels for row in s.get("snr") or [] for v in row if _num(v) is not None])
         for ax, s in zip(axes, pixels, strict=True):
-            snr = np.array([[np.nan if v is None else float(v) for v in row] for row in s.get("snr") or [[None]]])
-            nr, nc = snr.shape
-            ax.imshow(snr, origin="lower", extent=(0, nc, 0, nr), cmap="Blues", vmin=0, vmax=vmax)
-            pt, pn, cen = s.get("pos_target") or [], s.get("pos_neighbour") or [], s.get("centroid") or []
-            if len(pn) == 2 and None not in pn:
-                ax.plot(pn[0] + 0.5, pn[1] + 0.5, "s", mfc="none", mec=INK, ms=9)
-            if len(pt) == 2 and None not in pt:
-                ax.plot(pt[0] + 0.5, pt[1] + 0.5, "o", mfc="none", mec=MODEL, ms=10, mew=2)
-            if len(cen) == 2 and None not in cen:
-                ax.plot(cen[0] + 0.5, cen[1] + 0.5, "x", color=INK, ms=8, mew=2)
-            ax.set_title(f"Season {s.get('season')}", fontsize=10)
-            ax.set_xticks([])
-            ax.set_yticks([])
+            season(ax, s)
         fig.savefig(figures / "centroids.png")
 
 
@@ -2147,15 +2485,16 @@ def _zip(out_dir: Path, zip_path: Path, top: str) -> None:
 
 def load_citation(path: Path = CITATION_FILE) -> tuple[dict | None, str]:
     """(citation, where it came from) for the note's authors and the Zenodo creators: the repository's
-    ``CITATION.cff`` when present (a source checkout), else the installed package's author metadata (from
-    ``pyproject.toml``), else (None, a sentence saying the creators are placeholders)."""
+    ``CITATION.cff`` when present (a source checkout), with its ``doi`` (None without one; the note's code sentence,
+    ``code_sentence``), else the installed package's author metadata (from ``pyproject.toml``), else (None, a
+    sentence saying the creators are placeholders)."""
     import yaml
     try:
         data = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
     except (OSError, yaml.YAMLError):
         data = None
     if isinstance(data, dict) and data.get("authors"):
-        return data, "CITATION.cff in the source checkout"
+        return {**data, "doi": str(data.get("doi") or "").strip() or None}, "CITATION.cff in the source checkout"
     from importlib import metadata as md
     try:
         meta = md.metadata("skysift")
@@ -2293,10 +2632,11 @@ def _move_into_place(work: Path, out_dir: Path, say: Callable[[str], None]) -> N
 def _write_texts(out_dir: Path, zip_path: Path, data: dict, fields: dict, citation: dict | None) -> dict:
     """The four texts, then the hashes and the zip, for the DOI in ``fields`` (written again once a Zenodo draft
     reserved one). Returns the note's word counts."""
-    tex = render_note(data, fields["doi"], citation=citation)
+    tex = render_note(data, fields["doi"], citation=citation, panels=bool(fields.get("png")))
     _write(out_dir / "note" / "note.tex", tex)
     words = note_words(tex)
-    fields = {**fields, "note_words": words, "note_problems": note_problems(words, tex)}
+    fields = {**fields, "note_words": words, "note_problems": note_problems(words, tex),
+              "code_sentence": code_sentence(citation)}
     _write(out_dir / "exofop" / "note.txt", _render_plain("exofop_note.txt.j2", data, fields))
     _write(out_dir / "archive_email.txt", _render_plain("archive_email.txt.j2", data, fields))
     files = sorted({*_rel(out_dir), "README.md", "provenance/hashes.json"})
@@ -2309,7 +2649,7 @@ def _write_texts(out_dir: Path, zip_path: Path, data: dict, fields: dict, citati
 
 def build_pack(store, blob, settings, target_id: str, *, out_dir: Path | None = None, tic: str | None = None,
                observer_tag: str = "skysift", tag_seq: int = 1, zenodo: ZenodoClient | None = None,
-               log: Callable[[str], None] | None = None) -> PackReport:
+               final: bool = False, log: Callable[[str], None] | None = None) -> PackReport:
     """Write the submission pack of ``target_id`` from its stored dossier and zip it inside the folder as
     ``<target>_<yyyymmdd>_skysift_pack.zip``; the default folder is ``<data_dir>/packs/<target_id>/<UTC yyyymmdd>/`` (an
     earlier pack there is replaced only once the new one is complete: it is written in a hidden sibling folder and
@@ -2326,8 +2666,17 @@ def build_pack(store, blob, settings, target_id: str, *, out_dir: Path | None = 
     Raises NoDossier, ``dossier.LightCurveReleased`` (nothing is downloaded), PackError (bad TIC id, tag or folder; a
     live draft before approval, before the FPP sign-off, for a stale dossier, or for one ``gate_problems`` refuses,
     naming every problem) before anything is written, and ``zenodo.ZenodoError`` naming the built pack and any
-    unfinished draft when Zenodo fails."""
+    unfinished draft when Zenodo fails.
+
+    ``final`` (spec 11.6) is the pack to submit: it needs a live client (``FINAL_NEEDS_LIVE``), refuses an author
+    block with an empty or malformed field (``author_problems``) before anything is written, and after the draft
+    reserves its DOI and the texts carry it, refuses any placeholder left in a public text (``final_problems``) with
+    the unfinished-draft error, before the draft is filled or the zip uploaded."""
     say = log or (lambda _text: None)
+    if final and (zenodo is None or zenodo.sandbox):
+        raise PackError(FINAL_NEEDS_LIVE)
+    if final and author_problems(load_author()):
+        raise PackError(f"a final pack needs the author block: {'; '.join(author_problems(load_author()))}")
     tic, observer_tag = check_tic(tic), check_tag(observer_tag)
     if not (isinstance(tag_seq, int) and 1 <= tag_seq <= 99999):
         raise PackError(f"the Data Tag sequence is a number from 1 to 99999, not {tag_seq!r}")
@@ -2369,8 +2718,8 @@ def build_pack(store, blob, settings, target_id: str, *, out_dir: Path | None = 
     if citation is None:
         say("no CITATION.cff or package author found; the creators are placeholders")
     data = ds.public_claims(public_paths(raw, settings.data_dir))     # the pack embeds and uploads this JSON
-    final = out_dir
-    out_dir = _building(final)
+    place = out_dir                    # the pack's folder (``final`` is the --final flag)
+    out_dir = _building(place)
     try:
         zip_file, metadata, fields, words = _write_pack(
             out_dir, data, raw, row, lc, fnorm, target_id, date, now, settings, citation, creators_source,
@@ -2379,8 +2728,8 @@ def build_pack(store, blob, settings, target_id: str, *, out_dir: Path | None = 
     except BaseException:
         shutil.rmtree(out_dir, ignore_errors=True)
         raise
-    _move_into_place(out_dir, final, say)
-    out_dir, zip_path = final, final / zip_file
+    _move_into_place(out_dir, place, say)
+    out_dir, zip_path = place, place / zip_file
     store.set_pack(target_id, str(out_dir), now.replace(tzinfo=None))
     store.set_candidate_pack(sid, str(out_dir))
     say(f"wrote {zip_path}")
@@ -2395,6 +2744,9 @@ def build_pack(store, blob, settings, target_id: str, *, out_dir: Path | None = 
             doi = zinfo["doi"] or DOI_PLACEHOLDER
             words = _write_texts(out_dir, zip_path, data, {**fields, "zenodo": zinfo, "doi": doi,
                                                            "doi_shown": doi_shown(zinfo["doi"])}, citation)
+            left = final_problems(out_dir) if final else []
+            if left:
+                raise ZenodoError(f"a final pack carries no placeholder, but {'; '.join(left)}")
             say("filling the Zenodo draft and uploading the zip")
             zenodo.set_metadata(deposition, metadata)
             zenodo.upload(deposition, zip_path)
@@ -2504,4 +2856,4 @@ def _versions(data: dict, row: dict, now: datetime, Figure, zip_file: str, creat
             "python": platform.python_version(), "numpy": np.__version__, "matplotlib": mpl,
             "platform": sys.platform, "built_utc": now.isoformat(), "dossier_generated": data.get("generated"),
             "dossier_row_generated": ds._iso(row.get("generated")), "kbonus_doi": KBONUS_DOI,
-            "zip_name": zip_file, "creators_source": creators_source}
+            "zip_name": zip_file, "creators_source": creators_source, "software": software_versions()}

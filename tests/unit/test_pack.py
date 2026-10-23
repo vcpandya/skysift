@@ -219,7 +219,7 @@ def test_provenance_hashes_every_file_and_names_the_versions(env_with_dossier):
         data = (rep.out_dir / name).read_bytes()
         assert h == {"sha256": hashlib.sha256(data).hexdigest(), "nbytes": len(data)}
     versions = json.loads((rep.out_dir / "provenance" / "versions.json").read_text(encoding="utf-8"))
-    assert PACK_VERSION == "3"
+    assert PACK_VERSION == "4"
     assert versions["pack_version"] == PACK_VERSION and versions["search_version"] == env.data["signal"][
         "detector_version"]
     assert versions["ladder_version"] == env.data["provenance"]["ladder_version"] and versions["git_commit"]
@@ -412,8 +412,9 @@ def test_note_is_aastex7_with_an_abstract_inside_the_rnaas_limits(env_with_dossi
     keys = {k.strip() for c in cited for k in c.split(",")}
     items = set(re.findall(r"\\bibitem\[[^\]]*\]\{([^}]+)\}", tex))
     assert keys and keys == items                                              # every citation listed, none unused
-    assert {"mann2015", "mann2019", "kopparapu2013", "lindegren2021", "dressing2015", "kbonus", "kbonushlsp"} <= items
-    assert "fressin2013" not in items                                         # an M dwarf: the Dressing grid only
+    assert {"mann2015", "mann2019", "gaia2016", "gaia2023", "borucki2010", "kbonus", "kbonushlsp"} <= items
+    # Task 13: the in-house method, the colour table, the parallax zero point and the habitable zone are the README's
+    assert not {"morton2012", "dressing2015", "fressin2013", "pecaut2013", "lindegren2021", "kopparapu2013"} & items
     assert "AJ, 166, 265, doi:10.3847/1538-3881/ad0727" in tex and "doi:10.17909/7jbr-w430" in tex
     assert "40.290" in tex and "1 in 440" in tex and "provisional" not in tex
     assert r"2.47 $\pm$ 0.08 $R_\oplus$" in tex                                # Rp from the limb-darkened k
@@ -452,7 +453,8 @@ def test_note_for_a_star_without_parameters_or_pixels(env_with_dossier):
     data["pixels"] = None
     data["fpp"]["scenarios"][0]["factors"]["class"] = "FGK"
     tex = render_note(data, doi_placeholder="10.5281/zenodo.123")
-    assert "mann2015" not in tex and "kopparapu2013" not in tex and "fressin2013" in tex
+    assert "mann2015" not in tex and "kopparapu2013" not in tex and "fressin2013" not in tex    # Task 13: README
+    assert "fressin2013" in pack_module.readme_works(data)
     assert "pixel" in tex and "has not run" in tex and "10.5281/zenodo.123" in tex
     assert tex.count("{") == tex.count("}") and note_problems(note_words(tex), tex) == []
     assert "No Kepler stellar catalogue" not in tex                     # no star parameters, no provenance sentence
@@ -761,13 +763,12 @@ def test_build_pack_on_the_real_kic_6146676_dossier(env_with_dossier):
             "Gaia position. Both errors are the larger of the seasons' combined error and their scatter.") in note
     assert "not stored for every season" not in note
     tex = (rep.out_dir / "note" / "note.tex").read_text(encoding="utf-8")
-    assert (r"Against the Gaia position, which carries the WCS zero point and registration, the difference-image "
-            r"centroid sits 0.25 $\pm$ 0.28 arcsec away, with an exclusion radius of 0.83 arcsec (max(3 sigma, 0.5 "
-            r"arcsec)) within which a background source is not excluded; the nearest Gaia source beyond it is Gaia "
-            r"DR3 2073896294004902144 at 6.9 arcsec (G = 19.8). Against the star's own out-of-transit image the "
-            r"offset is 1.8 $\pm$ 1.0 arcsec (1.8 sigma), not an offset by the rule of \citet{bryson2013} (over 3 "
-            r"sigma and 0.2 arcsec); its reference is pulled by the neighbour, up to 1.30 px from the Gaia position. "
-            "Each error is the larger of the seasons' combined error and scatter.") in " ".join(tex.split())
+    assert (r"Against the Gaia position the difference-image centroid sits 0.25 $\pm$ 0.28 arcsec away, with an "
+            r"exclusion radius of 0.83 arcsec (max(3 sigma, 0.5 arcsec)) within which a background source is not "
+            r"excluded; the nearest Gaia source beyond it lies at 6.9 arcsec (G = 19.8); against the star's own "
+            r"out-of-transit image the offset is 1.8 $\pm$ 1.0 arcsec (1.8 sigma), not an offset by the rule of "
+            r"\citet{bryson2013} (3 sigma, 0.2 arcsec), its reference pulled by the neighbour up to 1.30 px.") in (
+        " ".join(tex.split()))
     assert r"]{bryson2013} Bryson" in tex
     assert "hand-built" not in note                     # spec 11.5: the README keeps it, with the file
     assert note_problems(rep.note_words, tex) == [] and rep.zip_path.is_file()
@@ -1182,7 +1183,9 @@ def test_exofop_parameter_files_follow_the_templates(env_with_dossier):
     eph = env.data["ephemeris"]
     assert float(planet["period"]) == pytest.approx(eph["period_days"], abs=1e-5)
     assert float(planet["period_unc"]) == pytest.approx(eph["period_err_days"], abs=1e-5)
-    assert planet["epoch"] == "2454969.3003" and planet["epoch_unc"] == "0.0019"
+    # Task 13 (spec 11.6): the central epoch, with its own error
+    assert float(planet["epoch"]) == pytest.approx(eph["t_ref_bjd"], abs=5e-5)
+    assert float(planet["epoch_unc"]) == pytest.approx(eph["t_ref_err_days"], abs=5e-5)
     assert planet["depth"] == "2167" and planet["depth_unc"] == "52" and planet["duration_unc"] == ""
     assert planet["radius"] == "2.47" and planet["radius_unc"] == "0.08"
     assert planet["temp"] == "269" and planet["temp_unc"] == "8" and planet["sma_unc"] == "0.0016"
@@ -1299,7 +1302,8 @@ def test_every_text_quotes_the_period_and_epoch_with_errors(env_with_dossier):
     commit = env.data["provenance"]["git_commit"]
     for name in ("README.md", "exofop/note.txt", "archive_email.txt"):
         text = (rep.out_dir / name).read_text(encoding="utf-8")
-        assert "40.289863 ± 0.000091 d" in text and "2454969.3003 ± 0.0019" in text, name
+        # Task 13 (spec 11.6): T0 is the central epoch with its own error
+        assert "40.289863 ± 0.000091 d" in text and "2455694.51787 ± 0.00092" in text, name
         assert "4.16 +0.06/-0.05 h" in text and "2,167 ± 52 ppm" in text and NO_BOOT not in text, name
     for name in ("exofop/note.txt", "archive_email.txt"):
         text = (rep.out_dir / name).read_text(encoding="utf-8")
@@ -1308,7 +1312,7 @@ def test_every_text_quotes_the_period_and_epoch_with_errors(env_with_dossier):
     assert r"40.289863 $\pm$ 0.000091 days" in tex and r"2455694.51787 $\pm$ 0.00092" in tex
     assert "4.16$^{+0.06}_{-0.05}$ hours" in tex and "8.0 minutes" in tex and "34 of 34" in tex
     meta = json.loads((rep.out_dir / "zenodo_metadata.json").read_text(encoding="utf-8"))
-    assert "40.289863 ± 0.000091 d" in meta["description"] and "2454969.3003 ± 0.0019" in meta["description"]
+    assert "40.289863 ± 0.000091 d" in meta["description"] and "2455694.51787 ± 0.00092" in meta["description"]
     _store(env, env.data)                                                 # the fixture's own: no shape error
     text = _unquoted((_build(env).out_dir / "README.md").read_text(encoding="utf-8"))
     assert text.count(f"(no error; {NO_BOOT})") == 1 and "4.41 h (no error;" in text
@@ -1342,12 +1346,14 @@ def test_note_has_software_facilities_and_the_model_clause_within_the_limits(env
         # the commit the dossier was generated at (the golden's 48972fd, not the checkout's HEAD), and triceratops
         # only with a stored cross-check (M10), which the golden has (fix round 4)
         commit = data["provenance"]["git_commit"]
-        tools = "numpy, scipy, astropy, matplotlib" + (", triceratops" if data.get("cross_check") else "")
+        # Task 13 (spec 11.6): each package with its installed version
+        tools = ", ".join(f"{p} {md.version(p)}" for p in ("numpy", "scipy", "astropy", "matplotlib")) + (
+            ", triceratops" if data.get("cross_check") else "")
         assert (rf"\software{{SkySift {md.version('skysift')} (search version {tex_safe(version)}, commit "
                 rf"{tex_safe(commit)}), {tools}}}") in tex
         assert (data is golden) == bool(data.get("cross_check")) and (data is not golden or commit == "48972fd")
         crossed = render_note({**data, "cross_check": {"fpp": 0.01, "nfpp": 0.001, "current": False}})
-        assert "matplotlib, triceratops}" in crossed
+        assert f"matplotlib {md.version('matplotlib')}, triceratops}}" in crossed
         assert r"\facilities{Kepler, Gaia, MAST, Exoplanet Archive}" in tex
         assert "the SkySift code at the stated commit is archived at doi:10.5281/zenodo.SOFTWARE (to be minted)" in tex
         assert "CROWDSAP" in tex and "PSFFRAC" in tex
@@ -1382,11 +1388,13 @@ def test_note_has_software_facilities_and_the_model_clause_within_the_limits(env
     flat = " ".join(render_note(free).split())
     assert ("b is 0.31 and a/R* 74.0 fitted, 1.3 sigma from the host's density (no error; ingress shorter than the "
             "cadence: b and a/R* are degenerate with k)") in flat
-    # fix round 4: the parity and secondary sentences keep every number and error in fewer words
-    assert (r"The odd and even depths are 2,212 $\pm$ 76 and 2,126 $\pm$ 83 ppm per event (0.8 sigma apart) and "
-            r"2,180 $\pm$ 69 and 2,195 $\pm$ 65 ppm on the stacked folds (0.2 sigma apart)." in " ".join(tex.split()))
-    assert (r"The phase 0.5 depth is 15 $\pm$ 65 ppm (3-sigma upper limit 210 ppm), no constraint on the geometric "
-            "albedo; the strongest dip elsewhere is 40 ppm at phase 0.62 (1.4 sigma).") in tex
+    # fix round 4: the parity and secondary sentences keep every number and error in fewer words; Task 13: the
+    # stacked folds and an albedo without a limit are the README's
+    assert (r"The odd and even depths are 2,212 $\pm$ 76 and 2,126 $\pm$ 83 ppm per event (0.8 sigma apart)." in
+            " ".join(tex.split()))
+    assert "stacked folds" not in tex and "geometric albedo" not in tex
+    assert (r"The phase 0.5 depth is 15 $\pm$ 65 ppm (3-sigma upper limit 210 ppm); the strongest dip elsewhere is "
+            "40 ppm at phase 0.62 (1.4 sigma).") in tex
     assert "14 $\\pm$ 31 ppm" in tex
     assert note_problems(note_words(tex), tex) == []
 
@@ -1553,8 +1561,8 @@ def test_the_note_names_its_methods_and_cites_them(env_with_dossier):
     signal = tex.split(r"\section{The signal}")[1].split(r"\section{")[0]
     # Task 8 fix round 3: the note keeps a pointer without citations, the sentence and its works are in the README;
     # fix round 4, M-3: the note's first pointer says which README
-    assert ("The ephemeris and transit-parameter errors come from per-transit fits, a weighted linear fit and a "
-            "bootstrap over transits (methods in the Zenodo pack's README).") in " ".join(signal.split())
+    assert ("The errors come from per-transit fits, a weighted linear fit and a bootstrap over transits (methods in "
+            "the Zenodo pack's README).") in " ".join(signal.split())
     assert len(pack_module.errors_pointer(data).split()) <= 25
     assert "deeg2015" not in tex and "holczer2016" not in tex and "schmitt2014" not in tex
     assert "It remains a candidate until follow-up confirms it." not in signal   # the abstract says it
@@ -1573,7 +1581,7 @@ def test_the_note_names_its_methods_and_cites_them(env_with_dossier):
     drawn = {**data, "shape": {**data["shape"], "method": ephemeris.SHAPE_PRIOR_METHOD}}
     assert ("bootstrap over transits (Schmitt et al. 2014), with the density prior's centre drawn from its Gaussian "
             "on each resample") in pack_module.errors_methods_text(drawn)
-    searched ={**data, "ephemeris": {**data["ephemeris"], "fold_ephemeris": "search"}}
+    searched = {**data, "ephemeris": {**data["ephemeris"], "fold_ephemeris": "search"}}
     assert "use the search period and epoch; the quoted ephemeris is the linear fit." in \
         pack_module.errors_methods_text(searched)
     for item in ("Deeg, H. J. 2015, arXiv:1503.05368", "Holczer, T., et al. 2016, ApJS, 225, 9",
@@ -1720,7 +1728,7 @@ def test_a_prior_claim_makes_every_text_a_vetting_and_never_a_blind_recovery(env
         assert PRIOR_DOI in text and "13 October 2026" in text, name
         assert "discovery" not in text.lower() and EM_DASH not in text and not IZE.search(text), name
     for name in ("README.md", "note/note.tex"):
-        assert "a re-detection" in texts[name] and "the search itself used no prior ephemeris" in texts[name], name
+        assert "a re-detection" in texts[name] and "the search used no prior ephemeris" in texts[name], name
         assert "Against that claim the period differs by" in texts[name], name
     # I-2: the prior-claim paragraph keeps its blank line before the next one; M1: its comparison reaches every text
     comparison = pack_module.comparison_text(env.data)
@@ -1743,7 +1751,7 @@ def test_a_prior_claim_makes_every_text_a_vetting_and_never_a_blind_recovery(env
     assert body.count(PRIOR_DOI) == 1 and body.count("13 October 2026") == 1
     assert "It remains a candidate until follow-up confirms it." in abstract
     assert "It remains a candidate until follow-up confirms it." not in body
-    assert note.index("]{mann2019}") < note.index("]{mehta2026}") < note.index("]{morton2012}")   # alphabetical
+    assert note.index("]{gaia2023}") < note.index("]{mann2019}") < note.index("]{mehta2026}")      # alphabetical
     assert note_problems(note_words(note), note) == []
     step2 = texts["README.md"].split("## Step 2.")[1].split("## Step 3.")[0]
     assert "record of priority" in step2 and PRIOR_DOI in step2 and "(a re-detection)" in step2
@@ -1838,8 +1846,8 @@ def test_the_fpp_headline_leads_with_triceratops(env_with_dossier):
     data = _stored_with_cross_check(env)
     abstract = pack_module.abstract_text(data)
     assert abstract.index("TRICERATOPS") < abstract.index("a four-scenario estimate without a bound-companion")
-    assert "in none of its validation classes, which do not apply at 30-minute cadence (Giacalone et al. 2021)" in (
-        abstract)
+    # the abstract's short class clause (Task 13, addendum cut 8)
+    assert "; no validation class applies at 30-minute cadence; Giacalone et al. 2021)" in abstract
     assert f"gives {cross_check.probability_text(data['fpp']['value'])}, a lower bound" in abstract
     texts = _texts(_build(env))
     assert all("answer different questions" not in t for t in texts.values())
@@ -1850,7 +1858,7 @@ def test_the_gate_refuses_an_abstract_with_the_in_house_fpp_alone(env_with_dossi
     env = env_with_dossier
     _store_errors(env)
     _store_cross_check(env)
-    monkeypatch.setattr(cross_check, "headline", lambda data, tex=False, named=True: None)
+    monkeypatch.setattr(cross_check, "headline", lambda data, tex=False, named=True, short=False: None)
     assert ("the abstract carries the in-house false-positive probability without the TRICERATOPS one"
             in pack_module.gate_problems(_stored_with_cross_check(env)))
 
@@ -2067,9 +2075,9 @@ def _check_live_shape(cross: str, prior: bool) -> dict:
     tex = render_note(data)
     flat = " ".join(tex.split())
     assert str(pack_module.cross_check_sentence(data, True)) in flat
-    assert ("Its full false-positive probability is at or above 0.5" in flat) == (cross == "dominant")
+    assert ("The full false-positive probability comes mainly from" in flat) == (cross == "dominant")
     assert ("2 degenerate runs left out" in flat) == (cross == "dominant")
-    assert cross_check.NO_CLASS_CLAUSE in flat and "validation lines" not in flat
+    assert cross_check.NO_CLASS_SHORT in flat and "validation lines" not in flat
     assert (str(pack_module.comparison_text(data, True)) in flat) == prior
     sentence = str(tess.note_sentence(block, True))
     assert sentence in flat and "Sector 109, not assessed" in sentence and "(count uncertain, about" in sentence
@@ -2079,8 +2087,8 @@ def _check_live_shape(cross: str, prior: bool) -> dict:
     assert r"by the rule of \citet{bryson2013}" in flat and r"]{bryson2013} Bryson" in flat
     assert "hand-built" not in flat                                               # spec 11.5: the README's
     # the digits move with each regeneration of the golden, so the sentences are built from it (Task 10)
-    assert str(pack_module.parity_sentence(data, True)) in flat
-    assert str(pack_module.secondary_sentence(data, True)) in flat
+    assert str(pack_module.parity_sentence(data, True, stacked=False)) in flat     # the note: per event (Task 13)
+    assert str(pack_module.secondary_sentence(data, True, short=True)) in flat
     assert (PRIOR_DOI in flat) == prior
     words = note_words(tex)
     assert note_problems(words, tex) == [] or words["total"] > NOTE_LIMITS["total"]
@@ -2095,14 +2103,20 @@ def test_the_live_shape_stays_inside_the_word_limit_with_margin(cross, prior):
     a skipped sector and an uncertain count, with and without a prior claim) stays at or under 1,480 words, 20 under
     the RNAAS limit, and the gate does not refuse it for its length. Measured in round 4: 1,376 and 1,384 without a
     prior claim, 1,439 and 1,447 with one (validated, dominant with two degenerate runs); with the version 5 golden
-    (Task 10 fix round 1): 1,413 and 1,421 without, 1,476 and 1,484 with one. Round 2 adds note words and Task 13
-    Step 15 makes the cuts (plan, word budget), so until then a count between the margin and the RNAAS limit is an
-    expected failure; the RNAAS limit and the gate hold throughout."""
+    (Task 10 fix round 1): 1,413 and 1,421 without, 1,476 and 1,484 with one. Round 2 added words (up to 1,787 with
+    Task 13's additions) and Task 13 made the cuts, so the margin is a hard assertion again: 1,330 and 1,358
+    without a prior claim, 1,426 and 1,454 with one, before the golden carries the star's Gaia flags. With the
+    caveats ``dossier.caveats`` stores and the figure's pixel panel, which the golden leaves out, the note still
+    passes the gate."""
     words = _check_live_shape(cross, prior)
-    assert words["total"] <= NOTE_LIMITS["total"], words
+    assert words["total"] <= LIVE_SHAPE_LIMIT, words
     assert not [p for p in pack_module.gate_problems(_live_shape(cross, prior)) if "words" in p]
-    if words["total"] > LIVE_SHAPE_LIMIT:
-        pytest.xfail(f"{words['total']} words, over the {LIVE_SHAPE_LIMIT} margin until Task 13 Step 15 cuts")
+    data = _live_shape(cross, prior)
+    data["caveats"] = dossier_module.caveats(data)
+    data["pixels"] = [{"season": s} for s in range(4)]           # the figure's panel (d) and its caption
+    tex = render_note(data)
+    assert "(d) per-season difference images" in tex and "No spectrum" in tex
+    assert note_problems(note_words(tex), tex) == [], note_words(tex)
 
 
 def test_the_body_does_not_repeat_the_abstract_and_keeps_every_number():
@@ -2112,7 +2126,8 @@ def test_the_body_does_not_repeat_the_abstract_and_keeps_every_number():
     tex = render_note(golden)
     signal = " ".join(tex.split(r"\section{The signal}")[1].split(r"\section{")[0].split())
     assert signal.startswith(r"In the KBonus Kepler Background light curve \citep{kbonus} of KIC 6146676 (Gaia DR3 "
-                             f"{golden['target']['gaia_id']}, $G = 16.2$), a dip of ")
+                             f"{golden['target']['gaia_id']}, $G = 16.2$), recorded by Kepler "
+                             r"\citep{borucki2010} only in other targets' pixels, a dip of ")
     assert "This note reports" not in signal and "recorded only in the background" not in signal
     abstract = tex.split(r"\begin{abstract}")[1].split(r"\end{abstract}")[0]
     assert abstract.startswith("\nThis note reports a transit candidate on KIC 6146676, a star Kepler recorded only "
@@ -2129,19 +2144,17 @@ def test_the_short_offset_sentence_keeps_both_offsets_and_the_verdict():
     own = {**OFFSET_FIT, "reference": "the star's own direct-image centroid", "counts": False}
     short = pack_module.offset_sentence({"centroid_offset": own}, short=True)
     # spec 11.5: the Gaia offset and the exclusion radius (max(3 x 0.28, 0.5) arcsec) lead
-    gaia = ("Against the Gaia position, which carries the WCS zero point and registration, the difference-image "
-            "centroid sits 0.25 ± 0.28 arcsec away, with an exclusion radius of 0.84 arcsec (max(3 sigma, 0.5 arcsec)) "
-            "within which a background source is not excluded. ")
-    assert short == (gaia + "Against the star's own out-of-transit image the offset is 0.39 ± 0.15 arcsec (2.6 sigma), "
-                     "not an offset by the rule of Bryson et al. (2013) (over 3 sigma and 0.2 arcsec). Each error is "
-                     "the larger of the seasons' combined error and scatter.")
+    # Task 13: one clause on the star's own image, the error rule and the reference's carriage the README's
+    gaia = ("Against the Gaia position the difference-image centroid sits 0.25 ± 0.28 arcsec away, with an exclusion "
+            "radius of 0.84 arcsec (max(3 sigma, 0.5 arcsec)) within which a background source is not excluded")
+    assert short == (gaia + "; against the star's own out-of-transit image the offset is 0.39 ± 0.15 arcsec (2.6 "
+                     "sigma), not an offset by the rule of Bryson et al. (2013) (3 sigma, 0.2 arcsec).")
     counted = pack_module.offset_sentence({"centroid_offset": {**own, "counts": True}}, tex=True, short=True)
-    assert r"(2.6 sigma), an offset by the rule of \citet{bryson2013} (over 3 sigma and 0.2 arcsec)." in str(counted)
+    assert r"(2.6 sigma), an offset by the rule of \citet{bryson2013} (3 sigma, 0.2 arcsec)." in str(counted)
     fit = pack_module.offset_sentence({"centroid_offset": OFFSET_FIT}, short=True)
-    assert fit == (gaia + "Against the catalogue position plus the two-source fit's common shift (the star's "
+    assert fit == (gaia + ". Against the catalogue position plus the two-source fit's common shift (the star's "
                    "direct-image centroid is not stored for every season) the difference-image centroid is offset by "
-                   "0.39 ± 0.15 arcsec (2.6 sigma), not assessed from the star's own image. Each error is the larger "
-                   "of the seasons' combined error and scatter.")
+                   "0.39 ± 0.15 arcsec (2.6 sigma), not assessed from the star's own image.")
     assert len(short.split()) < len(pack_module.offset_sentence({"centroid_offset": own}).split()) - 5
     assert pack_module.offset_sentence({"centroid_offset": own}).endswith(pack_module.SAME_ERROR_RULE)
 
@@ -2338,9 +2351,8 @@ def test_the_note_names_the_photometry_the_aperture_ratio_and_the_predicted_leak
         "aperture) of 0.75, 1.8 sigma short of it.")
     assert flat.count("CROWDSAP") == 1                       # Task 12 review M-5: defined once, in the ratio sentence
     assert "a PSF flux fraction inside the aperture (PSFFRAC)" in flat
-    assert pack_module.leak_sentence(data) == (
-        "KIC 5689116's optimal aperture dims by 130 ± 42 ppm, where this star's light alone (3.0 percent of that "
-        "aperture under the PSF model of the pixel check) predicts 61 ppm.")
+    assert pack_module.leak_sentence(data) == (       # the share and the method are the README's (addendum cut 5)
+        "The target's light predicts 61 ppm in KIC 5689116's optimal aperture against 130 ± 42 ppm measured.")
 
 
 # ---------------------------------------------------------------------------------------------------- Task 11 fix round 1
@@ -2389,7 +2401,7 @@ def test_the_page_texts_lead_with_triceratops_and_carry_the_prior_claim(env_prio
     assert texts["fpp_value"] == "0.012"
     assert texts["in_house"].startswith("A four-scenario estimate without a bound-companion or diluted-planet "
                                         "scenario gives ") and "a lower bound" in texts["in_house"]
-    assert cross_check.NO_CLASS_CLAUSE in texts["class_text"] and "'validated'" in texts["class_text"]
+    assert "no class applies at 30-minute cadence" in texts["class_text"] and "'validated'" in texts["class_text"]
     for text in texts.values():
         assert "read as" not in (text or "") and "validation lines" not in (text or "")
     assert texts["prior"] == pack_module.prior_claim_sentence(data)
@@ -2423,7 +2435,8 @@ def test_the_readme_gives_the_leak_method_as_a_floor():
     data = {"predicted_leak": {"predicted_ppm": 4.0, "share": 0.0017, "measured_ppm": -9.0, "measured_err_ppm": 12.0,
                                "kic": 6146666, "reason": None, "model": dossier_module.LEAK_MODEL}}
     text = pack_module.leak_method_text(data)
-    assert text.startswith("Predicted leak: " + dossier_module.LEAK_MODEL)
+    assert text.startswith("Predicted leak: this star's light is 0.2 percent of the light in KIC 6146666's optimal "
+                           "aperture, from " + dossier_module.LEAK_MODEL)
     assert text.endswith("the Gaussian has no PRF wings, so the prediction is a floor.")
     assert pack_module.leak_method_text({"predicted_leak": {**data["predicted_leak"], "predicted_ppm": None}}) is None
 
@@ -2436,3 +2449,163 @@ def test_the_readme_names_the_hand_built_file_only_when_the_pack_holds_it(env_pr
     assert not (rep.out_dir / pack_module.HAND_BUILT_FILE).exists()
     assert pack_module.HAND_BUILT_FILE not in readme
     assert f"(docs/candidates/{STAGE2_TARGET}/localisation/results.json)" in readme
+
+
+# ---------------------------------------------------------------------------------------------------- Task 13 (spec 11.6)
+
+def _star_extras(data, **star):
+    return {**data, "star": {**data["star"], "ruwe": 0.9449, "non_single_star": 0, "ebpminrp_gspphot": None, **star}}
+
+
+def test_the_star_sentence_and_the_provenance_carry_ruwe_nss_and_the_reddening(env_with_dossier):
+    data = _star_extras(_stored(env_with_dossier))
+    flat = " ".join(render_note(data).split())
+    assert "a RUWE of 0.94 and no non-single-star solution" in flat
+    assert "the reddening is not measured" in flat                     # the "not yet known" titles name it
+    rows = {r["parameter"]: r for r in pack_rows.provenance_rows(data)}
+    assert rows["RUWE"]["value"] == 0.9449 and rows["Gaia non-single-star flag"]["value"] == 0
+    red = _star_extras(data, ebpminrp_gspphot=0.12)
+    assert "GSP-Phot E(BP-RP) of 0.12" in " ".join(render_note(red).split())
+    assert "the reddening is not measured" not in " ".join(render_note(red).split())
+
+
+def test_the_readme_gives_the_flame_radius_as_a_systematic_and_keeps_the_habitable_zone(env_with_dossier):
+    rep = _build(env_with_dossier)
+    readme, note = _texts(rep)["README.md"], _texts(rep)["note/note.tex"]
+    flame = _stored(env_with_dossier)["star"]["gaia_cross_check"]["radius_flame"]
+    assert f"The Gaia FLAME radius of {flame:.3f} Rsun" in readme and "a systematic on the stellar radius" in readme
+    assert "kopparapu2013" not in note and "habitable" not in note.lower()
+    assert "sub-Neptune" in readme and "Rogers 2015" in readme and "Fulton et al. 2017" in readme
+
+
+def test_the_note_cites_gaia_dr3_and_kepler_and_its_software_line_is_not_counted(env_with_dossier):
+    tex = render_note(_stored(env_with_dossier))
+    flat = " ".join(tex.split())
+    for key in ("gaia2016", "gaia2023", "borucki2010"):
+        assert f"]{{{key}}}" in flat, key
+    assert r"\citep{gaia2016,gaia2023}" in flat and r"\citep{borucki2010}" in flat
+    versions = pack_module.software_versions()
+    assert f"numpy {versions['numpy']}" in flat and f"scipy {versions['scipy']}" in flat
+    software = re.search(r"\\software\{[^}]*\}", tex).group(0)
+    assert note_words(tex) == note_words(tex.replace(software, r"\software{}"))
+    readme = _texts(_build(env_with_dossier))["README.md"]
+    for ref in ("Skrutskie", "Thompson", "Kirk", "Stassun"):            # 2MASS, the KOI and EB catalogues, the TIC
+        assert ref in readme, ref
+
+
+def test_the_author_block_comes_from_docs_author_json(env_with_dossier, tmp_path, monkeypatch):
+    path = tmp_path / "author.json"
+    path.write_text(json.dumps({"name": "A. Person", "affiliation": "Somewhere", "email": "a@example.org",
+                                "orcid": "0000-0002-1825-0097"}), encoding="utf-8")
+    monkeypatch.setattr(pack_module, "AUTHOR_FILE", path)
+    tex = render_note(_stored(env_with_dossier), citation=None)
+    assert r"\author[0000-0002-1825-0097]{A. Person}" in tex and r"\affiliation{Somewhere}" in tex
+    assert r"\email{a@example.org}" in tex and "TO FILL IN" not in tex
+    assert pack_module.author_problems(pack_module.load_author(path)) == []
+    path.write_text(json.dumps({"name": "A. Person", "affiliation": "", "email": "", "orcid": "12"}),
+                    encoding="utf-8")
+    assert pack_module.author_problems(pack_module.load_author(path)) == [
+        "docs/author.json has no affiliation", "docs/author.json has no email",
+        "docs/author.json has the ORCID '12', not 0000-0000-0000-000X"]
+    assert pack_module.author_problems(None) == ["no docs/author.json"]
+
+
+def test_the_repository_author_file_names_the_author_and_leaves_the_rest_to_fill():
+    """docs/author.json carries the name of CITATION.cff; the other three fields are Vikram's to fill in."""
+    assert pack_module.load_author() == {"name": "Vikram Pandya", "affiliation": "", "email": "", "orcid": ""}
+
+
+def test_final_refuses_without_the_live_draft_and_with_any_placeholder(env_with_dossier, fake_session, tmp_path,
+                                                                     monkeypatch):
+    from skysift import fpp
+    monkeypatch.setattr(fpp, "SIGNED_OFF", True)
+    env = env_with_dossier
+    _approve(env)
+    _store_errors(env)
+    _store_cross_check(env)
+    with pytest.raises(PackError, match="--final needs --zenodo-live"):
+        _build(env, final=True)
+    path = tmp_path / "author.json"
+    path.write_text(json.dumps({"name": "A. Person", "affiliation": "", "email": "a@example.org",
+                                "orcid": "0000-0002-1825-0097"}), encoding="utf-8")
+    monkeypatch.setattr(pack_module, "AUTHOR_FILE", path)
+    live = ZenodoClient("t", sandbox=False, session=fake_session)
+    with pytest.raises(PackError, match="docs/author.json has no affiliation"):
+        _build(env, zenodo=live, final=True)
+    assert fake_session.calls == []                                  # refused before anything is written
+    path.write_text(json.dumps({"name": "A. Person", "affiliation": "Somewhere", "email": "a@example.org",
+                                "orcid": "0000-0002-1825-0097"}), encoding="utf-8")
+    with pytest.raises(ZenodoError, match=r"still says '10\.5281/zenodo\.SOFTWARE'.*unfinished"):
+        _build(env, zenodo=live, final=True)                         # CITATION.cff carries no software DOI yet
+    assert [c[0] for c in fake_session.calls] == ["POST"]            # reserved, never filled or uploaded
+    monkeypatch.setattr(pack_module, "load_citation",
+                        lambda path=None: ({"authors": [{"name": "A. Person"}], "doi": "10.5281/zenodo.777"}, "test"))
+    fake_session.calls.clear()
+    rep = _build(env, zenodo=live, final=True)
+    assert pack_module.final_problems(rep.out_dir) == []
+    tex = (rep.out_dir / "note" / "note.tex").read_text(encoding="utf-8")
+    assert f"10.5281/zenodo.{DEPOSITION_ID}" in tex and "doi:10.5281/zenodo.777" in tex
+    assert [c[0] for c in fake_session.calls] == ["POST", "PUT", "PUT"]
+    versions = json.loads((rep.out_dir / "provenance" / "versions.json").read_text(encoding="utf-8"))
+    assert versions["software"] == pack_module.software_versions() and versions["pack_version"] == "4"
+
+
+def test_imp_unc_carries_the_larger_error():
+    data = {"ephemeris": {}, "planet": {}, "shape": {"ok": True, "b": {"median": 0.5, "minus": 0.063, "plus": 0.030,
+                                                                      "point": 0.5}}}
+    row = _parse_pipe(exofop.render_exofop_planet(data, "20261022", None, "tag"), PLANET_COLUMNS)
+    assert row["imp"] == "0.500" and row["imp_unc"] == "0.063"
+
+
+def test_exofop_and_the_archive_quote_the_central_epoch(env_with_dossier):
+    data = _with_errors(_stored(env_with_dossier))
+    t = data["timing"]
+    row = _parse_pipe(exofop.render_exofop_planet(data, "20261022", None, "tag"), PLANET_COLUMNS)
+    # the bulk file prints the value at its error's digits (pm_digits), so compare the number, not four decimals
+    assert float(row["epoch"]) == pytest.approx(t["t_ref"] + BKJD, abs=5e-5)
+    assert float(row["epoch_unc"]) == pytest.approx(t["t_ref_err"], rel=0.05)
+    assert f"(epoch {t['epoch_ref']}, the centre of the series)" in pack_text.ephemeris_sentence(data)
+
+
+def test_the_single_event_sentence_compares_the_statistics():
+    data = {"tests": [{"rung": "rung1_events", "status": "pass",
+                       "metrics": {"n_covered": 31, "n_events_with_data": 33, "ses_max_over_mes": 0.28}}]}
+    assert pack_module._vetting_sentences(data)[0] == (
+        "Of the 33 predicted transits with data, 31 are well covered, and the largest single-event statistic is 0.28 "
+        "of the multiple-event statistic.")
+
+
+def test_the_abstract_quotes_the_period_with_the_texts_digits(env_with_dossier):
+    data = _with_errors(_stored(env_with_dossier))
+    assert f"dip every {pack_text.quantities(data)['period']} days" in pack_module.abstract_text(data)
+
+
+def test_season_means_the_roll_season_and_the_depth_test_speaks_of_quarter_groups():
+    data = {"stability": {"metrics": {"season_depths": {"0": 1, "1": 2, "2": 3, "3": 4}, "chi2": 3.5, "dof": 3,
+                                      "p_value": 0.32}}, "tests": []}
+    text = " ".join(pack_module._vetting_sentences(data))
+    assert "The depth agrees across 4 quarter groups (quarters taken modulo 4;" in text and "seasons" not in text
+
+
+def test_the_note_figure_carries_the_fold_the_parity_and_the_season_difference_images(env_with_dossier,
+                                                                                     with_matplotlib):
+    rep = _build(env_with_dossier)
+    assert (rep.out_dir / "note" / "figure1.png").is_file()
+    flat = " ".join(_texts(rep)["note/note.tex"].split())
+    assert "(a) the light curve" in flat and "(b) odd and (c) even transits" in flat
+    assert "(d) per-season difference images" in flat and flat.count(r"\begin{figure}") == 1
+    assert (rep.out_dir / "note" / "figure1.pdf").is_file() and (rep.out_dir / "figures" / "centroids.png").is_file()
+    plain = " ".join(render_note(_stored(env_with_dossier), panels=False).split())     # the SVG: the fold alone
+    assert "(a)" not in plain and "(b) odd" not in plain and "The light curve folded on" in plain
+
+
+def test_one_clause_gives_the_follow_up_window_and_the_photometry(env_with_dossier):
+    data = _with_errors(_stored(env_with_dossier))
+    after = 2461335.5                                         # 22 October 2026
+    nxt = pack_rows.next_transits(data, after, n=1)[0]
+    text = pack_module.followup_text(data, after)
+    depth = float(f"{data['ephemeris']['depth_ppm']:.2g}")
+    assert text == (f"A transit in {nxt['date'][-4:]} is predicted to within {nxt['window_min']:.0f} minutes "
+                    f"(1 sigma) and needs photometry at about {depth:,.0f} ppm on a G "
+                    f"{data['target']['gmag']:.1f} star, within reach of a 1 to 2 m telescope.")
+    assert pack_module.followup_text({**data, "timing": None}, after) is None

@@ -212,7 +212,7 @@
     {%- endif %}
     {%- if events %}
     <div class="table-wrap"><table class="dossier-table">
-      <caption>Per-transit depths</caption>
+      <caption>Per-transit depths. The single-event S/N is measured on the fold this page draws; <code>events.csv</code> in the pack gives the value the timing cut read on the search ephemeris.</caption>
       <thead><tr><th scope="col" class="num">epoch</th><th scope="col" class="num">quarter</th><th scope="col" class="num">mid-transit, BKJD</th><th scope="col" class="num">depth, ppm</th><th scope="col" class="num">coverage</th><th scope="col" class="num">single-event S/N</th></tr></thead>
       <tbody>{% for ev in events %}<tr><td class="num">{{ ev.epoch }}</td><td class="num">{{ ev.quarter }}</td><td class="num">{{ ev.t_mid | fmt(3) }}</td><td class="num">{{ ev.depth_ppm | fmt(0) }} ± {{ ev.err_ppm | fmt(0) }}</td><td class="num">{{ ev.coverage | fmt(2) }}</td><td class="num">{{ ev.ses | fmt(1) }}</td></tr>{% endfor %}</tbody>
     </table></div>

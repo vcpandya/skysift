@@ -204,10 +204,13 @@ def quantities(data: dict, tex: bool = False) -> dict:
 
 def ephemeris_sentence(data: dict) -> str:
     """"P = ... d, T0 = BJD_TDB ..., duration ... h, depth ... ppm", each with its error or the reason it has none:
-    the ExoFOP note, the archive email and the Zenodo description quote this one sentence."""
+    the ExoFOP note, the archive email and the Zenodo description quote this one sentence. T0 is the central epoch,
+    "T0 = BJD_TDB <t_ref ± err> (epoch E, the centre of the series)", when the timing fit is ok (spec 11.6)."""
     q = quantities(data)
-    parts = [f"P = {q['period_pm']} d{q['period_note']}" if q["period_pm"] else None,
-             f"T0 = BJD_TDB {q['t0_bjd_pm']}" if q["t0_bjd_pm"] else None,
+    timed = (data.get("timing") or {}).get("ok") is True and q["t_ref_bjd_pm"] and q["epoch_ref"] is not None
+    t0 = (f"T0 = BJD_TDB {q['t_ref_bjd_pm']} (epoch {q['epoch_ref']}, the centre of the series)" if timed
+          else f"T0 = BJD_TDB {q['t0_bjd_pm']}" if q["t0_bjd_pm"] else None)
+    parts = [f"P = {q['period_pm']} d{q['period_note']}" if q["period_pm"] else None, t0,
              f"duration {q['duration_pm']} h{q['duration_note']}" if q["duration_pm"] else None,
              f"depth {q['depth_pm']} ppm{q['depth_note']}" if q["depth_pm"] else None]
     return ", ".join(p for p in parts if p)
@@ -216,21 +219,32 @@ def ephemeris_sentence(data: dict) -> str:
 CROWDSAP_WORDS = "a CROWDSAP (this star's light fraction in the aperture)"
 
 
-def aperture_clause(block: dict | None, tex: bool = False) -> str | None:
+def aperture_clause(block: dict | None, tex: bool = False, short: bool = False) -> str | None:
     """Rung 3's aperture ratio on the fold against CROWDSAP (the dossier's ``aperture`` block, spec 11.5), the one
     wording of the note and the dossier page (Task 12 review I-1): "the SAP depth is R ± e of the PSF depth against a
     CROWDSAP (this star's light fraction in the aperture) of C, Z sigma short of it" ("above it" when the ratio is
-    the larger), CROWDSAP defined here once (review M-5); None without the block's ratio and error."""
+    the larger), CROWDSAP defined here once (review M-5); None without the block's ratio and error. ``short`` is the
+    note's clause since Task 13 (the word limit; addendum cut 7): "the SAP depth is R ± e of it, Z sigma short of
+    a CROWDSAP (this star's light fraction in the aperture) of C", CROWDSAP defined there once."""
     if not isinstance(block, dict):
         return None
-    ratio, err, crowd, short = (_num(block.get(k)) for k in ("ratio", "ratio_err", "crowdsap", "shortfall_sigma"))
+    ratio, err, crowd, short_sigma = (_num(block.get(k)) for k in ("ratio", "ratio_err", "crowdsap",
+                                                                    "shortfall_sigma"))
     if ratio is None or err is None:
         return None
+    if short:
+        parts = ["the SAP depth is ", pm_text(ratio, err, err, tex=tex), " of it"]
+        if crowd is not None and short_sigma is not None:
+            parts.append(f", {abs(short_sigma):.1f} sigma {'short of' if short_sigma < 0 else 'above'} "
+                         f"{CROWDSAP_WORDS} of {crowd:.2f}")
+        elif crowd is not None:
+            parts.append(f" against {CROWDSAP_WORDS} of {crowd:.2f}")
+        return _joined(tex, *parts)
     parts = ["the SAP depth is ", pm_text(ratio, err, err, tex=tex), " of the PSF depth"]
     if crowd is not None:
         parts.append(f" against {CROWDSAP_WORDS} of {crowd:.2f}")
-        if short is not None:
-            parts.append(f", {abs(short):.1f} sigma {'short of' if short < 0 else 'above'} it")
+        if short_sigma is not None:
+            parts.append(f", {abs(short_sigma):.1f} sigma {'short of' if short_sigma < 0 else 'above'} it")
     return _joined(tex, *parts)
 
 

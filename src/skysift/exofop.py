@@ -92,7 +92,8 @@ def prior_fields(data: dict) -> dict:
 def render_exofop_planet(data: dict, date: str, tic: str | None, tag: str) -> str:
     """``exofop/params_planet_<date>_001.txt``, ExoFOP's planet template (``EXOFOP_PLANET_COLUMNS``): the target
     ``TIC<tic>.01`` (``TIC<TIC-TO-FILL>.01`` without a TIC id), flag ``newctoi`` with its discovery and candidate
-    name, disposition ``PC``, the ephemeris with its errors (epoch in full BJD_TDB), Rp/R*, a/R* and b only when the
+    name, disposition ``PC``, the ephemeris with its errors (epoch in full BJD_TDB: the reference epoch at the centre
+    of the series when the timing fit is ok, spec 11.6), Rp/R*, a/R* and b only when the
     bootstrap gives them errors (a/R* the quoted one: from the stellar parameters, with their errors, when the
     density-prior fit is quoted, spec 11.3), the planet's radius, temperature, insolation and orbit with theirs,
     ``prop_period`` 0 and the paper URL and notes as placeholders, or, when the dossier holds a prior claim on the
@@ -101,7 +102,10 @@ def render_exofop_planet(data: dict, date: str, tic: str | None, tag: str) -> st
     eph, planet, shape = data.get("ephemeris") or {}, data.get("planet") or {}, data.get("shape") or {}
     e = _errors(eph)
     period = _plain(eph.get("period_days"), e["period"], e["period"], 5)
-    epoch = _plain(_bjd(eph, "t0"), e["t0"], e["t0"], 4)
+    # the central epoch with its error when the timing fit is ok (spec 11.6), epoch 0 otherwise
+    timed = (data.get("timing") or {}).get("ok") is True and _bjd(eph, "t_ref") is not None
+    epoch = (_plain(_bjd(eph, "t_ref"), e["t_ref"], e["t_ref"], 4) if timed
+             else _plain(_bjd(eph, "t0"), e["t0"], e["t0"], 4))
     depth = _plain(eph.get("depth_ppm"), e["depth"], e["depth"], 0)
     duration = _plain(eph.get("duration_h"), e["duration_minus"], e["duration_plus"], 2)
     values = {"target": f"TIC{tic or TIC_PLACEHOLDER}.01", "flag": "newctoi", "disp": "PC",

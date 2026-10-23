@@ -278,7 +278,7 @@ def test_data_files_ship_with_the_package():
 # gaiadr3.astrophysical_parameters); asking gaia_source for a FLAME column is an HTTP 400 from the archive
 GAIA_SOURCE_COLUMNS = {"source_id", "ra", "dec", "parallax", "parallax_error", "phot_g_mean_mag", "bp_rp", "ruwe",
                        "nu_eff_used_in_astrometry", "pseudocolour", "ecl_lat", "astrometric_params_solved",
-                       "teff_gspphot"}
+                       "teff_gspphot", "non_single_star", "ebpminrp_gspphot"}
 ASTROPHYSICAL_COLUMNS = {"radius_flame", "mass_flame"}
 
 
@@ -288,5 +288,21 @@ def test_the_star_query_takes_each_column_from_its_dr3_table():
     by_table = {alias: {c.split(".", 1)[1] for c in columns if c.startswith(alias + ".")} for alias in ("g", "ap")}
     assert len(by_table["g"]) + len(by_table["ap"]) == len(columns)          # every column is qualified
     assert by_table["g"] <= GAIA_SOURCE_COLUMNS and by_table["ap"] == ASTROPHYSICAL_COLUMNS
+    assert {"ruwe", "non_single_star", "ebpminrp_gspphot"} <= by_table["g"]      # spec 11.6: the star sentence
     assert rest.startswith("gaiadr3.gaia_source AS g LEFT OUTER JOIN gaiadr3.astrophysical_parameters AS ap "
                            "ON ap.source_id = g.source_id WHERE g.source_id = {id}")
+
+
+def test_the_star_carries_ruwe_the_nss_flag_and_the_reddening():
+    """Spec 11.6: RUWE, the Gaia non-single-star flag and GSP-Phot E(BP-RP) reach the star block (None where Gaia has
+    no value)."""
+    extra = GAIA_CSV.replace(b",radius_flame,mass_flame\n", b",radius_flame,mass_flame,non_single_star,"
+                             b"ebpminrp_gspphot\n").replace(b",0.5394,0.5595\n", b",0.5394,0.5595,0,0.1203\n")
+    row = query_gaia(target_6146676(), fetch=fake_fetch({**RESPONSES, "WHERE g.source_id": extra}), store=None)
+    assert (row.ruwe, row.non_single_star, row.ebpminrp_gspphot) == (pytest.approx(0.9449), 0, pytest.approx(0.1203))
+    star, _ = derive(row, 40.29109, 0.048, 2165e-6, np.random.default_rng(1))
+    assert (star.ruwe, star.non_single_star, star.ebpminrp_gspphot) == (pytest.approx(0.9449), 0,
+                                                                         pytest.approx(0.1203))
+    plain = gaia_row_6146676()
+    assert plain.non_single_star is None and plain.ebpminrp_gspphot is None
+    assert derive(plain, 40.29109, 0.048, 2165e-6, np.random.default_rng(1))[0].ebpminrp_gspphot is None

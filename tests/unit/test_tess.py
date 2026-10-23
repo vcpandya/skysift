@@ -242,16 +242,16 @@ def test_the_note_sentence_is_one_short_sentence_with_every_number():
             f"transits fall in its windows at a diluted {b['dilution']['depth_tess_ppm']:,.0f} ppm against a 1-hour "
             f"noise of {noise['nominal_1h_ppm']:,.0f} to {noise['conservative_1h_ppm']:,.0f} ppm at a blended "
             f"T = {b['dilution']['t_total']:.1f}, a folded {sig['folded_conservative']:.2f} to "
-            f"{sig['folded_nominal']:.2f} sigma, so {tess.VERDICT_PHRASES[b['verdict']]}")
+            f"{sig['folded_nominal']:.2f} sigma, so {tess.VERDICT_PHRASES[b['verdict']]}{tess.NO_DATA_EXAMINED}")
     # round 2, N1 and N4: the note's sentence points to the README and cites Christ et al. 2019 alone
     assert text == f"{body} (noise model and thresholds in the README; Christ et al. 2019)."
     assert b["sentence"] == f"{body}." and tess.note_sentence(b, readme=False) == f"{body}."
-    assert "per hour" not in text and len(text.split()) < 72 and text.count("; ") == 2   # one short sentence
+    assert "per hour" not in text and len(text.split()) < 80 and text.count("; ") == 3   # one short sentence
     alone = tess.statement({**META, "neighbours": []}, EPHEMERIS)
     assert "at T = 15.2, a folded" in tess.note_sentence(alone)          # no blend, no "blended"
     tex = str(tess.note_sentence(b, tex=True))
     assert "ephemeris transits" in tex and "\\%" not in tex
-    assert tex.endswith(r"the transit \citep[noise model and thresholds in the README;][]{christ2019}.")
+    assert tex.endswith(r"were examined \citep[noise model and thresholds in the README;][]{christ2019}.")
     assert set(re.findall(r"\{([a-z]+[0-9]{4})\}", tex)) == {"christ2019"} and tess.note_cites(b) == ("christ2019",)
 
 
@@ -259,9 +259,9 @@ def test_the_note_sentence_is_one_short_sentence_with_every_number():
 def test_each_verdict_gets_its_phrase_and_an_exofop_line(verdict, monkeypatch):
     monkeypatch.setattr(tess, "verdict", lambda *_a: verdict)
     b = tess.statement(META, EPHEMERIS)
-    assert b["verdict"] == verdict and b["sentence"].endswith(f"so {tess.VERDICT_PHRASES[verdict]}.")
-    assert tess.note_sentence(b).endswith(f"so {tess.VERDICT_PHRASES[verdict]} (noise model and thresholds in the "
-                                          "README; Christ et al. 2019).")
+    said = f"so {tess.VERDICT_PHRASES[verdict]}{tess.NO_DATA_EXAMINED}"         # spec 11.6
+    assert b["verdict"] == verdict and b["sentence"].endswith(f"{said}.")
+    assert tess.note_sentence(b).endswith(f"{said} (noise model and thresholds in the README; Christ et al. 2019).")
     line = tess.exofop_line(b)
     assert line.startswith(f"TESS: {verdict}; {b['n_transits']} transits in sectors 14, 15, 41")
     assert "; folded S/N " in line and "-" in line.split("folded S/N ")[1]
@@ -532,3 +532,10 @@ def test_the_first_pointer_names_the_readme_of_the_zenodo_pack():
     assert str(tess.note_sentence(b, tex=True, first=True)).endswith(
         r"\citep[noise model and thresholds in the Zenodo pack's README;][]{christ2019}.")
     assert "README" not in tess.note_sentence(b, readme=False, first=True)
+
+
+def test_the_tess_clause_says_no_data_were_examined_and_qualifies_not_expected():
+    block = {**tess.statement(META, EPHEMERIS), "verdict": "not expected"}
+    text = tess.note_sentence(block, readme=False)
+    assert text.endswith("so TESS is not expected to have detected the transit at the nominal noise; no TESS data "
+                         "were examined.")

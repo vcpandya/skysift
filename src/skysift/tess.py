@@ -89,6 +89,8 @@ SHOULD_DETECT_DOC = ("A conservative folded significance at or above 7.1: the Ke
                      "Montet and Fabrycky 2019 (AJ 157, 235) centre their TESS recovery logistic; Sullivan et al. "
                      "2015 (ApJ 809, 77) use 7.3.")
 NOT_EXPECTED_S = 3.0
+# every counted prediction ends with this clause (spec 11.6): the statement is a prediction, no TESS pixel was read
+NO_DATA_EXAMINED = "; no TESS data were examined"
 NOT_EXPECTED_DOC = ("A nominal folded significance below 3: the floor Christ, Montet and Fabrycky 2019 (AJ 157, "
                     "235) report as adequate for characterising known planets.")
 # "not assessed" (fix round 2, N3): TESScut lists sectors for the star but none of them is in the table, so no
@@ -97,7 +99,7 @@ VERDICTS = ("should have detected", "marginal", "not expected", "not observed in
 VERDICT_PHRASES = {
     "should have detected": "TESS should have detected the transit and a TESS search is the natural follow-up",
     "marginal": "a TESS detection would be marginal",
-    "not expected": "TESS is not expected to have detected the transit",
+    "not expected": "TESS is not expected to have detected the transit at the nominal noise",
     "not observed in transit": "no transit fell in a TESS window",
     "not assessed": "TESS coverage was not assessed",
 }
@@ -481,7 +483,7 @@ def _plain_sentence(b: dict | None) -> str:
             f"at a diluted {_ppm(b['dilution']['depth_tess_ppm'])} ppm against a 1-hour noise of "
             f"{_ppm(noise['nominal_1h_ppm'])} to {_ppm(noise['conservative_1h_ppm'])} ppm at {_magnitude(b)}, a folded "
             f"{_s(sig['folded_conservative'])} to {_s(sig['folded_nominal'])} sigma, so "
-            f"{VERDICT_PHRASES[b['verdict']]}.")
+            f"{VERDICT_PHRASES[b['verdict']]}{NO_DATA_EXAMINED}.")
 
 
 # the works the methods sentence cites, as (key, plain citation); since fix round 2 (N1) it is printed in the

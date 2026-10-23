@@ -37,6 +37,9 @@ This pack was built on {{ f.built_words }} by SkySift (pack format {{ f.pack_ver
 {% if n.odd_text %}
 | odd and even depths | {{ n.odd_text }} and {{ n.even_text }}{% if n.parity_sigma_text %} ({{ n.parity_sigma_text }} sigma apart){% endif %} |
 {% endif %}
+{% if n.stacked_parity_text %}
+| odd and even depths, stacked folds | {{ n.stacked_parity_text }} |
+{% endif %}
 {% if n.secondary_pm %}
 | secondary eclipse (phase 0.5) | {{ n.secondary_pm }} ppm{% if n.secondary_limit %}, 3-sigma upper limit {{ n.secondary_limit }} ppm{% endif %} |
 {% endif %}
@@ -47,6 +50,10 @@ This pack was built on {{ f.built_words }} by SkySift (pack format {{ f.pack_ver
 | {{ row.parameter }} | {{ row.text }} |
 {% endfor %}
 | TESS | {{ n.tess_row }} |
+{% if n.star_method_text or n.flame_text or n.hz_text %}
+
+Star:{% if n.star_method_text %} {{ n.star_method_text }}{% endif %}{% if n.flame_text %} {{ n.flame_text }}{% endif %}{% if n.hz_text %} {{ n.hz_text }}{% endif %}
+{% endif %}
 {% if n.errors_methods %}
 
 Ephemeris and transit-parameter errors (the note's signal section points here): {{ n.errors_methods }}
@@ -59,6 +66,10 @@ Ephemeris and transit-parameter errors (the note's signal section points here): 
 
 CROWDSAP and PSFFRAC are KBonus header keywords. CROWDSAP is {{ crowdsap_definition }}; PSFFRAC is {{ psffrac_definition }}.
 {% endif %}
+{% if n.secondary_plain %}
+
+Phase 0.5 and the red noise: {{ n.secondary_plain }} The margins are rung 2's model-shift test (the largest positive excursion and the tertiary dip in the same fold).
+{% endif %}
 {% if n.offset_text or n.hand_built_text %}
 
 Pixel offset:{% if n.offset_text %} {{ n.offset_text }}{% endif %}{% if n.hand_built_text %} {{ n.hand_built_text }}{% endif %}
@@ -70,7 +81,7 @@ Pixel offset:{% if n.offset_text %} {{ n.offset_text }}{% endif %}{% if n.hand_b
 
 {{ n.fap_text }}
 
-{{ n.fpp_text }}{{ (" " ~ n.beb_radius_text) if n.beb_radius_text else "" }}
+{{ n.fpp_text }} {{ n.in_house_method }}{{ (" " ~ n.beb_radius_text) if n.beb_radius_text else "" }}
 {% if n.cross_check_after %}
 
 {{ n.cross_check_after }}
@@ -171,6 +182,10 @@ Observers who plan a transit ask for the ephemeris first. Send `data/ephemeris.c
 {% for t in n.next_transits %}
 - {{ t.text }}
 {% endfor %}
+{% if n.followup_text %}
+
+{{ n.followup_text }}
+{% endif %}
 
 Send{% else %}
 Observers who plan a transit ask for the ephemeris first. Send `data/ephemeris.csv` and say: mid-transit times are T = {{ n.t0_bjd }} + E x {{ n.period }} (BJD_TDB, E a whole number of orbits) and the transit lasts {{ n.duration_pm }} h. The dossier carries no formal error on the period or the first mid-transit (the transits could not be timed one by one), so a window of at least one transit duration either side of each predicted time is needed, more for times years after 2013. Send{% endif %} `data/lightcurve.csv` and `data/events.csv` to anyone checking the depth, and `dossier.html` to anyone who wants the full vetting. Point every request at the Zenodo DOI, so everyone works from the same frozen files.
@@ -180,6 +195,9 @@ Observers who plan a transit ask for the ephemeris first. Send `data/ephemeris.c
 {% for c in n.caveats %}
 - {{ c.title }}. {{ c.text }}
 {% endfor %}
+{% if n.followup_text %}
+- {{ n.followup_text }}
+{% endif %}
 
 ## What is in the pack
 
@@ -196,8 +214,14 @@ There is no centroid figure: the pixel step has not run for this signal, or its 
 
 ## Provenance
 
-`provenance/versions.json` names the pack format, the dossier format, the search and ladder versions and the git commit. Software: {{ n.software_line }}; {{ n.code_sentence }}. The note's authors and the Zenodo creators came from {{ f.creators_source }}. `provenance/queries.json` lists every catalogue and data request made for this target (URL, time, status, SHA-256). `provenance/calibration.json` holds the null-search counts behind the false-alarm probability. `provenance/hashes.json` holds the SHA-256 of every other file in the pack. To rebuild the dossier from the archive files:
+`provenance/versions.json` names the pack format, the dossier format, the search and ladder versions and the git commit. Software: {{ n.software_line }}; {{ f.code_sentence }}. The note's authors and the Zenodo creators came from {{ f.creators_source }}. `provenance/queries.json` lists every catalogue and data request made for this target (URL, time, status, SHA-256). `provenance/calibration.json` holds the null-search counts behind the false-alarm probability. `provenance/hashes.json` holds the SHA-256 of every other file in the pack. To rebuild the dossier from the archive files:
 
 {% for c in n.commands %}
     {{ c }}
+{% endfor %}
+
+## References
+
+{% for r in n.references_plain %}
+- {{ r }}
 {% endfor %}

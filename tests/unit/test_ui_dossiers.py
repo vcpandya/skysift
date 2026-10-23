@@ -791,8 +791,8 @@ def test_dossier_page_shows_the_cross_check_block(seeded_dossier):
         assert "nearby false-positive probability" in checks and "0.0001 to 0.0001" in checks
         # I-1 (spec 11.2): the class name is a label of where the medians fall, never a reading of the signal
         plain = html_module.unescape(checks)
-        assert "read as" not in plain and "region the paper labels 'likely planet'" in plain
-        assert f"TRICERATOPS places the signal {cc.NO_CLASS_CLAUSE}" in plain and "never blocks the live draft" in plain
+        assert "read as" not in plain and cc.CLASS_LABEL.format(cls="likely planet") in plain     # Task 13 wording
+        assert "never blocks the live draft" in plain
         # the false-positive items lead with the TRICERATOPS headline; the in-house lower bound follows
         lead = f"{cc.headline({**data, 'cross_check': cc.with_current(result, data)})}."
         assert lead.startswith("TRICERATOPS 1.1.0 gives a false-positive probability of ") and lead in plain
@@ -875,7 +875,8 @@ def test_section_01_presents_a_prior_claim_with_its_relationship(seeded_dossier)
     signal = client.get(f"/dossiers/{STAGE2_TARGET}").text.split('id="signal"')[1].split('id="repeat"')[0]
     assert "Kuber Mehta reported this signal first" in signal and "doi:10.5281/zenodo.23325261" in signal
     assert "13 October 2026" in signal
-    assert "result is a re-detection: the sweep" in signal and "the search itself used no prior ephemeris" in signal
+    assert "result is a re-detection: the pipeline was developed" in signal
+    assert "the search used no prior ephemeris" in signal
     # M1: the comparison with the claim's numbers follows the claim on the page, as in the README
     from skysift import pack
     claimed = {**data, "prior_claims": [PRIOR_CLAIM]}
@@ -906,8 +907,7 @@ def test_the_validated_class_is_not_named_and_withdrawn_in_one_breath(seeded_dos
     app.state.store.set_cross_check(STAGE2_TARGET, fake_result(cc.inputs_fingerprint(data), fpp=0.012, nfpp=1e-4))
     page = html_module.unescape(client.get(f"/dossiers/{STAGE2_TARGET}").text)
     checks = page.split('id="checks"')[1].split('id="pixels"')[0]
-    label = (f"TRICERATOPS places the signal {cc.NO_CLASS_CLAUSE} (Giacalone et al. 2021); its medians sit in the "
-             "region the paper labels 'validated', a place on the scale and not a class of the signal.")
+    label = cc.CLASS_LABEL.format(cls="validated")      # the Task 13 wording: a place on the scale, not a class
     assert label in checks
     lead = ("TRICERATOPS 1.1.0 gives a false-positive probability of 0.012 (0.012 without a planet on an unresolved "
             f"bound companion), {cc.NO_CLASS_CLAUSE} (Giacalone et al. 2021).")

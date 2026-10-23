@@ -1203,8 +1203,8 @@ def test_a_stamp_wcs_shifted_by_a_fifth_of_a_pixel_moves_only_the_catalogue_offs
 
 # ---------------------------------------------------------------------------------------------------- prior claims (P1)
 
-DEVELOPMENT_NOTE = ("the sweep's target list and the pipeline's tests used this star from 14 October 2026, the day "
-                    "after the claim; the search itself used no prior ephemeris")
+DEVELOPMENT_NOTE = ("the pipeline was developed with this star as a test case from 14 October 2026; the search used "
+                    "no prior ephemeris")         # the addendum's one clause (Task 13, cut 7)
 PRIOR_CLAIM = {"doi": "10.5281/zenodo.23325261", "date": "2026-10-13", "author": "Kuber Mehta",
                "title": "Planethunt: archival evidence for the KIC 5689121 transit candidate",
                "status": "Research Note submitted 13 October 2026, reported not accepted",
@@ -1558,3 +1558,19 @@ def test_the_fpp_takes_the_quoted_fit_and_the_parity_block_with_the_exclusion_ra
     failed = {**shape, "fits": {**shape["fits"], "prior": {"ok": False}}}
     none = dossier_module.fpp_inputs(signal, tests, star, planet, [], 16.2, blocks={"shape": failed})
     assert (none.fit_k, none.fit_b, none.fit_a_over_r) == (None, None, None)
+
+
+def test_the_star_caveat_names_the_reddening_and_one_quarter_group_is_not_a_season():
+    """Spec 11.6: without GSP-Phot E(BP-RP) the stellar-radius caveat's title says the reddening is not measured; a
+    depth measured in one quarter group says "quarter group", the roll season keeping "season"."""
+    data = {"star": {"reddening_note": "", "alt_radius_e02": {"median": 0.48}, "ebpminrp_gspphot": None},
+            "tests": [{"rung": "rung3_stability", "status": "pass", "metrics": {"season_depths": {"0": 2000.0}}}]}
+    titles = {c["title"]: c for c in dossier_module.caveats(data)}
+    spectrum = dossier_module.no_spectrum_title(data["star"])
+    assert spectrum == ("No spectrum: the planet radius depends on the stellar radius from Gaia colour and parallax, "
+                        "and the reddening is not measured")
+    assert spectrum in titles and "At E(BP-RP) = 0.2 the stellar radius would be 0.480 Rsun." in titles[spectrum]["text"]
+    measured = dossier_module.no_spectrum_title({**data["star"], "ebpminrp_gspphot": 0.12})
+    assert measured.endswith("colour and parallax") and "reddening" not in measured
+    one = titles["The depth is measured in one quarter group only"]["text"]
+    assert "1 quarter group" in one and "season" not in one

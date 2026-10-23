@@ -455,3 +455,11 @@ def test_cli_crosscheck_export_and_import(settings, monkeypatch, tmp_path):
     for argv in ([], ["--export", "x", "--import", str(good)]):
         r = runner.invoke(app, ["crosscheck", "--target", STAGE2_TARGET, *argv])
         assert r.exit_code == 2 and "one of --export or --import" in r.output
+
+
+def test_pack_final_needs_zenodo_live():
+    """Spec 11.6: --final refuses before anything is read when the draft is not a live one."""
+    r = runner.invoke(app, ["pack", "--target", "kic-006146676", "--final"])
+    assert r.exit_code == 2 and "--final needs --zenodo-live" in r.output
+    r = runner.invoke(app, ["pack", "--target", "kic-006146676", "--final", "--zenodo"])
+    assert r.exit_code == 2 and "--final needs --zenodo-live" in r.output

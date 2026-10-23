@@ -313,10 +313,15 @@ def logg_value(star: dict) -> dict | None:
             "plus": side("plus", "minus")}
 
 
+GAIA_FLAG_ROWS = (("RUWE", "ruwe", ""), ("Gaia non-single-star flag", "non_single_star", ""),
+                  ("GSP-Phot E(BP-RP)", "ebpminrp_gspphot", "mag"))
+
+
 def provenance_rows(data: dict) -> list[dict]:
     """The star block as rows {parameter, value, minus, plus, unit, method, inputs, reference}: each parameter with
     the method, inputs and reference its stored source names (the Gaia DR3 id first among the inputs), the spectral
-    type with the temperature's, and log g from the mass and radius (``logg_value``)."""
+    type with the temperature's, log g from the mass and radius (``logg_value``), and RUWE, the Gaia non-single-star
+    flag and GSP-Phot E(BP-RP) as Gaia DR3 gives them (``GAIA_FLAG_ROWS``, spec 11.6), each when stored."""
     star, gaia = data.get("star") or {}, (data.get("target") or {}).get("gaia_id")
     rows = []
 
@@ -341,6 +346,12 @@ def provenance_rows(data: dict) -> list[dict]:
                      "value": logg["median"], "unit": "cgs",
                      "method": f"log10(G M / R^2) from the mass and radius above (solar {SOLAR_LOGG}), errors in "
                                "quadrature with their correlation ignored", "inputs": inputs(rest), "reference": ""})
+    for name, key, unit in GAIA_FLAG_ROWS:
+        v = star.get(key)
+        if v is None or isinstance(v, bool) or not isinstance(v, (int, float)):
+            continue
+        rows.append({"parameter": name, "value": v, "minus": None, "plus": None, "unit": unit,
+                     "method": "Gaia DR3 gaia_source", "inputs": inputs(""), "reference": "Gaia Collaboration 2023"})
     return rows
 
 

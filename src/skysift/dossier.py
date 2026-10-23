@@ -1283,9 +1283,10 @@ def partial_box_seasons(seasons: list[dict]) -> list[dict]:
     return [s for s in seasons if isinstance(s, dict) and s.get("voting") is True and s.get("box_partial") is True]
 
 
-def partial_box_sentence(seasons: list[dict]) -> str:
+def partial_box_sentence(seasons: list[dict], short: bool = False) -> str:
     """One sentence naming the voting seasons whose box is cut by the stamp edge, the star or stars whose box it is
-    (a box with fewer than nine pixels) and the largest ``edge_bias_pix`` allowance among them; "" when none is."""
+    (a box with fewer than nine pixels) and the largest ``edge_bias_pix`` allowance among them; "" when none is.
+    ``short`` is the Research Note's form: "..., adding up to B px to the centroid error."."""
     cut = partial_box_seasons(seasons)
     if not cut:
         return ""
@@ -1300,6 +1301,9 @@ def partial_box_sentence(seasons: list[dict]) -> str:
     else:
         whose = "this star's 3 x 3 box is"
     bias = max((_num(s, "edge_bias_pix") or 0.0 for s in cut), default=0.0)
+    if short:
+        return (f"In season{'s' if len(cut) > 1 else ''} {listed} {whose} cut by the stamp edge, adding up to "
+                f"{bias:.2f} px to the centroid error.")
     return (f"In season{'s' if len(cut) > 1 else ''} {listed} {whose} cut by the stamp edge; the centroid there is "
             f"measured on the pixels present and the shift the cut would give a point source ({bias:.2f} px at most) "
             "is added to its error.")
@@ -1364,6 +1368,18 @@ def prior_claims_unchecked(data: dict) -> bool:
     """The dossier was built where the candidates folder was absent (``prior_claims`` stored as None), so no prior
     claim on the signal was looked for. A dossier from before the key existed reads as checked with none."""
     return "prior_claims" in data and data["prior_claims"] is None
+
+
+CANDIDATE_CAVEAT = "This is a candidate until follow-up confirms it"
+NO_SPECTRUM = "No spectrum: the planet radius depends on the stellar radius from Gaia colour and parallax"
+NO_REDDENING = ", and the reddening is not measured"
+
+
+def no_spectrum_title(star: dict | None) -> str:
+    """The stellar-radius caveat's title (spec 11.6): ``NO_SPECTRUM``, with ``NO_REDDENING`` when Gaia gives no GSP-Phot
+    E(BP-RP) for the star. The pack reads the title from here, so it follows the star block it prints."""
+    red = (star or {}).get("ebpminrp_gspphot")
+    return NO_SPECTRUM + ("" if isinstance(red, (int, float)) and not isinstance(red, bool) else NO_REDDENING)
 
 
 def caveats(data: dict) -> list[dict]:
@@ -1462,17 +1478,16 @@ def caveats(data: dict) -> list[dict]:
     text += f" {note}" if note else " The star's radius is not known here."
     if alt is not None and not note:
         text += f" At E(BP-RP) = 0.2 the stellar radius would be {alt:.3f} Rsun."
-    out.append({"title": "No spectrum: the planet radius depends on the stellar radius from Gaia colour and parallax",
-                "text": text})
+    out.append({"key": "no_spectrum", "title": no_spectrum_title(star), "text": text})
     stab = next((t.get("metrics") or {} for t in tests if t.get("rung") == "rung3_stability"), None)
     if stab is not None:
         n_seasons = stab.get("n_seasons")
         n_seasons = len(stab.get("season_depths") or {}) if n_seasons is None else int(n_seasons)
-        if n_seasons < 2:
-            out.append({"title": "The depth is measured in one season only",
-                        "text": f"Rung 3 found data in {n_seasons} season{'' if n_seasons == 1 else 's'}, so a depth "
-                                "that changes with the detector cannot be tested."})
-    out.append({"title": "This is a candidate until follow-up confirms it",
+        if n_seasons < 2:          # rung 3's groups are quarters modulo 4, not the archive roll season (spec 11.6)
+            out.append({"title": "The depth is measured in one quarter group only",
+                        "text": f"Rung 3 found data in {n_seasons} quarter group{'' if n_seasons == 1 else 's'}, so "
+                                "a depth that changes with the detector cannot be tested."})
+    out.append({"title": CANDIDATE_CAVEAT,
                 "text": "Follow-up would need ground-based transit photometry at a predicted time, a spectrum of the "
                         "host and high-resolution imaging. Without imaging, an unresolved bound companion within "
                         f"{UNRESOLVED_COMPANION_ARCSEC} arcsec that carries the transit is the open false-positive "

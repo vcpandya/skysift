@@ -133,6 +133,9 @@ def _creator(author: dict) -> dict | None:
 # spec 11.4: what the false-alarm probability was measured against, and what it means across the whole sweep
 FAP_NULLS = ("{k} of {n:,} null searches (the inverted and scrambled light curves of {stars:,} other KBonus stars, "
              "searched without the masked pass and alias resolution) reached the signal's SDE")
+# the note's form (Task 13, the word limit; addendum cut 2): the method parenthetical is the README's, and the
+# note's abstract says the nulls are other KBonus stars
+FAP_NULLS_SHORT = "{k} of {n:,} null searches reached the signal's SDE"
 FAP_SWEEP = ("; across the {s:,}-star sweep {expected} expected by chance, and the vetting ladder, not the SDE, "
              "separates the candidate from them")
 FAP_NO_SWEEP = "; the vetting ladder, not the SDE, separates the candidate from such peaks"
@@ -152,17 +155,22 @@ def _expected(x: float) -> str:
     return "about one such peak is" if n == 1 else f"about {n:,} such peaks are"
 
 
-def fap_sentence(data: dict) -> str:
+def fap_sentence(data: dict, short: bool = False) -> str:
     """"False-alarm probability: <words>." and, when calibrated, ``FAP_NULLS`` with ``FAP_SWEEP`` (the stored
     ``calibration.sweep_size`` times the FAP) or ``FAP_NO_SWEEP`` without a sweep size. A dossier stored before the
-    calibration block says "other KBonus stars" without their count."""
+    calibration block says "other KBonus stars" without their count. ``short`` is the note's form,
+    ``FAP_NULLS_SHORT``, without the method parenthetical, which the README and the other texts keep."""
     fap, calib = data.get("fap") or {}, data.get("calibration") or {}
     words = fap.get("words") or "not computed"
     if not (fap.get("calibrated") and fap.get("n") is not None):
         return f"False-alarm probability: {words}."
     stars = calib.get("null_stars")
-    nulls = (FAP_NULLS.format(k=fap.get("k"), n=fap["n"], stars=stars) if isinstance(stars, int)
-             else FAP_NULLS.replace("{stars:,} ", "").format(k=fap.get("k"), n=fap["n"]))
+    if short:
+        nulls = FAP_NULLS_SHORT.format(k=fap.get("k"), n=fap["n"])
+    elif isinstance(stars, int):
+        nulls = FAP_NULLS.format(k=fap.get("k"), n=fap["n"], stars=stars)
+    else:
+        nulls = FAP_NULLS.replace("{stars:,} ", "").format(k=fap.get("k"), n=fap["n"])
     size, value = calib.get("sweep_size"), fap.get("fap")
     if isinstance(size, int) and size > 0 and isinstance(value, (int, float)) and math.isfinite(value):
         sweep = FAP_SWEEP.format(s=size, expected=_expected(size * value))
@@ -188,13 +196,13 @@ def _capital(text: str) -> str:
     return text[:1].upper() + text[1:]
 
 
-def probability_sentences(data: dict) -> tuple[str, str]:
+def probability_sentences(data: dict, short: bool = False) -> tuple[str, str]:
     """The two probabilities, each in its own sentence (``fap_sentence``; the false-positive one leads with the
     TRICERATOPS headline, ``crosscheck.headline``, when a current cross-check exists, then ``in_house_text``). The
     in-house estimate says "provisional" until its factor tables are signed off, and "not computed" without the Gaia
     neighbour list. Every pack text uses these, so the numbers never merge into one."""
     fpp = data.get("fpp") or {}
-    fap_text = fap_sentence(data)
+    fap_text = fap_sentence(data, short=short)
     pixels = "" if fpp.get("pixels", True) else " (no pixel data yet)"
     head = cc.headline(data, named=False)
     if head is not None:

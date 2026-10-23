@@ -47,6 +47,8 @@ RUN_KEYS = ("seed", "fpp", "fpp_no_stp", "nfpp", "p_stp", "p_ptp", "best_scenari
 CITATION = "(Giacalone et al. 2021)"
 # spec 11.2: the paper's classes do not apply at Kepler's 30-minute cadence, so the texts name none
 NO_CLASS_CLAUSE = "in none of its validation classes, which do not apply at 30-minute cadence"
+# the Research Note's form (Task 13, the word limit; addendum cut 8); every other text keeps NO_CLASS_CLAUSE
+NO_CLASS_SHORT = "no validation class applies at 30-minute cadence"
 # the scenarios of the package's probability table in words, for the sentence on a dominant scenario
 SCENARIO_WORDS = {
     "TP": "a planet transiting the target", "EB": "an eclipsing binary on the target",
@@ -618,14 +620,14 @@ CLASS_PHRASES = {
 }
 
 
+CLASS_LABEL = "The medians fall where Giacalone et al. (2021) label '{cls}'; no class applies at 30-minute cadence."
+
+
 def class_label_text(cls: str | None) -> str | None:
-    """Where the medians fall on Giacalone et al.'s scale, as the dossier page prints it (spec 11.2):
-    ``NO_CLASS_CLAUSE`` first, then the class name as the label of that place on the scale, never as a reading of
+    """Where the medians fall on Giacalone et al.'s scale, wherever it prints (the dossier page; the controller's
+    wording ruling of Task 13): ``CLASS_LABEL``, the class name the label of a place on the scale, never a reading of
     the signal. None without a class (a block of the earlier format)."""
-    if not cls:
-        return None
-    return (f"TRICERATOPS places the signal {NO_CLASS_CLAUSE} {CITATION}; its medians sit in the region the paper "
-            f"labels '{cls}', a place on the scale and not a class of the signal.")
+    return CLASS_LABEL.format(cls=cls) if cls else None
 
 
 def dominant_scenario(block: dict) -> dict | None:
@@ -639,14 +641,19 @@ def dominant_scenario(block: dict) -> dict | None:
     return {"id": str(best.get("ID")), "scenario": str(best.get("scenario")), "prob": float(best["prob"])}
 
 
-def dominant_sentence(block: dict) -> str | None:
+def dominant_sentence(block: dict, short: bool = False) -> str | None:
     """When the median full FPP is at or above 0.5 (ruling t), the scenario behind it in words, named on its star
-    when it is a nearby one, with its probability in the median run; None otherwise."""
+    when it is a nearby one, with its probability in the median run; None otherwise. ``short`` is the note's form:
+    "The full false-positive probability comes mainly from the NEB scenario, <words> (TIC N), at 0.55 in the median
+    run."."""
     fpp, top = block.get("fpp"), dominant_scenario(block)
     if fpp is None or fpp < DOMINANT_ABOVE or top is None:
         return None
     words = SCENARIO_WORDS.get(top["scenario"], top["scenario"])
     star = f" (TIC {top['id']})" if top["scenario"] in NEARBY_SCENARIOS else ""
+    if short:
+        return (f"The full false-positive probability comes mainly from the {top['scenario']} scenario, "
+                f"{words}{star}, at {probability_text(top['prob'])} in the median run.")
     return (f"Its full false-positive probability is at or above {DOMINANT_ABOVE} mainly through {words}{star}, the "
             f"{top['scenario']} scenario, at a probability of {probability_text(top['prob'])} in the median run.")
 
@@ -671,16 +678,20 @@ def _current(data: dict) -> dict | None:
     return block if complete(block) and block.get("current") is True else None
 
 
-def headline(data: dict, tex: bool = False, named: bool = True) -> str | None:
+def headline(data: dict, tex: bool = False, named: bool = True, short: bool = False) -> str | None:
     """The false-positive probability every public text leads with (spec 11.2): the TRICERATOPS median full FPP,
     its value without STP and ``NO_CLASS_CLAUSE``, citing Giacalone et al. 2021; None without a complete, current
     cross-check. ``named`` False drops "a false-positive probability of", for a text whose label already names it
     ("False-positive probability: TRICERATOPS 1.1.0 gives 0.012 ..."). With ``tex`` a LaTeX ``Raw`` citing
-    ``giacalone2021``."""
+    ``giacalone2021``. ``short`` is the note's abstract: "(<no-STP value> without a planet on an unresolved bound
+    companion; no validation class applies at 30-minute cadence; Giacalone et al. 2021)" (``NO_CLASS_SHORT``)."""
     block = _current(data)
     if block is None:
         return None
     what = "a false-positive probability of " if named else ""
+    if short and not tex:
+        return (f"TRICERATOPS {block['tool_version']} gives {what}{_p(block['fpp'])} ({_p(block['fpp_no_stp'])} "
+                f"without a planet on an unresolved bound companion; {NO_CLASS_SHORT}; Giacalone et al. 2021)")
     words = (f"TRICERATOPS {block['tool_version']} gives {what}{_p(block['fpp'])} "
              f"({_p(block['fpp_no_stp'])} without a planet on an unresolved bound companion), {NO_CLASS_CLAUSE}")
     if tex:
@@ -688,7 +699,8 @@ def headline(data: dict, tex: bool = False, named: bool = True) -> str | None:
     return f"{words} {CITATION}"
 
 
-def comparison_sentence(data: dict, tex: bool = False, after_headline: bool = False) -> str | None:
+def comparison_sentence(data: dict, tex: bool = False, after_headline: bool = False,
+                        short: bool = False) -> str | None:
     """For the pack's texts: the method (the TRICERATOPS version, the KBonus light curve, Kepler limb darkening,
     the package's Gaia DR3 field-star population; ruling u), the medians of the full FPP, the FPP without STP and the
     NFPP each with its 16th to 84th percentile range and the run count (ruling s), ``NO_CLASS_CLAUSE`` where the
@@ -698,7 +710,10 @@ def comparison_sentence(data: dict, tex: bool = False, after_headline: bool = Fa
     a text that has just printed ``headline`` (the README, the ExoFOP note and the archive email): it refers back to
     those medians and adds their ranges, the NFPP, the run count and the method, so the tool's median is printed
     once. None without a current cross-check of the present format. With ``tex`` a LaTeX ``Raw`` citing
-    ``giacalone2021``."""
+    ``giacalone2021``. ``short``, the Research Note's form since Task 13 (the word limit), gives the method, the
+    three medians and the run count, ending "(no validation class applies at 30-minute cadence)" (``NO_CLASS_SHORT``;
+    the sentence already cites the paper), and the dominant scenario in its short form; the README's
+    ``after_headline`` sentence keeps the ranges."""
     block = _current(data)
     if block is None:
         return None
@@ -713,6 +728,16 @@ def comparison_sentence(data: dict, tex: bool = False, after_headline: bool = Fa
         text += f" {dominant}" if dominant else ""
         return Raw(tex_escape(text)) if tex else text
     head = f"TRICERATOPS {block['tool_version']} "
+    if short:              # the Research Note (Task 13, the word limit): the README carries the ranges
+        rest = (", run on the KBonus light curve with Kepler limb darkening and Gaia DR3 field stars, gives a median "
+                f"false-positive probability of {_p(block['fpp'])}, {_p(block['fpp_no_stp'])} without "
+                "a planet transiting an unresolved bound companion (STP), absent from SkySift's model, and a nearby "
+                f"false-positive probability of {_p(block['nfpp'])} over {n} runs{left_out} ({NO_CLASS_SHORT}).")
+        if dominant:
+            rest += f" {dominant_sentence(block, short=True)}"
+        if tex:
+            return Raw(tex_escape(head) + r"\citep{giacalone2021}" + tex_escape(rest))
+        return head + CITATION + rest
     rest = (", run on the KBonus light curve with Kepler limb darkening and Gaia DR3 field stars, gives "
             f"a median false-positive probability of {_p(block['fpp'])} (16th to 84th percentile "
             f"{range_text(block, 'fpp')}), {_p(block['fpp_no_stp'])} ({range_text(block, 'fpp_no_stp')}) without a "

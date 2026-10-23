@@ -297,7 +297,8 @@ def _seed_star() -> tuple[dict, dict, dict]:
                                  "distance_bailer_jones_pc": 301.9, "note": "Gaia DR3 cross-check (seed)."},
             "reddening_note": ("Teff and spectral type assume E(BP-RP) at or below 0.1 at the observed BP-RP 2.10; if "
                                "E(BP-RP) were 0.2 the dwarf-table radius would be 0.569 Rsun."),
-            "alt_radius_e02": _v(0.569, 0.034, 0.036), "caveats": [], "gaia_errors": []}
+            "alt_radius_e02": _v(0.569, 0.034, 0.036), "caveats": [], "gaia_errors": [],
+            "ruwe": None, "non_single_star": None, "ebpminrp_gspphot": None}       # the Gaia flags (Task 13)
     planet = {"rp_rearth": _v(2.61, 0.08, 0.09), "a_au": _v(a_au, 0.0016, 0.0016), "a_over_r": _v(77.5, 2.3, 2.5),
               "teq_k": _v(269.0, 7.0, 8.0), "insolation_earth": _v(1.24, 0.12, 0.15),
               "transit_probability": _v(0.0129, 0.0004, 0.0004), "hz_inner_au": 0.2177, "hz_outer_au": 0.413,

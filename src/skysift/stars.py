@@ -74,7 +74,7 @@ CONE_COLUMNS = ("phot_g_mean_mag", "sep_arcsec", "source_id")
 # HTTP 400 from the archive); the outer join keeps the gaia_source row of a star FLAME did not fit
 Q_SOURCE = ("SELECT g.source_id, g.ra, g.dec, g.parallax, g.parallax_error, g.phot_g_mean_mag, g.bp_rp, g.ruwe, "
             "g.nu_eff_used_in_astrometry, g.pseudocolour, g.ecl_lat, g.astrometric_params_solved, g.teff_gspphot, "
-            "ap.radius_flame, ap.mass_flame FROM gaiadr3.gaia_source AS g "
+            "g.non_single_star, g.ebpminrp_gspphot, ap.radius_flame, ap.mass_flame FROM gaiadr3.gaia_source AS g "
             "LEFT OUTER JOIN gaiadr3.astrophysical_parameters AS ap ON ap.source_id = g.source_id "
             "WHERE g.source_id = {id}")
 Q_DISTANCE = "SELECT r_med_geo, r_lo_geo, r_hi_geo FROM external.gaiaedr3_distance WHERE source_id = {id}"
@@ -110,6 +110,8 @@ class GaiaRow:                               # None where Gaia has no value
     r_hi_geo: float | None
     ks: float | None                         # 2MASS
     ks_err: float | None
+    non_single_star: int | None = None       # gaia_source's NSS flag: 0 without a non-single-star solution
+    ebpminrp_gspphot: float | None = None    # GSP-Phot E(BP-RP), when Gaia fitted one
 
 
 @dataclass(frozen=True)
@@ -139,6 +141,9 @@ class StarParams:
     reddening_note: str          # the E(BP-RP) assumption and the alternative radius at E = 0.2
     alt_radius_e02: Value | None
     caveats: tuple[str, ...]
+    ruwe: float | None = None                # Gaia DR3, copied for the star sentence and the provenance (spec 11.6)
+    non_single_star: int | None = None
+    ebpminrp_gspphot: float | None = None
 
 
 @dataclass(frozen=True)
@@ -311,7 +316,8 @@ def query_gaia(target: Target, *, fetch, store) -> GaiaRow | None:
         ecl_lat=ecl_lat, params_solved=aps, teff_gspphot=_num(s.get("teff_gspphot")),
         radius_flame=_num(s.get("radius_flame")), mass_flame=_num(s.get("mass_flame")),
         r_med_geo=_num(d.get("r_med_geo")), r_lo_geo=_num(d.get("r_lo_geo")), r_hi_geo=_num(d.get("r_hi_geo")),
-        ks=_num(t.get("ks_m")), ks_err=_num(t.get("ks_msigcom")))
+        ks=_num(t.get("ks_m")), ks_err=_num(t.get("ks_msigcom")), non_single_star=_int(s.get("non_single_star")),
+        ebpminrp_gspphot=_num(s.get("ebpminrp_gspphot")))
 
 
 def query_neighbours(target: Target, depth: float, *, fetch, store, radius_arcsec: float = 20.0) -> list[Neighbour]:
@@ -387,12 +393,19 @@ def _cross_check(gaia: GaiaRow | None, teff: Value | None, radius: Value | None,
             "distance_bailer_jones_pc": gaia.r_med_geo, "note": note}
 
 
+def _gaia_flags(gaia: GaiaRow | None) -> dict:
+    """RUWE, the non-single-star flag and GSP-Phot E(BP-RP) of the Gaia row, as ``StarParams`` carries them."""
+    if gaia is None:
+        return {}
+    return {"ruwe": gaia.ruwe, "non_single_star": gaia.non_single_star, "ebpminrp_gspphot": gaia.ebpminrp_gspphot}
+
+
 def _unknown(gaia: GaiaRow | None, extra: tuple[str, ...] = (), lead: str | None = NO_STAR,
              ) -> tuple[StarParams, PlanetParams]:
     star = StarParams(route="none", spectral_type=None, teff=None, radius=None, mass=None, density_gcc=None,
                       distance_pc=None, abs_g=None, abs_ks=None,
                       gaia_cross_check=_cross_check(gaia, None, None, None, None), reddening_note="",
-                      alt_radius_e02=None, caveats=(lead, *extra) if lead else tuple(extra))
+                      alt_radius_e02=None, caveats=(lead, *extra) if lead else tuple(extra), **_gaia_flags(gaia))
     planet = PlanetParams(rp_rearth=None, a_au=None, a_over_r=None, teq_k=None, insolation_earth=None,
                           transit_probability=None, hz_inner_au=None, hz_outer_au=None, in_habitable_zone=None)
     return star, planet
@@ -523,7 +536,8 @@ def derive(gaia: GaiaRow | None, period: float, fit_k: float | None, depth: floa
                       density_gcc=_value(density_s, 2, "M* / (4/3 pi R*^3) from the same draws"),
                       distance_pc=distance, abs_g=abs_g, abs_ks=abs_ks,
                       gaia_cross_check=_cross_check(gaia, teff, radius, mass, distance),
-                      reddening_note=reddening_note, alt_radius_e02=alt, caveats=tuple(caveats))
+                      reddening_note=reddening_note, alt_radius_e02=alt, caveats=tuple(caveats),
+                      **_gaia_flags(gaia))
     return star, _planet(teff_s, radius_s, mass_s, period, fit_k, depth)
 
 

@@ -322,7 +322,9 @@ def pack_command(target: str = typer.Option(..., "--target", help="The target id
                                                   "instead of the sandbox (implies --zenodo); refused before a "
                                                   "reviewer approves the candidate, while the false-positive "
                                                   "estimate is provisional, and while the stored dossier's "
-                                                  "ephemeris or transit shape carries no error.")):
+                                                  "ephemeris or transit shape carries no error."),
+                 final: bool = typer.Option(False, "--final", help="Refuse empty author fields and any placeholder "
+                                            "DOI (needs --zenodo-live).")):
     """Build the submission pack from the target's stored dossier: the README's five steps, the Research Note draft,
     the data files, figures, provenance and the ExoFOP copies, and a zip. With --zenodo, also a Zenodo draft
     deposition holding the zip, made after every file is written; publishing it is your click on Zenodo. Prints the
@@ -332,6 +334,9 @@ def pack_command(target: str = typer.Option(..., "--target", help="The target id
     from skysift import pack as pk
     from skysift import zenodo as zn
     console = _console(stderr=True)
+    if final and not zenodo_live:               # spec 11.6: only a live draft reserves the record's DOI
+        _plain(console, pk.FINAL_NEEDS_LIVE)
+        raise typer.Exit(2)
     if zenodo_live and not fpp.SIGNED_OFF:       # the provisional FPP must not reach a live record, token or not
         _plain(console, "--zenodo-live is refused while the false-positive estimate is provisional (spec 4.2's factor "
                         "tables are not signed off); use --zenodo for a sandbox rehearsal")
@@ -342,8 +347,8 @@ def pack_command(target: str = typer.Option(..., "--target", help="The target id
     client = zn.ZenodoClient(token, sandbox=not zenodo_live, session=zn.new_session()) if token else None
     try:
         rep = pk.build_pack(store, blob, s, target, out_dir=Path(out) if out else None, tic=tic, observer_tag=tag,
-                            tag_seq=tag_seq,
-                            zenodo=client, log=lambda text: _plain(console, text))
+                            tag_seq=tag_seq, zenodo=client, final=final,
+                            log=lambda text: _plain(console, text))
     except (pk.NoDossier, ds.NoSignal) as e:
         _plain(console, str(e))
         raise typer.Exit(1) from None
