@@ -226,7 +226,7 @@ def test_provenance_hashes_every_file_and_names_the_versions(env_with_dossier):
         data = (rep.out_dir / name).read_bytes()
         assert h == {"sha256": hashlib.sha256(data).hexdigest(), "nbytes": len(data)}
     versions = json.loads((rep.out_dir / "provenance" / "versions.json").read_text(encoding="utf-8"))
-    assert PACK_VERSION == "4"
+    assert PACK_VERSION == "5"
     assert versions["pack_version"] == PACK_VERSION and versions["search_version"] == env.data["signal"][
         "detector_version"]
     assert versions["ladder_version"] == env.data["provenance"]["ladder_version"] and versions["git_commit"]
@@ -1891,7 +1891,14 @@ def test_the_fpp_headline_leads_with_triceratops(env_with_dossier):
     assert f"gives {cross_check.probability_text(data['fpp']['value'])}, a lower bound" in abstract
     texts = _texts(_build(env))
     assert all("answer different questions" not in t for t in texts.values())
-    assert pack_module.BOTH_TOOLS in " ".join(texts["note/note.tex"].split())
+    # spec 12.2: the note gives the four numbers and what carries the weight once the excluded neighbours are removed
+    note = " ".join(texts["note/note.tex"].split())
+    assert str(cross_check.comparison_sentence(data, tex=True, short=True)) in note
+    assert str(cross_check.dominant_excluded_sentence(data, tex=True, short=True)) in note
+    assert "a run without them is a follow-up" not in note
+    assert cross_check.comparison_sentence(data, after_headline=True) in texts["README.md"]
+    for name in ("exofop/note.txt", "archive_email.txt"):
+        assert "with the one neighbour the difference images exclude removed" in texts[name], name
 
 
 def test_the_gate_refuses_an_abstract_with_the_in_house_fpp_alone(env_with_dossier, monkeypatch):
@@ -2111,9 +2118,11 @@ def _live_shape(cross: str, prior: bool = True) -> dict:
     or ``cross="dominant"`` (a full FPP at 0.6, the dominant-scenario sentence and two degenerate runs left out),
     each with the factor sentence."""
     from skysift import tess
-    from tests.unit.test_crosscheck import fake_result
+    from tests.unit.test_crosscheck import REMOVED, fake_result, fake_variant
     from tests.unit.ui_seed import SEED_TESS
     data = json.loads(GOLDEN.read_text(encoding="utf-8"))
+    # spec 12.2: the golden's own exclusion radius, so both long forms of the dominant-excluded sentence count
+    assert data["centroid_offset"]["exclusion_radius_arcsec"] > 0
     assert data["dossier_version"] == dossier_module.DOSSIER_VERSION
     assert data["timing"]["ok"] is True and data["shape"]["ok"] is True
     assert pack_module.self_referenced(data["centroid_offset"]) and data["hand_built_localisation"]["agrees"]
@@ -2122,11 +2131,13 @@ def _live_shape(cross: str, prior: bool = True) -> dict:
     meta = {**SEED_TESS, "sectors": [*SEED_TESS["sectors"], 109]}
     data["tess"] = tess.statement(meta, {**data["ephemeris"], "period_err_days": 0.002})
     if cross == "validated":
-        block = fake_result(cross_check.inputs_fingerprint(data), fpp=0.012, nfpp=1e-4)
+        block = fake_result(cross_check.inputs_fingerprint(data), fpp=0.012, nfpp=1e-4,
+                            variant=fake_variant(fpp=0.004))
     else:
         block = fake_result(cross_check.inputs_fingerprint(data), fpp=0.6, nfpp=0.002,
                             scenarios=[{"ID": "169822655", "scenario": "NEB", "prob": 0.55},
-                                       {"ID": "169822650", "scenario": "TP", "prob": 0.4}])
+                                       {"ID": "169822650", "scenario": "TP", "prob": 0.4}],
+                            variant=fake_variant(fpp=0.31, nfpp=0.0, p_stp=0.3, removed=REMOVED * 6))
         for run in block["runs"][:2]:                     # identical runs, so the medians do not move
             run["degenerate"] = True
         block["n_degenerate"] = 2
@@ -2159,6 +2170,10 @@ def _check_live_shape(cross: str, prior: bool) -> dict:
     assert ("The full false-positive probability comes mainly from" in flat) == (cross == "dominant")
     assert ("2 degenerate runs left out" in flat) == (cross == "dominant")
     assert cross_check.NO_CLASS_SHORT in flat and "validation lines" not in flat
+    # spec 12.2: the pixel-excluded set's two medians and the scenario that carries its weight
+    v = data["cross_check"]["variant_excluded"]
+    assert f"removed it gives {cross_check.probability_text(v['fpp'])}, and" in flat
+    assert str(cross_check.dominant_excluded_sentence(data, tex=True, short=True)) in flat
     assert (str(pack_module.comparison_text(data, True)) in flat) == prior
     # Task 13 fix round 1 (cut 11): the note's short TESS sentence; the README's row keeps the skipped sector and
     # the uncertain count
@@ -2643,7 +2658,7 @@ def test_final_refuses_without_the_live_draft_and_with_any_placeholder(env_with_
     assert f"10.5281/zenodo.{DEPOSITION_ID}" in tex and "doi:10.5281/zenodo.777" in tex
     assert [c[0] for c in fake_session.calls] == ["POST", "PUT", "PUT"]
     versions = json.loads((rep.out_dir / "provenance" / "versions.json").read_text(encoding="utf-8"))
-    assert versions["software"] == pack_module.software_versions() and versions["pack_version"] == "4"
+    assert versions["software"] == pack_module.software_versions() and versions["pack_version"] == PACK_VERSION
 
 
 def test_imp_unc_carries_the_larger_error():
@@ -2914,9 +2929,7 @@ def test_the_follow_up_both_tools_and_radius_sentences_read_as_the_review_asks()
                          "hundred ppm per 10 minutes.")
     faint = {**golden, "target": {**golden["target"], "gmag": 18.0}}
     assert pack_module.followup_text(faint, 2461000.0).endswith("ppm transit on a G 18.0 star.")
-    assert pack_module.BOTH_TOOLS == ("TRICERATOPS's nearby false-positive weight sits on neighbours the pixels "
-                                      "exclude; a run without them is a follow-up; an unresolved bound companion is "
-                                      "the open channel.")
+    assert not hasattr(pack_module, "BOTH_TOOLS")      # spec 12.2: the run without them is made, and named
     assert pack_module.BEB_RADIUS.endswith("as its confusion radius; it was 2.0 arcsec in model 2.")
     assert "spec 11.5" not in pack_module.BEB_RADIUS
 

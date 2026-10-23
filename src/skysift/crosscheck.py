@@ -18,7 +18,13 @@ The export and the result are schema 3 (spec 12.4). Round 3 (spec 12.1) replaced
 the contamination budget by brightness and the package's own box fractions without the Kepler pixel's geometry, with
 the Kepler-pixel overlap at rung 5's fitted PSF width (``rung5_psf_sigma``, exported with the inputs), the budget a
 cap. A result made before that carries no ``schema`` key, reads as schema 2 and is refused, and a stored block of
-that format is not ``complete``."""
+that format is not ``complete``.
+
+Round 3 (spec 12.2) adds a third variant beside the first run set, which stands unchanged: the neighbours that rung 5's
+difference images exclude removed (``pixel_excluded``, exported with the inputs; ``EXCLUDE_RULE``). Giacalone et al.
+2021 allow removing a nearby star once a centroid analysis rules it out, and this is that run. It does not make the
+cross-check circular, since the first set, which removes no star, is always quoted beside it and never replaced: the
+texts print four numbers, the FPP and the FPP without STP of each set. A result without the variant is refused."""
 from __future__ import annotations
 
 import csv
@@ -51,7 +57,18 @@ EXPORT_SCHEMA = 3               # inputs.json (spec 12.4): rung 5's PSF width fo
 RESULT_SCHEMA = 3               # result.json (spec 12.4): the shares of spec 12.1; a result without the key is 2
 PSF_SIGMA_SOURCE = "rung 5's two-source fit (psf_sigma_pix), mean over the voting seasons with a width"
 RESULT_KEYS = ("schema", "tool", "tool_version", "run_utc", "n_runs", "n_degenerate", *SUMMARY_KEYS, "runs",
-               "scenarios", "stars", "inputs_sha256", "caveats", "settings")
+               "scenarios", "stars", "inputs_sha256", "caveats", "settings", "variant_excluded")
+EXCLUDE_SIGMA = 3.0                 # spec 12.2: nearer the target than the neighbour by more than this, every season
+# rung 5's own neighbour: the Gaia neighbour nearest the stamp separation, within this
+STAMP_MATCH_ARCSEC = 1.0
+EXCLUDE_RULE = ("a neighbour is excluded when, in every voting season of rung 5, the difference-image centroid lies "
+                "nearer the target than the neighbour by more than 3 sigma: for the neighbour rung 5 fitted, its own "
+                "vote (separation_sigma, nearer the target); for every other Gaia neighbour the lower bound (D / 2 - "
+                "dist_target_pix) / centroid_sigma_axis_pix on the same bisector statistic, D its separation in "
+                "Kepler pixels, which holds whatever its direction")
+# the pixel-excluded run set of the result (spec 12.2), stored beside the first
+VARIANT_KEYS = ("n_runs", "n_degenerate", *SUMMARY_KEYS, "runs", "scenarios", "removed", "same_as_all", "seeds",
+                "median_run_seed")
 RUN_KEYS = ("seed", "fpp", "fpp_no_stp", "nfpp", "p_stp", "p_ptp", "best_scenario", "degenerate")
 CITATION = "(Giacalone et al. 2021)"
 # spec 11.2: the paper's classes do not apply at Kepler's 30-minute cadence, so the texts name none
@@ -263,8 +280,7 @@ def _query_neighbour_params(neighbours: list[dict], *, fetch, store, target_id: 
 def _pixel_exclusion(data: dict, ds) -> dict | None:
     """``inputs.json``'s ``pixel_exclusion`` (spec 11.2): the radius about the Gaia-referenced difference centroid
     inside which a background source is not excluded (``dossier.exclusion_radius``), its rule and the centroid's
-    offset from the star; None without a centroid block or its error. The tool does not read it yet: a rerun with
-    the excluded field stars removed is a follow-up."""
+    offset from the star; None without a centroid block or its error."""
     co = data.get("centroid_offset")
     radius = _finite((co or {}).get("exclusion_radius_arcsec")) if isinstance(co, dict) else None
     radius = ds.exclusion_radius(co) if radius is None else radius
@@ -308,6 +324,89 @@ def rung5_psf_sigma(data: dict) -> dict:
     if not widths:
         return {**out, "reason": "rung 5 has no voting season with a fitted PSF width"}
     return {**out, "sigma_pix": float(np.mean(widths))}
+
+
+def stamp_neighbour(neighbours: list[dict], seasons: list[dict]) -> str | None:
+    """The source id of the Gaia neighbour rung 5 fitted: the stamp separation is the median over ``seasons`` (the
+    voting ones) of |pos_neighbour - pos_target| in arcsec (``priors.PIXEL_ARCSEC``), and the neighbour whose
+    ``sep_arcsec`` is nearest it within ``STAMP_MATCH_ARCSEC`` is rung 5's, a tie going to the brighter G. None
+    without a season holding both positions or without a neighbour that close."""
+    from skysift import dossier as ds
+    from skysift.priors import PIXEL_ARCSEC
+    seps = []
+    for s in seasons:
+        pt, pn = ds._pair(s, "pos_target"), ds._pair(s, "pos_neighbour")
+        if pt is not None and pn is not None:
+            seps.append(float(np.hypot(*(pn - pt))) * PIXEL_ARCSEC)
+    if not seps:
+        return None
+    stamp = float(np.median(seps))
+    near = []
+    for n in neighbours:
+        sep, g = _finite(n.get("sep_arcsec")), _finite(n.get("gmag"))
+        if sep is not None and abs(sep - stamp) <= STAMP_MATCH_ARCSEC:
+            near.append((abs(sep - stamp), math.inf if g is None else g, str(n.get("source_id"))))
+    return min(near)[2] if near else None
+
+
+def season_margin(season: dict, sep_arcsec: float | None, stamp: bool) -> tuple[float | None, str, str | None]:
+    """(the margin in sigma by which the season's difference centroid lies nearer the target than the neighbour, its
+    basis, why it is None). For rung 5's own neighbour (``stamp``) the season's vote: ``separation_sigma``, positive
+    when ``nearer`` is "target" and negative when "neighbour" ("rung 5 vote"). For any other neighbour the
+    "geometric bound" (D / 2 - ``dist_target_pix``) / ``centroid_sigma_axis_pix``, D the separation in Kepler pixels:
+    a point within ``dist_target_pix`` of the target is at least D / 2 - dist_target_pix nearer the target than the
+    bisector of any star D away, whatever its direction."""
+    from skysift import dossier as ds
+    from skysift.priors import PIXEL_ARCSEC
+    n = season.get("season")
+    if stamp:
+        value, nearer = ds._num(season, "separation_sigma"), season.get("nearer")
+        if value is None or nearer not in ("target", "neighbour"):
+            return None, "rung 5 vote", f"season {n} has no rung 5 vote against this neighbour"
+        return (abs(value) if nearer == "target" else -abs(value)), "rung 5 vote", None
+    dist, err = ds._num(season, "dist_target_pix"), ds._num(season, "centroid_sigma_axis_pix")
+    if dist is None or err is None or err <= 0 or sep_arcsec is None:
+        return None, "geometric bound", f"season {n} has no centroid distance or error"
+    return (sep_arcsec / PIXEL_ARCSEC / 2 - dist) / err, "geometric bound", None
+
+
+def pixel_excluded(data: dict) -> dict:
+    """``inputs.json``'s ``pixel_excluded`` (spec 12.2): which Gaia neighbours (``fpp.inputs.neighbours``) rung 5's
+    difference images exclude by ``EXCLUDE_RULE``. A neighbour is excluded when rung 5 has a voting season and every
+    voting season's margin (``season_margin``; rung 5's vote for the neighbour it fitted, ``stamp_neighbour``) is a
+    number above ``EXCLUDE_SIGMA``; otherwise its reason names the first season that falls short, or "no separation
+    stored". Returns {"rule", "sigma", "pixel_arcsec", "seasons" (the voting season numbers), "stamp_source_id",
+    "neighbours": [{"source_id", "sep_arcsec", "gmag", "excluded", "margins": [{"season", "margin_sigma", "basis"}],
+    "min_margin_sigma", "reason"}], "excluded_ids" (in the stored order), "reason": None | "rung 5 has not run" |
+    "rung 5 has no voting season"}."""
+    from skysift import dossier as ds
+    from skysift.priors import PIXEL_ARCSEC
+    neighbours = ((data.get("fpp") or {}).get("inputs") or {}).get("neighbours") or []
+    metrics = ds._metrics(data.get("tests") or [], "rung5_pixels")
+    seasons = [s for s in ds._pixel_seasons(metrics) if ds.season_votes(s)]
+    reason = ("rung 5 has not run" if not metrics else "rung 5 has no voting season" if not seasons else None)
+    stamp = stamp_neighbour(neighbours, seasons)
+    rows = []
+    for nb in neighbours:
+        sid, sep = str(nb.get("source_id")), _finite(nb.get("sep_arcsec"))
+        is_stamp = sid == stamp
+        margins, why = [], reason
+        if why is None and sep is None and not is_stamp:
+            why = "no separation stored"
+        if why is None:
+            for s in seasons:
+                m, basis, lack = season_margin(s, sep, is_stamp)
+                margins.append({"season": s.get("season"), "margin_sigma": m, "basis": basis})
+                if why is None and lack is not None:
+                    why = lack
+                elif why is None and m <= EXCLUDE_SIGMA:
+                    why = f"season {s.get('season')} margin {m:.2f} sigma, not above {EXCLUDE_SIGMA:g}"
+        numbers = [m["margin_sigma"] for m in margins if m["margin_sigma"] is not None]
+        rows.append({"source_id": sid, "sep_arcsec": sep, "gmag": _finite(nb.get("gmag")), "excluded": why is None,
+                     "margins": margins, "min_margin_sigma": min(numbers) if numbers else None, "reason": why})
+    return {"rule": EXCLUDE_RULE, "sigma": EXCLUDE_SIGMA, "pixel_arcsec": PIXEL_ARCSEC,
+            "seasons": [s.get("season") for s in seasons], "stamp_source_id": stamp, "neighbours": rows,
+            "excluded_ids": [r["source_id"] for r in rows if r["excluded"]], "reason": reason}
 
 
 def _copy_pixel_files(store, blob, kic: int | None,
@@ -441,7 +540,8 @@ def export_inputs(store, blob, settings, target_id: str, out_dir: Path, *, fetch
               "signal_id": sid, "dossier_generated": data.get("generated"), "ephemeris": data.get("ephemeris"),
               "star": data.get("star"), "neighbours": neighbours, "neighbour_params_note": params_note,
               "leak": _leak(data), "rung5_psf_sigma": rung5_psf_sigma(data),
-              "pixel_exclusion": _pixel_exclusion(data, ds), "neighbour_kic": kic,
+              "pixel_exclusion": _pixel_exclusion(data, ds), "pixel_excluded": pixel_excluded(data),
+              "neighbour_kic": kic,
               "quarters": quarters, "tpf_files": files,
               "tpf_kept": [q for q in quarters if q not in fetched], "tpf_fetched": fetched, "tpf_missing": missing,
               "lightcurve": {"file": "lightcurve.csv", "window_durations": int(WINDOW_DURATIONS), "n": len(rows),
@@ -501,6 +601,51 @@ def _validate_run(i: int, r) -> None:
         raise BadResult(f"run {i + 1}'s fpp_no_stp must be a probability between 0 and 1 or null")
     if not _close(r["fpp_no_stp"], fpp_without_stp(r["fpp"], r["p_stp"])):
         raise BadResult(f"run {i + 1}'s fpp_no_stp is not (fpp - p_stp) / (1 - p_stp)")
+
+
+def _validate_variant(result: dict) -> None:
+    """Raise BadResult naming the first thing wrong with the result's pixel-excluded run set (spec 12.2): not an
+    object of ``VARIANT_KEYS``, another run count than the first set's, a run that fails the first set's checks, seeds
+    other than the first set's, a degenerate count or a median or percentile that is not its runs', every run
+    degenerate, a ``removed`` list that is not of {tic_id, source_id} objects, or a ``same_as_all`` that is not a bool
+    or is true over runs that differ from the first set's."""
+    v = result["variant_excluded"]
+    if not isinstance(v, dict) or any(k not in v for k in VARIANT_KEYS):
+        raise BadResult(f"variant_excluded must be an object holding {', '.join(VARIANT_KEYS)}")
+    n = result["n_runs"]
+    if isinstance(v["n_runs"], bool) or v["n_runs"] != n:
+        raise BadResult(f"variant_excluded.n_runs {v['n_runs']!r} is not the first set's {n}")
+    runs = v["runs"]
+    if not isinstance(runs, list) or len(runs) != n:
+        raise BadResult(f"variant_excluded.runs must list {n} runs")
+    for i, r in enumerate(runs):
+        try:
+            _validate_run(i, r)
+        except BadResult as e:
+            raise BadResult(f"variant_excluded {e}") from None
+    first = [r["seed"] for r in result["runs"]]
+    if v["seeds"] != first or [r["seed"] for r in runs] != first:
+        raise BadResult("variant_excluded's seeds are not the first set's")
+    degenerate = sum(1 for r in runs if r["degenerate"])
+    if isinstance(v["n_degenerate"], bool) or v["n_degenerate"] != degenerate:
+        raise BadResult(f"variant_excluded.n_degenerate {v['n_degenerate']!r} is not the {degenerate} degenerate "
+                        "runs")
+    if degenerate == n:
+        raise BadResult("every run of variant_excluded was degenerate, so there is no median to quote")
+    expected = summarise(runs)
+    for key in SUMMARY_KEYS:
+        if not _close(v[key], expected[key]):
+            raise BadResult(f"variant_excluded.{key} {v[key]!r} is not the non-degenerate runs' value "
+                            f"{expected[key]!r}")
+    removed = v["removed"]
+    if not isinstance(removed, list) or not all(isinstance(r, dict) and isinstance(r.get("tic_id"), str)
+                                                and isinstance(r.get("source_id"), str) for r in removed):
+        raise BadResult("variant_excluded.removed must list {tic_id, source_id} objects")
+    same = v["same_as_all"]
+    differ = [{k: r[k] for k in RUN_KEYS} for r in runs] != [{k: r[k] for k in RUN_KEYS} for r in result["runs"]]
+    if not isinstance(same, bool) or (same and differ):
+        raise BadResult("variant_excluded says same_as_all but its runs differ from the first set's"
+                        if isinstance(same, bool) else "variant_excluded.same_as_all must be true or false")
 
 
 def validate_result(result) -> None:
@@ -565,6 +710,7 @@ def validate_result(result) -> None:
         raise BadResult(f"settings.allow_old_export is {result['settings']['allow_old_export']!r}: the result was "
                         "made from an export before the revision of 22 October 2026, on the package's own shares; "
                         "re-export and run the tool again")
+    _validate_variant(result)
 
 
 def complete(block: dict | None) -> bool:
@@ -590,12 +736,17 @@ def classify(fpp: float | None, nfpp: float | None) -> str | None:
 
 
 def with_current(block: dict | None, data: dict) -> dict | None:
-    """The stored block with ``current`` (made for the inputs of ``data``, a dossier's JSON) and ``class``
-    (``classify`` of its medians; None for a block of the earlier format) recomputed; None without a block."""
+    """The stored block with ``current`` (made for the inputs of ``data``, a dossier's JSON), ``class`` (``classify``
+    of its medians) and ``class_excluded`` (of the pixel-excluded set's medians) recomputed, each class None for a
+    block of an earlier format; None without a block."""
     if not block:
         return None
-    cls = classify(block.get("fpp"), block.get("nfpp")) if complete(block) else None
-    return {**block, "current": block.get("inputs_sha256") == inputs_fingerprint(data), "class": cls}
+    full = complete(block)
+    v = block.get("variant_excluded") if full else None
+    cls = classify(block.get("fpp"), block.get("nfpp")) if full else None
+    cls_ex = classify(v.get("fpp"), v.get("nfpp")) if isinstance(v, dict) else None
+    return {**block, "current": block.get("inputs_sha256") == inputs_fingerprint(data), "class": cls,
+            "class_excluded": cls_ex}
 
 
 def import_result(store, target_id: str, path: Path) -> dict:
@@ -664,8 +815,9 @@ def class_label_text(cls: str | None) -> str | None:
 
 
 def dominant_scenario(block: dict) -> dict | None:
-    """The false-positive scenario (any but TP, PTP and DTP) with the largest probability in the median run's table:
-    {"id", "scenario", "prob"}, or None without one."""
+    """The false-positive scenario (any but TP, PTP and DTP) with the largest probability in the median run's table
+    of ``block``, the first run set or the pixel-excluded one (``variant_excluded``): {"id", "scenario", "prob"}, or
+    None without one."""
     rows = [s for s in block.get("scenarios") or [] if isinstance(s, dict) and _finite(s.get("prob")) is not None
             and s.get("scenario") not in NOT_FALSE_POSITIVES]
     if not rows:
@@ -711,22 +863,114 @@ def _current(data: dict) -> dict | None:
     return block if complete(block) and block.get("current") is True else None
 
 
+def _variant(block: dict) -> dict | None:
+    v = block.get("variant_excluded")
+    return v if isinstance(v, dict) else None
+
+
+def removed_phrase(variant: dict) -> str:
+    """"the one neighbour the difference images exclude", or "the <n> neighbours the difference images exclude"."""
+    n = len(variant.get("removed") or [])
+    return ("the one neighbour the difference images exclude" if n == 1
+            else f"the {n} neighbours the difference images exclude")
+
+
+def _removed_list(variant: dict) -> str:
+    """Each removed neighbour in the export's order: "Gaia DR3 <id> at <sep> arcsec, smallest margin <m> sigma"."""
+    parts = []
+    for r in variant.get("removed") or []:
+        sep, m = _finite(r.get("sep_arcsec")), _finite(r.get("min_margin_sigma"))
+        text = f"Gaia DR3 {r.get('source_id')}"
+        text += f" at {sep:.2f} arcsec" if sep is not None else ""
+        text += f", smallest margin {m:.3g} sigma" if m is not None else ""
+        parts.append(text)
+    return "; ".join(parts)
+
+
+def excluded_text(block: dict, ranges: bool) -> str:
+    """The pixel-excluded set's numbers in prose, for ``comparison_sentence``. With ``ranges`` (the README, the ExoFOP
+    note, the archive email and the page): "With <removed_phrase> removed (<each neighbour>), <n> seeded runs give
+    <FPP> (16th to 84th percentile <range>), <FPP without STP> (<range>) without STP and a nearby false-positive
+    probability of <NFPP> (<range>)."; without (the Research Note): "With <removed_phrase> removed it gives <FPP>,
+    and <FPP without STP> without STP.". A set that removed nothing (``same_as_all``) says so."""
+    v = _variant(block)
+    if v is None:
+        return ""
+    if v.get("same_as_all"):
+        return ("The difference images exclude no neighbour, so no run set with neighbours removed differs from this "
+                "one.")
+    phrase = removed_phrase(v)
+    if not ranges:
+        return f"With {phrase} removed it gives {_p(v['fpp'])}, and {_p(v['fpp_no_stp'])} without STP."
+    listed = _removed_list(v)
+    return (f"With {phrase} removed{f' ({listed})' if listed else ''}, {v['n_runs']} seeded runs give {_p(v['fpp'])} "
+            f"(16th to 84th percentile {range_text(v, 'fpp')}), {_p(v['fpp_no_stp'])} "
+            f"({range_text(v, 'fpp_no_stp')}) without STP and a nearby false-positive probability of "
+            f"{_p(v['nfpp'])} ({range_text(v, 'nfpp')}).")
+
+
+def dominant_excluded_sentence(data: dict, tex: bool = False, short: bool = False) -> str | None:
+    """The scenario that carries the pixel-excluded set's false-positive weight (``dominant_scenario`` of its median
+    run's table), and that the signal stays a candidate. For STP, inside the exclusion radius
+    (``centroid_offset.exclusion_radius_arcsec``; without it, within ``dossier.UNRESOLVED_COMPANION_ARCSEC``), which
+    no imaging constrains. ``short`` is the Research Note's form. With ``tex`` a LaTeX ``Raw``. None without a
+    current, complete cross-check or without such a scenario."""
+    from skysift.dossier import UNRESOLVED_COMPANION_ARCSEC
+    block = _current(data)
+    v = _variant(block) if block else None
+    top = dominant_scenario(v) if v else None
+    if top is None:
+        return None
+    radius = _finite((data.get("centroid_offset") or {}).get("exclusion_radius_arcsec")) \
+        if isinstance(data.get("centroid_offset"), dict) else None
+    where = (f"inside the {radius:.2f} arcsec exclusion radius" if radius is not None
+             else f"within {UNRESOLVED_COMPANION_ARCSEC:g} arcsec")
+    lead = ("The remaining weight is mainly" if short else
+            "The false-positive weight sits mainly on" if v.get("same_as_all") else
+            "With those neighbours removed the false-positive weight sits mainly on")
+    if top["scenario"] == "STP":
+        what = (f"a planet on an unresolved bound companion {where}, which no imaging constrains" if short else
+                f"a planet transiting an unresolved bound companion {where}, which no high-resolution imaging "
+                "constrains")
+    else:
+        star = f" (TIC {top['id']})" if top["scenario"] in NEARBY_SCENARIOS else ""
+        what = f"{SCENARIO_WORDS.get(top['scenario'], top['scenario'])}{star}"
+    text = f"{lead} {top['scenario']}, {what}, so the signal stays a candidate."
+    return Raw(tex_escape(text)) if tex else text
+
+
 def headline(data: dict, tex: bool = False, named: bool = True, short: bool = False) -> str | None:
     """The false-positive probability every public text leads with (spec 11.2): the TRICERATOPS median full FPP,
     its value without STP and ``NO_CLASS_CLAUSE``, citing Giacalone et al. 2021; None without a complete, current
     cross-check. ``named`` False drops "a false-positive probability of", for a text whose label already names it
     ("False-positive probability: TRICERATOPS 1.1.0 gives 0.012 ..."). With ``tex`` a LaTeX ``Raw`` citing
     ``giacalone2021``. ``short`` is the note's abstract: "(<no-STP value> without a planet on an unresolved bound
-    companion; no validation class applies at 30-minute cadence; Giacalone et al. 2021)" (``NO_CLASS_SHORT``)."""
+    companion; no validation class applies at 30-minute cadence; Giacalone et al. 2021)" (``NO_CLASS_SHORT``). Spec
+    12.2: after the first set's two numbers come the pixel-excluded set's two, "and <FPP> (<FPP without STP> without
+    it) with <removed_phrase> removed" (in the abstract "; <FPP> and <FPP without STP> with ... removed")."""
     block = _current(data)
     if block is None:
         return None
     what = "a false-positive probability of " if named else ""
+    v = _variant(block)
     if short and not tex:
+        if v is None:
+            middle = ""
+        elif v.get("same_as_all"):
+            middle = "; the same with no neighbour removed, since the difference images exclude none"
+        else:
+            middle = f"; {_p(v['fpp'])} and {_p(v['fpp_no_stp'])} with {removed_phrase(v)} removed"
         return (f"TRICERATOPS {block['tool_version']} gives {what}{_p(block['fpp'])} ({_p(block['fpp_no_stp'])} "
-                f"without a planet on an unresolved bound companion; {NO_CLASS_SHORT}; Giacalone et al. 2021)")
+                f"without a planet on an unresolved bound companion{middle}; {NO_CLASS_SHORT}; Giacalone et al. 2021)")
+    if v is None:
+        middle = ""
+    elif v.get("same_as_all"):
+        middle = ", and the same with no neighbour removed, since the difference images exclude none"
+    else:
+        middle = f", and {_p(v['fpp'])} ({_p(v['fpp_no_stp'])} without it) with {removed_phrase(v)} removed"
     words = (f"TRICERATOPS {block['tool_version']} gives {what}{_p(block['fpp'])} "
-             f"({_p(block['fpp_no_stp'])} without a planet on an unresolved bound companion), {NO_CLASS_CLAUSE}")
+             f"({_p(block['fpp_no_stp'])} without a planet on an unresolved bound companion){middle}, "
+             f"{NO_CLASS_CLAUSE}")
     if tex:
         return Raw(tex_escape(words) + r" \citep{giacalone2021}")
     return f"{words} {CITATION}"
@@ -746,7 +990,9 @@ def comparison_sentence(data: dict, tex: bool = False, after_headline: bool = Fa
     ``giacalone2021``. ``short``, the Research Note's form since Task 13 (the word limit), gives the method, the
     three medians and the run count, ending "(no validation class applies at 30-minute cadence)" (``NO_CLASS_SHORT``;
     the sentence already cites the paper), and the dominant scenario in its short form; the README's
-    ``after_headline`` sentence keeps the ranges."""
+    ``after_headline`` sentence keeps the ranges. Spec 12.2: every form then gives the pixel-excluded set
+    (``excluded_text``: with its ranges and the neighbours removed, or in the note its two medians alone), and the
+    ``after_headline`` form ends on ``dominant_excluded_sentence``."""
     block = _current(data)
     if block is None:
         return None
@@ -759,6 +1005,9 @@ def comparison_sentence(data: dict, tex: bool = False, after_headline: bool = Fa
                 f"{range_text(block, 'fpp_no_stp')} without STP, a scenario absent from SkySift's model); the nearby "
                 f"false-positive probability is {_p(block['nfpp'])} ({range_text(block, 'nfpp')}).")
         text += f" {dominant}" if dominant else ""
+        text += f" {excluded_text(block, True)}" if _variant(block) else ""
+        why = dominant_excluded_sentence(data)
+        text += f" {why}" if why else ""
         return Raw(tex_escape(text)) if tex else text
     head = f"TRICERATOPS {block['tool_version']} "
     if short:              # the Research Note (Task 13, the word limit): the README carries the ranges
@@ -768,6 +1017,7 @@ def comparison_sentence(data: dict, tex: bool = False, after_headline: bool = Fa
                 f"false-positive probability of {_p(block['nfpp'])} over {n} runs{left_out} ({NO_CLASS_SHORT}).")
         if dominant:
             rest += f" {dominant_sentence(block, short=True)}"
+        rest += f" {excluded_text(block, False)}" if _variant(block) else ""
         if tex:
             return Raw(tex_escape(head) + r"\citep{giacalone2021}" + tex_escape(rest))
         return head + CITATION + rest
@@ -779,6 +1029,7 @@ def comparison_sentence(data: dict, tex: bool = False, after_headline: bool = Fa
             f"runs{left_out}, {NO_CLASS_CLAUSE}.")
     if dominant:
         rest += f" {dominant}"
+    rest += f" {excluded_text(block, True)}" if _variant(block) else ""
     if tex:
         return Raw(tex_escape(head) + r"\citep{giacalone2021}" + tex_escape(rest))
     return head + CITATION + rest

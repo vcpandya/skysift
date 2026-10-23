@@ -46,13 +46,22 @@ fluxratio_i = share_i / (1 + S), S the shares' sum, and the depth star i would n
 share_i (0 above 1, as the package does). The package places a neighbour the TIC lacks on the target's pixel, so its
 overlap is taken at its stored separation, as every star's is. The round-2 rule (B shared by the package's box
 fractions in the Kepler band, an added star weighted by ``offset_box_factor``; ``budget_shares``) is kept beside each
-share as ``share_before``. No star is removed and no scenario dropped.
+share as ``share_before``. The first run set removes no star and drops no scenario.
 
 The export must carry what the revisions added (the target's CROWDSAP in (0, 1] and PSFFRAC key, each neighbour's
 parameter sources, the clip count, schema 3 and rung 5's PSF width; ``export_problems``): the tool refuses an older
 export with exit 2 unless ``--allow-old-export`` is given, and then the package's box shares stand and the result
 records the flag. An export whose ``rung5_psf_sigma`` holds no width is refused with exit 2 whatever the flags, since
 the overlap cannot be computed without it.
+
+Third variant (spec 12.2). The first run set removes no star. The pixel-excluded variant removes the neighbours rung
+5's difference images exclude by more than 3 sigma in every voting season (the export's ``pixel_excluded`` block, its
+rule and per-season margins), so it rests on SkySift's own centroid test and is quoted beside the first set, never in
+its place; Giacalone et al. 2021 allow removing a star a centroid analysis rules out. ``excluded_stars`` maps each
+excluded Gaia neighbour to its row of the run's star list (its TIC id, or its own id when the tool added it), and after
+the first set the tool calls ``remove_star`` for them and runs the same seeds again (``variant_block``, the result's
+``variant_excluded``). With no star to remove the variant is the first set (``same_as_all``) and nothing more runs.
+``--resume`` covers both sets: the second starts only once the first holds ``--runs`` runs.
 
 Runs (ruling s). ``calc_probs(exptime=0.0204, N=1_000_000, parallel=True, dilution_corrected=True)`` runs ``--runs``
 times (20 by default, the import's minimum) with seeds ``--seed`` to ``--seed + runs - 1``. The package's parallel
@@ -123,6 +132,9 @@ FPP_DECIMALS = 3                    # the serial and parallel FPPs are compared 
 NOISE_SIGMAS = 3.0                  # an NFPP gap within this many seed-to-seed standard deviations is noise
 METRICS = ("fpp", "fpp_no_stp", "nfpp", "p_stp", "p_ptp")          # skysift.crosscheck.METRICS
 RUN_KEYS = ("seed", "fpp", "fpp_no_stp", "nfpp", "p_stp", "p_ptp", "best_scenario", "degenerate")
+SUMMARY_KEYS = tuple(f"{m}{s}" for m in METRICS for s in ("", "_p16", "_p84"))   # skysift.crosscheck.SUMMARY_KEYS
+VARIANT_KEYS = ("n_runs", "n_degenerate", *SUMMARY_KEYS, "runs", "scenarios", "removed", "same_as_all", "seeds",
+                "median_run_seed")                                              # skysift.crosscheck.VARIANT_KEYS
 PARAMS = (("Teff", "teff"), ("rad", "radius"), ("mass", "mass"))  # the package's column, the export's key
 PIXEL_ARCSEC = 4.0                  # the package's Kepler pixel (the round-2 rule, share_before)
 PSF_SIGMA_PIX = 0.75                # the package's Gaussian PSF (calc_depths; the round-2 rule, share_before)
@@ -160,8 +172,9 @@ CAVEATS = (
      "degenerate are quoted, and every run is kept."),
     ("The dossier's Gaia neighbours are matched to the TIC stars by their separation from the target only, since the "
      "dossier stores no position for them."),
-    ("No star is removed on the strength of SkySift's own centroid test, which would make the cross-check "
-     "circular."),
+    ("The first run set removes no star. The pixel-excluded variant removes the neighbours rung 5's difference "
+     "images exclude by more than 3 sigma in every voting season (spec 12.2), so it rests on SkySift's own centroid "
+     "test and is quoted beside the first set, never in its place."),
 )
 OUT_OF_TRANSIT_MIN = 50             # fewer out-of-transit points: the robust scatter is taken over every point
 
@@ -481,8 +494,8 @@ def clip_caveat(lightcurve: dict) -> str | None:
 def export_problems(inputs: dict) -> list[str]:
     """What an export lacks of the cross-check revisions of 22 and 23 October 2026: the target's CROWDSAP (in (0, 1])
     and its PSFFRAC key, each neighbour's ``params_source`` and ``mass_radius`` (an export before 9b2a0e4 set masses by
-    the older evolved rule), the light curve's clip count, schema ``EXPORT_SCHEMA`` and the ``rung5_psf_sigma`` key
-    (spec 12.1). [] for a current export."""
+    the older evolved rule), the light curve's clip count, schema ``EXPORT_SCHEMA``, the ``rung5_psf_sigma`` key
+    (spec 12.1) and the ``pixel_excluded`` key (spec 12.2). [] for a current export."""
     out = []
     tgt = inputs.get("target") or {}
     c = _finite(tgt.get("crowdsap"))
@@ -504,6 +517,8 @@ def export_problems(inputs: dict) -> list[str]:
         out.append(f"the export is schema {schema!r}, not {EXPORT_SCHEMA}")
     if "rung5_psf_sigma" not in inputs:
         out.append("the export has no rung5_psf_sigma key")
+    if "pixel_excluded" not in inputs:
+        out.append("the export has no pixel_excluded key")
     return out
 
 
@@ -595,6 +610,51 @@ def summarise(runs: list[dict]) -> dict:
     return out
 
 
+def _median_run(runs: list[dict]) -> int:
+    """The index of the non-degenerate run nearest the median FPP (of every run when all are degenerate)."""
+    summary = summarise(runs)
+    good = [i for i, r in enumerate(runs) if not r["degenerate"]] or list(range(len(runs)))
+    centre = summary["fpp"] if summary["fpp"] is not None else 0.0
+    return min(good, key=lambda i: abs(runs[i]["fpp"] - centre))
+
+
+def excluded_stars(pixel_excluded: dict | None, matched: list[dict],
+                   added: dict) -> tuple[list[dict], list[str]]:
+    """(the stars the pixel-excluded variant removes, the notes) from the export's ``pixel_excluded`` block (spec
+    12.2): for each excluded Gaia neighbour, in the export's order, {"tic_id", "source_id", "sep_arcsec",
+    "min_margin_sigma"} with the TIC id ``match_neighbours`` gave it, or its own id when the tool added it; a note for
+    each excluded neighbour in neither, since there is nothing to remove. ([], []) without the block or an excluded
+    id."""
+    ids = [str(x) for x in (pixel_excluded or {}).get("excluded_ids") or []]
+    if not ids:
+        return [], []
+    rows = {str(n.get("source_id")): n for n in pixel_excluded.get("neighbours") or []}
+    tic_of = {str(m["source_id"]): str(m["tic_id"]) for m in matched}
+    removed, notes = [], []
+    for sid in ids:
+        tic = sid if sid in added else tic_of.get(sid)
+        if tic is None:
+            notes.append(f"Gaia DR3 {sid} is excluded by the difference images but is not in the run's star list, "
+                         "so there is nothing to remove.")
+            continue
+        row = rows.get(sid) or {}
+        removed.append({"tic_id": tic, "source_id": sid, "sep_arcsec": _finite(row.get("sep_arcsec")),
+                        "min_margin_sigma": _finite(row.get("min_margin_sigma"))})
+    return removed, notes
+
+
+def variant_block(runs: list[dict], removed: list[dict], same_as_all: bool) -> dict:
+    """The result's ``variant_excluded`` (spec 12.2), keyed ``VARIANT_KEYS``: the run and degenerate counts, the
+    medians and percentiles (``summarise``), every run (``RUN_KEYS``), the scenario table of the non-degenerate run
+    nearest the median FPP, the stars removed, whether the set is the first one (``same_as_all``, nothing removed),
+    the seeds and that run's seed."""
+    i = _median_run(runs)
+    return {"n_runs": len(runs), "n_degenerate": sum(1 for r in runs if r["degenerate"]), **summarise(runs),
+            "runs": [{k: r[k] for k in RUN_KEYS} for r in runs], "scenarios": runs[i]["scenarios"],
+            "removed": list(removed), "same_as_all": bool(same_as_all), "seeds": [r["seed"] for r in runs],
+            "median_run_seed": runs[i]["seed"]}
+
+
 def _clamp(x) -> float:
     """A probability held in 0 to 1 (the package's FPP can be a rounding error below 0); 0 when not finite."""
     return _unit(x)[0]
@@ -665,16 +725,15 @@ def star_rows(stars: list[dict], matched: list[dict], added: dict[str, float], s
     return out
 
 
-def assemble_result(runs: list[dict], stars: list[dict], settings: dict, inputs: dict, version: str) -> dict:
+def assemble_result(runs: list[dict], stars: list[dict], settings: dict, inputs: dict, version: str, *,
+                    variant: dict) -> dict:
     """The result file, keyed as ``skysift.crosscheck.RESULT_KEYS``: the schema, the run count, the degenerate count,
     the medians and 16th and 84th percentiles over the runs that are not degenerate (``summarise``), every run
     (``RUN_KEYS``), the scenario table of the non-degenerate run nearest the median FPP, the stars, the inputs'
-    fingerprint, the caveats (``CAVEATS``, the settings' notes and the degenerate count) and the settings with the
-    seeds."""
+    fingerprint, the caveats (``CAVEATS``, the settings' notes and the degenerate count), the settings with the
+    seeds and the pixel-excluded run set ``variant`` (``variant_block``)."""
     summary = summarise(runs)
-    good = [i for i, r in enumerate(runs) if not r["degenerate"]] or list(range(len(runs)))
-    centre = summary["fpp"] if summary["fpp"] is not None else 0.0
-    nearest = min(good, key=lambda i: abs(runs[i]["fpp"] - centre))
+    nearest = _median_run(runs)
     degenerate = sum(1 for r in runs if r["degenerate"])
     caveats = list(CAVEATS) + list(settings.get("notes") or [])
     if degenerate:
@@ -686,7 +745,8 @@ def assemble_result(runs: list[dict], stars: list[dict], settings: dict, inputs:
             "runs": [{k: r[k] for k in RUN_KEYS} for r in runs], "scenarios": runs[nearest]["scenarios"],
             "stars": stars, "inputs_sha256": inputs["fingerprint"], "caveats": caveats,
             "settings": {**{k: v for k, v in settings.items() if k != "notes"}, "seeds": [r["seed"] for r in runs],
-                         "median_run_seed": runs[nearest]["seed"]}}
+                         "median_run_seed": runs[nearest]["seed"]},
+            "variant_excluded": variant}
 
 
 # ---------------------------------------------------------------------------------------------------- checkpoint
@@ -755,12 +815,14 @@ def stars_digest(rows) -> str:
 def checkpoint_key(fingerprint: str, *, seed: int, draws: int, check_draws: int, parallel_check: bool,
                    flux_err: float, shares: dict, quarters, allow_old_export: bool, version: str,
                    field_stars: dict | None = None, stars_sha256: str | None = None,
-                   lightcurve_sha256: str | None = None, inputs_json_sha256: str | None = None) -> dict:
+                   lightcurve_sha256: str | None = None, inputs_json_sha256: str | None = None,
+                   excluded_tic_ids: list[str] | None = None) -> dict:
     """What a resumed run must share with the runs already made: the inputs' fingerprint, the first seed, the draws
     per run, the check's draws, the exposure time, the flux error, the flux shares (their source, budget, CROWDSAP and
     rung 5's PSF width), the quarters, whether an older
     export was allowed, the package version, and the hashes of what a resume rebuilds: the field-star population
-    (``field_star_summary``), the final ``stars`` table (``stars_digest``), ``lightcurve.csv`` and ``inputs.json``."""
+    (``field_star_summary``), the final ``stars`` table (``stars_digest``), ``lightcurve.csv`` and ``inputs.json``,
+    and the TIC ids the pixel-excluded variant removes, sorted."""
     return {"inputs_sha256": fingerprint, "first_seed": int(seed), "N": int(draws),
             "check_draws": int(check_draws) if parallel_check else None, "parallel_check": bool(parallel_check),
             "exptime_days": EXPTIME_DAYS, "flux_err_rel_robust": float(flux_err),
@@ -768,13 +830,15 @@ def checkpoint_key(fingerprint: str, *, seed: int, draws: int, check_draws: int,
             "quarters": [int(q) for q in quarters], "allow_old_export": bool(allow_old_export),
             "tool_version": str(version), "field_stars_n": (field_stars or {}).get("n_rows"),
             "field_stars_sha256": (field_stars or {}).get("sha256"), "stars_sha256": stars_sha256,
-            "lightcurve_sha256": lightcurve_sha256, "inputs_json_sha256": inputs_json_sha256}
+            "lightcurve_sha256": lightcurve_sha256, "inputs_json_sha256": inputs_json_sha256,
+            "excluded_tic_ids": sorted(str(x) for x in excluded_tic_ids or [])}
 
 
 def new_state() -> dict:
-    """The state a checkpoint keeps: the runs so far, the serial-against-parallel record, the parallel path's
-    failure, whether the parallel path is in use, and the run numbers a resume started at."""
-    return {"runs": [], "check": None, "failure": None, "parallel": True, "resumes": []}
+    """The state a checkpoint keeps: the runs so far of the first set and of the pixel-excluded one, the
+    serial-against-parallel record, the parallel path's failure, whether the parallel path is in use, and the run
+    numbers a resume started at."""
+    return {"runs": [], "runs_excluded": [], "check": None, "failure": None, "parallel": True, "resumes": []}
 
 
 def write_partial(path: Path, key: dict, state: dict, *, attempts: int = REPLACE_ATTEMPTS, pause: float = 0.2) -> bool:
@@ -798,17 +862,20 @@ def write_partial(path: Path, key: dict, state: dict, *, attempts: int = REPLACE
 
 
 def checkpoint_runs(path: Path) -> int:
-    """The number of runs a checkpoint holds. Raises OSError or ValueError when it cannot be read as one."""
+    """The number of runs a checkpoint holds, the larger of its two sets. Raises OSError or ValueError when it cannot
+    be read as one."""
     data = json.loads(Path(path).read_text(encoding="utf-8"))
     if not isinstance(data, dict) or not isinstance(data.get("runs"), list):
         raise ValueError(f"{path} is not a checkpoint of this tool")  # noqa: TRY004  (one error for a bad file)
-    return len(data["runs"])
+    second = data.get("runs_excluded")
+    return max(len(data["runs"]), len(second) if isinstance(second, list) else 0)
 
 
 def resume_state(path: Path, key: dict) -> dict:
     """The state of the checkpoint at ``path`` (``new_state``'s keys). Raises OSError when it cannot be read and
-    ValueError when it is not a checkpoint, when its key differs from ``key`` (naming what differs), or when its runs
-    are not the consecutive seeds from the first."""
+    ValueError when it is not a checkpoint, when its key differs from ``key`` (naming what differs), when the runs of
+    either set are not the consecutive seeds from the first, or when the pixel-excluded set holds more runs than the
+    first (it starts only once the first is done)."""
     data = json.loads(Path(path).read_text(encoding="utf-8"))
     if not isinstance(data, dict) or not isinstance(data.get("key"), dict) or not isinstance(data.get("runs"), list):
         raise ValueError(f"{path} is not a checkpoint of this tool")  # noqa: TRY004  (one error for a bad file)
@@ -817,15 +884,21 @@ def resume_state(path: Path, key: dict) -> dict:
     if differ:
         raise ValueError(f"the checkpoint {path} was made with other settings ({', '.join(differ)} differ), so its "
                          "runs cannot be continued; remove it or run without --resume")
-    runs = data["runs"]
-    for k, r in enumerate(runs):
-        if not isinstance(r, dict) or any(x not in r for x in (*RUN_KEYS, "scenarios")):
-            raise ValueError(f"run {k + 1} of the checkpoint {path} lacks a key")
-        if r["seed"] != key["first_seed"] + k:
-            raise ValueError(f"run {k + 1} of the checkpoint {path} has seed {r['seed']}, not "
-                             f"{key['first_seed'] + k}")
+    runs, second = data["runs"], data.get("runs_excluded") or []
+    if not isinstance(second, list):
+        raise ValueError(f"{path} is not a checkpoint of this tool")  # noqa: TRY004  (one error for a bad file)
+    for which, held in (("run", runs), ("pixel-excluded run", second)):
+        for k, r in enumerate(held):
+            if not isinstance(r, dict) or any(x not in r for x in (*RUN_KEYS, "scenarios")):
+                raise ValueError(f"{which} {k + 1} of the checkpoint {path} lacks a key")
+            if r["seed"] != key["first_seed"] + k:
+                raise ValueError(f"{which} {k + 1} of the checkpoint {path} has seed {r['seed']}, not "
+                                 f"{key['first_seed'] + k}")
+    if second and len(second) > len(runs):
+        raise ValueError(f"the checkpoint's second set runs ahead of its first ({len(second)} pixel-excluded runs "
+                         f"against {len(runs)}), so {path} is not one this tool wrote; remove it")
     state = new_state()
-    state.update(runs=runs, check=data.get("check"), failure=data.get("failure"),
+    state.update(runs=runs, runs_excluded=second, check=data.get("check"), failure=data.get("failure"),
                  parallel=bool(data.get("parallel", True)), resumes=list(data.get("resumes") or []))
     return state
 
@@ -959,6 +1032,9 @@ def main(argv=None) -> int:
                      "target).")
     if inputs.get("neighbour_params_note"):
         notes.append(f"{inputs['neighbour_params_note']}.")
+    # spec 12.2: the neighbours the difference images exclude, removed in the second run set
+    removed, ex_notes = excluded_stars(inputs.get("pixel_excluded"), matched, added)
+    notes += ex_notes
     # the stellar parameters a TIC row lacks, and those of an added star, from the export (ruling q)
     by_source = {str(n.get("source_id")): n for n in neighbours}
     gaia_of = {m["tic_id"]: m["source_id"] for m in matched}
@@ -1023,7 +1099,9 @@ def main(argv=None) -> int:
                          version=tool_version, field_stars=field_stars,
                          stars_sha256=stars_digest(t.stars.to_dict("records")),
                          lightcurve_sha256=file_sha256(inputs_dir / inputs["lightcurve"]["file"]),
-                         inputs_json_sha256=file_sha256(inputs_dir / "inputs.json"))
+                         inputs_json_sha256=file_sha256(inputs_dir / "inputs.json"),
+                         excluded_tic_ids=[r["tic_id"] for r in removed])
+    all_stars = t.stars.to_dict("records")           # the star list of the first set, before remove_star
     state, resume_note = new_state(), None
     if a.resume and not partial.exists():
         resume_note = "--resume was given but no checkpoint existed, so the run started fresh"
@@ -1034,9 +1112,13 @@ def main(argv=None) -> int:
         except (OSError, ValueError) as e:
             print(f"cannot resume: {type(e).__name__}: {e}", file=sys.stderr)
             return 2
-        state["resumes"].append(len(state["runs"]) + 1)
-        print(f"resuming from {partial} at run {len(state['runs']) + 1} (seed {a.seed + len(state['runs'])})",
-              file=sys.stderr)
+        state["resumes"].append(len(state["runs"]) + len(state["runs_excluded"]) + 1)
+        if len(state["runs"]) < a.runs:
+            print(f"resuming from {partial} at run {len(state['runs']) + 1} (seed {a.seed + len(state['runs'])})",
+                  file=sys.stderr)
+        else:
+            print(f"resuming from {partial} at pixel-excluded run {len(state['runs_excluded']) + 1} (seed "
+                  f"{a.seed + len(state['runs_excluded'])})", file=sys.stderr)
     if a.parallel_check and state["check"] is None and not state["runs"] and state["failure"] is None:
         answers = {}
         for mode in (False, True):
@@ -1074,12 +1156,37 @@ def main(argv=None) -> int:
         write_partial(partial, key, state)
         print(f"run {k + 1}/{a.runs} (seed {seed}, {'parallel' if state['parallel'] else 'serial'}): FPP "
               f"{t.FPP:.3g}, NFPP {t.NFPP:.3g} ({clock.monotonic() - started:.1f} s)", file=sys.stderr)
+    if not removed:
+        variant = variant_block(runs, [], True)
+        notes.append("The difference images exclude no neighbour, so the pixel-excluded variant is the first set.")
+    else:
+        t.remove_star([r["tic_id"] for r in removed])
+        second = state["runs_excluded"]
+        for k in range(len(second), a.runs):
+            seed, started = a.seed + k, clock.monotonic()
+            try:
+                probs(seed, a.draws, state["parallel"])
+            except Exception as e:  # as above: the parallel path failing switches to the serial loop
+                if not state["parallel"]:
+                    raise
+                state["failure"], state["parallel"] = f"{type(e).__name__}: {e}", False
+                probs(seed, a.draws, False)
+            second.append(run_record(seed, t.FPP, t.NFPP, t.FPP_degenerate, _probs(t)))
+            write_partial(partial, key, state)
+            print(f"pixel-excluded run {k + 1}/{a.runs} (seed {seed}): FPP {t.FPP:.3g}, NFPP {t.NFPP:.3g} "
+                  f"({clock.monotonic() - started:.1f} s)", file=sys.stderr)
+        variant = variant_block(second, removed, False)
+        n = len(removed)
+        notes.append(f"The pixel-excluded variant removes {n} neighbour{'s' if n != 1 else ''} (TIC "
+                     f"{', '.join(r['tic_id'] for r in removed)}) with remove_star before calc_probs and runs the "
+                     "same seeds; Giacalone et al. 2021 allow removing a star a centroid analysis rules out, and the "
+                     "margins are in the export's pixel_excluded block.")
     check, failure, parallel = state["check"], state["failure"], state["parallel"]
     if check:
         notes.append(f"The serial loop against the parallel path: {check['comparison']}")
     if failure:
         notes.append(f"The package's parallel path failed ({failure}), so the serial loop was used from then on.")
-    first_row = t.stars.iloc[0]
+    first_row = all_stars[0]
     star = inputs.get("star") or {}
     settings = {"N": a.draws, "exptime_days": EXPTIME_DAYS, "search_radius_pix": SEARCH_RADIUS,
                 "aperture": "3 x 3 around the target", "dilution_corrected": True, "parallel": parallel,
@@ -1100,15 +1207,17 @@ def main(argv=None) -> int:
                                   "source": params_source.get(str(first_row["ID"])),
                                   "skysift": {k: (star.get(k) or {}).get("median") for k in ("teff", "radius",
                                                                                              "mass")}}}
-    stars = star_rows(t.stars.to_dict("records"), matched, added, shares, gmags, params_source)
-    result = assemble_result(runs, stars, settings, inputs, tool_version)
+    stars = star_rows(all_stars, matched, added, shares, gmags, params_source)
+    result = assemble_result(runs, stars, settings, inputs, tool_version, variant=variant)
     tmp = out.with_name(out.name + ".tmp")
     tmp.write_text(json.dumps(result, indent=1, allow_nan=False), encoding="utf-8")
     os.replace(tmp, out)
     partial.unlink(missing_ok=True)
     fpp, nfpp = result["fpp"], result["nfpp"]
+    vf = variant["fpp"]
     print(f"median FPP {fpp if fpp is None else f'{fpp:.3g}'}, NFPP {nfpp if nfpp is None else f'{nfpp:.3g}'} over "
-          f"{result['n_runs'] - result['n_degenerate']} runs; wrote {out}", file=sys.stderr)
+          f"{result['n_runs'] - result['n_degenerate']} runs, pixel-excluded FPP {vf if vf is None else f'{vf:.3g}'}; "
+          f"wrote {out}", file=sys.stderr)
     return 0
 
 

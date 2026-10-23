@@ -119,7 +119,7 @@ from skysift.zenodo import (
     probability_sentences,
 )
 
-PACK_VERSION = "4"      # 4: round 2 (spec 11): the vetting texts, the limb-darkened shape, author.json, --final
+PACK_VERSION = "5"      # 5: round 3 (spec 12): the pixel-excluded variant and the dust-map extinction
 # the five steps, in the README's order; the dashboard's step list (ui.routes.dossiers.PACK_STEPS) is built from these
 STEPS = (("1", "Freeze the record"), ("2", "Upload to ExoFOP-TESS"), ("3", "Write it up"),
          ("4", "Tell the archive"), ("5", "Answer follow-up questions"))
@@ -410,10 +410,6 @@ BIBLIOGRAPHY = (
 
 # spec 11.1: words no public text may carry (case-insensitive); "independent" is kept for the vetting ladder alone
 FORBIDDEN_WORDS = (r"\bblind\b", r"\bindependent recovery\b")
-# spec 11.2 as amended at the round-2 final review (minor 5): what TRICERATOPS computed, since its nearby
-# false-positive probability is the weight it gives the neighbours the pixel offset excludes, and what is still open
-BOTH_TOOLS = ("TRICERATOPS's nearby false-positive weight sits on neighbours the pixels exclude; a run without them is "
-              "a follow-up; an unresolved bound companion is the open channel.")
 COMPARED = ("period", "epoch", "depth")         # the claim's quantities set against the dossier's, in this order
 
 
@@ -735,13 +731,15 @@ def cross_check_sentence(data: dict, tex: bool = False) -> str | None:
     return cc.comparison_sentence(data, tex=tex, short=tex)      # the note's short class clause (addendum cut 8)
 
 
-def both_tools(data: dict) -> str | None:
-    """``BOTH_TOOLS`` (spec 11.2) when a current cross-check is printed and the pixel rung voted, so that both
-    estimates have counted the pixels; None otherwise."""
+def both_tools(data: dict, tex: bool = False) -> str | None:
+    """The Research Note's sentence after the two estimates (spec 12.2): what carries the TRICERATOPS weight once
+    the neighbours the difference images exclude are removed (``crosscheck.dominant_excluded_sentence``, short),
+    when a current cross-check is printed and the pixel rung voted, so that both estimates have counted the pixels;
+    None otherwise."""
     if cross_check_sentence(data) is None:
         return None
     voting, _silent = _pixel_votes(_test(data, "rung5_pixels"))
-    return BOTH_TOOLS if voting else None
+    return cc.dominant_excluded_sentence(data, tex=tex, short=True) if voting else None
 
 
 def _capital(text: str) -> str:
@@ -1778,7 +1776,7 @@ def numbers(data: dict, tex: bool = False, after_bjd: float | None = None) -> di
         "fap_text": fap_text, "fpp_text": fpp_text,
         "caveats": [{**c, "title": _caveat_title(c, star)} for c in caveats],
         "in_house_text": in_house_text(data), "in_house_capital": _capital(in_house_text(data)),
-        "both_tools": both_tools(data),
+        "both_tools": both_tools(data, tex),
         "cross_check_sentence": cross_check_sentence(data, tex),
         # the plain texts print the headline in fpp_text first, so their cross-check sentence refers back to it
         "cross_check_after": cc.comparison_sentence(data, after_headline=True),
@@ -2053,7 +2051,8 @@ FILE_NOTES = {
     "data/rung_metrics.json": "every vetting rung's status, reason and metrics",
     HAND_BUILT_FILE: "the hand-built localisation study of the same pixel files that the README compares with "
                      "(season by season, its centroid's distance from the star)",
-    "data/cross_check.json": "the TRICERATOPS cross-check: every run's false-positive probability with "
+    "data/cross_check.json": "the TRICERATOPS cross-check: every run's false-positive probability with all "
+                             "neighbours and with the neighbours the difference images exclude removed, with "
                              "and without STP, nearby false-positive probability, P(STP) and P(PTP), their medians "
                              "and 16th to 84th percentiles, the median run's scenario table, the stars with their "
                              "flux shares and parameter sources, the inputs it was made for and the caveats",

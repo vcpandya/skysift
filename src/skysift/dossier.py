@@ -89,7 +89,8 @@ log = logging.getLogger(__name__)
 
 # 3: ephemeris, timing, shape, parity and secondary blocks; 4: the TESS block (22 Oct 2026); 5: limb-darkened free and
 # prior fits, folds on the linear ephemeris, SES-cut timing (spec 11.3)
-DOSSIER_VERSION = "5"
+# 6: round 3 (spec 12): the extinction block, the four cross-check numbers, the sharing rows
+DOSSIER_VERSION = "6"
 N_BOOT_DEFAULT = eph.N_BOOT     # the shape bootstrap's resamples; ``generate`` reads it at call time
 # best first; an undetermined signal (the pixel stage could not decide) outranks every closed one, so a target's
 # tile and its dossier name the same signal when a superseded parent or a rejected sibling has the higher SDE
@@ -2034,7 +2035,8 @@ def page_texts(data: dict) -> dict:
     ``trend`` the depth trend with its direction when it is printed (``pack.trend_sentence``); ``shape``,
     ``parity``, ``secondary`` and ``stability`` the vetting sentences (``pack.vetting_texts``); ``pixels`` the
     centroid sentence (``pack.pixel_sentence``); ``star`` the Gaia flags and the reddening (``pack.star_texts``);
-    ``cross_check`` the TRICERATOPS sentence with its ranges (``crosscheck.comparison_sentence``); ``tess`` the
+    ``cross_check`` the TRICERATOPS sentence with its ranges (``crosscheck.comparison_sentence``); ``excluded`` the
+    scenario that carries the pixel-excluded set's weight (``crosscheck.dominant_excluded_sentence``); ``tess`` the
     note's TESS sentence; and ``fold`` the figure's fold (``pack.fold_text``). Each None when it does not apply."""
     from skysift import pack, zenodo  # pack imports this module
 
@@ -2052,6 +2054,7 @@ def page_texts(data: dict) -> dict:
             **pack.vetting_texts(data), "pixels": pack.pixel_sentence(data) if _rung(data.get("tests") or [],
                                                                                    "rung5_pixels") else None,
             "star": pack.star_texts(data), "cross_check": cc.comparison_sentence(data),
+            "excluded": cc.dominant_excluded_sentence(data),
             "tess": pack.tess_text(data) if (data.get("tess") or {}).get("available") else None,
             "fold": pack.fold_text(data), "ephemeris": _ephemeris_words(data)}
 

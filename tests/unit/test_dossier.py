@@ -550,10 +550,11 @@ def test_an_unchanged_dossier_reports_its_stored_fap_and_a_version_bump_regenera
     rep = generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch)
     assert not rep.generated and rep.fap.words() == "1 in 1,700" == seeded["fap"]["words"]
     assert rep.fpp.value == pytest.approx(compute(FppInputs(**seeded["fpp"]["inputs"])).value)
-    monkeypatch.setattr(dossier_module, "DOSSIER_VERSION", "6")
+    bumped = str(int(DOSSIER_VERSION) + 1)
+    monkeypatch.setattr(dossier_module, "DOSSIER_VERSION", bumped)
     again = generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch)
     assert again.generated and "format changed" in again.stale_reason
-    assert env.store.dossier(STAGE2_TARGET)["dossier_version"] == "6"
+    assert env.store.dossier(STAGE2_TARGET)["dossier_version"] == bumped
 
 
 def test_rank_key_orders_stage_two_approved_stage_one_and_rejected_last():
@@ -1124,7 +1125,7 @@ def test_generate_merges_the_stored_cross_check_and_a_regeneration_keeps_it(env)
     env.store.set_cross_check(STAGE2_TARGET, block)
     again = _data(generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch, force=True))
     # the class of the medians is recomputed at every merge, never read from the stored block
-    assert again["cross_check"] == {**block, "class": "validated"}
+    assert again["cross_check"] == {**block, "class": "validated", "class_excluded": "validated"}
     assert env.store.dossier(STAGE2_TARGET)["cross_check"] == block
     env.store.set_cross_check(STAGE2_TARGET, {**block, "inputs_sha256": "0" * 64})     # made for other inputs
     stale = _data(generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch, force=True))
@@ -1465,7 +1466,7 @@ def test_the_export_embeds_only_the_public_fields_of_a_prior_claim():
 def test_version_5_folds_on_the_linear_ephemeris_and_stores_both_fits(env):
     d = json.loads(generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch,
                             force=True).data_path.read_text(encoding="utf-8"))
-    assert d["dossier_version"] == "5" == DOSSIER_VERSION
+    assert d["dossier_version"] == "6" == DOSSIER_VERSION
     e, timing, shape = d["ephemeris"], d["timing"], d["shape"]
     assert e["fold_ephemeris"] == f"linear fit of {timing['n_used']} transit times"
     assert d["stability"]["ephemeris"] == e["fold_ephemeris"] and "season_depths" in d["stability"]["metrics"]
@@ -1644,3 +1645,17 @@ def test_the_page_texts_carry_every_sentence_the_note_prints():
     assert texts["fold"].startswith("Folded on the 40.29081 day linear-fit ephemeris, within ")
     assert texts["ephemeris"].startswith("Ephemeris: ") and texts["ephemeris"].endswith("; the star has G = 16.2.")
     assert texts["cross_check"] is None                     # the golden's cross-check is not current
+    assert texts["excluded"] is None
+
+
+def test_the_page_texts_name_what_carries_the_pixel_excluded_weight():
+    """Spec 12.2: ``page_texts``' ``excluded`` is the dominant-excluded sentence of a current cross-check."""
+    from skysift import crosscheck as cc
+    from tests.unit.test_crosscheck import fake_result
+    golden = json.loads((Path(__file__).parents[1] / "golden" / "kic-006146676-generated.json").read_text(
+        encoding="utf-8"))
+    data = {**golden, "cross_check": cc.with_current({**fake_result(cc.inputs_fingerprint(golden)), "current": True},
+                                                     golden)}
+    texts = page_texts(data)
+    assert texts["excluded"] == cc.dominant_excluded_sentence(data) and texts["excluded"].startswith(
+        "With those neighbours removed the false-positive weight sits mainly on STP")

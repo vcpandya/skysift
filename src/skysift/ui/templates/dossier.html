@@ -242,6 +242,14 @@
     {%- macro spread(block, m) %}<span class="mono">{{ g3(block[m]) }}</span> (16th to 84th percentile <span class="mono">{{ g3(block[m ~ "_p16"]) }} to {{ g3(block[m ~ "_p84"]) }}</span>){% endmacro %}
     {%- if cc and cc.runs is defined %}
     <p>An estimate with TRICERATOPS {{ cc.tool_version }} (Giacalone et al. 2021) over {{ cc.n_runs }} runs{% if cc.n_degenerate %}, {{ cc.n_degenerate }} degenerate and left out{% endif %}: median false-positive probability {{ spread(cc, "fpp") }}, {{ spread(cc, "fpp_no_stp") }} without a planet transiting an unresolved bound companion (STP), which SkySift's model leaves out, and nearby false-positive probability {{ spread(cc, "nfpp") }}. {% if texts.class_text %}{{ texts.class_text }} {% endif %}The cross-check never blocks the live draft. {% if cc.current %}It was made for this dossier's period, depth and neighbours.{% else %}It was made for an earlier dossier (the period, the depth or the neighbours have changed since), so it does not count until it is run again.{% endif %}</p>
+    {%- set vx = cc.variant_excluded %}
+    {%- if vx and vx.runs is defined %}
+    {%- set nx = vx.removed | length %}
+    <p>{% if vx.same_as_all %}The difference images exclude no neighbour, so the run set with them removed is this one.{% else %}With {{ "the one neighbour the difference images exclude" if nx == 1 else "the %d neighbours the difference images exclude" | format(nx) }} removed, over {{ vx.n_runs }} runs: median false-positive probability {{ spread(vx, "fpp") }}, {{ spread(vx, "fpp_no_stp") }} without STP, and nearby false-positive probability {{ spread(vx, "nfpp") }}.{% endif %}{% if texts.excluded %} {{ texts.excluded }}{% endif %}</p>
+    {%- if nx %}
+    <ul class="dossier-small">{% for r in vx.removed %}<li>Gaia DR3 <span class="mono">{{ r.source_id }}</span> at {{ "%.2f" | format(r.sep_arcsec) if r.sep_arcsec is not none else "–" }} arcsec, smallest margin {{ g3(r.min_margin_sigma) }} sigma</li>{% endfor %}</ul>
+    {%- endif %}
+    {%- endif %}
     {{ pack_words(texts, ["cross_check"], "only-expert dossier-small") }}
     {%- if cc.caveats %}
     <ul class="dossier-small">{% for c in cc.caveats %}<li>{{ c }}</li>{% endfor %}</ul>

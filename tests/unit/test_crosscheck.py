@@ -77,9 +77,25 @@ def fake_runs(fpp: float = 0.012, nfpp: float = 1e-4, n: int = cc.N_RUNS, p_stp:
              "degenerate": False} for k in range(n)]
 
 
+REMOVED = [{"tic_id": "169822655", "source_id": "2073896190925687296", "sep_arcsec": 11.452381,
+            "min_margin_sigma": 12.657602}]
+
+
+def fake_variant(fpp: float = 0.004, nfpp: float = 0.0, n: int = cc.N_RUNS, p_stp: float = 0.003,
+                 removed: list | None = None, scenarios: list | None = None) -> dict:
+    """The pixel-excluded run set as the tool writes it: ``n`` identical runs, seeds 1 to n."""
+    runs = fake_runs(fpp, nfpp, n, p_stp)
+    return {"n_runs": n, "n_degenerate": 0, **cc.summarise(runs), "runs": runs,
+            "scenarios": scenarios or [{"ID": "169822650", "scenario": "TP", "prob": 1 - fpp},
+                                       {"ID": "169822650", "scenario": "STP", "prob": p_stp}],
+            "removed": REMOVED if removed is None else removed, "same_as_all": False,
+            "seeds": [r["seed"] for r in runs], "median_run_seed": 1}
+
+
 def fake_result(sha: str, fpp: float = 0.012, nfpp: float = 1e-4, n: int = cc.N_RUNS, p_stp: float = 0.0,
-                scenarios: list | None = None) -> dict:
-    """A result file as the tool writes it: ``n`` runs whose medians are ``fpp`` and ``nfpp``."""
+                scenarios: list | None = None, variant: dict | None = None) -> dict:
+    """A result file as the tool writes it: ``n`` runs whose medians are ``fpp`` and ``nfpp``, and the pixel-excluded
+    run set ``variant`` (``fake_variant(n=n)`` by default)."""
     runs = fake_runs(fpp, nfpp, n, p_stp)
     return {"schema": 3, "tool": cc.TOOL, "tool_version": "1.1.0", "run_utc": "2026-10-22T12:00:00+00:00", "n_runs": n,
             "n_degenerate": 0, **cc.summarise(runs), "runs": runs,
@@ -89,7 +105,8 @@ def fake_result(sha: str, fpp: float = 0.012, nfpp: float = 1e-4, n: int = cc.N_
             "caveats": [("The light is shared in the Kepler band with Gaia G as the proxy; the limb darkening comes "
                          "from the package's Kepler table.")],
             "settings": {"N": 1_000_000, "exptime_days": 0.0204,
-                         "field_stars": {"file": "r.population.csv", "n_rows": 8883, "sha256": "c" * 64}}}
+                         "field_stars": {"file": "r.population.csv", "n_rows": 8883, "sha256": "c" * 64}},
+            "variant_excluded": variant if variant is not None else fake_variant(n=n)}
 
 
 def _write(path: Path, obj) -> Path:
@@ -351,7 +368,7 @@ def test_import_validates_and_stores_the_result(env, tmp_path):
         cc.import_result(env.store, "kic-000000001", _write(tmp_path / "ok.json", fake_result(sha)))
     good = dict(fake_result(sha), extra="not kept")
     block = cc.import_result(env.store, STAGE2_TARGET, _write(tmp_path / "ok.json", good))
-    assert block["current"] is True and set(block) == {*cc.RESULT_KEYS, "current", "class"}
+    assert block["current"] is True and set(block) == {*cc.RESULT_KEYS, "current", "class", "class_excluded"}
     assert env.store.dossier(STAGE2_TARGET)["cross_check"] == block and block["fpp"] == 0.012
     assert block["class"] == "validated" and cc.verdict(block) == (False, None)
 
@@ -373,7 +390,9 @@ def test_a_hand_made_20_run_file_with_degenerate_runs_is_summarised_over_the_oth
     assert s["nfpp"] == pytest.approx(9.5e-5)
     assert cc.fpp_without_stp(0.046, 0.0455) == pytest.approx(0.0005 / 0.9545)        # the smoke run: about 0.05 %
     assert cc.fpp_without_stp(1.0, 1.0) is None and cc.fpp_without_stp(0.01, 0.02) == 0.0
-    result = {**fake_result("c" * 64), "runs": runs, "n_degenerate": 2, **s}
+    same = {**fake_variant(removed=[]), "runs": runs, "n_degenerate": 2, **s, "seeds": [r["seed"] for r in runs],
+            "same_as_all": True}
+    result = {**fake_result("c" * 64), "runs": runs, "n_degenerate": 2, **s, "variant_excluded": same}
     cc.validate_result(result)
     with pytest.raises(cc.BadResult, match="every run was degenerate"):
         every = [dict(r, degenerate=True) for r in runs]
@@ -432,7 +451,10 @@ def test_comparison_sentence_prints_both_fpps_with_their_ranges_and_no_class():
     assert "nearby false-positive probability of 1 in 10,000" in text and "over 20 runs," in text
     # spec 11.2: no class on Giacalone et al.'s scale and no "different questions" tail; SkySift's own estimate is
     # the in-house sentence's, not this one's
-    assert text.endswith(f"over 20 runs, {cc.NO_CLASS_CLAUSE}.")
+    # spec 12.2: the variant with its ranges
+    assert (f"over 20 runs, {cc.NO_CLASS_CLAUSE}. With the one neighbour the difference images exclude removed "
+            "(Gaia DR3 2073896190925687296 at 11.45 arcsec, smallest margin 12.7 sigma), 20 seeded runs give 0.0040 "
+            "(16th to 84th percentile 0.0040 to 0.0040)") in text
     assert "the medians" not in text and "SkySift's own" not in text and "different questions" not in text
     assert "e-0" not in text and "e-0" not in cc.comparison_sentence(data, tex=True)
     assert chr(0x2014) not in text and "discover" not in text.lower() and "validated" not in text
@@ -458,8 +480,9 @@ def test_the_headline_leads_with_both_triceratops_numbers():
     data = {"fpp": {"value": 0.0035}, "cross_check": block}
     assert cc.headline(data) == (f"TRICERATOPS 1.1.0 gives a false-positive probability of 0.046 "
                                  f"({cc.probability_text(block['fpp_no_stp'])} without a planet on an unresolved bound "
-                                 "companion), in none of its validation classes, which do not apply at 30-minute "
-                                 "cadence (Giacalone et al. 2021)")
+                                 "companion), and 0.0040 (0.0010 without it) with the one neighbour the difference "
+                                 "images exclude removed, in none of its validation classes, which do not apply at "
+                                 "30-minute cadence (Giacalone et al. 2021)")
     assert str(cc.headline(data, tex=True)).endswith(r"at 30-minute cadence \citep{giacalone2021}")
     assert cc.headline({"cross_check": {**block, "current": False}}) is None and cc.headline({}) is None
 
@@ -748,7 +771,7 @@ def _current_export(path: Path, **inputs_changes) -> None:
     """``_old_export`` with everything an export of round 3 carries; ``inputs_changes`` replace keys of inputs.json."""
     _old_export(path)
     inputs = json.loads((path / "inputs.json").read_text(encoding="utf-8"))
-    inputs.update({"schema": 3, "rung5_psf_sigma": LIVE_PSF,
+    inputs.update({"schema": 3, "rung5_psf_sigma": LIVE_PSF, "pixel_excluded": cc.pixel_excluded(_live()),
                    "target": {**inputs["target"], "crowdsap": 0.8565, "psffrac": 0.8},
                    "neighbours": [{**n, "params_source": {}, "mass_radius": None} for n in inputs["neighbours"]],
                    "lightcurve": {**inputs["lightcurve"], "clipped": 0}, **inputs_changes})
@@ -791,8 +814,9 @@ def test_tool_result_and_checkpoint_carry_the_schema_and_the_width():
     rows = tc.star_rows(R2_STARS, [], {}, shares, R2_G, {})
     assert rows[3]["overlap"] == pytest.approx(0.005864323, rel=1e-5) and rows[3]["share_before"] == pytest.approx(
         0.1617909, rel=1e-5) and rows[3]["share"] == pytest.approx(0.1381348, rel=1e-5)
-    assert tc.assemble_result([tc.run_record(1, 0.1, 0.01, False, [])], rows, {}, {"fingerprint": "a" * 64},
-                              "1.1.0")["schema"] == tc.RESULT_SCHEMA == 3
+    one = [tc.run_record(1, 0.1, 0.01, False, [])]
+    assert tc.assemble_result(one, rows, {}, {"fingerprint": "a" * 64}, "1.1.0",
+                              variant=tc.variant_block(one, [], True))["schema"] == tc.RESULT_SCHEMA == 3
 
 
 def test_tool_param_updates_fill_only_what_the_tic_lacks():
@@ -828,7 +852,8 @@ def test_tool_runs_are_recorded_summarised_and_pass_the_import_checks():
     runs = [tc.run_record(7 + k, f, f / 10, k == 4, scen) for k, f in enumerate(np.linspace(0.01, 0.2, 20))]
     settings = {"N": 1_000_000, "notes": ["a note"], "parallel": True, "allow_old_export": False,
                 "field_stars": {"n_rows": 10, "sha256": "c" * 64}}
-    result = tc.assemble_result(runs, [{"id": "1", "tmag": 15.2}], settings, {"fingerprint": "b" * 64}, "1.1.0")
+    result = tc.assemble_result(runs, [{"id": "1", "tmag": 15.2}], settings, {"fingerprint": "b" * 64}, "1.1.0",
+                                variant=tc.variant_block(runs, [], True))
     assert tuple(result) == cc.RESULT_KEYS and result["tool"] == cc.TOOL and result["n_degenerate"] == 1
     good = [x for x in runs if not x["degenerate"]]
     assert result["fpp"] == pytest.approx(float(np.median([x["fpp"] for x in good])))
@@ -1041,6 +1066,7 @@ def test_tool_refuses_an_export_from_before_the_revision(tmp_path, monkeypatch, 
     for words in ("no crowdsap key", "no psffrac key", "neighbour 1 carry no parameter sources",
                   "neighbour 1 carry no mass_radius (the radius each mass belongs to)", "no clip count",
                   "the export is schema None, not 3", "the export has no rung5_psf_sigma key",
+                  "the export has no pixel_excluded key",
                   "re-export it with skysift crosscheck --export", "--allow-old-export"):
         assert words in err
     assert not (tmp_path / "r.json").exists()
@@ -1053,7 +1079,8 @@ def test_tool_refuses_an_export_from_before_the_revision(tmp_path, monkeypatch, 
     monkeypatch.setattr(tc, "tr", SimpleNamespace(target=target))
     with pytest.raises(Reached):                             # past the refusal, at the package's constructor
         tc.main([*args, "--allow-old-export"])
-    assert tc.export_problems({"schema": 3, "rung5_psf_sigma": LIVE_PSF, "target": {"crowdsap": 1.2, "psffrac": None},
+    assert tc.export_problems({"schema": 3, "rung5_psf_sigma": LIVE_PSF, "pixel_excluded": None,
+                               "target": {"crowdsap": 1.2, "psffrac": None},
                                "neighbours": [{"params_source": {}, "mass_radius": None}],
                                "lightcurve": {"clipped": 0}}) == ["the target's CROWDSAP 1.2 is not in (0, 1]"]
     assert tc.main([*args, "--draws", "0"]) == 2
@@ -1355,3 +1382,170 @@ def test_the_leakage_note_lists_each_neighbour_before_and_after(tmp_path):
             "that box light, with the NFPP it drives, is an upper bound for the KBonus PSF photometry") in text
     assert text.rstrip().endswith(ln.tc.PRF_CAVEAT) and "Both columns" not in text
     assert "\u2014" not in text
+
+
+# ---------------------------------------------------------------------------------------------------- Task 15
+
+def test_pixel_excluded_takes_rung_5s_vote_for_its_neighbour_and_the_bound_for_the_others():
+    out = cc.pixel_excluded(_live())
+    assert out["seasons"] == [0, 1, 2, 3] and out["reason"] is None and out["sigma"] == 3.0
+    assert out["stamp_source_id"] == "2073896190925687296"          # 11.45 arcsec against the stamp's 11.53
+    rows = {n["source_id"]: n for n in out["neighbours"]}
+    stamp = rows["2073896190925687296"]
+    assert [m["basis"] for m in stamp["margins"]] == ["rung 5 vote"] * 4
+    assert [m["margin_sigma"] for m in stamp["margins"]] == pytest.approx([27.845078, 19.814692, 17.424733,
+                                                                           12.657602])
+    near = rows["2073896294004902144"]                                # 7.14 arcsec: D / 2 = 0.8973 px
+    assert [m["basis"] for m in near["margins"]] == ["geometric bound"] * 4
+    assert [m["margin_sigma"] for m in near["margins"]] == pytest.approx([12.12, 10.33, 9.93, 7.07], abs=0.01)
+    assert near["min_margin_sigma"] == pytest.approx(7.07, abs=0.01) and near["reason"] is None
+    # 10.94 arcsec lies within 1 arcsec of the stamp separation too, but 11.45 is nearer: the bound for it
+    other = rows["2073896289692192128"]["margins"][0]
+    assert other["basis"] == "geometric bound" and other["margin_sigma"] == pytest.approx(20.41, abs=0.01)
+    assert out["excluded_ids"] == [n["source_id"] for n in LIVE_NEIGHBOURS]
+    assert all(n["excluded"] for n in rows.values()) and out["rule"] == cc.EXCLUDE_RULE
+
+
+def test_a_season_without_a_vote_keeps_every_neighbour_and_no_voting_season_excludes_nothing():
+    holed = [*LIVE_SEASONS[:3], {**LIVE_SEASONS[3], "dist_target_pix": None, "separation_sigma": None}]
+    out = cc.pixel_excluded(_live(holed))
+    assert out["excluded_ids"] == []
+    rows = {n["source_id"]: n for n in out["neighbours"]}
+    assert rows["2073896294004902144"]["reason"] == "season 3 has no centroid distance or error"
+    assert rows["2073896190925687296"]["reason"] == "season 3 has no rung 5 vote against this neighbour"
+    assert rows["2073896294004902144"]["excluded"] is False
+    low = [*LIVE_SEASONS[:3], {**LIVE_SEASONS[3], "centroid_sigma_axis_pix": 0.5}]  # (0.8973 - 0.1866) / 0.5 = 1.42
+    out = cc.pixel_excluded(_live(low))
+    assert "2073896294004902144" not in out["excluded_ids"] and "2073896190925687296" in out["excluded_ids"]
+    assert next(n for n in out["neighbours"] if n["source_id"] == "2073896294004902144")["reason"] == (
+        "season 3 margin 1.42 sigma, not above 3")
+    none = cc.pixel_excluded(_live([{**s, "voting": False} for s in LIVE_SEASONS]))
+    assert none["excluded_ids"] == [] and none["reason"] == "rung 5 has no voting season"
+    assert cc.pixel_excluded({"tests": [], "fpp": {"inputs": {"neighbours": LIVE_NEIGHBOURS}}})["reason"] == (
+        "rung 5 has not run")
+
+
+def test_the_export_lists_the_pixel_excluded_neighbours(env, tmp_path):
+    cc.export_inputs(env.store, env.blob, env.settings, STAGE2_TARGET, tmp_path / "cc", fetch=env.xfetch)
+    inputs = json.loads((tmp_path / "cc" / "inputs.json").read_text(encoding="utf-8"))
+    assert inputs["pixel_excluded"] == cc.pixel_excluded(_stored(env))
+
+
+def test_tool_maps_the_excluded_neighbours_to_the_stars_it_removes():
+    from tools import triceratops_check as tc
+    px = {"excluded_ids": ["g1", "g2", "g3"],
+          "neighbours": [{"source_id": "g1", "sep_arcsec": 7.14, "min_margin_sigma": 7.07},
+                         {"source_id": "g2", "sep_arcsec": 11.45, "min_margin_sigma": 12.66},
+                         {"source_id": "g3", "sep_arcsec": 18.6, "min_margin_sigma": 21.4}]}
+    removed, notes = tc.excluded_stars(px, [{"source_id": "g2", "tic_id": "169822655", "dsep_arcsec": 0.24}],
+                                       {"g1": 19.3})
+    assert removed == [{"tic_id": "g1", "source_id": "g1", "sep_arcsec": 7.14, "min_margin_sigma": 7.07},
+                       {"tic_id": "169822655", "source_id": "g2", "sep_arcsec": 11.45, "min_margin_sigma": 12.66}]
+    assert notes == [("Gaia DR3 g3 is excluded by the difference images but is not in the run's star list, so "
+                      "there is nothing to remove.")]
+    assert tc.excluded_stars(None, [], {}) == ([], []) and tc.excluded_stars({"excluded_ids": []}, [], {}) == ([], [])
+    assert tc.VARIANT_KEYS == cc.VARIANT_KEYS
+
+
+def test_tool_result_carries_the_pixel_excluded_variant_and_passes_the_import():
+    from tools import triceratops_check as tc
+    table = [{"ID": "t", "scenario": "TP", "prob": 0.92}, {"ID": "t", "scenario": "STP", "prob": 0.05}]
+    runs = [tc.run_record(1 + k, 0.08, 0.02, False, table) for k in range(20)]
+    ex = [tc.run_record(1 + k, 0.055, 0.0, False, [{"ID": "t", "scenario": "TP", "prob": 0.945},
+                                                    {"ID": "t", "scenario": "STP", "prob": 0.05}]) for k in range(20)]
+    removed = [{"tic_id": "169822655", "source_id": "g2", "sep_arcsec": 11.45, "min_margin_sigma": 12.66}]
+    settings = {"N": 1_000_000, "field_stars": {"file": "p.csv", "n_rows": 10, "sha256": "c" * 64}}
+    result = tc.assemble_result(runs, [], settings, {"fingerprint": "a" * 64}, "1.1.0",
+                                variant=tc.variant_block(ex, removed, False))
+    assert result["schema"] == 3 and tuple(result) == cc.RESULT_KEYS
+    v = result["variant_excluded"]
+    assert tuple(v) == cc.VARIANT_KEYS and v["removed"] == removed and v["seeds"] == list(range(1, 21))
+    assert v["fpp"] == pytest.approx(0.055) and v["nfpp"] == 0.0 and v["same_as_all"] is False
+    cc.validate_result(result)
+    same = tc.assemble_result(runs, [], settings, {"fingerprint": "a" * 64}, "1.1.0",
+                              variant=tc.variant_block(runs, [], True))
+    assert same["variant_excluded"]["fpp"] == same["fpp"] and same["variant_excluded"]["removed"] == []
+    cc.validate_result(same)
+
+
+def test_tool_checkpoint_resumes_the_second_set(tmp_path):
+    from tools import triceratops_check as tc
+    key = tc.checkpoint_key("a" * 64, seed=1, draws=2000, check_draws=2000, parallel_check=True, flux_err=0.001,
+                            shares={"source": tc.OVERLAP}, quarters=[1], allow_old_export=False, version="1.1.0",
+                            excluded_tic_ids=["1879962333", "169822655"])
+    assert key["excluded_tic_ids"] == ["169822655", "1879962333"]                         # sorted
+    state = tc.new_state()
+    assert state["runs_excluded"] == []
+    state["runs"] = [tc.run_record(1 + k, 0.1, 1e-4, False, []) for k in range(3)]
+    state["runs_excluded"] = [tc.run_record(1 + k, 0.05, 0.0, False, []) for k in range(2)]
+    part = tmp_path / "r.partial.json"
+    tc.write_partial(part, key, state)
+    back = tc.resume_state(part, key)
+    assert back["runs_excluded"] == state["runs_excluded"] and tc.checkpoint_runs(part) == 3
+    with pytest.raises(ValueError, match=r"\(excluded_tic_ids differ\)"):
+        tc.resume_state(part, {**key, "excluded_tic_ids": []})
+    tc.write_partial(part, key, {**state, "runs": state["runs"][:1]})
+    with pytest.raises(ValueError, match="the checkpoint's second set runs ahead of its first"):
+        tc.resume_state(part, key)
+
+
+def test_the_import_requires_the_pixel_excluded_variant():
+    good = fake_result("a" * 64)
+    cc.validate_result(good)
+    with pytest.raises(cc.BadResult, match="the result file lacks variant_excluded"):
+        cc.validate_result({k: v for k, v in good.items() if k != "variant_excluded"})
+    v = good["variant_excluded"]
+    with pytest.raises(cc.BadResult, match="variant_excluded's seeds are not the first set's"):
+        cc.validate_result({**good, "variant_excluded": {**v, "seeds": list(range(2, 22))}})
+    with pytest.raises(cc.BadResult, match="variant_excluded says same_as_all but its runs differ from the first "
+                                           "set's"):
+        cc.validate_result({**good, "variant_excluded": {**v, "same_as_all": True}})
+    with pytest.raises(cc.BadResult, match=r"variant_excluded\.fpp 0\.5 is not the non-degenerate runs' value"):
+        cc.validate_result({**good, "variant_excluded": {**v, "fpp": 0.5}})
+    with pytest.raises(cc.BadResult, match="variant_excluded.removed must list"):
+        cc.validate_result({**good, "variant_excluded": {**v, "removed": [{"tic_id": "1"}]}})
+    stored = cc.with_current({**good, "current": True}, DATA)
+    assert stored["class_excluded"] == cc.classify(v["fpp"], v["nfpp"])
+
+
+def _four(fpp_ex: float = 0.055, nfpp_ex: float = 0.0, removed=None, same: bool = False) -> dict:
+    sha = cc.inputs_fingerprint(DATA)
+    variant = fake_variant(fpp=fpp_ex, nfpp=nfpp_ex, p_stp=0.05, removed=removed)
+    if same:
+        variant = {**fake_variant(fpp=0.08, nfpp=0.02, p_stp=0.05, removed=[]), "same_as_all": True}
+    block = {**fake_result(sha, fpp=0.08, nfpp=0.02, p_stp=0.05, variant=variant), "current": True}
+    return {**DATA, "fpp": {"value": 0.0035}, "cross_check": block,
+            "centroid_offset": {"exclusion_radius_arcsec": 0.83480394}}
+
+
+def test_every_text_carries_the_four_numbers():
+    data = _four()
+    assert cc.headline(data) == (
+        "TRICERATOPS 1.1.0 gives a false-positive probability of 0.080 (0.032 without a planet on an unresolved bound "
+        "companion), and 0.055 (0.0053 without it) with the one neighbour the difference images exclude removed, in "
+        "none of its validation classes, which do not apply at 30-minute cadence (Giacalone et al. 2021)")
+    assert cc.headline(data, short=True).endswith(
+        "(0.032 without a planet on an unresolved bound companion; 0.055 and 0.0053 with the one neighbour the "
+        "difference images exclude removed; no validation class applies at 30-minute cadence; Giacalone et al. 2021)")
+    after = cc.comparison_sentence(data, after_headline=True)
+    assert ("With the one neighbour the difference images exclude removed (Gaia DR3 2073896190925687296 at 11.45 "
+            "arcsec, smallest margin 12.7 sigma), 20 seeded runs give 0.055 (16th to 84th percentile 0.055 to "
+            "0.055), 0.0053 (0.0053 to 0.0053) without STP and a nearby false-positive probability of 0 (0 to "
+            "0).") in after
+    assert after.endswith(
+        "With those neighbours removed the false-positive weight sits mainly on STP, a planet transiting an "
+        "unresolved bound companion inside the 0.83 arcsec exclusion radius, which no high-resolution imaging "
+        "constrains, so the signal stays a candidate.")
+    assert "With the one neighbour the difference images exclude removed it gives 0.055, and 0.0053 without STP." \
+        in cc.comparison_sentence(data, short=True)
+    assert cc.dominant_excluded_sentence(data, short=True) == (
+        "The remaining weight is mainly STP, a planet on an unresolved bound companion inside the 0.83 arcsec "
+        "exclusion radius, which no imaging constrains, so the signal stays a candidate.")
+    six = _four(removed=REMOVED * 6)
+    assert "with the 6 neighbours the difference images exclude removed" in cc.headline(six)
+    assert "and the same with no neighbour removed, since the difference images exclude none" in cc.headline(
+        _four(same=True))
+    assert cc.dominant_excluded_sentence({**data, "cross_check": {**data["cross_check"], "current": False}}) is None
+    no_radius = {**data, "centroid_offset": None}
+    assert "within 2.2 arcsec, which no high-resolution imaging" in cc.dominant_excluded_sentence(no_radius)
+    assert "—" not in after

@@ -534,6 +534,22 @@
       para(2, `An estimate with TRICERATOPS ${CC.tool_version} (Giacalone et al. 2021) over ${CC.n_runs} runs${CC.n_degenerate ? `, ${CC.n_degenerate} degenerate and left out` : ""}: median false-positive probability ${spread("fpp")}, ${spread("fpp_no_stp")} without a planet transiting an unresolved bound companion (STP), which SkySift's model leaves out, and nearby false-positive probability ${spread("nfpp")}. ${PT.class_text ? `${PT.class_text} ` : ""}The cross-check never blocks the live draft. ${CC.current
         ? "It was made for this dossier's period, depth and neighbours."
         : "It was made for an earlier dossier (the period, the depth or the neighbours have changed since), so it does not count until it is run again."}`);
+      // spec 12.2: the run set with the neighbours the difference images exclude removed, and what carries its weight
+      const VX = CC.variant_excluded;
+      if (VX && Array.isArray(VX.runs)) {
+        const nx = (VX.removed || []).length;
+        const vspread = (m) => `${g3(VX[m])} (16th to 84th percentile ${g3(VX[`${m}_p16`])} to ${g3(VX[`${m}_p84`])})`;
+        const phrase = nx === 1 ? "the one neighbour the difference images exclude" : `the ${nx} neighbours the difference images exclude`;
+        const lead = VX.same_as_all
+          ? "The difference images exclude no neighbour, so the run set with them removed is this one."
+          : `With ${phrase} removed, over ${VX.n_runs} runs: median false-positive probability ${vspread("fpp")}, ${vspread("fpp_no_stp")} without STP, and nearby false-positive probability ${vspread("nfpp")}.`;
+        para(2, PT.excluded ? `${lead} ${PT.excluded}` : lead);
+        if (nx) {
+          const ul = h("ul", "dossier-small");
+          VX.removed.forEach((r) => ul.appendChild(h("li", null, `Gaia DR3 ${r.source_id} at ${isNum(r.sep_arcsec) ? Number(r.sep_arcsec).toFixed(2) : "–"} arcsec, smallest margin ${g3(r.min_margin_sigma)} sigma`)));
+          sec(2).appendChild(ul);
+        }
+      }
       para(2, PT.cross_check, "pack-words only-expert dossier-small");
       if ((CC.caveats || []).length) {
         const ul = h("ul", "dossier-small");

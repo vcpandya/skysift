@@ -207,3 +207,19 @@ def test_the_abstract_clause_gives_the_rate_per_star_and_the_sweep_expectation()
                                                                             "computed")
     assert zenodo.expected_peaks(0.3) == "fewer than one such peak" and zenodo.expected_peaks(1.2) == \
         "about one such peak"
+
+
+def test_the_probability_sentence_carries_the_pixel_excluded_numbers():
+    """Spec 12.2: the false-positive sentence leads with the four TRICERATOPS numbers (``crosscheck.headline``)."""
+    import json
+    from pathlib import Path
+
+    from skysift import crosscheck as cc
+    from tests.unit.test_crosscheck import fake_result
+    golden = json.loads((Path(__file__).parents[1] / "golden" / "kic-006146676-generated.json").read_text(
+        encoding="utf-8"))
+    data = {**golden, "cross_check": cc.with_current({**fake_result(cc.inputs_fingerprint(golden)), "current": True},
+                                                     golden)}
+    fpp = zenodo.probability_sentences(data)[1]
+    assert "with the one neighbour the difference images exclude removed" in fpp
+    assert fpp.startswith(f"False-positive probability: {cc.headline(data, named=False)};")

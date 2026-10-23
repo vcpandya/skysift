@@ -3,6 +3,7 @@ dossier page in both modes, the standalone download, the dossier jobs, the pack 
 Probabilities block of the verdict popup. TestClient against the dashboard seed with one hand-made dossier."""
 import html as html_module
 import json
+import re
 import sys
 import xml.etree.ElementTree as ET
 from types import SimpleNamespace
@@ -800,6 +801,13 @@ def test_dossier_page_shows_the_cross_check_block(seeded_dossier):
         assert "without a bound-companion or diluted-planet scenario" in plain
         assert "made for this dossier" in checks and "earlier dossier" not in checks
         assert "Kepler table" in checks and chr(0x2014) not in checks
+        # spec 12.2: the pixel-excluded set, its spread in the page's g3 form and the neighbour it removes
+        bare = re.sub(r"<[^>]+>", "", plain)
+        assert "with the one neighbour the difference images exclude removed" in bare
+        assert ("With the one neighbour the difference images exclude removed, over 20 runs: median false-positive "
+                "probability 0.004 (16th to 84th percentile 0.004 to 0.004)") in bare
+        assert "Gaia DR3 2073896190925687296 at 11.45 arcsec, smallest margin 12.7 sigma" in bare
+        assert cc.dominant_excluded_sentence({**data, "cross_check": cc.with_current(result, data)}) in bare
     app.state.store.set_cross_check(STAGE2_TARGET, {**result, "inputs_sha256": "0" * 64, "current": True})
     checks = client.get(f"/dossiers/{STAGE2_TARGET}").text.split('id="checks"')[1].split('id="pixels"')[0]
     assert "made for an earlier dossier" in checks
@@ -828,6 +836,10 @@ def test_the_standalone_page_carries_a_cross_check_imported_after_its_export(see
     assert "over ${CC.n_runs} runs" in after and "16th to 84th percentile" in after and "PT.class_text" in after
     texts = json.loads(blob)["page_texts"]          # the headline follows the imported block (spec 11.2)
     assert texts["fpp_lead"].startswith("TRICERATOPS 1.1.0 gives a false-positive probability of 0.023 (")
+    # spec 12.2: the standalone page carries the variant (dossier.js draws its spread from the block)
+    assert "with the one neighbour the difference images exclude removed" in texts["fpp_lead"]
+    assert block["variant_excluded"]["fpp"] == 0.004 and texts["excluded"].startswith("With those neighbours")
+    assert "removed, over ${VX.n_runs} runs: median false-positive probability ${vspread(\"fpp\")}" in after
 
 
 def test_the_pixel_section_quotes_the_offset_against_the_rule(seeded_dossier):
@@ -909,7 +921,8 @@ def test_the_validated_class_is_not_named_and_withdrawn_in_one_breath(seeded_dos
     label = cc.CLASS_LABEL          # round-2 final review, minor 7: only that no class applies
     assert label in checks
     lead = ("TRICERATOPS 1.1.0 gives a false-positive probability of 0.012 (0.012 without a planet on an unresolved "
-            f"bound companion), {cc.NO_CLASS_CLAUSE} (Giacalone et al. 2021).")
+            "bound companion), and 0.0040 (0.0010 without it) with the one neighbour the difference images exclude "
+            f"removed, {cc.NO_CLASS_CLAUSE} (Giacalone et al. 2021).")
     assert lead in checks and checks.index(lead) < checks.index(", in-house") < checks.index("a lower bound")
     for bad in ("validation lines", "read as", "its section 4.2", 'class="crosscheck-class"', "likely planet"):
         assert bad not in checks, bad
