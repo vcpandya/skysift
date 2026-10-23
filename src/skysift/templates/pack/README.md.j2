@@ -50,13 +50,18 @@ This pack was built on {{ f.built_words }} by SkySift (pack format {{ f.pack_ver
 | {{ row.parameter }} | {{ row.text }} |
 {% endfor %}
 | TESS | {{ n.tess_row }} |
-{% if n.star_method_text or n.flame_text or n.hz_text %}
+{% if n.star_method_text or n.reddening_plain or n.flame_text or n.hz_text %}
 
-Star:{% if n.star_method_text %} {{ n.star_method_text }}{% endif %}{% if n.flame_text %} {{ n.flame_text }}{% endif %}{% if n.hz_text %} {{ n.hz_text }}{% endif %}
+Star:{% if n.star_method_text %} {{ n.star_method_text }}{% endif %}{% if n.reddening_plain %} {{ n.reddening_plain }}; the radius sensitivity is under "What is not yet known".{% endif %}{% if n.flame_text %} {{ n.flame_text }}{% endif %}{% if n.hz_text %} {{ n.hz_text }}{% endif %}{{ "" }}
 {% endif %}
 {% if n.errors_methods %}
 
 Ephemeris and transit-parameter errors (the note's signal section points here): {{ n.errors_methods }}
+{% endif %}
+
+{% if n.note_forms %}
+
+Note wording: {{ n.note_forms }}
 {% endif %}
 {% if n.tess_methods %}
 
@@ -72,7 +77,7 @@ Phase 0.5 and the red noise: {{ n.secondary_plain }} The margins are rung 2's mo
 {% endif %}
 {% if n.offset_text or n.hand_built_text %}
 
-Pixel offset:{% if n.offset_text %} {{ n.offset_text }}{% endif %}{% if n.hand_built_text %} {{ n.hand_built_text }}{% endif %}
+Pixel offset:{% if n.offset_text %} {{ n.offset_text }}{% endif %}{% if n.hand_built_text %} {{ n.hand_built_text }}{% endif %}{{ "" }}
 {% endif %}
 {% if n.leak_method %}
 
@@ -151,12 +156,12 @@ Who sees it: uploads are public at once. ExoFOP offers a 12-month proprietary pe
 
 Accounts: an AAS journals account (the submission system of the Research Notes of the AAS) and an arXiv account. A first submission to astro-ph.EP may need an endorsement from someone who has already posted there; arXiv tells you when you submit, and the endorsement request goes by email to a colleague who can endorse. The engine cannot submit for you.
 
-The limits (AAS research note guidelines): at most {{ "{:,}".format(f.limits.total) }} words including the title, headings, caption and references, of which up to {{ f.limits.abstract }} are the required abstract, and one figure or one table, not both. The draft is `note/note.tex`, with one figure, `note/figure1`: {{ f.note_words.total }} words in all ({{ f.note_words.body }} of title, headings, text and caption, {{ f.note_words.abstract }} of abstract, {{ f.note_words.references }} of references; the author block and keywords are not counted).
+The limits (AAS research note guidelines): at most {{ "{:,}".format(f.limits.total) }} words including the title, headings, caption and references, of which up to {{ f.limits.abstract }} are the required abstract, and one figure or one table, not both. The draft is `note/note.tex`, with one figure, `note/figure1`: {{ f.note_words.total }} words in all ({{ f.note_words.body }} of title, headings, text and caption, {{ f.note_words.abstract }} of abstract, {{ f.note_words.references }} of references; the author block, the keywords and the software line are not counted).
 {% if f.note_problems %}
 **Over the limit:** {{ f.note_problems | join("; ") }}. Shorten it before you submit.
 {% endif %}
 
-1. Fill in the author block (affiliation, email, ORCID) and add co-authors.
+1. The author block comes from `docs/author.json` (name, affiliation, email, ORCID): fill in any field it lacks there and build the pack again, then add co-authors.
 {% if f.zenodo and f.zenodo.doi and f.zenodo.sandbox %}2. Replace {{ f.zenodo.doi }} (a sandbox DOI) before submission: use the DOI of the record you publish on zenodo.org in step 1.{% elif f.zenodo and f.zenodo.doi %}2. Check that {{ f.zenodo.doi }}, the draft's reserved DOI, matches the published record.{% else %}2. Replace {{ f.doi_shown }} with the Zenodo DOI from step 1.{% endif %}{{ "" }}
 3. Read every sentence against `dossier.html`; the note is built from the stored numbers and says nothing the dossier does not.
 4. Compile it with AASTeX v7 (aastex7.cls) and pdflatex; Overleaf has the AAS template. The UAT keywords can be changed in the submission form. {% if f.png %}The figure is `note/figure1.pdf`.{% else %}matplotlib could not be imported when this pack was built, so there is no PDF figure: convert `note/figure1.svg` to PDF first (Inkscape: `inkscape figure1.svg --export-type=pdf`).{% endif %}
@@ -195,9 +200,6 @@ Observers who plan a transit ask for the ephemeris first. Send `data/ephemeris.c
 {% for c in n.caveats %}
 - {{ c.title }}. {{ c.text }}
 {% endfor %}
-{% if n.followup_text %}
-- {{ n.followup_text }}
-{% endif %}
 
 ## What is in the pack
 

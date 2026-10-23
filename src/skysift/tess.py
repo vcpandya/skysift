@@ -444,14 +444,24 @@ def note_cites(block: dict | None) -> tuple[str, ...]:
     return ()
 
 
-def note_sentence(block: dict | None, tex: bool = False, readme: bool = True, first: bool = False) -> str:
+def note_sentence(block: dict | None, tex: bool = False, readme: bool = True, first: bool = False,
+                  short: bool = False) -> str:
     """The note's sentence (spec 10.8), one short sentence per candidate: the sectors as a span with the cadences,
     any sector TESScut lists that is not assessed, the transits in the windows, the diluted depth, the nominal and
     conservative 1-hour noise at the (blended) magnitude, the folded significance under both and the verdict
     phrase, ending "(noise model and thresholds in the README; Christ et al. 2019)" when a prediction was made;
     "TESS coverage was not assessed." without the inputs. ``readme=False`` leaves the pointer out (the dossier
     page prints the method under it); ``first`` makes it the note's first pointer, "in the Zenodo pack's
-    README" (``README_POINTER_FIRST``). With ``tex`` a LaTeX ``Raw``."""
+    README" (``README_POINTER_FIRST``). ``short`` is the Research Note's form since Task 13 fix round 1 (the word
+    limit) when transits fell in counted windows: "TESS observed the star in N sectors; the predicted folded
+    significance is S to S sigma, so <verdict> (Christ et al. 2019, methods in the README)." (``_short_sentence``),
+    the README's TESS row keeping the rest. With ``tex`` a LaTeX ``Raw``."""
+    brief = _short_sentence(block) if short and readme and note_cites(block) else None
+    if brief is not None:
+        where = f"methods in {PACK_README}" if first else "methods in the README"
+        if tex:
+            return Raw(tex_escape(brief[:-1]) + rf" \citep[{tex_escape(where)}]{{christ2019}}.")
+        return f"{brief[:-1]} (Christ et al. 2019; {where})."
     text = _plain_sentence(block)
     if not (readme and note_cites(block)):
         return Raw(tex_escape(text)) if tex else text
@@ -459,6 +469,17 @@ def note_sentence(block: dict | None, tex: bool = False, readme: bool = True, fi
     if tex:
         return Raw(tex_escape(body) + rf" \citep[{tex_escape(pointer)}][]{{christ2019}}.")
     return f"{body} ({pointer} Christ et al. 2019)."
+
+
+def _short_sentence(b: dict | None) -> str | None:
+    """The note's TESS sentence (Task 13 fix round 1, cut 11): the sector count, the folded significance under the
+    conservative and the nominal noise and the verdict; None unless transits fell in counted windows."""
+    if not isinstance(b, dict) or not b.get("available") or not b.get("sectors") or not b.get("n_transits"):
+        return None
+    k, sig = len(b["sectors"]), b["significance"]
+    return (f"TESS observed the star in {k} sector{'s' if k != 1 else ''}; the predicted folded significance is "
+            f"{_s(sig['folded_conservative'])} to {_s(sig['folded_nominal'])} sigma, so "
+            f"{VERDICT_PHRASES[b['verdict']]}.")
 
 
 def _plain_sentence(b: dict | None) -> str:

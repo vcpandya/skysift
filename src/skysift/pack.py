@@ -327,10 +327,14 @@ def references(data: dict) -> dict[str, bool]:
             "claret2011": shape_sentence(data) is not None and bool((data.get("shape") or {}).get("comparison")),
             # spec 11.6: Kepler in the signal sentence, Gaia DR3 in the star sentence; the habitable zone and its
             # Kopparapu et al. edges are the README's
-            "borucki2010": True, "gaia2016": star_ok, "gaia2023": star_ok}
+            "borucki2010": True, "gaia2016": star_ok, "gaia2023": star_ok,
+            # Task 13 fix round 1 (I-1): the GSP-Phot reddening prints with the cool-dwarf bias it carries
+            "andrae2023": star_ok and _num(star.get("ebpminrp_gspphot")) is not None}
 
 
 BIBLIOGRAPHY = (
+    ("andrae2023", r"{Andrae} et~al.(2023)",
+     r"Andrae, R., Fouesneau, M., Sordo, R., et~al. 2023, A\&A, 674, A27, doi:10.1051/0004-6361/202243462"),
     ("battley2021", r"{Battley} et~al.(2021)",
      r"Battley, M.~P., Kunimoto, M., Armstrong, D.~J., \& Pollacco, D. 2021, MNRAS, 503, 4092"),
     ("borucki2010", r"{Borucki} et~al.(2010)", r"Borucki, W.~J., Koch, D., Basri, G., et~al. 2010, Science, 327, 977"),
@@ -431,8 +435,9 @@ def prior_bib(data: dict) -> list[tuple[str, Raw, str]]:
 def prior_claim_sentence(data: dict, tex: bool = False) -> str | None:
     """Who reported the signal first, when and where (the DOI of the public record), and how SkySift's result stands
     to that claim: the earliest claim's relationship (``RELATIONSHIP_WORDS``) and its development note (spec 11.1).
-    None without a prior claim. With ``tex`` a ``Raw`` citing each record (``prior_bib``); the plain text names the
-    record's title instead."""
+    None without a prior claim. With ``tex`` a ``Raw`` citing each record (``prior_bib``) with the claim's short
+    development clause (``development_note_short``, Task 13 fix round 1, the word limit) when it has one; the plain
+    text names the record's title instead and keeps the full note."""
     pairs = prior_keys(data)
     if not pairs:
         return None
@@ -446,7 +451,7 @@ def prior_claim_sentence(data: dict, tex: bool = False) -> str | None:
         parts.append(f" {said} ({record})" if tex else f' {said}, in "{claim["title"]}" ({record})')
     first = pairs[0][0]
     relationship = RELATIONSHIP_WORDS.get(first.get("relationship") or "")
-    note = first.get("development_note") or ""
+    note = (tex and first.get("development_note_short")) or first.get("development_note") or ""
     if relationship:
         parts.append(f"; SkySift's result is {relationship}" + (f": {note}." if note else "."))
     else:
@@ -738,7 +743,7 @@ def tess_text(data: dict, tex: bool = False) -> str:
     N1: the methods sentence and its references cost the note about 180 words); "TESS coverage was not assessed."
     without the inputs. Its pointer names the README as the Zenodo pack's when the note has no errors pointer
     before it (fix round 4, M-3)."""
-    return tess_module.note_sentence(data.get("tess"), tex, first=errors_pointer(data) is None)
+    return tess_module.note_sentence(data.get("tess"), tex, first=errors_pointer(data) is None, short=tex)
 
 
 def _plain_tex(text: str) -> str:
@@ -768,6 +773,36 @@ OCCURRENCE_WORDS = {"dressing2015": "Dressing and Charbonneau (2015)", "fressin2
 def in_house_method_text(data: dict) -> str:
     """The README's method of the in-house estimate (the note's until Task 13's word budget, addendum cut 1)."""
     return IN_HOUSE_METHOD.format(occurrence=" and ".join(OCCURRENCE_WORDS[k] for k in _occurrence_keys(data)))
+
+
+# M-1 of the Task 13 review: where the note's wording is shorter than the specification's, the README says so; every
+# number and claim is in both
+def note_forms(data: dict) -> str | None:
+    """The README's sentence on where the Research Note words a statement more briefly than this README, with the
+    same numbers (Task 13 review M-1): the nearest Gaia source by distance and magnitude, a/R* without its label
+    where the quoted values follow the host's density, the short class clause, the claim's short development
+    note; only the ones this note carries. None when it carries none."""
+    items = []
+    if offset_block(data) and (offset_block(data).get("nearest_beyond") or {}).get("source_id"):
+        items.append("it names the nearest Gaia source beyond the exclusion radius by its distance and G magnitude "
+                     "(its Gaia DR3 id is in the pixel offset paragraph)")
+    cmp = (data.get("shape") or {}).get("comparison") if isinstance(data.get("shape"), dict) else None
+    if isinstance(cmp, dict) and cmp.get("quoted") == "prior" and cmp.get("constrained") is False:
+        items.append('it gives a/R* without the label "from the stellar parameters", the shape sentence saying the '
+                     "quoted values follow the host's density")
+    if cross_check_sentence(data) is not None:
+        items.append(f"it says \"{cc.NO_CLASS_SHORT}\" for the validation classes of TRICERATOPS")
+    if tess_module.note_sentence(data.get("tess"), short=True) != tess_module.note_sentence(data.get("tess")):
+        items.append("it gives TESS as the sector count, the predicted folded significance and the verdict, "
+                     "\"predicted\" standing for \"no TESS data were examined\" (the windows, the dilution and the "
+                     "noise are in the TESS row above)")
+    claims = prior_claims(data)
+    if claims and claims[0].get("development_note_short"):
+        items.append("it gives the claim's development note as \"" + claims[0]["development_note_short"] + "\"")
+    if not items:
+        return None
+    return ("The Research Note words these more briefly than this README, with the same numbers: "
+            + "; ".join(items) + ".")
 
 
 def readme_works(data: dict) -> list[str]:
@@ -817,7 +852,14 @@ def readme_references(data: dict) -> list[str]:
     out = [plain_reference(k) for k, _label, _text in BIBLIOGRAPHY if k in keys]
     out += [_plain_tex(text) for _key, _label, text in prior_bib(data)]
     out += [f"{plain_reference(k)} ({what})" for k, what in README_REFERENCES]
-    return out
+    return sorted(out, key=_by_author)        # by the first author's name (Task 13 review M-4)
+
+
+def _by_author(reference: str) -> str:
+    """A reference's sort key: its text without accents, in lower case ("Martínez-Palomera" sorts as "martinez")."""
+    import unicodedata
+    plain = unicodedata.normalize("NFKD", reference)
+    return "".join(c for c in plain if not unicodedata.combining(c)).lower()
 
 
 def tess_methods_text(data: dict) -> str | None:
@@ -1001,20 +1043,25 @@ def secondary_sentence(data: dict, tex: bool = False, short: bool = False) -> st
     parts = ["The phase 0.5 depth is ",
              pm_text(sec["depth_ppm"], sec.get("err_ppm"), sec.get("err_ppm"), nd=0, comma=True, tex=tex), " ppm"]
     limit = _f(sec.get("limit_3sigma_ppm"), 0, True)
-    if limit:
-        albedo = albedo_text(data)
-        if short and albedo == f", {ALBEDO_NONE}":      # the note keeps an albedo limit, not its absence (Task 13)
-            albedo = ""
-        parts.append(f" (3-sigma upper limit {limit} ppm){albedo}")
     top, phase, sigma = (_f(sec.get("strongest_ppm"), 0, True), _f(sec.get("strongest_phase"), 2),
                          _f(sec.get("strongest_sigma"), 1))
+    if short:       # the note's form since Task 13 fix round 1 (cut 12): one sentence, no "upper", no "in the fold"
+        albedo = albedo_text(data)
+        if limit:
+            parts.append(f" (3-sigma limit {limit} ppm{'' if albedo == f', {ALBEDO_NONE}' else albedo})")
+        if top and phase and sigma:
+            parts.append(f", the strongest dip elsewhere {top} ppm at phase {phase} ({sigma} sigma)")
+            pos = _f(_metrics(data, "rung2_shape").get("sigma_pos"), 1)
+            if pos:
+                parts.append(f", and positive excursions reach {pos} sigma")
+        return _joined(tex, *parts, ".")
+    if limit:
+        parts.append(f" (3-sigma upper limit {limit} ppm){albedo_text(data)}")
     if top and phase and sigma:
         parts.append(f"; the strongest dip elsewhere is {top} ppm at phase {phase} ({sigma} sigma)")
         sh = _metrics(data, "rung2_shape")
         pos, ter = _f(sh.get("sigma_pos"), 1), _f(sh.get("sigma_ter"), 1)
-        if pos and short:
-            parts.append(f", and positive excursions in the same fold reach {pos} sigma")
-        elif pos and ter:
+        if pos and ter:
             parts.append(f", against model-shift margins of {pos} sigma for the largest positive excursion and {ter} "
                          "sigma for the tertiary dip")
     return _joined(tex, *parts, ".")
@@ -1198,7 +1245,8 @@ def offset_sentence(data: dict, tex: bool = False, short: bool = False) -> str |
     verdict = "an offset" if block.get("counts") else "not an offset"
     if short:                   # one clause since Task 13 (the word limit; addendum cut 7)
         own = ["; against the star's own out-of-transit image the offset is ", pm_text(off, err, err, tex=tex),
-               f" arcsec ({sigma:.1f} sigma), {verdict} by the rule of ", cite, f" ({k:g} sigma, {level:g} arcsec)"]
+               f" arcsec ({sigma:.1f} sigma), {verdict} by the rule of ", cite,
+               f" (over {k:g} sigma and {level:g} arcsec)"]
     else:
         own = [". Against the star's own out-of-transit image the difference-image centroid is offset by ",
                pm_text(off, err, err, tex=tex), f" arcsec ({sigma:.1f} sigma), {verdict} by the rule of ", cite,
@@ -1258,20 +1306,43 @@ def pixel_sentence(data: dict, tex: bool = False) -> str:
 
 def gaia_flags_text(data: dict) -> str | None:
     """The star sentence's Gaia clause (spec 11.6): "Gaia gives a RUWE of R and no non-single-star solution" (or "a
-    non-single-star solution (flag N)" when the flag is above 0), with ", and a GSP-Phot E(BP-RP) of E" when Gaia
-    fitted one; None when the star block carries none of the three (a dossier made before them)."""
+    non-single-star solution (flag N)" when the flag is above 0); None when the star block carries neither (a dossier
+    made before them). The GSP-Phot reddening has its own sentence with its caveat (``reddening_text``)."""
     star = data.get("star") or {}
-    ruwe, nss, red = _num(star.get("ruwe")), _num(star.get("non_single_star")), _num(star.get("ebpminrp_gspphot"))
+    ruwe, nss = _num(star.get("ruwe")), _num(star.get("non_single_star"))
     parts = []
     if ruwe is not None:
         parts.append(f"a RUWE of {ruwe:.2f}")
     if nss is not None:
         parts.append(f"a non-single-star solution (flag {nss:.0f})" if nss > 0 else "no non-single-star solution")
-    if not parts and red is None:
+    return "Gaia gives " + " and ".join(parts) if parts else None
+
+
+REDDENING_BIAS = "a value biased for cool dwarfs"
+
+
+def reddening_text(data: dict, tex: bool = False) -> str | None:
+    """The GSP-Phot reddening with its caveat (spec 11.6; Task 13 fix round 1, I-1): "GSP-Phot gives E(BP-RP) E, a
+    value biased for cool dwarfs (Andrae et al. 2023); ..." and what the parameters assume. On the Mann route the
+    radius comes from the absolute Ks magnitude, which barely depends on reddening, so the clause says the temperature
+    assumes 0.1 or less; on the colour-table route the radius itself assumes it, "which raises (lowers) it to X Rsun
+    at 0.2". None without the value or a characterised star. With ``tex`` a ``Raw`` citing ``andrae2023``."""
+    star = data.get("star") or {}
+    red = _num(star.get("ebpminrp_gspphot"))
+    if red is None or not star_characterized(data):
         return None
-    if red is not None:
-        parts.append(f"a GSP-Phot E(BP-RP) of {red:.2f}")
-    return "Gaia gives " + (parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + " and " + parts[-1])
+    cite = Raw(r" \citep{andrae2023}") if tex else " (Andrae et al. 2023)"
+    alt, radius = (_num((star.get(k) or {}).get("median")) for k in ("alt_radius_e02", "radius"))
+    if star.get("route") == "mann":
+        ks = Raw("$K_s$") if tex else "Ks"
+        rest = ["; the temperature assumes 0.1 or less, and the ", ks, " radius barely depends on it"]
+    elif alt is not None and radius is not None and alt != radius:
+        unit = Raw(r" $R_\odot$") if tex else " Rsun"
+        rest = [f"; the radius assumes 0.1 or less, which {'raises' if alt > radius else 'lowers'} it to {alt:.3f}",
+                unit, " at 0.2"]
+    else:
+        rest = ["; the parameters assume 0.1 or less"]
+    return _joined(tex, f"GSP-Phot gives E(BP-RP) {red:.2f}, {REDDENING_BIAS}", cite, *rest)
 
 
 def flame_text(data: dict) -> str | None:
@@ -1398,8 +1469,10 @@ def dilution_sentence(data: dict, tex: bool = False) -> str | None:
              "psffrac": "a PSF flux fraction inside the aperture (PSFFRAC)"}
     sentences: list[list] = []
     ratio = aperture_clause(data.get("aperture"), tex, short=tex)
-    psf = rows.get("psffrac") if tex and ratio else None      # the note names PSFFRAC in the ratio clause (Task 13)
-    if (data.get("target") or {}).get("source") in (None, "kbonus_bkg"):
+    kbonus = (data.get("target") or {}).get("source") in (None, "kbonus_bkg")
+    # the note names PSFFRAC in the ratio clause of the KBonus sentence (Task 13), only there (review M-8)
+    psf = rows.get("psffrac") if tex and ratio and kbonus else None
+    if kbonus:
         # the ratio is one clause of the photometry sentence in the note (addendum cut 7)
         sentences.append([f"The depth is {ds.PSF_PHOTOMETRY}", *(["; ", ratio] if ratio else []),
                           f", with {words['psffrac']} of {psf['text']}" if psf else "", "."])
@@ -1469,9 +1542,18 @@ def software_line(data: dict, versions: dict | None = None) -> str:
     version is named alone); triceratops only when a cross-check is stored."""
     versions = software_versions() if versions is None else versions
     tools = ", ".join(f"{p} {versions[p]}" if versions.get(p) else p for p in SOFTWARE_PACKAGES)
-    tools += f", {CROSS_CHECK_SOFTWARE}" if data.get("cross_check") else ""
+    if isinstance(data.get("cross_check"), dict):      # with the stored tool version (Task 13 review M-9)
+        version = data["cross_check"].get("tool_version")
+        tools += f", {CROSS_CHECK_SOFTWARE}" + (f" {version}" if version else "")
     return (f"SkySift {skysift_version()} (search version {search_version(data) or 'unknown'}, commit "
             f"{software_commit(data)}), {tools}")
+
+
+def code_doi(citation: dict | None) -> str:
+    """The code's DOI as the note's data sentence gives it (Task 13 fix round 1, cut 14): "doi:<doi>" from
+    ``CITATION.cff``, else ``SOFTWARE_DOI_PLACEHOLDER`` with "(to be minted)"."""
+    doi = str((citation or {}).get("doi") or "").strip()
+    return f"doi:{doi}" if doi else f"doi:{SOFTWARE_DOI_PLACEHOLDER}{CODE_DOI_PENDING}"
 
 
 def code_sentence(citation: dict | None) -> str:
@@ -1554,7 +1636,8 @@ def numbers(data: dict, tex: bool = False, after_bjd: float | None = None) -> di
         "dilution_rows": list(dilution.values()),
         "software_line": software_line(data), "facilities": FACILITIES,
         "gaia_flags_text": gaia_flags_text(data), "flame_text": flame_text(data), "hz_text": hz_text(data),
-        "star_method_text": star_method_text(data),
+        "reddening_text": reddening_text(data, tex), "reddening_plain": reddening_text(data),
+        "star_method_text": star_method_text(data), "note_forms": note_forms(data),
         "followup_text": followup_text(data, julian_date(datetime.now(UTC)) if after_bjd is None else after_bjd),
         "references_plain": readme_references(data), "in_house_method": in_house_method_text(data),
         "pixel_panels": bool(data.get("pixels")),
@@ -1743,15 +1826,36 @@ def final_problems(out_dir: Path) -> list[str]:
     return out
 
 
-def _authors(citation: dict | None) -> list[dict]:
-    """The note's authors: the one of ``docs/author.json`` when the file exists (``load_author``), else the
-    citation's, each {name, orcid, affiliation, email} (an empty field stays empty, and the template prints its
-    placeholder)."""
+def with_author(citation: dict | None) -> dict | None:
+    """The citation with ``docs/author.json`` as its one author (Task 13 review M-5), so the note's authors and the
+    Zenodo creators come from the same dict: the file's name, affiliation and ORCID, a field the file leaves empty
+    taken from the citation's first author of the same name, and that author's family and given names kept for
+    Zenodo's "Family, Given" form. The citation unchanged without the file."""
     author = load_author()
-    if author is not None:
-        orcid = _ORCID.search(author["orcid"])
-        return [{"name": author["name"] or "AUTHOR NAME TO FILL IN", "orcid": orcid.group(0) if orcid else None,
-                 "affiliation": author["affiliation"], "email": author["email"]}]
+    if author is None:
+        return citation
+    first = next((a for a in (citation or {}).get("authors") or [] if isinstance(a, dict)), {})
+    named = " ".join(str(first.get(k) or "") for k in ("given-names", "family-names")).strip() or first.get("name")
+    same = bool(first) and (not author["name"] or named == author["name"])
+    entry = {"name": author["name"] or (named if same else "") or "AUTHOR NAME TO FILL IN"}
+    if same:
+        entry.update({k: first[k] for k in ("given-names", "family-names") if first.get(k)})
+    for key in ("orcid", "affiliation", "email"):
+        value = author[key] or (str(first.get(key) or "") if same else "")
+        if value:
+            entry[key] = value
+    return {**(citation or {}), "authors": [entry]}
+
+
+def _authors(citation: dict | None) -> list[dict]:
+    """The note's authors: the one of ``docs/author.json`` when the file exists (``with_author``, which fills an
+    empty field from the citation's same author), else the citation's, each {name, orcid, affiliation, email} (an
+    empty field stays empty, and the template prints its placeholder)."""
+    if load_author() is not None:
+        a = with_author(citation)["authors"][0]
+        orcid = _ORCID.search(str(a.get("orcid") or ""))
+        return [{"name": a["name"], "orcid": orcid.group(0) if orcid else None,
+                 "affiliation": a.get("affiliation", ""), "email": a.get("email", "")}]
     out = []
     for a in (citation or {}).get("authors") or []:
         if not isinstance(a, dict):
@@ -1787,7 +1891,7 @@ def render_note(data: dict, doi_placeholder: str = DOI_PLACEHOLDER, *, citation:
     note = f", a {SANDBOX_DOI_NOTE}" if doi.startswith(SANDBOX_DOI_PREFIX) else ""
     body = _env(tex=True).get_template("note.tex.j2").render(
         n=numbers(data, tex=True), refs=refs, bib=bib, doi=doi, doi_note=note, authors=_authors(citation),
-        code_sentence=code_sentence(citation), panels=panels)
+        code_sentence=code_sentence(citation), code_doi=code_doi(citation), panels=panels)
     return AASTEX_FRAME.read_text(encoding="utf-8") + "\n" + body
 
 
@@ -1807,8 +1911,8 @@ FILE_NOTES = {
     "note/note.tex": "the Research Note draft (AASTeX v7)",
     "note/figure1.svg": "the fold panel of the note's figure alone (the folded transit); the PDF and PNG carry "
                         "all panels",
-    "note/figure1.pdf": "the note's figure as PDF, for pdflatex: (a) the fold, (b) odd and (c) even transits, (d) "
-                        "the per-season difference images",
+    "note/figure1.pdf": "the note's figure as PDF, for pdflatex: (a) the fold and (b) odd and (c) even transits, "
+                        "with (d) the per-season difference images when the pixel check stored them",
     "note/figure1.png": "the note's figure as PNG, the same panels",
     "data/lightcurve.csv": "the whitened light curve the search ran on: time BKJD, relative flux in ppm, error in "
                            "ppm, quarter",
@@ -1846,7 +1950,9 @@ def file_notes(data: dict) -> dict[str, str]:
     gives): ``data/events.csv`` (``event_rows``) and ``data/transit_times.csv`` (``timing_rows``), which list the same
     epochs."""
     n, used = len(event_rows(data)), sum(1 for r in timing_rows(data) if r.get("used") is True)
-    return {**FILE_NOTES,
+    figure = ("the note's figure as PDF, for pdflatex: (a) the fold, (b) odd and (c) even transits"
+              + (", (d) the per-season difference images" if data.get("pixels") else ""))
+    return {**FILE_NOTES, "note/figure1.pdf": figure,
             "data/events.csv": f"the {n} transits with data: epoch, mid-time, quarter, depth, error, coverage, "
                                "single-event statistic and whether the transit was timed",
             "data/transit_times.csv": f"the same {len(timing_rows(data))} epochs as `data/events.csv`, {used} of "
@@ -2715,7 +2821,9 @@ def build_pack(store, blob, settings, target_id: str, *, out_dir: Path | None = 
     lc = LightCurveLoader(store, blob, source_factory=ds._offline_factory(target_id, sid)).load(target, pin=True)
     fnorm = ds.whitened(lc, raw["signal"])
     citation, creators_source = load_citation()
-    if citation is None:
+    if load_author() is not None:          # Task 13 review M-5: the note's authors and the Zenodo creators agree
+        citation, creators_source = with_author(citation), f"docs/author.json (with {creators_source})"
+    elif citation is None:
         say("no CITATION.cff or package author found; the creators are placeholders")
     data = ds.public_claims(public_paths(raw, settings.data_dir))     # the pack embeds and uploads this JSON
     place = out_dir                    # the pack's folder (``final`` is the --final flag)

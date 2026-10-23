@@ -267,10 +267,16 @@ def _shape(m: dict) -> tuple[str, str]:
     return sentence[:1].upper() + sentence[1:], numbers
 
 
-def _stability(m: dict, aperture: dict | None = None) -> tuple[str, str]:
+def _stability(m: dict, aperture: dict | None = None, stability: dict | None = None) -> tuple[str, str]:
     """Rung 3 in words. With the dossier's ``aperture`` block (the ratio on the fold) the aperture clause is the
     note's (``pack_text.aperture_clause``: the ratio with its error against CROWDSAP and the shortfall in sigma, spec
-    11.5 and Task 12 review I-1); without it, rung 3's own ratio and its distance from equal depths, named so."""
+    11.5 and Task 12 review I-1); without it, rung 3's own ratio and its distance from equal depths, named so. With
+    the dossier's ``stability`` block (rung 3 on the fold, Task 10) the quarter groups, their depths and the
+    chi-squared are that block's, the ones the note quotes (Task 13 review M-7), and the numbers say "on the fold"."""
+    fold = (stability.get("metrics") or {}) if isinstance(stability, dict) else {}
+    keys = ("season_depths", "season_errs", "chi2", "dof", "p_value")
+    m = {**m, **{k: fold[k] for k in keys if fold.get(k) is not None}} if fold.get("p_value") is not None else m
+    on = " on the fold" if fold.get("p_value") is not None else ""
     depths, errs = m.get("season_depths") or {}, m.get("season_errs") or {}
     p, chi2, dof = _num(m, "p_value"), _num(m, "chi2"), _num(m, "dof")
     ratio = _num(m, "sap_psf_ratio") if _num(m, "aperture_ratio") is None else _num(m, "aperture_ratio")
@@ -287,7 +293,7 @@ def _stability(m: dict, aperture: dict | None = None) -> tuple[str, str]:
     # its groups are "quarter group N" wherever rung 5's are "archive season N"
     seasons = [f"quarter group {s}: {_ppm(_num(depths, s))}" + (f" ± {_ppm(_num(errs, s))}" if s in errs else "")
                + " ppm" for s in sorted(depths, key=str)]
-    fit = chi2 is not None and dof is not None and p is not None and f"χ² {chi2:.1f} on {dof:.0f} dof, p = {p:.2g}"
+    fit = chi2 is not None and dof is not None and p is not None and f"χ² {chi2:.1f} on {dof:.0f} dof, p = {p:.2g}{on}"
     on_fold = clause is not None and "aperture ratio on the fold " + pm_text(aperture["ratio"], aperture["ratio_err"],
                                                                              aperture["ratio_err"])
     ratio_text = ratio is not None and f"aperture ratio {ratio:.2f}" + (f", {az:.1f} σ from equal depths"
@@ -418,10 +424,10 @@ def _passed_in_words(reason: str) -> str | None:
 _ARCHIVE_SEASON = re.compile(r"\bseason (?=\d)")
 
 
-def _row(rung: str, row: dict, aperture: dict | None = None) -> Why:
+def _row(rung: str, row: dict, aperture: dict | None = None, stability: dict | None = None) -> Why:
     status, reason, m = row.get("status") or "", row.get("reason") or "", row.get("metrics") or {}
     m = m if isinstance(m, dict) else {}         # a row whose metrics are not a mapping reads as one with none
-    passed, numbers = (_stability(m, aperture) if rung == "rung3_stability" else
+    passed, numbers = (_stability(m, aperture, stability) if rung == "rung3_stability" else
                        BUILDERS.get(rung, lambda _m: ("Passed", ""))(m))
     missing = nxt = None
     if status == "fail":
@@ -447,7 +453,7 @@ def _latest(tests: list[dict]) -> dict[str, dict]:
     return latest
 
 
-def why(tests: list[dict], aperture: dict | None = None) -> list[Why]:
+def why(tests: list[dict], aperture: dict | None = None, stability: dict | None = None) -> list[Why]:
     """One line per rung in ladder order (then any rung the ladder does not know), from the latest row of each. A rung
     without a row is skipped: after a failed check because the ladder stopped, otherwise because it was not run.
     ``aperture`` is the dossier's aperture block, which rung 3's line then quotes as the note does (``_stability``)."""
@@ -460,7 +466,7 @@ def why(tests: list[dict], aperture: dict | None = None) -> list[Why]:
                         "Pixels not yet examined" if rung == "rung5_pixels" else "Not run under this ladder")
             out.append(Why(rung, RUNG_NAMES.get(rung, rung), "skipped", sentence, "", None, None, None))
             continue
-        out.append(_row(rung, row, aperture))
+        out.append(_row(rung, row, aperture, stability))
         failed = failed or out[-1].status == "fail"
     return out
 

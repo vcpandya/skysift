@@ -1203,13 +1203,18 @@ def test_a_stamp_wcs_shifted_by_a_fifth_of_a_pixel_moves_only_the_catalogue_offs
 
 # ---------------------------------------------------------------------------------------------------- prior claims (P1)
 
-DEVELOPMENT_NOTE = ("the pipeline was developed with this star as a test case from 14 October 2026; the search used "
-                    "no prior ephemeris")         # the addendum's one clause (Task 13, cut 7)
+# spec 11.1's development note, which every public text but the note prints in full (Task 13 fix round 1, I-3),
+# and the note's short clause
+DEVELOPMENT_NOTE = ("the sweep's target list and the pipeline's tests used this star from 14 October 2026, the day "
+                    "after the claim; the search itself used no prior ephemeris")
+DEVELOPMENT_NOTE_SHORT = ("the pipeline used this star as a test case from 14 October 2026, the day after the claim; "
+                          "the search used no prior ephemeris")
 PRIOR_CLAIM = {"doi": "10.5281/zenodo.23325261", "date": "2026-10-13", "author": "Kuber Mehta",
                "title": "Planethunt: archival evidence for the KIC 5689121 transit candidate",
                "status": "Research Note submitted 13 October 2026, reported not accepted",
                "note": "same host assignment; SkySift's sweep a week later",
                "relationship": "re-detection", "development_note": DEVELOPMENT_NOTE,
+               "development_note_short": DEVELOPMENT_NOTE_SHORT,
                "period_days": 13.769448, "period_err_days": None, "t0_bjd": 2455630.24543, "t0_err_days": None,
                "depth_ppm": 1883, "depth_err_ppm": 106, "fpp": 0.07, "fpp_tool": "TRICERATOPS"}
 
@@ -1220,6 +1225,7 @@ def test_prior_claims_read_the_relationship_and_the_numbers(tmp_path):
     (folder / "prior_claims.json").write_text(json.dumps([PRIOR_CLAIM]), encoding="utf-8")
     claim = dossier_module.prior_claims("kic-005689121", root=tmp_path)[0]
     assert claim["relationship"] == "re-detection" and claim["development_note"] == DEVELOPMENT_NOTE
+    assert claim["development_note_short"] == DEVELOPMENT_NOTE_SHORT
     assert (claim["period_days"], claim["t0_bjd"], claim["depth_ppm"], claim["depth_err_ppm"], claim["fpp"]) == (
         13.769448, 2455630.24543, 1883.0, 106.0, 0.07)
     assert claim["period_err_days"] is None and claim["fpp_tool"] == "TRICERATOPS"

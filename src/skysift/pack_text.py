@@ -250,8 +250,8 @@ def aperture_clause(block: dict | None, tex: bool = False, short: bool = False) 
 
 # what the public texts may say about a prior claim; dossier.py imports these names from here, their one source
 PRIOR_CLAIM_NUMBERS = ("period_days", "period_err_days", "t0_bjd", "t0_err_days", "depth_ppm", "depth_err_ppm", "fpp")
-PRIOR_CLAIM_PUBLIC = ("doi", "date", "author", "title", "relationship", "development_note", *PRIOR_CLAIM_NUMBERS,
-                      "fpp_tool")
+PRIOR_CLAIM_PUBLIC = ("doi", "date", "author", "title", "relationship", "development_note",
+                      "development_note_short", *PRIOR_CLAIM_NUMBERS, "fpp_tool")
 # spec 11.1: how each text names the relationship of SkySift's result to the claim, as a noun and as a verb
 RELATIONSHIP_WORDS = {"re-detection": "a re-detection",
                       "blind-recovery": "a recovery made before SkySift knew of the claim",

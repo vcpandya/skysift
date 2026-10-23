@@ -38,7 +38,7 @@ The SkySift engine (search version \VAR{n.search_version}, ladder version \VAR{n
 \section{The star and the planet}
 
 \BLOCK{if n.star_ok}
-No Kepler stellar catalogue covers a background star, so the parameters come from Gaia DR3 \citep{gaia2016,gaia2023} colour and parallax\BLOCK{if n.gaia_flags_text}; \VAR{n.gaia_flags_text}\BLOCK{endif}. \BLOCK{if n.teff}The colour gives \BLOCK{if n.spectral_type}a spectral type of \VAR{n.spectral_type} and \BLOCK{endif}an effective temperature of \VAR{n.teff} K\BLOCK{if n.distance}, and the zero-point-corrected parallax a distance of \VAR{n.distance} pc\BLOCK{endif}. \BLOCK{elif n.distance}The zero-point-corrected parallax gives a distance of \VAR{n.distance} pc. \BLOCK{endif}\BLOCK{if refs.mann2015}From the absolute $K_s$ magnitude the relations of \citet{mann2015}\BLOCK{if refs.mann2019} and \citet{mann2019}\BLOCK{endif} give \BLOCK{else}The star has \BLOCK{endif}a radius of \VAR{n.radius} $R_\odot$\BLOCK{if n.mass} and a mass of \VAR{n.mass} $M_\odot$\BLOCK{endif}.
+No Kepler stellar catalogue covers a background star, so the parameters come from Gaia DR3 \citep{gaia2016,gaia2023} colour and parallax\BLOCK{if n.gaia_flags_text}; \VAR{n.gaia_flags_text}\BLOCK{endif}. \BLOCK{if n.reddening_text}\VAR{n.reddening_text}. \BLOCK{endif}\BLOCK{if n.teff}The colour gives \BLOCK{if n.spectral_type}a spectral type of \VAR{n.spectral_type} and \BLOCK{endif}an effective temperature of \VAR{n.teff} K\BLOCK{if n.distance}, and the zero-point-corrected parallax a distance of \VAR{n.distance} pc\BLOCK{endif}. \BLOCK{elif n.distance}The zero-point-corrected parallax gives a distance of \VAR{n.distance} pc. \BLOCK{endif}\BLOCK{if refs.mann2015}From the absolute $K_s$ magnitude the relations of \citet{mann2015}\BLOCK{if refs.mann2019} and \citet{mann2019}\BLOCK{endif} give \BLOCK{else}The star has \BLOCK{endif}a radius of \VAR{n.radius} $R_\odot$\BLOCK{if n.mass} and a mass of \VAR{n.mass} $M_\odot$\BLOCK{endif}.
 \BLOCK{if n.rp}
 \BLOCK{if n.fit_k}With the fitted radius ratio of \VAR{n.fit_k} the\BLOCK{else}The\BLOCK{endif} planet radius is \VAR{n.rp} $R_\oplus$, on an orbit of \VAR{n.a} AU\BLOCK{if n.teq} with an equilibrium temperature of \VAR{n.teq} K at a Bond albedo of 0.3\BLOCK{endif}\BLOCK{if n.insolation} and \VAR{n.insolation} times the insolation of Earth\BLOCK{endif}.
 \BLOCK{endif}
@@ -52,7 +52,7 @@ The star could not be characterised from Gaia photometry, so the planet radius, 
 
 \section{What is not yet known}
 
-\VAR{n.caveat_text}\BLOCK{if n.followup_text} \VAR{n.followup_text}\BLOCK{endif}
+\VAR{n.caveat_text}
 
 \begin{figure}[ht!]
 \includegraphics[width=\linewidth]{figure1}
@@ -61,7 +61,7 @@ The star could not be characterised from Gaia photometry, so the planet radius, 
 
 \section{Data availability}
 
-Every number, error and file behind this note is on Zenodo at \dataset[doi:\VAR{doi}]{https://doi.org/\VAR{doi}}\VAR{doi_note}. The light curves are from the KBonus Kepler Background high-level science product at MAST \citep{kbonushlsp}, and \VAR{code_sentence}.
+Pack, with every number, error and file behind this note: \dataset[doi:\VAR{doi}]{https://doi.org/\VAR{doi}}\VAR{doi_note}; light curves: the KBonus Kepler Background high-level science product at MAST \citep{kbonushlsp}; code: SkySift at commit \VAR{n.commit}, \VAR{code_doi}.
 
 \software{\VAR{n.software_line}}
 

@@ -1648,7 +1648,7 @@ def _section(name: str, errors: dict, build: Callable[[], object]):
 
 CANDIDATES_DIR = Path(__file__).resolve().parents[2] / "docs" / "candidates"     # present in a source checkout only
 PRIOR_CLAIM_FIELDS = ("doi", "date", "author", "title", "status", "note", "relationship", "development_note",
-                      *PRIOR_CLAIM_NUMBERS, "fpp_tool")
+                      "development_note_short", *PRIOR_CLAIM_NUMBERS, "fpp_tool")
 PRIOR_CLAIM_REQUIRED = ("doi", "date", "author", "title")
 
 
@@ -1660,7 +1660,8 @@ class PriorClaimsError(ValueError):
 def prior_claims(target_id: str, root: Path | None = None) -> list[dict]:
     """The public, dated claims on the same signal made before SkySift's, as the person running the engine declared
     them in ``docs/candidates/<target>/prior_claims.json`` (a list of {doi, date, author, title, status, note,
-    relationship, development_note, the claim's numbers ``PRIOR_CLAIM_NUMBERS`` and fpp_tool}; the date as
+    relationship, development_note, development_note_short (the Research Note's clause, Task 13 fix round 1), the
+    claim's numbers ``PRIOR_CLAIM_NUMBERS`` and fpp_tool}; the date as
     YYYY-MM-DD). Text fields come back as stripped strings ("" when absent), numbers as finite floats or None, and the
     relationship as one of ``RELATIONSHIPS`` or None when absent. An empty list when the file is absent. A file that
     does not read as such a list, or names another relationship, raises PriorClaimsError, since a claim dropped in
@@ -1942,7 +1943,9 @@ def _assemble(store, signal, target, tests, decisions, plots, pixels, star, plan
         "ephemeris": ephemeris,
         **{key: blocks.get(key) for key in ("timing", "shape", "parity", "secondary", "stability", "aperture",
                                             "depth_trend")},
-        "plots": plots, "tests": test_rows, "why": [dataclasses.asdict(w) for w in explain.why(tests, aperture=blocks.get("aperture"))],
+        "plots": plots, "tests": test_rows,
+        "why": [dataclasses.asdict(w) for w in explain.why(tests, aperture=blocks.get("aperture"),
+                                                           stability=blocks.get("stability"))],
         "rechecks": store.rechecks(signal["id"]), "children": store.children(signal["id"]),
         "fap": {**dataclasses.asdict(fap), "one_in": fap.one_in(), "words": fap.words(), "sde": float(signal["sde"]),
                 "signal_search_version": signal["detector_version"], "calibration_version": version,

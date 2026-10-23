@@ -133,9 +133,8 @@ def _creator(author: dict) -> dict | None:
 # spec 11.4: what the false-alarm probability was measured against, and what it means across the whole sweep
 FAP_NULLS = ("{k} of {n:,} null searches (the inverted and scrambled light curves of {stars:,} other KBonus stars, "
              "searched without the masked pass and alias resolution) reached the signal's SDE")
-# the note's form (Task 13, the word limit; addendum cut 2): the method parenthetical is the README's, and the
-# note's abstract says the nulls are other KBonus stars
-FAP_NULLS_SHORT = "{k} of {n:,} null searches reached the signal's SDE"
+# the note's form (Task 13, the word limit; addendum cut 2): the method parenthetical is the README's
+FAP_NULLS_SHORT = "{k} of {n:,} null searches of other KBonus stars reached the signal's SDE"
 FAP_SWEEP = ("; across the {s:,}-star sweep {expected} expected by chance, and the vetting ladder, not the SDE, "
              "separates the candidate from them")
 FAP_NO_SWEEP = "; the vetting ladder, not the SDE, separates the candidate from such peaks"

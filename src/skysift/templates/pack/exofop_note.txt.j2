@@ -12,7 +12,7 @@ Found in the KBonus Kepler Background light curve (Martinez-Palomera, Hedges and
 Prior claim: {{ n.prior_plain }}{{ (" " ~ n.comparison_plain) if n.comparison_plain else "" }}
 {% endif %}
 
-Ephemeris: {{ n.ephemeris_text }}; {{ n.n_events }} transits, SDE {{ n.sde }}, S/N {{ n.snr }}.{% if n.timed %} Reference mid-transit BJD_TDB {{ n.t_ref_bjd_pm }} at epoch {{ n.epoch_ref }}; {{ n.n_used }} of {{ n.n_measured }} timed transits fit the linear ephemeris with an rms of {{ n.rms_min }} min.{% else %} Allow at least one duration either side of a predicted time.{% endif %} Found by SkySift (search version {{ n.search_version }}, commit {{ n.commit }}).
+Ephemeris: {{ n.ephemeris_text }}; {{ n.n_events }} transits, SDE {{ n.sde }}, S/N {{ n.snr }}.{% if n.timed %} {{ n.n_used }} of {{ n.n_measured }} timed transits fit the linear ephemeris with an rms of {{ n.rms_min }} min.{% else %} Allow at least one duration either side of a predicted time.{% endif %} Found by SkySift (search version {{ n.search_version }}, commit {{ n.commit }}).
 {% if n.rp_text %}
 Planet radius {{ n.rp_text }} Earth radii on a {{ n.a_text }} AU orbit{% if n.teq_text %}, Teq {{ n.teq_text }} K{% endif %}; host {{ n.host_text }}.
 {% endif %}

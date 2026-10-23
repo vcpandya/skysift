@@ -875,8 +875,7 @@ def test_section_01_presents_a_prior_claim_with_its_relationship(seeded_dossier)
     signal = client.get(f"/dossiers/{STAGE2_TARGET}").text.split('id="signal"')[1].split('id="repeat"')[0]
     assert "Kuber Mehta reported this signal first" in signal and "doi:10.5281/zenodo.23325261" in signal
     assert "13 October 2026" in signal
-    assert "result is a re-detection: the pipeline was developed" in signal
-    assert "the search used no prior ephemeris" in signal
+    assert "result is a re-detection: the sweep" in signal and "the search itself used no prior ephemeris" in signal
     # M1: the comparison with the claim's numbers follows the claim on the page, as in the README
     from skysift import pack
     claimed = {**data, "prior_claims": [PRIOR_CLAIM]}
@@ -1036,3 +1035,11 @@ def test_the_checks_section_gives_the_notes_aperture_ratio(seeded_dossier):
     assert clause == ("the SAP depth is 0.696 ± 0.069 of the PSF depth against a CROWDSAP (this star's light fraction "
                       "in the aperture) of 0.86, 2.3 sigma short of it")
     assert clause in checks and "sigma apart" not in checks
+
+
+def test_the_probabilities_intro_has_a_lead_in_without_a_cross_check(seeded_dossier):
+    """Task 13 review M-11: without a TRICERATOPS lead the intro still says what "they" are."""
+    client, _app, _ids, _data = seeded_dossier
+    page = html_module.unescape(client.get(f"/dossiers/{STAGE2_TARGET}").text)
+    intro = page.split('class="prob-intro">')[1].split("</p>")[0]
+    assert intro == "Two probabilities, the false alarm and the false positive. They are shown apart and never combined."

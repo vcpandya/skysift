@@ -526,3 +526,15 @@ def test_the_stability_line_gives_the_aperture_ratio_not_agreement():
     assert ("the SAP depth is 0.696 ± 0.069 of the PSF depth against a CROWDSAP (this star's light fraction in the "
             "aperture) of 0.86, 2.3 sigma short of it") in line.sentence
     assert "4.7" not in line.sentence and "0.696 ± 0.069" in line.numbers
+
+
+def test_the_rung_3_line_quotes_the_quarter_group_test_on_the_fold():
+    """Task 13 review M-7: with the dossier's stability block the page's rung 3 line gives the fold's p-value, the
+    one the note quotes, and says so."""
+    row = {"rung": "rung3_stability", "status": "pass", "reason": "",
+           "metrics": {"season_depths": {"0": 1.0, "1": 2.0}, "chi2": 5.0, "dof": 1, "p_value": 0.32}}
+    fold = {"metrics": {"season_depths": {"0": 1.0, "1": 2.0}, "chi2": 0.4, "dof": 1, "p_value": 0.94}}
+    line = next(w for w in explain.why([row], stability=fold) if w.rung == "rung3_stability")
+    assert "p = 0.94" in line.sentence and "p = 0.94 on the fold" in line.numbers and "0.32" not in line.numbers
+    plain = next(w for w in explain.why([row]) if w.rung == "rung3_stability")
+    assert "p = 0.32" in plain.sentence and "on the fold" not in plain.numbers

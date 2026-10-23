@@ -8,7 +8,7 @@
 {% set fpp_words = fpp.get("words") or "not computed" %}
 <section id="{{ block_id or 'probabilities' }}" class="probabilities" tabindex="-1" aria-labelledby="{{ heading_id or 'probabilities-title' }}">
   <h3 id="{{ heading_id or 'probabilities-title' }}">Probabilities</h3>
-  <p class="prob-intro">{% if fpp_lead %}Two estimates: TRICERATOPS first, the in-house lower bound second. {% endif %}They are shown apart and never combined.</p>
+  <p class="prob-intro">{% if fpp_lead %}Two estimates: TRICERATOPS first, the in-house lower bound second. {% else %}Two probabilities, the false alarm and the false positive. {% endif %}They are shown apart and never combined.</p>
   <dl class="prob-list">
     <div class="prob-item">
       <dt>False alarm</dt>
