@@ -253,6 +253,8 @@ def metadata_from(data: dict, citation: dict | None, prior: str | None = None) -
                  else f"SkySift vetting of the transit candidate on {name}")
     creators = [c for a in (citation or {}).get("authors") or [] if isinstance(a, dict) and (c := _creator(a))]
     fap_text, fpp_text = probability_sentences(data)
+    own = cc.own_evidence_sentence(data)            # Task 15 addendum 2: which FPP rests on our own evidence
+    fpp_text = f"{fpp_text} {own}" if own else fpp_text
     ephemeris = ephemeris_sentence(data)
     how = "vetted" if prior else "found"
     paragraphs = [data.get("summary") or "", f"Prior claim: {prior}" if prior else "",

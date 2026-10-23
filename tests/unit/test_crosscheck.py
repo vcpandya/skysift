@@ -168,6 +168,18 @@ def test_inputs_fingerprint_changes_with_the_period_and_the_neighbours():
     noise = json.loads(json.dumps(DATA))
     noise["ephemeris"]["period_days"] = 40.29 + 1e-12                    # below the dossier's 8 significant figures
     assert cc.inputs_fingerprint(noise) == base
+    # round 3 review M3: the separations, CROWDSAP and rung 5's PSF width the shares use
+    farther = json.loads(json.dumps(DATA))
+    farther["fpp"]["inputs"]["neighbours"][0]["sep_arcsec"] = 11.8
+    assert cc.inputs_fingerprint(farther) != base
+    crowded = {**DATA, "target": {**DATA["target"], "meta": {"crowdsap": 0.8565}}}
+    assert cc.inputs_fingerprint(crowded) != base
+    assert cc.inputs_fingerprint({**crowded, "target": {**DATA["target"], "meta": {"crowdsap": 0.86}}}) != \
+        cc.inputs_fingerprint(crowded)
+    wide = {**crowded, **_live()}
+    narrow = {**wide, **_live([{**s, "psf_sigma_pix": 0.5} for s in LIVE_SEASONS])}
+    assert cc.inputs_fingerprint(wide) != cc.inputs_fingerprint(crowded)
+    assert cc.inputs_fingerprint(narrow) != cc.inputs_fingerprint(wide)
 
 
 def test_export_writes_inputs_lightcurve_and_the_pixel_files(env, tmp_path):
@@ -891,10 +903,19 @@ def test_tool_parallel_check_and_caveats():
     assert one["nfpp_noise_sd"] is None and "cannot be set against" in one["comparison"]
     shares = tc.leakage_shares(R2_STARS, CROWDSAP_6146676, R2_G, DEPTH_6146676, R2_SEPS, SIGMA_5)
     text = tc.leakage_caveat(shares, CROWDSAP_6146676)
-    assert text.startswith("CROWDSAP 0.8565 of the target's KBonus file bounds the light its neighbours can leak into "
-                           "its PSF light curve at (1 - CROWDSAP) / CROWDSAP = 0.1675 of the target's own.")
+    assert text.startswith("The budget (1 - C) / C = 0.1675 comes from the KBonus crowding metric for this "
+                           "extraction (the CROWDSAP of the target's KBonus file, C = 0.8565: the catalogue's own "
+                           "estimate that 14 percent of the fitted flux is from other sources, PRF wings included); "
+                           "the split among the neighbours follows the PRF overlap rule; the cap did not bind. ")
     assert "rung 5's fitted width (0.570 Kepler pixels, the mean over its voting seasons)" in text and "Gaia G" in text
-    assert "the shares sum to 0.1548, within the budget, so they stand." in text
+    # round 3 review M4: the sum is of the overlap-weighted fluxes, which are the shares only under the budget
+    assert "the overlap-weighted fluxes sum to 0.1548, within the budget, so they stand." in text
+    named = tc.leakage_caveat(shares, CROWDSAP_6146676, {"crowdsap_column": "crowdsap", "crowdsap_catalogue":
+                                                         "KBonus-bkg v1.0 source catalogue (Martinez-Palomera et "
+                                                         "al. 2023)"})
+    assert named.startswith("The budget (1 - C) / C = 0.1675 comes from the KBonus crowding metric for this extraction "
+                            "(the crowdsap column of the KBonus-bkg v1.0 source catalogue (Martinez-Palomera et al. "
+                            "2023), C = 0.8565: ")
     assert "upper bound for the KBonus PSF photometry" in text and "—" not in text
     # the controller's ruling after Task 14 (spec 12.1 amended): a floor on the box light, which bounds the PSF leak
     assert text.endswith("Each share is a floor on the light that neighbour puts in the target's 3 x 3 box, and that "
@@ -903,7 +924,12 @@ def test_tool_parallel_check_and_caveats():
                          "order.")
     capped = tc.leakage_shares(R2_STARS, 0.95, R2_G, DEPTH_6146676, R2_SEPS, SIGMA_5)
     assert "above the budget, so they are scaled down to it" in tc.leakage_caveat(capped, 0.95)
-    assert tc.PRF_CAVEAT in tc.CAVEATS and tc.CAVEATS.index(tc.PRF_CAVEAT) == 1
+    assert "the cap did bind. " in tc.leakage_caveat(capped, 0.95)
+    # round 3 review M2: the PRF caveat stands beside the overlap shares only
+    assert tc.PRF_CAVEAT not in tc.CAVEATS
+    assert tc.share_caveats(shares, CROWDSAP_6146676) == [text, tc.PRF_CAVEAT]
+    box = tc.leakage_shares(R2_STARS, None, R2_G, DEPTH_6146676, R2_SEPS, SIGMA_5)
+    assert tc.share_caveats(box, None) == [tc.leakage_caveat(box, None)]
     assert "so each is a floor on the light that neighbour puts in that box. That box light is in turn an upper " \
            "bound on what leaks into the KBonus PSF light curve, since the PRF fit removes" in tc.PRF_CAVEAT
     assert "leaks into the KBonus PSF light curve (Bryson" not in tc.PRF_CAVEAT
@@ -1236,6 +1262,8 @@ def test_tool_check_record_is_clamped_and_star_rows_carry_the_box_factor():
     assert [r["weight"] for r in rows] == [r["weight"] for r in shares["rows"]] and rows[0]["weight"] is None
     assert [r["share_before"] for r in rows] == [r["share_before"] for r in shares["rows"]]
     assert rows[0]["share_bound"] is None and "upper bound for the KBonus PSF photometry" in rows[1]["share_bound"]
+    # round 3 review M1: an added star's row has no package separation, so the one its overlap used is stored
+    assert [r["overlap_sep_arcsec"] for r in rows] == [None, 4.0, 7.0]
 
 
 def test_the_import_requires_a_field_star_population():
@@ -1361,6 +1389,7 @@ R2_RESULT = {"stars": [{"id": i, "sep_arcsec": s, "gmag": g, "kepler_flux": f, "
 
 def test_the_leakage_note_lists_each_neighbour_before_and_after(tmp_path):
     from tools import leakage_note as ln
+    from tools import triceratops_check as tc
     rows = ln.note_rows(R2_RESULT, SIGMA_5)
     assert [r["sep_arcsec"] for r in rows] == [6.938, 10.784, 11.69, 13.151, 13.584, 18.369, 20.886]
     assert [r["share_before"] for r in rows] == [r[4] for r in R2_ROWS[1:8]]
@@ -1382,6 +1411,30 @@ def test_the_leakage_note_lists_each_neighbour_before_and_after(tmp_path):
             "that box light, with the NFPP it drives, is an upper bound for the KBonus PSF photometry") in text
     assert text.rstrip().endswith(ln.tc.PRF_CAVEAT) and "Both columns" not in text
     assert "\u2014" not in text
+    # Task 15 addendum 2: the budget's basis in three parts, in order, with the cap's state
+    assert ("The budget's basis has three parts. First, it comes from the catalogue, not from SkySift: (1 - C) / C = "
+            "0.16753 with C = 0.85650748 the KBonus crowding metric for this extraction, the crowdsap column of the "
+            "KBonus-bkg v1.0 source catalogue (Martinez-Palomera et al. 2023)") in text
+    assert "14 percent of the fitted flux belongs to other sources, PRF wings included. Second, " in text
+    assert ("Third, the cap did not bind: the overlap-weighted fluxes sum to 0.1549 against the budget of "
+            "0.1675.") in text
+    # round 3 review M5: the "keeps most of its round-2 share" clause only beyond two pixels and at half or more
+    keeps = "keeps most of its round-2 share"
+    assert keeps in text
+    risen = [{**r, "share_before": r["share"] / 5} if r["id"] == "169822655" else r for r in rows]
+    assert keeps in ln.render(R2_RESULT, sigma, risen)                    # a share that rose still kept most
+    fell = [{**r, "share_before": r["share"] * 3} if r["id"] == "169822655" else r for r in rows]
+    assert keeps not in ln.render(R2_RESULT, sigma, fell)
+    near = [{**r, "sep_pix": 1.5} if r["id"] == "169822655" else r for r in rows]
+    neutral = ln.render(R2_RESULT, sigma, near)
+    assert keeps not in neutral and "The largest share after the rule is 0.138 (TIC 169822655" in neutral
+    # round 3 review M1: an added star (no sep_arcsec) is listed and weighted at the separation its overlap used
+    added = {"id": "2073896294000000001", "gaia_source_id": "2073896294000000001", "sep_arcsec": None,
+             "overlap_sep_arcsec": 9.0, "gmag": 18.0, "kepler_flux": 0.2, "share": 1e-4}
+    more = {**R2_RESULT, "stars": [*R2_RESULT["stars"], added]}
+    listed = {r["id"]: r for r in ln.note_rows(more, SIGMA_5)}
+    assert listed["2073896294000000001"]["sep_arcsec"] == 9.0
+    assert listed["2073896294000000001"]["overlap"] == pytest.approx(tc.overlap(9.0, SIGMA_5))
 
 
 # ---------------------------------------------------------------------------------------------------- Task 15
@@ -1429,6 +1482,9 @@ def test_the_export_lists_the_pixel_excluded_neighbours(env, tmp_path):
     cc.export_inputs(env.store, env.blob, env.settings, STAGE2_TARGET, tmp_path / "cc", fetch=env.xfetch)
     inputs = json.loads((tmp_path / "cc" / "inputs.json").read_text(encoding="utf-8"))
     assert inputs["pixel_excluded"] == cc.pixel_excluded(_stored(env))
+    # Task 15 addendum 2: the tool prints the budget's catalogue column from the export
+    assert inputs["target"]["crowdsap_column"] == "crowdsap"
+    assert inputs["target"]["crowdsap_catalogue"] == "KBonus-bkg v1.0 source catalogue (Martinez-Palomera et al. 2023)"
 
 
 def test_tool_maps_the_excluded_neighbours_to_the_stars_it_removes():
@@ -1536,8 +1592,10 @@ def test_every_text_carries_the_four_numbers():
         "With those neighbours removed the false-positive weight sits mainly on STP, a planet transiting an "
         "unresolved bound companion inside the 0.83 arcsec exclusion radius, which no high-resolution imaging "
         "constrains, so the signal stays a candidate.")
-    assert "With the one neighbour the difference images exclude removed it gives 0.055, and 0.0053 without STP." \
-        in cc.comparison_sentence(data, short=True)
+    # Task 16's cut 2, taken in Task 15 for the word limit: the note's variant is a parenthesis in its sentence
+    assert ("absent from SkySift's model (0.055 and 0.0053 without STP with the one neighbour the difference images "
+            "exclude removed), and a nearby false-positive probability of 0.020") in cc.comparison_sentence(data,
+                                                                                                         short=True)
     assert cc.dominant_excluded_sentence(data, short=True) == (
         "The remaining weight is mainly STP, a planet on an unresolved bound companion inside the 0.83 arcsec "
         "exclusion radius, which no imaging constrains, so the signal stays a candidate.")
@@ -1549,3 +1607,37 @@ def test_every_text_carries_the_four_numbers():
     no_radius = {**data, "centroid_offset": None}
     assert "within 2.2 arcsec, which no high-resolution imaging" in cc.dominant_excluded_sentence(no_radius)
     assert "—" not in after
+
+
+
+def test_the_texts_say_which_fpp_rests_on_our_own_evidence_and_trace_the_budget():
+    """Task 15 addendum 2: the own-evidence sentence in the note's and the after-headline forms, and the leakage
+    budget's three-part basis from the result's flux shares, with the catalogue column and the cap's state."""
+    data = _four()
+    own = ("The FPP with the pixel-excluded neighbours removed (0.055) is the number that rests on our own evidence "
+           "(the difference-image centroids); the all-neighbours FPP (0.080) rests on the catalogue's crowding metric "
+           "split by the PRF overlap rule, a bound rather than a measurement.")
+    assert cc.own_evidence_sentence(data) == own
+    assert own in cc.comparison_sentence(data, after_headline=True)
+    assert own in cc.comparison_sentence(data, short=True) and own not in cc.comparison_sentence(data)
+    assert cc.own_evidence_sentence(_four(same=True)) is None
+    assert cc.leakage_basis(data) is None                               # the fake result stores no flux shares
+    shares = {"source": "Kepler-pixel overlap, capped by the contamination budget", "budget": 0.16753213,
+              "crowdsap": 0.85650748, "sigma_pix": 0.5695906, "weight_sum": 0.1548311, "capped": False}
+    block = {**data["cross_check"], "settings": {**data["cross_check"]["settings"], "flux_shares": shares}}
+    basis = cc.leakage_basis({**data, "cross_check": block})
+    assert basis.startswith("The leakage budget behind the nearby false-positive probability has three parts. First, "
+                            "it comes from the catalogue, not from SkySift: (1 - C) / C = 0.1675, with C = 0.8565 the "
+                            "KBonus crowding metric for this extraction (the crowdsap column of the KBonus-bkg v1.0 "
+                            "source catalogue (Martinez-Palomera et al. 2023)), the catalogue's own estimate that 14 "
+                            "percent of the fitted flux belongs to other sources, PRF wings included. Second, its "
+                            "split among the neighbours follows the PRF overlap rule")
+    assert "(0.570 Kepler pixels)" in basis
+    assert basis.endswith("Third, the overlap-weighted fluxes sum to 0.1548, below the budget of 0.1675, so the cap "
+                          "did not bind.")
+    bound = cc.leakage_basis({**data, "cross_check": {**block, "settings": {**block["settings"], "flux_shares": {
+        **shares, "crowdsap": 0.95, "budget": 0.05263158, "capped": True}}}})
+    assert bound.endswith("Third, the overlap-weighted fluxes sum to 0.1548, above the budget, so the cap bound and "
+                          "they were scaled down to it.")
+    for text in (own, basis):
+        assert "\u2014" not in text and "discover" not in text.lower() and "validated" not in text

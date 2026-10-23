@@ -27,6 +27,13 @@ NOTE_WITHIN_ARCSEC = 21.0           # the note lists the stars within this of th
 BIG_SHARE = 0.01                    # a largest share above this gets its own paragraph
 
 
+def _sep(star: dict) -> float | None:
+    """The separation a row's overlap is taken at: ``overlap_sep_arcsec`` (the tool's, for an added star whose
+    ``sep_arcsec`` is None; round 3 review M1), else ``sep_arcsec``."""
+    sep = _num(star.get("overlap_sep_arcsec"))
+    return sep if sep is not None else _num(star.get("sep_arcsec"))
+
+
 def _num(x) -> float | None:
     if isinstance(x, bool) or x is None:
         return None
@@ -40,7 +47,7 @@ def _num(x) -> float | None:
 def _weights(result: dict, sigma_pix: float) -> tuple[float, float | None, float]:
     """(the sum of overlap times Kepler-band flux over every non-target row with a flux, the budget, the scale
     min(1, budget / that sum), 1 without a budget or a sum)."""
-    total = sum(tc.overlap(s.get("sep_arcsec"), sigma_pix) * float(s["kepler_flux"])
+    total = sum(tc.overlap(_sep(s), sigma_pix) * float(s["kepler_flux"])
                 for s in result["stars"][1:] if _num(s.get("kepler_flux")) is not None)
     budget = _num(((result.get("settings") or {}).get("flux_shares") or {}).get("budget"))
     scale = min(1.0, budget / total) if budget is not None and total > 0 else 1.0
@@ -48,14 +55,15 @@ def _weights(result: dict, sigma_pix: float) -> tuple[float, float | None, float
 
 
 def note_rows(result: dict, sigma_pix: float) -> list[dict]:
-    """The stars of ``result`` other than the target with a finite separation at or below ``NOTE_WITHIN_ARCSEC``,
+    """The stars of ``result`` other than the target with a finite separation (``_sep``) at or below
+    ``NOTE_WITHIN_ARCSEC``,
     sorted by separation: {"id", "gaia_source_id", "sep_arcsec", "sep_pix", "gmag", "kepler_flux", "overlap",
     "share_before" (the stored share), "share"}, the share overlap x kepler_flux x scale (``_weights``), None for a
     row without a Kepler-band flux."""
     _total, _budget, scale = _weights(result, sigma_pix)
     out = []
     for s in result["stars"][1:]:
-        sep = _num(s.get("sep_arcsec"))
+        sep = _sep(s)
         if sep is None or sep > NOTE_WITHIN_ARCSEC:
             continue
         flux, ov = _num(s.get("kepler_flux")), tc.overlap(sep, sigma_pix)
@@ -115,8 +123,10 @@ def render(result: dict, sigma: dict, rows: list[dict], after: dict | None = Non
                f"down to the budget only when their sum passes it. {cap}")
     header = ("| TIC | Gaia DR3 | sep (arcsec) | sep (Kepler px) | G | Kepler flux / target | overlap | share before "
               "| share after |")
-    lines = [f"# Leakage shares of {star} before and after spec 12.1 (23 October 2026)", "", opening, "", header,
-             "|---|---|---|---|---|---|---|---|---|"]
+    lines = [f"# Leakage shares of {star} before and after spec 12.1 (23 October 2026)", "", opening, ""]
+    basis = _basis(crowdsap, budget, total)
+    lines += [basis, ""] if basis else []
+    lines += [header, "|---|---|---|---|---|---|---|---|---|"]
     for r in rows:
         lines.append(f"| {r['id']} | {r['gaia_source_id'] or 'not matched'} | {r['sep_arcsec']:.2f} | "
                      f"{r['sep_pix']:.2f} | {_fixed(r['gmag'])} | {_fixed(r['kepler_flux'])} | {r['overlap']:.4g} | "
@@ -128,16 +138,37 @@ def render(result: dict, sigma: dict, rows: list[dict], after: dict | None = Non
     if top is not None and top["share"] > BIG_SHARE:
         largest = (f"The largest share after the rule is {top['share']:.3g} (TIC {top['id']}, "
                    f"{top['sep_arcsec']:.2f} arcsec, {top['sep_pix']:.2f} Kepler pixels): its overlap "
-                   f"{top['overlap']:.2g} times its Kepler-band flux of {top['kepler_flux']:.3g} times the target's. "
-                   "Spec 12.1 expected a star beyond two Kepler pixels to take effectively nothing; this one keeps "
-                   "most of its round-2 share, so the NFPP it drives is for the controller to read before the live "
-                   "runs.")
+                   f"{top['overlap']:.2g} times its Kepler-band flux of {top['kepler_flux']:.3g} times the target's.")
+        before = _num(top.get("share_before"))
+        if top["sep_pix"] > 2 and before is not None and top["share"] >= 0.5 * before:     # round 3 review M5
+            largest += (" Spec 12.1 expected a star beyond two Kepler pixels to take effectively nothing; this one "
+                        "keeps most of its round-2 share, so the NFPP it drives is for the controller to read before "
+                        "the live runs.")
         lines += ["", largest]
     bound = ("The shares after the rule are a floor on the light each neighbour puts in the target's 3 x 3 box, and "
              f"that box light, with the NFPP it drives, is {tc.PSF_BOUND}. The third variant of spec 12.2, with the "
              "neighbours rung 5's difference images exclude removed, is where those neighbours are taken out.")
     lines += ["", bound, "", tc.PRF_CAVEAT, ""]
     return "\n".join(lines)
+
+
+def _basis(crowdsap: float | None, budget: float | None, total: float) -> str | None:
+    """The budget's basis in three parts, in the order every text gives them (Task 15 addendum 2): the catalogue's
+    crowding metric, the PRF overlap rule, whether the cap bound. None without a CROWDSAP or a budget."""
+    from skysift.sources.kbonus_bkg import CATALOGUE, CROWDSAP_COLUMN
+    if crowdsap is None or budget is None:
+        return None
+    cap = (f"the cap bound: the overlap-weighted fluxes sum to {total:.4f}, above the budget of {budget:.4f}"
+           if total > budget else
+           f"the cap did not bind: the overlap-weighted fluxes sum to {total:.4f} against the budget of {budget:.4f}")
+    return ("The budget's basis has three parts. First, it comes from the catalogue, not from SkySift: (1 - C) / C = "
+            f"{budget:.5f} with C = {crowdsap:.8g} the KBonus crowding metric for this extraction, the "
+            f"{CROWDSAP_COLUMN} column of the {CATALOGUE} (`src/skysift/sources/kbonus_bkg.py` reads it into the "
+            "target's `meta[\"crowdsap\"]`; the light-curve file's per-quarter CROWDSAP keywords, `lc/kbonus.py`, "
+            "are the same metric per quarter), the catalogue's own estimate that "
+            f"{100 * (1 - crowdsap):.0f} percent of the fitted flux belongs to other sources, PRF wings included. "
+            "Second, the split among the neighbours follows the PRF overlap rule above, each share an absolute "
+            f"fraction of the target's flux. Third, {cap}.")
 
 
 def _shown(path: str) -> str:

@@ -52,7 +52,7 @@ This pack was built on {{ f.built_words }} by SkySift (pack format {{ f.pack_ver
 | TESS | {{ n.tess_row }} |
 {% if n.star_method_text or n.reddening_plain or n.flame_text or n.hz_text %}
 
-Star:{% if n.star_method_text %} {{ n.star_method_text }}{% endif %}{% if n.reddening_plain %} {{ n.reddening_plain }}; the radius sensitivity is under "What is not yet known".{% endif %}{% if n.flame_text %} {{ n.flame_text }}{% endif %}{% if n.hz_text %} {{ n.hz_text }}{% endif %}{{ "" }}
+Star:{% if n.star_method_text %} {{ n.star_method_text }}{% endif %}{% if n.crowdsap_text %} {{ n.crowdsap_text }}{% endif %}{% if n.reddening_plain %} {{ n.reddening_plain }}; the radius sensitivity is under "What is not yet known".{% endif %}{% if n.flame_text %} {{ n.flame_text }}{% endif %}{% if n.hz_text %} {{ n.hz_text }}{% endif %}{{ "" }}
 {% endif %}
 {% if n.errors_methods %}
 
@@ -98,6 +98,10 @@ Photometry and dilution: {{ n.dilution_text }}
 {% if n.cross_check_after %}
 
 {{ n.cross_check_after }}
+{% endif %}
+{% if n.leakage_basis %}
+
+{{ n.leakage_basis }}
 {% endif %}
 {% if n.cross_check_flag %}
 

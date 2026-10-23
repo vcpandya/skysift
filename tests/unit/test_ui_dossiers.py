@@ -808,6 +808,8 @@ def test_dossier_page_shows_the_cross_check_block(seeded_dossier):
                 "probability 0.004 (16th to 84th percentile 0.004 to 0.004)") in bare
         assert "Gaia DR3 2073896190925687296 at 11.45 arcsec, smallest margin 12.7 sigma" in bare
         assert cc.dominant_excluded_sentence({**data, "cross_check": cc.with_current(result, data)}) in bare
+        # Task 15 addendum 2: which number rests on our own evidence, beside the variant line
+        assert cc.own_evidence_sentence({**data, "cross_check": cc.with_current(result, data)}) in bare
     app.state.store.set_cross_check(STAGE2_TARGET, {**result, "inputs_sha256": "0" * 64, "current": True})
     checks = client.get(f"/dossiers/{STAGE2_TARGET}").text.split('id="checks"')[1].split('id="pixels"')[0]
     assert "made for an earlier dossier" in checks
@@ -840,6 +842,8 @@ def test_the_standalone_page_carries_a_cross_check_imported_after_its_export(see
     assert "with the one neighbour the difference images exclude removed" in texts["fpp_lead"]
     assert block["variant_excluded"]["fpp"] == 0.004 and texts["excluded"].startswith("With those neighbours")
     assert "removed, over ${VX.n_runs} runs: median false-positive probability ${vspread(\"fpp\")}" in after
+    assert texts["own_evidence"].startswith("The FPP with the pixel-excluded neighbours removed (0.0040)")
+    assert "PT.own_evidence" in after and "PT.leakage_basis" in after and "PT.crowdsap" in after
 
 
 def test_the_pixel_section_quotes_the_offset_against_the_rule(seeded_dossier):

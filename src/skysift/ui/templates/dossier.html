@@ -245,11 +245,12 @@
     {%- set vx = cc.variant_excluded %}
     {%- if vx and vx.runs is defined %}
     {%- set nx = vx.removed | length %}
-    <p>{% if vx.same_as_all %}The difference images exclude no neighbour, so the run set with them removed is this one.{% else %}With {{ "the one neighbour the difference images exclude" if nx == 1 else "the %d neighbours the difference images exclude" | format(nx) }} removed, over {{ vx.n_runs }} runs: median false-positive probability {{ spread(vx, "fpp") }}, {{ spread(vx, "fpp_no_stp") }} without STP, and nearby false-positive probability {{ spread(vx, "nfpp") }}.{% endif %}{% if texts.excluded %} {{ texts.excluded }}{% endif %}</p>
+    <p>{% if vx.same_as_all %}The difference images exclude no neighbour, so the run set with them removed is this one.{% else %}With {{ "the one neighbour the difference images exclude" if nx == 1 else "the %d neighbours the difference images exclude" | format(nx) }} removed, over {{ vx.n_runs }} runs: median false-positive probability {{ spread(vx, "fpp") }}, {{ spread(vx, "fpp_no_stp") }} without STP, and nearby false-positive probability {{ spread(vx, "nfpp") }}.{% endif %}{% if texts.own_evidence %} {{ texts.own_evidence }}{% endif %}{% if texts.excluded %} {{ texts.excluded }}{% endif %}</p>
     {%- if nx %}
     <ul class="dossier-small">{% for r in vx.removed %}<li>Gaia DR3 <span class="mono">{{ r.source_id }}</span> at {{ "%.2f" | format(r.sep_arcsec) if r.sep_arcsec is not none else "–" }} arcsec, smallest margin {{ g3(r.min_margin_sigma) }} sigma</li>{% endfor %}</ul>
     {%- endif %}
     {%- endif %}
+    {{ pack_words(texts, ["leakage_basis"]) }}
     {{ pack_words(texts, ["cross_check"], "only-expert dossier-small") }}
     {%- if cc.caveats %}
     <ul class="dossier-small">{% for c in cc.caveats %}<li>{{ c }}</li>{% endfor %}</ul>
@@ -381,7 +382,7 @@
 <section id="star" class="dossier-section" aria-labelledby="star-title">
   {{ section_head("05", "star", "The star and the planet", ("Gaia's colour and parallax make the host " ~ (("a " ~ star.spectral_type ~ " star") if star.spectral_type else "a star of unknown type") ~ ". The transit gives the planet's size relative to the star; its size in Earth radii, its orbit and its temperature follow from the star and carry its errors.") if star.route != "none" else "The star could not be characterised from Gaia photometry, so the planet's size, orbit and temperature are not given.") }}
   {{ notice_list(notices.get("star", [])) }}
-  {{ pack_words(texts, ["star"]) }}
+  {{ pack_words(texts, ["star", "crowdsap"]) }}
   <div class="dossier-pair">
     <dl class="dossier-kv">
       <div><dt>Spectral type</dt><dd>{{ star.spectral_type or "not known" }}</dd></div>

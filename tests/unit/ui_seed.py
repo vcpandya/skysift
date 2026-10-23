@@ -445,6 +445,7 @@ def seed_dossier(store: Store, data_dir, target_id: str = STAGE2_TARGET) -> dict
         target = {c.name: getattr(t, c.name) for c in TargetRow.__table__.columns}
     period, t0, dur = float(sig["period"]), float(sig["t0"]), float(sig["duration"])
     star, planet, look = _seed_star()
+    star["crowdsap"] = ds.crowdsap_provenance(target.get("meta"), None)     # Task 15 addendum 2
     fap, fpp = _seed_probabilities(period, float(sig["sde"]))
     errors = _seed_errors(period, t0)
     cand = {"status": sig["candidate_status"]} if sig.get("candidate_status") else None

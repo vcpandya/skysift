@@ -543,13 +543,14 @@
         const lead = VX.same_as_all
           ? "The difference images exclude no neighbour, so the run set with them removed is this one."
           : `With ${phrase} removed, over ${VX.n_runs} runs: median false-positive probability ${vspread("fpp")}, ${vspread("fpp_no_stp")} without STP, and nearby false-positive probability ${vspread("nfpp")}.`;
-        para(2, PT.excluded ? `${lead} ${PT.excluded}` : lead);
+        para(2, [lead, PT.own_evidence, PT.excluded].filter(Boolean).join(" "));
         if (nx) {
           const ul = h("ul", "dossier-small");
           VX.removed.forEach((r) => ul.appendChild(h("li", null, `Gaia DR3 ${r.source_id} at ${isNum(r.sep_arcsec) ? Number(r.sep_arcsec).toFixed(2) : "–"} arcsec, smallest margin ${g3(r.min_margin_sigma)} sigma`)));
           sec(2).appendChild(ul);
         }
       }
+      para(2, PT.leakage_basis, "pack-words dossier-small");
       para(2, PT.cross_check, "pack-words only-expert dossier-small");
       if ((CC.caveats || []).length) {
         const ul = h("ul", "dossier-small");
@@ -643,6 +644,7 @@
       ["Radius", v(S.radius, 3, "solar radii")], ["Mass", v(S.mass, 3, "solar masses")], ["Planet radius", v(PL.rp_rearth, 2, "Earth radii")],
       ["Orbit", v(PL.a_au, 3, "AU")], ["Equilibrium temperature", v(PL.teq_k, 0, "K")]]);
     para(4, PT.star, "pack-words dossier-small");
+    para(4, PT.crowdsap, "pack-words dossier-small");
     if (L) {
       [["look-star", "The star beside the Sun, to scale. The colour follows the surface temperature."],
         ["look-planet", "The planet beside Earth and Neptune, to scale. Its size is measured; its surface is a guess."],

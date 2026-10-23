@@ -1659,3 +1659,24 @@ def test_the_page_texts_name_what_carries_the_pixel_excluded_weight():
     texts = page_texts(data)
     assert texts["excluded"] == cc.dominant_excluded_sentence(data) and texts["excluded"].startswith(
         "With those neighbours removed the false-positive weight sits mainly on STP")
+
+
+def test_the_star_block_names_the_catalogue_column_of_its_crowding_metric():
+    """Task 15 addendum 2: the stellar provenance carries CROWDSAP with its column, its catalogue and the
+    per-quarter header keyword of each usable quarter, with their minimum and maximum."""
+    from skysift.dossier import crowdsap_provenance
+    lc_meta = {"per_quarter": {2: {"crowdsap": 0.8401}, 3: {"crowdsap": 0.8702}, 4: {"crowdsap": None},
+                               5: {"crowdsap": 0.86}}}
+    out = crowdsap_provenance({"crowdsap": 0.85650748}, lc_meta, quarters=[2, 3, 4])
+    assert out == {"value": 0.85650748, "column": "crowdsap",
+                   "catalogue": "KBonus-bkg v1.0 source catalogue (Martinez-Palomera et al. 2023)",
+                   "per_quarter": {"2": 0.8401, "3": 0.8702}, "per_quarter_min": 0.8401, "per_quarter_max": 0.8702}
+    assert crowdsap_provenance({"crowdsap": 0.9}, None)["per_quarter_min"] is None
+    assert crowdsap_provenance({}, lc_meta) is None
+
+
+def test_generate_stores_the_crowding_metric_in_the_star_block(env):
+    d = _data(generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch, force=True))
+    crowd = d["star"]["crowdsap"]
+    assert crowd["column"] == "crowdsap" and crowd["catalogue"].startswith("KBonus-bkg v1.0 source catalogue")
+    assert crowd["value"] == d["target"]["meta"]["crowdsap"]

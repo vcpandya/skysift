@@ -1296,7 +1296,9 @@ def test_readme_defines_crowdsap_and_psffrac(env_with_dossier):
     assert text.count("CROWDSAP is the fraction of the light in the aperture that belongs to the target") == 1
     assert "PSFFRAC is the fraction of the target's PSF flux inside the KBonus aperture" in text
     # round-2 final review, I-2: "crowding" only in the PSF-photometry statement the note prints
-    assert "KBonus header keywords" in text and text.count("crowding") == text.count("no crowding correction")
+    # Task 15 addendum 2: and the "crowding metric" the leakage budget is traced to
+    assert "KBonus header keywords" in text and text.count("crowding") == text.count("no crowding correction") + \
+        text.count("crowding metric")
 
 
 def test_readme_without_a_parity_difference_or_a_timing_fit(env_with_dossier):
@@ -1894,7 +1896,9 @@ def test_the_fpp_headline_leads_with_triceratops(env_with_dossier):
     # spec 12.2: the note gives the four numbers and what carries the weight once the excluded neighbours are removed
     note = " ".join(texts["note/note.tex"].split())
     assert str(cross_check.comparison_sentence(data, tex=True, short=True)) in note
-    assert str(cross_check.dominant_excluded_sentence(data, tex=True, short=True)) in note
+    # addendum 2: the own-evidence sentence takes the dominant-excluded sentence's place in the note
+    assert str(cross_check.dominant_excluded_sentence(data, tex=True, short=True)) not in note
+    assert cross_check.own_evidence_sentence(data) in note
     assert "a run without them is a follow-up" not in note
     assert cross_check.comparison_sentence(data, after_headline=True) in texts["README.md"]
     for name in ("exofop/note.txt", "archive_email.txt"):
@@ -2172,8 +2176,9 @@ def _check_live_shape(cross: str, prior: bool) -> dict:
     assert cross_check.NO_CLASS_SHORT in flat and "validation lines" not in flat
     # spec 12.2: the pixel-excluded set's two medians and the scenario that carries its weight
     v = data["cross_check"]["variant_excluded"]
-    assert f"removed it gives {cross_check.probability_text(v['fpp'])}, and" in flat
-    assert str(cross_check.dominant_excluded_sentence(data, tex=True, short=True)) in flat
+    assert f"({cross_check.probability_text(v['fpp'])} and {cross_check.probability_text(v['fpp_no_stp'])} without " \
+           "STP with the " in flat
+    assert cross_check.own_evidence_sentence(data) in flat
     assert (str(pack_module.comparison_text(data, True)) in flat) == prior
     # Task 13 fix round 1 (cut 11): the note's short TESS sentence; the README's row keeps the skipped sector and
     # the uncertain count
@@ -3028,3 +3033,44 @@ def test_the_note_readme_upload_note_and_page_carry_the_same_round_2_numbers():
         for name, text in texts.items():
             flat = " ".join(text.replace("$\\pm$", "±").split())
             assert number in flat, (number, name)
+
+
+
+def test_the_readme_traces_the_leakage_budget_to_the_catalogue(env_with_dossier):
+    """Task 15 addendum 2: the stellar provenance row and the README's star line name CROWDSAP's catalogue column;
+    the README gives the three-part basis and every text with the four numbers names the number that rests on our
+    own evidence; the forbidden-words gate stays clean."""
+    env = env_with_dossier
+    _store_errors(env)
+    stored = _stored(env)
+    crowd = {"value": 0.85650748, "column": "crowdsap",
+             "catalogue": "KBonus-bkg v1.0 source catalogue (Martinez-Palomera et al. 2023)",
+             "per_quarter": {"2": 0.8401, "3": 0.8702}, "per_quarter_min": 0.8401, "per_quarter_max": 0.8702}
+    _store(env, {**stored, "star": {**stored["star"], "crowdsap": crowd}})
+    shares = {"source": "Kepler-pixel overlap, capped by the contamination budget", "budget": 0.16753213,
+              "crowdsap": 0.85650748, "sigma_pix": 0.5695906, "weight_sum": 0.1548311, "capped": False}
+    block = _store_cross_check(env)
+    env.store.set_cross_check(STAGE2_TARGET, {**block, "settings": {**block["settings"], "flux_shares": shares}})
+    data = _stored_with_cross_check(env)
+    row = {r["parameter"]: r for r in pack_rows.provenance_rows(data)}["KBonus crowding metric (CROWDSAP)"]
+    assert row["value"] == 0.85650748 and row["method"] == "the crowdsap column of the KBonus-bkg v1.0 source catalogue"
+    assert row["reference"] == "Martinez-Palomera et al. 2023" and "0.8401 to 0.8702 over its 2 usable quarters" in \
+        row["inputs"]
+    rep = _build(env)
+    texts = _texts(rep)
+    readme = texts["README.md"]
+    assert pack_rows.crowdsap_text(data) in readme and "(the crowdsap column of the KBonus-bkg v1.0 source " \
+        "catalogue, Martinez-Palomera et al. 2023;" in readme
+    assert cross_check.leakage_basis(data) in readme and "so the cap did not bind." in readme
+    own = cross_check.own_evidence_sentence(data)
+    assert own.startswith("The FPP with the pixel-excluded neighbours removed (0.0040) is the number that rests on "
+                          "our own evidence")
+    for name in ("README.md", "exofop/note.txt", "archive_email.txt"):
+        assert own in texts[name], name
+    assert str(pack_text.tex_escape(own)) in " ".join(texts["note/note.tex"].split())
+    assert " ".join(texts["note/note.tex"].split()).count("rests on our own evidence") == 1
+    meta = json.loads((rep.out_dir / "zenodo_metadata.json").read_text(encoding="utf-8"))
+    assert own in meta["description"]
+    assert "KBonus crowding metric (CROWDSAP)" in (rep.out_dir / "data" / "stellar_provenance.csv").read_text(
+        encoding="utf-8")
+    assert not [p for p in pack_module.gate_problems(data) if "spec 11.1" in p]

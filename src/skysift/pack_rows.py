@@ -383,7 +383,34 @@ def provenance_rows(data: dict) -> list[dict]:
             continue
         rows.append({"parameter": name, "value": v, "minus": None, "plus": None, "unit": unit,
                      "method": "Gaia DR3 gaia_source", "inputs": inputs(""), "reference": "Gaia Collaboration 2023"})
+    crowd = star.get("crowdsap")
+    if isinstance(crowd, dict) and _num(crowd.get("value")) is not None:     # Task 15 addendum 2
+        per = crowd.get("per_quarter") or {}
+        lo, hi = _num(crowd.get("per_quarter_min")), _num(crowd.get("per_quarter_max"))
+        spread = (f"the CROWDSAP keyword of the light-curve file runs {lo:.4f} to {hi:.4f} over its {len(per)} "
+                  "usable quarters" if None not in (lo, hi) else "no per-quarter CROWDSAP keyword stored")
+        catalogue, _, ref = str(crowd.get("catalogue") or "").partition(" (")
+        rows.append({"parameter": "KBonus crowding metric (CROWDSAP)", "value": _num(crowd["value"]), "minus": None,
+                     "plus": None, "unit": "", "method": f"the {crowd.get('column')} column of the {catalogue}",
+                     "inputs": spread, "reference": ref.rstrip(")")})
     return rows
+
+
+def crowdsap_text(data: dict) -> str | None:
+    """The star's crowding metric with its catalogue column (Task 15 addendum 2), for the README's star line and the
+    page: "The KBonus crowding metric is C = 0.8565 (the crowdsap column of the KBonus-bkg v1.0 source catalogue,
+    Martinez-Palomera et al. 2023; the light-curve file's CROWDSAP keyword runs 0.8401 to 0.8702 over its 17 usable
+    quarters)."; None without it."""
+    crowd = (data.get("star") or {}).get("crowdsap")
+    if not isinstance(crowd, dict) or _num(crowd.get("value")) is None:
+        return None
+    catalogue = str(crowd.get("catalogue") or "").replace(" (", ", ").rstrip(")")
+    lo, hi, n = _num(crowd.get("per_quarter_min")), _num(crowd.get("per_quarter_max")), len(crowd.get("per_quarter")
+                                                                                             or {})
+    spread = (f"; the light-curve file's CROWDSAP keyword runs {lo:.4f} to {hi:.4f} over its {n} usable quarters"
+              if None not in (lo, hi) else "")
+    return (f"The KBonus crowding metric is C = {_num(crowd['value']):.4f} (the {crowd.get('column')} column of the "
+            f"{catalogue}{spread}).")
 
 
 def dilution_rows(data: dict) -> list[dict]:

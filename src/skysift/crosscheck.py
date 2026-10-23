@@ -138,14 +138,20 @@ def _finite(x) -> float | None:
 
 def inputs_fingerprint(data: dict) -> str:
     """The SHA-256 of what the cross-check depends on in a dossier: the period, T0, depth and duration, the target's
-    G and the Gaia neighbours (source id and G, sorted by id), each number at the dossier's 8 significant figures."""
+    G, its KBonus CROWDSAP (the leakage budget), rung 5's fitted PSF width (``rung5_psf_sigma``, the overlap's width;
+    round 3 review M3) and the Gaia neighbours (source id, G and separation, sorted by id), each number at the
+    dossier's 8 significant figures."""
     eph = data.get("ephemeris") or {}
     inputs = (data.get("fpp") or {}).get("inputs") or {}
-    gmag = (data.get("target") or {}).get("gmag")
-    neighbours = sorted([str(n.get("source_id")), _round(n.get("gmag"))] for n in inputs.get("neighbours") or [])
+    target = data.get("target") or {}
+    gmag = target.get("gmag")
+    neighbours = sorted([str(n.get("source_id")), _round(n.get("gmag")), _round(n.get("sep_arcsec"))]
+                        for n in inputs.get("neighbours") or [])
     key = {"period_days": _round(eph.get("period_days")), "t0_bkjd": _round(eph.get("t0_bkjd")),
            "depth_ppm": _round(eph.get("depth_ppm")), "duration_h": _round(eph.get("duration_h")),
-           "gmag": _round(gmag if gmag is not None else inputs.get("gmag")), "neighbours": neighbours}
+           "gmag": _round(gmag if gmag is not None else inputs.get("gmag")), "neighbours": neighbours,
+           "crowdsap": _round(_finite((target.get("meta") or {}).get("crowdsap"))),
+           "psf_sigma_pix": _round(rung5_psf_sigma(data)["sigma_pix"])}
     return hashlib.sha256(json.dumps(key, sort_keys=True).encode("utf-8")).hexdigest()
 
 
@@ -533,9 +539,11 @@ def export_inputs(store, blob, settings, target_id: str, out_dir: Path, *, fetch
                            "teff": p["teff"], "radius": p["radius"], "mass": p["mass"], "mass_radius": p["mass_radius"],
                            "params_source": p["source"]})
     kepmag = next((meta.get(k) for k in ("kepmag", "kp") if _finite(meta.get(k)) is not None), None)
+    from skysift.sources.kbonus_bkg import CATALOGUE, CROWDSAP_COLUMN
     inputs = {"schema": EXPORT_SCHEMA,
               "target": {**{k: t.get(k) for k in ("target_id", "gaia_id", "kic", "ra", "dec", "gmag")},
-                         "crowdsap": _finite(meta.get("crowdsap")), "psffrac": _finite(meta.get("psffrac")),
+                         "crowdsap": _finite(meta.get("crowdsap")), "crowdsap_column": CROWDSAP_COLUMN,
+                         "crowdsap_catalogue": CATALOGUE, "psffrac": _finite(meta.get("psffrac")),
                          "kepmag": _finite(kepmag)},
               "signal_id": sid, "dossier_generated": data.get("generated"), "ephemeris": data.get("ephemeris"),
               "star": data.get("star"), "neighbours": neighbours, "neighbour_params_note": params_note,
@@ -651,13 +659,12 @@ def _validate_variant(result: dict) -> None:
 def validate_result(result) -> None:
     """Raise BadResult naming the first thing wrong with a result: a schema other than ``RESULT_SCHEMA`` (a result
     without the key is schema 2, made before round 3 without the Kepler-pixel shares), a missing key, another tool,
-    fewer than
-    ``N_RUNS`` runs or a run list of another length, a run without its probabilities (each between 0 and 1) or with
-    an FPP without STP that is not (FPP - P_STP) / (1 - P_STP), a degenerate count that is not the runs', every run
-    degenerate, a median or percentile that is not the non-degenerate runs' (``summarise``), an inputs hash that is
-    not a SHA-256, fewer than ``MIN_DRAWS`` draws per run (``settings.N``: a smoke result), no field-star population
-    (``settings.field_stars`` without a row count above 0), or a run made with ``--allow-old-export``
-    (``settings.allow_old_export`` true)."""
+    fewer than ``N_RUNS`` runs or a run list of another length, a run without its probabilities (each between 0 and
+    1) or with an FPP without STP that is not (FPP - P_STP) / (1 - P_STP), a degenerate count that is not the runs',
+    every run degenerate, a median or percentile that is not the non-degenerate runs' (``summarise``), an inputs hash
+    that is not a SHA-256, fewer than ``MIN_DRAWS`` draws per run (``settings.N``: a smoke result), no field-star
+    population (``settings.field_stars`` without a row count above 0), a run made with ``--allow-old-export``
+    (``settings.allow_old_export`` true), or a pixel-excluded run set that fails ``_validate_variant``."""
     if not isinstance(result, dict):
         raise BadResult("the result file does not hold a JSON object")
     tail = ("it was made before round 3 (spec 12) without the Kepler-pixel shares; run the tool again")
@@ -891,22 +898,66 @@ def excluded_text(block: dict, ranges: bool) -> str:
     """The pixel-excluded set's numbers in prose, for ``comparison_sentence``. With ``ranges`` (the README, the ExoFOP
     note, the archive email and the page): "With <removed_phrase> removed (<each neighbour>), <n> seeded runs give
     <FPP> (16th to 84th percentile <range>), <FPP without STP> (<range>) without STP and a nearby false-positive
-    probability of <NFPP> (<range>)."; without (the Research Note): "With <removed_phrase> removed it gives <FPP>,
-    and <FPP without STP> without STP.". A set that removed nothing (``same_as_all``) says so."""
+    probability of <NFPP> (<range>)."; without, the Research Note's parenthesis inside its cross-check sentence
+    (Task 16's cut 2, taken here for the word limit): "(<FPP> and <FPP without STP> without STP with <removed_phrase>
+    removed)". A set that removed nothing (``same_as_all``) says so."""
     v = _variant(block)
     if v is None:
         return ""
     if v.get("same_as_all"):
         return ("The difference images exclude no neighbour, so no run set with neighbours removed differs from this "
-                "one.")
+                "one." if ranges else "(the same with no neighbour removed, since the difference images exclude none)")
     phrase = removed_phrase(v)
     if not ranges:
-        return f"With {phrase} removed it gives {_p(v['fpp'])}, and {_p(v['fpp_no_stp'])} without STP."
+        return f"({_p(v['fpp'])} and {_p(v['fpp_no_stp'])} without STP with {phrase} removed)"
     listed = _removed_list(v)
     return (f"With {phrase} removed{f' ({listed})' if listed else ''}, {v['n_runs']} seeded runs give {_p(v['fpp'])} "
             f"(16th to 84th percentile {range_text(v, 'fpp')}), {_p(v['fpp_no_stp'])} "
             f"({range_text(v, 'fpp_no_stp')}) without STP and a nearby false-positive probability of "
             f"{_p(v['nfpp'])} ({range_text(v, 'nfpp')}).")
+
+
+def own_evidence_sentence(data: dict) -> str | None:
+    """Which of the two FPPs rests on SkySift's own evidence (Task 15 addendum 2): "The FPP with the pixel-excluded
+    neighbours removed (<FPP>) is the number that rests on our own evidence (the difference-image centroids); the
+    all-neighbours FPP (<FPP>) rests on the catalogue's crowding metric split by the PRF overlap rule, a bound rather
+    than a measurement." None without a current, complete cross-check, or when the difference images exclude no
+    neighbour (``same_as_all``: the two sets are one)."""
+    block = _current(data)
+    v = _variant(block) if block else None
+    if v is None or v.get("same_as_all"):
+        return None
+    return (f"The FPP with the pixel-excluded neighbours removed ({_p(v['fpp'])}) is the number that rests on our "
+            f"own evidence (the difference-image centroids); the all-neighbours FPP ({_p(block['fpp'])}) rests on the "
+            "catalogue's crowding metric split by the PRF overlap rule, a bound rather than a measurement.")
+
+
+def leakage_basis(data: dict) -> str | None:
+    """The leakage budget's basis in three parts, in this order (Task 15 addendum 2), for the README and the page:
+    the budget (1 - C) / C from the catalogue's crowding metric (its column and catalogue named), the split by the
+    PRF overlap rule at rung 5's width, and whether the cap bound. None without a current, complete cross-check whose
+    shares are the Kepler-pixel overlap (``settings.flux_shares``)."""
+    from skysift.sources.kbonus_bkg import CATALOGUE, CROWDSAP_COLUMN
+    block = _current(data)
+    shares = ((block or {}).get("settings") or {}).get("flux_shares") or {}
+    c, budget = _finite(shares.get("crowdsap")), _finite(shares.get("budget"))
+    total, sigma = _finite(shares.get("weight_sum")), _finite(shares.get("sigma_pix"))
+    if block is None or not str(shares.get("source") or "").startswith("Kepler-pixel overlap") or None in (
+            c, budget, total, sigma):
+        return None
+    crowd = (data.get("star") or {}).get("crowdsap") or {}
+    column, catalogue = crowd.get("column") or CROWDSAP_COLUMN, crowd.get("catalogue") or CATALOGUE
+    cap = (f"the overlap-weighted fluxes sum to {total:.4f}, above the budget, so the cap bound and they were scaled "
+           "down to it" if shares.get("capped") else
+           f"the overlap-weighted fluxes sum to {total:.4f}, below the budget of {budget:.4f}, so the cap did not "
+           "bind")
+    return ("The leakage budget behind the nearby false-positive probability has three parts. First, it comes from "
+            f"the catalogue, not from SkySift: (1 - C) / C = {budget:.4f}, with C = {c:.4f} the KBonus crowding "
+            f"metric for this extraction (the {column} column of the {catalogue}), the catalogue's own estimate that "
+            f"{100 * (1 - c):.0f} percent of the fitted flux belongs to other sources, PRF wings included. Second, "
+            "its split among the neighbours follows the PRF overlap rule: each neighbour's share is its Kepler-pixel "
+            f"overlap at rung 5's PSF width ({sigma:.3f} Kepler pixels) times its Kepler-band flux relative to the "
+            f"target's, as an absolute fraction of the target's flux. Third, {cap}.")
 
 
 def dominant_excluded_sentence(data: dict, tex: bool = False, short: bool = False) -> str | None:
@@ -991,7 +1042,9 @@ def comparison_sentence(data: dict, tex: bool = False, after_headline: bool = Fa
     three medians and the run count, ending "(no validation class applies at 30-minute cadence)" (``NO_CLASS_SHORT``;
     the sentence already cites the paper), and the dominant scenario in its short form; the README's
     ``after_headline`` sentence keeps the ranges. Spec 12.2: every form then gives the pixel-excluded set
-    (``excluded_text``: with its ranges and the neighbours removed, or in the note its two medians alone), and the
+    (``excluded_text``: with its ranges and the neighbours removed, or in the note its two medians alone); the
+    note's and the ``after_headline`` forms then say which FPP rests on SkySift's own evidence
+    (``own_evidence_sentence``, Task 15 addendum 2; the page prints it beside its own variant line), and the
     ``after_headline`` form ends on ``dominant_excluded_sentence``."""
     block = _current(data)
     if block is None:
@@ -1006,18 +1059,23 @@ def comparison_sentence(data: dict, tex: bool = False, after_headline: bool = Fa
                 f"false-positive probability is {_p(block['nfpp'])} ({range_text(block, 'nfpp')}).")
         text += f" {dominant}" if dominant else ""
         text += f" {excluded_text(block, True)}" if _variant(block) else ""
+        own = own_evidence_sentence(data)
+        text += f" {own}" if own else ""
         why = dominant_excluded_sentence(data)
         text += f" {why}" if why else ""
         return Raw(tex_escape(text)) if tex else text
     head = f"TRICERATOPS {block['tool_version']} "
     if short:              # the Research Note (Task 13, the word limit): the README carries the ranges
+        variant = f" {excluded_text(block, False)}" if _variant(block) else ""
         rest = (", run on the KBonus light curve with Kepler limb darkening and Gaia DR3 field stars, gives a median "
                 f"false-positive probability of {_p(block['fpp'])}, {_p(block['fpp_no_stp'])} without "
-                "a planet transiting an unresolved bound companion (STP), absent from SkySift's model, and a nearby "
-                f"false-positive probability of {_p(block['nfpp'])} over {n} runs{left_out} ({NO_CLASS_SHORT}).")
+                f"a planet transiting an unresolved bound companion (STP), absent from SkySift's model{variant}, and "
+                f"a nearby false-positive probability of {_p(block['nfpp'])} over {n} runs{left_out} "
+                f"({NO_CLASS_SHORT}).")
         if dominant:
             rest += f" {dominant_sentence(block, short=True)}"
-        rest += f" {excluded_text(block, False)}" if _variant(block) else ""
+        own = own_evidence_sentence(data)
+        rest += f" {own}" if own else ""
         if tex:
             return Raw(tex_escape(head) + r"\citep{giacalone2021}" + tex_escape(rest))
         return head + CITATION + rest

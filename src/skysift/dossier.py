@@ -734,6 +734,27 @@ class CentroidEstimate:
     n_seasons: int
 
 
+def crowdsap_provenance(meta: dict | None, lc_meta: dict | None, quarters=None) -> dict | None:
+    """The star block's ``crowdsap`` (Task 15 addendum 2): the KBonus crowding metric C of this extraction, the
+    catalogue column it is read from and the catalogue, and the CROWDSAP header keyword of each usable quarter of the
+    light-curve file (``lc_meta["per_quarter"]``, the quarters in ``quarters`` when given) with their minimum and
+    maximum. {"value", "column", "catalogue", "per_quarter": {str(quarter): C_q}, "per_quarter_min",
+    "per_quarter_max"}; None without a finite C."""
+    from skysift.sources.kbonus_bkg import CATALOGUE, CROWDSAP_COLUMN
+    value = _num(meta or {}, "crowdsap")
+    if value is None:
+        return None
+    use = None if quarters is None else {int(q) for q in quarters}
+    per = {}
+    for q, kw in sorted(((lc_meta or {}).get("per_quarter") or {}).items(), key=lambda kv: int(kv[0])):
+        c = _num(kw or {}, "crowdsap")
+        if c is not None and (use is None or int(q) in use):
+            per[str(int(q))] = c
+    return {"value": value, "column": CROWDSAP_COLUMN, "catalogue": CATALOGUE, "per_quarter": per,
+            "per_quarter_min": min(per.values()) if per else None,
+            "per_quarter_max": max(per.values()) if per else None}
+
+
 def season_votes(season: dict) -> bool:
     """Whether a rung 5 season voted: its ``voting`` flag; a row written before rung 5 stored the flag votes when
     its ``nearer`` names a star."""
@@ -1875,6 +1896,9 @@ def generate(store: Store, blob, settings, target_id: str, *, signal_id: int | N
     data = _assemble(store, signal, target, tests, decisions, plots, pixels, star, planet, gaia_errors, fap, fpp,
                      inputs, calibration, version, settings.data_dir, blocks)
     data["calibration"] = calibration_block(store, signal, source, rows, fap, target_id)
+    data["star"]["crowdsap"] = crowdsap_provenance(target.get("meta"), getattr(lc, "meta", None),
+                                                   np.unique(np.asarray(lc.quarter)) if lc.quarter is not None
+                                                   else None)
     if isinstance(data.get("centroid_offset"), dict):
         data["centroid_offset"]["nearest_beyond"] = nearest_beyond(data["centroid_offset"], inputs.neighbours)
     rung5 = _metrics(tests, "rung5_pixels")
@@ -2036,7 +2060,10 @@ def page_texts(data: dict) -> dict:
     ``parity``, ``secondary`` and ``stability`` the vetting sentences (``pack.vetting_texts``); ``pixels`` the
     centroid sentence (``pack.pixel_sentence``); ``star`` the Gaia flags and the reddening (``pack.star_texts``);
     ``cross_check`` the TRICERATOPS sentence with its ranges (``crosscheck.comparison_sentence``); ``excluded`` the
-    scenario that carries the pixel-excluded set's weight (``crosscheck.dominant_excluded_sentence``); ``tess`` the
+    scenario that carries the pixel-excluded set's weight (``crosscheck.dominant_excluded_sentence``);
+    ``own_evidence`` which of the two FPPs rests on SkySift's own evidence (``crosscheck.own_evidence_sentence``);
+    ``leakage_basis`` the three-part basis of the leakage budget (``crosscheck.leakage_basis``); ``crowdsap`` the
+    star's crowding metric with its catalogue column (``pack_rows.crowdsap_text``); ``tess`` the
     note's TESS sentence; and ``fold`` the figure's fold (``pack.fold_text``). Each None when it does not apply."""
     from skysift import pack, zenodo  # pack imports this module
 
@@ -2054,7 +2081,8 @@ def page_texts(data: dict) -> dict:
             **pack.vetting_texts(data), "pixels": pack.pixel_sentence(data) if _rung(data.get("tests") or [],
                                                                                    "rung5_pixels") else None,
             "star": pack.star_texts(data), "cross_check": cc.comparison_sentence(data),
-            "excluded": cc.dominant_excluded_sentence(data),
+            "excluded": cc.dominant_excluded_sentence(data), "own_evidence": cc.own_evidence_sentence(data),
+            "leakage_basis": cc.leakage_basis(data), "crowdsap": pack.crowdsap_text(data),
             "tess": pack.tess_text(data) if (data.get("tess") or {}).get("available") else None,
             "fold": pack.fold_text(data), "ephemeris": _ephemeris_words(data)}
 

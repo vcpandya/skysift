@@ -12,6 +12,11 @@ from skysift import net
 from skysift.lc.kbonus import parse_kbonus_fits
 from skysift.models import LightCurve, Target
 
+# the KBonus crowding metric of each extraction: this column of the source catalogue, read into ``meta["crowdsap"]``
+# (the light-curve file's per-quarter CROWDSAP header keywords are the same metric per quarter)
+CROWDSAP_COLUMN = "crowdsap"
+CATALOGUE = "KBonus-bkg v1.0 source catalogue (Martinez-Palomera et al. 2023)"
+
 BASE = "https://archive.stsci.edu/hlsps/kbonus-bkg"
 CATALOG_URL = f"{BASE}/catalogs/hlsp_kbonus-bkg_kepler_kepler_source-catalog_kepler_v1.0_cat.fits"
 FILE_TEMPLATE = "hlsp_kbonus-bkg_kepler_kepler_{fname}_kepler_v1.0_lc.fits"   # verified against MAST, October 2026
@@ -82,7 +87,7 @@ class KBonusBkg:
         # The v1.0 source catalogue names each target by its ``fname`` stem (``kic-003357387`` or
         # ``gaia-dr3-2049134982905809664``); the light-curve file name is derived from it (see FILE_TEMPLATE).
         gaia_col = _strings(tab["gaia_designation"]); fname_col = _strings(tab["fname"])
-        tpf_org = np.asarray(tab["tpforg"]); crowdsap = np.asarray(tab["crowdsap"], dtype=float)
+        tpf_org = np.asarray(tab["tpforg"]); crowdsap = np.asarray(tab[CROWDSAP_COLUMN], dtype=float)
         # ``sap_avail`` is an 18-character bit string, one per Kepler quarter (Q0 to Q17); its count of ones is the
         # number of quarters with a light curve. 5,472 of the 34,161 no-KIC stars have only Q0 (9.7 days, 469 points),
         # which is below the detector's MIN_POINTS and cannot be searched; 57,002 of the 84,487 KIC bystanders have

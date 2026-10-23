@@ -75,6 +75,7 @@ from skysift.pack_rows import (
     SHAPE_ROWS,
     _metrics,
     _test,
+    crowdsap_text,
     dilution_rows,
     ephemeris_rows,
     event_rows,
@@ -735,8 +736,9 @@ def both_tools(data: dict, tex: bool = False) -> str | None:
     """The Research Note's sentence after the two estimates (spec 12.2): what carries the TRICERATOPS weight once
     the neighbours the difference images exclude are removed (``crosscheck.dominant_excluded_sentence``, short),
     when a current cross-check is printed and the pixel rung voted, so that both estimates have counted the pixels;
-    None otherwise."""
-    if cross_check_sentence(data) is None:
+    None otherwise, and None when the cross-check sentence already says which number rests on SkySift's own evidence
+    (``crosscheck.own_evidence_sentence``), which takes its place for the word limit (Task 15 addendum 2)."""
+    if cross_check_sentence(data) is None or cc.own_evidence_sentence(data) is not None:
         return None
     voting, _silent = _pixel_votes(_test(data, "rung5_pixels"))
     return cc.dominant_excluded_sentence(data, tex=tex, short=True) if voting else None
@@ -1780,6 +1782,7 @@ def numbers(data: dict, tex: bool = False, after_bjd: float | None = None) -> di
         "cross_check_sentence": cross_check_sentence(data, tex),
         # the plain texts print the headline in fpp_text first, so their cross-check sentence refers back to it
         "cross_check_after": cc.comparison_sentence(data, after_headline=True),
+        "leakage_basis": cc.leakage_basis(data), "crowdsap_text": crowdsap_text(data),
         "cross_check_block": cc.verdict(data.get("cross_check"))[1],
         "cross_check_flag": cc.owner_flag(data),
         "tess_text": tess_text(data, tex), "tess_row": tess_module.readme_row(data.get("tess")),

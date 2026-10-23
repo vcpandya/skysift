@@ -159,7 +159,6 @@ CAVEATS = (
      "direction each way: a bound companion of a cool dwarf is cooler still, so the TESS band overstates its light "
      "and the dilution it causes, while background field stars are mostly bluer than the target, so the TESS band "
      "understates theirs. The limb darkening comes from the package's Kepler table."),
-    PRF_CAVEAT,
     ("No high-resolution imaging exists, so the package lets an unresolved bound companion sit anywhere within "
      "2.2 arcsec of the target; a planet transiting such a companion (STP) counts towards the full FPP and is the "
      "open false-positive channel. SkySift's model has no such scenario, so the FPP without STP, (FPP - P_STP) / "
@@ -394,7 +393,8 @@ def leakage_shares(stars, crowdsap, gmags, tdepth: float, seps_arcsec, sigma_pix
     fraction of the aperture light), "crowdsap", "sigma_pix", "weight_sum": S_w | None, "capped": S_w > B | None,
     "scale": scale | None, "rows": [{"id", "g_package", "box_factor", "band", "kepler_flux" (f_i from G, None without
     it), "g", "overlap" (None for the target), "weight" (None for the target), "share_before", "share" (None for the
-    target), "fluxratio", "tdepth", "source"}]}."""
+    target), "overlap_sep_arcsec" (the separation the overlap is taken at, None for the target), "fluxratio",
+    "tdepth", "source"}]}."""
     factors = [1.0 if f is None else float(f) for f in (box_factors or [None] * len(stars))]
     g, before = budget_shares(stars, crowdsap, gmags, factors)
     pkg = [_finite(s.get("fluxratio")) or 0.0 for s in stars]
@@ -406,7 +406,8 @@ def leakage_shares(stars, crowdsap, gmags, tdepth: float, seps_arcsec, sigma_pix
         rows.append({"id": str(s.get("ID")), "g_package": pkg[i], "box_factor": factors[i],
                      "band": "Gaia G" if None not in (gt, tt, gm[i], tmag[i]) else "Tmag",
                      "kepler_flux": 10 ** (-0.4 * (gm[i] - gt)) if None not in (gm[i], gt) else None, "g": g[i],
-                     "overlap": None, "weight": None, "share_before": before[i]})
+                     "overlap": None, "weight": None, "share_before": before[i],
+                     "overlap_sep_arcsec": _finite(seps_arcsec[i]) if i else None})
     c, sigma = _finite(crowdsap), _finite(sigma_pix)
     if c is not None and 0.0 < c <= 1.0 and sigma is not None and sigma > 0:
         budget = (1.0 - c) / c
@@ -443,17 +444,32 @@ def leakage_shares(stars, crowdsap, gmags, tdepth: float, seps_arcsec, sigma_pix
             "weight_sum": None, "capped": None, "scale": None, "rows": rows}
 
 
-def leakage_caveat(shares: dict, crowdsap) -> str:
-    """The caveat on the flux shares the run used (``leakage_shares``)."""
+def share_caveats(shares: dict, crowdsap, target: dict | None = None) -> list[str]:
+    """The caveats on the flux shares the run used: ``leakage_caveat``, then ``PRF_CAVEAT`` when the shares are the
+    Kepler-pixel overlap (round 3 review M2: a run on the package's box has no Gaussian of rung 5's width)."""
+    return [leakage_caveat(shares, crowdsap, target), *([PRF_CAVEAT] if shares["source"] == OVERLAP else [])]
+
+
+def leakage_caveat(shares: dict, crowdsap, target: dict | None = None) -> str:
+    """The caveat on the flux shares the run used (``leakage_shares``). For the Kepler-pixel overlap it opens with
+    the budget's basis (Task 15 addendum 2): the catalogue's crowding metric, named by the export's
+    ``crowdsap_column`` and ``crowdsap_catalogue`` (``target``, the export's target block), the PRF overlap rule and
+    whether the cap bound."""
     if shares["source"] == OVERLAP:
         fate = ("above the budget, so they are scaled down to it" if shares["capped"]
                 else "within the budget, so they stand")
-        return (f"CROWDSAP {float(crowdsap):.4f} of the target's KBonus file bounds the light its neighbours can leak "
-                f"into its PSF light curve at (1 - CROWDSAP) / CROWDSAP = {shares['budget']:.4f} of the target's own. "
+        c = float(crowdsap)
+        column, catalogue = (target or {}).get("crowdsap_column"), (target or {}).get("crowdsap_catalogue")
+        where = (f"the {column} column of the {catalogue}" if column and catalogue
+                 else "the CROWDSAP of the target's KBonus file")
+        return (f"The budget (1 - C) / C = {shares['budget']:.4f} comes from the KBonus crowding metric for this "
+                f"extraction ({where}, C = {c:.4f}: the catalogue's own estimate that {100 * (1 - c):.0f} percent of "
+                "the fitted flux is from other sources, PRF wings included); the split among the neighbours follows "
+                f"the PRF overlap rule; the cap did {'' if shares['capped'] else 'not '}bind. "
                 "Each neighbour's share is the fraction of a Gaussian of rung 5's fitted width "
                 f"({shares['sigma_pix']:.3f} Kepler pixels, the mean over its voting seasons) at its separation that "
                 "falls inside the target's 3 x 3 box, over that of a star at the centre, times its Kepler-band flux "
-                "relative to the target's (Gaia G as the proxy); the shares sum to "
+                "relative to the target's (Gaia G as the proxy); the overlap-weighted fluxes sum to "
                 f"{shares['weight_sum']:.4f}, {fate}. Each share is a floor on the light that neighbour puts in "
                 "the target's 3 x 3 box, and that light, with the nearby false-positive probability it drives, is "
                 f"{PSF_BOUND}.")
@@ -701,7 +717,9 @@ def star_rows(stars: list[dict], matched: list[dict], added: dict[str, float], s
     """The stars the run used, from TRICERATOPS's ``stars`` rows after the shares were written: id, Tmag, G,
     separation, the flux ratio and required depth used, the package's box fraction, the Kepler-band fraction, the
     Kepler-band flux relative to the target, the box factor (1 for a TIC star at its own position, the Gaussian factor
-    at its separation for an added one), the Kepler-pixel overlap and the weight of spec 12.1, the round-2 share
+    at its separation for an added one), the Kepler-pixel overlap, the separation it was taken at
+    (``overlap_sep_arcsec``: the stored Gaia separation for an added star, whose row has none) and the weight of spec
+    12.1, the round-2 share
     (``share_before``), the share and its source, what the share bounds (``share_bound``, None for the target and for
     the package's box), the Teff, radius and mass with their sources, the Gaia id and whether the Tmag is an
     estimate."""
@@ -717,6 +735,7 @@ def star_rows(stars: list[dict], matched: list[dict], added: dict[str, float], s
                     "g_package": sh["g_package"], "g_kepler": sh["g"], "kepler_flux": sh["kepler_flux"],
                     "band": sh["band"], "box_factor": sh["box_factor"], "overlap": sh["overlap"],
                     "weight": sh["weight"], "share_before": sh["share_before"], "share": sh["share"],
+                    "overlap_sep_arcsec": sh.get("overlap_sep_arcsec"),
                     "share_source": sh["source"],
                     "share_bound": PSF_BOUND if sh["source"] == OVERLAP and sh["share"] is not None else None,
                     "teff": num(s.get("Teff")), "rad": num(s.get("rad")), "mass": num(s.get("mass")),
@@ -819,10 +838,9 @@ def checkpoint_key(fingerprint: str, *, seed: int, draws: int, check_draws: int,
                    excluded_tic_ids: list[str] | None = None) -> dict:
     """What a resumed run must share with the runs already made: the inputs' fingerprint, the first seed, the draws
     per run, the check's draws, the exposure time, the flux error, the flux shares (their source, budget, CROWDSAP and
-    rung 5's PSF width), the quarters, whether an older
-    export was allowed, the package version, and the hashes of what a resume rebuilds: the field-star population
-    (``field_star_summary``), the final ``stars`` table (``stars_digest``), ``lightcurve.csv`` and ``inputs.json``,
-    and the TIC ids the pixel-excluded variant removes, sorted."""
+    rung 5's PSF width), the quarters, whether an older export was allowed, the package version, the hashes of what a
+    resume rebuilds (the field-star population, ``field_star_summary``; the final ``stars`` table, ``stars_digest``;
+    ``lightcurve.csv`` and ``inputs.json``) and the TIC ids the pixel-excluded variant removes, sorted."""
     return {"inputs_sha256": fingerprint, "first_seed": int(seed), "N": int(draws),
             "check_draws": int(check_draws) if parallel_check else None, "parallel_check": bool(parallel_check),
             "exptime_days": EXPTIME_DAYS, "flux_err_rel_robust": float(flux_err),
@@ -1073,7 +1091,7 @@ def main(argv=None) -> int:
                             box_factors=[factors.get(str(r["ID"])) for r in rows])
     t.stars["fluxratio"] = [r["fluxratio"] for r in shares["rows"]]
     t.stars["tdepth"] = [r["tdepth"] for r in shares["rows"]]
-    notes.append(leakage_caveat(shares, tgt.get("crowdsap")))
+    notes += share_caveats(shares, tgt.get("crowdsap"), tgt)
     for text in (leak_caveat(inputs.get("leak")), clip_caveat(inputs["lightcurve"])):
         if text:
             notes.append(text)
