@@ -2848,7 +2848,7 @@ def test_the_readme_gives_the_shape_call_with_its_evidence_and_the_note_does_not
             "values follow the host's density (Seager and Mallén-Ornelas 2003; Kipping 2010).") in text
     assert text in readme
     assert "- Seager, S., & Mallén-Ornelas, G. 2003, ApJ, 585, 1038" in readme
-    assert "- Kipping, D. M. 2010, MNRAS, 407, 301" in readme
+    assert "- Kipping, D. M. 2010, MNRAS, 408, 1758" in readme
     tex = render_note(golden)
     assert UNCONSTRAINED in " ".join(tex.split())
     assert "seager2003" not in tex and "kipping2010" not in tex

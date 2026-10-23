@@ -370,7 +370,7 @@ BIBLIOGRAPHY = (
     ("guerrero2021", r"{Guerrero} et~al.(2021)",
      r"Guerrero, N.~M., Seager, S., Huang, C.~X., et~al. 2021, ApJS, 254, 39"),
     ("holczer2016", r"{Holczer} et~al.(2016)", r"Holczer, T., et~al. 2016, ApJS, 225, 9"),
-    ("kipping2010", r"{Kipping}(2010)", r"Kipping, D.~M. 2010, MNRAS, 407, 301"),
+    ("kipping2010", r"{Kipping}(2010)", r"Kipping, D.~M. 2010, MNRAS, 408, 1758"),
     ("kirk2016", r"{Kirk} et~al.(2016)", r"Kirk, B., Conroy, K., Pr{\v s}a, A., et~al. 2016, AJ, 151, 68"),
     ("kbonus", r"{Mart{\'\i}nez-Palomera} et~al.(2023a)",
      r"Mart{\'\i}nez-Palomera, J., Hedges, C., \& Dotson, J. 2023a, AJ, 166, 265, doi:10.3847/1538-3881/ad0727"),
