@@ -1,6 +1,6 @@
 {
  "dossier_version": "5",
- "generated": "2026-10-23T01:30:46.677761+00:00",
+ "generated": "2026-10-23T03:17:40.666773+00:00",
  "target": {
   "target_id": "kic-006146676",
   "source": "kbonus_bkg",
@@ -4419,98 +4419,98 @@
   "ephemeris": "linear fit of 31 transit times"
  },
  "predicted_leak": {
-  "predicted_ppm": 3.6710304,
-  "share": 0.0016581248,
+  "predicted_ppm": 4.274177,
+  "share": 0.001930553,
   "quarters": [
-   {
-    "quarter": 0,
-    "season": 3,
-    "share": 0.00036337377
-   },
-   {
-    "quarter": 1,
-    "season": 3,
-    "share": 0.00026886934
-   },
    {
     "quarter": 2,
     "season": 0,
-    "share": 0.00030901147
+    "share": 0.00030901147,
+    "reason": null
    },
    {
     "quarter": 3,
     "season": 1,
-    "share": 0.0034265398
+    "share": 0.0034265398,
+    "reason": null
    },
    {
     "quarter": 4,
     "season": 2,
-    "share": 0.0038571694
+    "share": 0.0038571694,
+    "reason": null
    },
    {
     "quarter": 5,
     "season": 3,
-    "share": 0.00026317378
+    "share": 0.00026317378,
+    "reason": null
    },
    {
     "quarter": 6,
     "season": 0,
-    "share": 0.00036359848
+    "share": 0.00036359848,
+    "reason": null
    },
    {
     "quarter": 7,
     "season": 1,
-    "share": 0.0038616013
+    "share": 0.0038616013,
+    "reason": null
    },
    {
     "quarter": 8,
     "season": 2,
-    "share": 0.0038991438
+    "share": 0.0038991438,
+    "reason": null
    },
    {
     "quarter": 9,
     "season": 3,
-    "share": 0.0022131939
+    "share": 0.0022131939,
+    "reason": null
    },
    {
     "quarter": 10,
     "season": 0,
-    "share": 0.00036240675
+    "share": 0.00036240675,
+    "reason": null
    },
    {
     "quarter": 11,
     "season": 1,
-    "share": 0.0033710313
+    "share": 0.0033710313,
+    "reason": null
    },
    {
     "quarter": 12,
     "season": 2,
-    "share": 0.0035844662
+    "share": 0.0035844662,
+    "reason": null
    },
    {
     "quarter": 13,
     "season": 3,
-    "share": 0.00028861257
+    "share": 0.00028861257,
+    "reason": null
    },
    {
     "quarter": 14,
     "season": 0,
-    "share": 0.00036618209
+    "share": 0.00036618209,
+    "reason": null
    },
    {
     "quarter": 15,
     "season": 1,
-    "share": 0.002761099
+    "share": 0.002761099,
+    "reason": null
    },
    {
     "quarter": 16,
     "season": 2,
-    "share": 3.1065514e-05
-   },
-   {
-    "quarter": 17,
-    "season": 3,
-    "share": 0.00025570775
+    "share": 3.1065514e-05,
+    "reason": null
    }
   ],
   "measured_ppm": -9.48671,
@@ -4973,6 +4973,6 @@
    "rung4_novelty": "4",
    "rung5_pixels": "4"
   },
-  "git_commit": "b95202e"
+  "git_commit": "48972fd"
  }
 }
