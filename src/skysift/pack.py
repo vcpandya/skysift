@@ -1273,7 +1273,7 @@ def _seasons_phrase(near: int, voting: list[dict], silent: list[dict]) -> str:
 
 
 def _silent_sentence(silent: list[dict]) -> str:
-    """The seasons that did not vote, each with its stored reason as one clause (``reason_words``): "Season 3 did not
+    """The seasons that did not vote, each with its stored reason as one clause (``reason_words``) in parentheses: "Season 3 did not
     vote: box cut: ambiguous at 1.8 sigma." (no brackets inside brackets, round-2 final review, minor 10)."""
     def label(s: dict) -> str:
         return str(s.get("season")) if s.get("season") is not None else "?"
@@ -1281,10 +1281,10 @@ def _silent_sentence(silent: list[dict]) -> str:
         return ""
     if len(silent) == 1:
         s = silent[0]
-        return f"Season {label(s)} did not vote: {reason_words(s.get('non_voting_reason'))}."
+        return f"Season {label(s)} did not vote ({reason_words(s.get('non_voting_reason'))})."
     names = ", ".join(label(s) for s in silent[:-1]) + f" and {label(silent[-1])}"
     why = "; ".join(f"season {label(s)} {reason_words(s.get('non_voting_reason'))}" for s in silent)
-    return f"Seasons {names} did not vote: {why}."
+    return f"Seasons {names} did not vote ({why})."
 
 
 def _first(value) -> float | None:

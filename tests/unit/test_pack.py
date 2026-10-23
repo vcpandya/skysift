@@ -584,7 +584,7 @@ def test_a_season_that_did_not_vote_is_named_and_its_null_depths_are_skipped(env
     data = _with_a_silent_season(env_with_dossier.data)
     text = pack_module.pixel_sentence(data)
     assert "the dip is nearer this star than its brightest neighbour in 2 of 2 seasons that voted" in text
-    assert "Season 3 did not vote: box incomplete: target." in text and "nan" not in text
+    assert "Season 3 did not vote (box incomplete: target)." in text and "nan" not in text
     assert "A two-source fit gives a median depth of 2,550 ppm on this star" in text  # the voting seasons only
     abstract = pack_module.abstract_text(data)
     assert "nearer this star than its brightest neighbour in 2 of 2 seasons that voted" in abstract
@@ -647,7 +647,7 @@ def test_pixel_sentence_without_box_keys_is_unchanged(env_with_dossier):
         "away, with an exclusion radius of 0.50 arcsec (max(3 sigma, 0.5 arcsec)) within which a background source "
         "is not excluded; the nearest Gaia source beyond it is Gaia DR3 2101234567890120001 at 6.6 arcsec from the "
         "centroid (G = 19.8). A two-source fit gives a median depth of 2,213 ppm on this star and -21 ppm on the "
-        "neighbour. Season 3 did not vote: box incomplete: target.")
+        "neighbour. Season 3 did not vote (box incomplete: target).")
 
 
 def test_a_crashed_build_leaves_no_folder_that_blocks_the_retry(env_with_dossier, monkeypatch):
@@ -2987,10 +2987,10 @@ def test_the_silent_seasons_and_the_secondary_read_without_nested_brackets():
     """Minor 10 and the Task 13 parked minor: a non-voting season's reason is one clause; the note's short secondary
     keeps "in the same fold"."""
     assert pack_module._silent_sentence([{"season": 3, "non_voting_reason": "box cut: ambiguous (1.8 sigma)"}]) == \
-        "Season 3 did not vote: box cut: ambiguous at 1.8 sigma."
+        "Season 3 did not vote (box cut: ambiguous at 1.8 sigma)."
     assert pack_module._silent_sentence([{"season": 0, "non_voting_reason": "box cut"},
                                          {"season": 3, "non_voting_reason": None}]) == \
-        "Seasons 0 and 3 did not vote: season 0 box cut; season 3 no reason stored."
+        "Seasons 0 and 3 did not vote (season 0 box cut; season 3 no reason stored)."
     assert pack_text.reason_words("too few points (0.5 sigma)") == "too few points at 0.5 sigma"
     assert pack_text.reason_words("") == "no reason stored"
     assert pack_text.reason_words("box incomplete: target") == "box incomplete: target"      # one reason, not two
