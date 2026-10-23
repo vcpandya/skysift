@@ -60,6 +60,7 @@ from skysift.lc.tpf import OPTIMAL_APERTURE_BIT, parse_tpf, tpf_listing_url
 from skysift.lc.transit_model import compare_fits, exposure_flux, fit_shape, limb_darkening
 from skysift.models import LightCurve, Signal, Target
 from skysift.net import ServiceUnavailable
+from skysift.pack_text import PRIOR_CLAIM_NUMBERS, PRIOR_CLAIM_PUBLIC, RELATIONSHIPS
 from skysift.pipeline import revet_flux, search_version
 from skysift.priors import NO_PIXEL_CONFUSION_ARCSEC, NO_PIXEL_FALLOFF_ARCSEC, PIXEL_ARCSEC
 from skysift.store.db import (
@@ -305,14 +306,17 @@ def pick_signal(store: Store, target_id: str, signal_id: int | None = None) -> d
     return min(rows, key=lambda r: rank_key(r, r["decision"]))
 
 
-def fingerprint(latest_tests: list[dict], final_status: str, decision: str | None, calibration_rows: int = 0) -> str:
+def fingerprint(latest_tests: list[dict], final_status: str, decision: str | None, calibration_rows: int = 0,
+                sweep_size: int | None = None) -> str:
     """sha256 of the sorted test row ids, the final status, the latest decision, the number of rows in the source's
-    null calibration (``calibration_rows``) and the FPP model version: a dossier is stale when any of them changed
-    since it was written, so one written while the calibration was short goes stale as the null searches arrive, and
-    one written under an older false-positive model goes stale with the model."""
+    null calibration (``calibration_rows``), the sweep size the false-alarm sentence quotes (``sweep_size_of``; 0 for
+    none) and the FPP model version: a dossier is stale when any of them changed since it was written, so one written
+    while the calibration was short goes stale as the null searches arrive, one written before the sweep grew goes
+    stale with it, and one written under an older false-positive model goes stale with the model."""
     ids = sorted(int(t["id"]) for t in latest_tests)
     text = json.dumps({"tests": ids, "status": final_status, "decision": decision,
-                       "calibration_rows": int(calibration_rows), "fpp_model": FPP_MODEL_VERSION}, sort_keys=True)
+                       "calibration_rows": int(calibration_rows), "sweep_size": int(sweep_size or 0),
+                       "fpp_model": FPP_MODEL_VERSION}, sort_keys=True)
     return hashlib.sha256(text.encode()).hexdigest()
 
 
@@ -1616,10 +1620,6 @@ def _section(name: str, errors: dict, build: Callable[[], object]):
 
 
 CANDIDATES_DIR = Path(__file__).resolve().parents[2] / "docs" / "candidates"     # present in a source checkout only
-# how SkySift's result stands to a prior claim (spec 11.1): found again knowing of the claim, found before knowing of
-# it, or only vetted on the claim's ephemeris
-RELATIONSHIPS = ("re-detection", "blind-recovery", "vetting-only")
-PRIOR_CLAIM_NUMBERS = ("period_days", "period_err_days", "t0_bjd", "t0_err_days", "depth_ppm", "depth_err_ppm", "fpp")
 PRIOR_CLAIM_FIELDS = ("doi", "date", "author", "title", "status", "note", "relationship", "development_note",
                       *PRIOR_CLAIM_NUMBERS, "fpp_tool")
 PRIOR_CLAIM_REQUIRED = ("doi", "date", "author", "title")
@@ -1664,11 +1664,6 @@ def prior_claims(target_id: str, root: Path | None = None) -> list[dict]:
         out.append({**row, "relationship": relationship})
     return sorted(out, key=lambda c: c["date"])
 
-
-# what may travel with a pack about a prior claim: the status of someone else's submission and the owner's note stay
-# in prior_claims.json (pack_text.PRIOR_CLAIM_PUBLIC holds the same names)
-PRIOR_CLAIM_PUBLIC = ("doi", "date", "author", "title", "relationship", "development_note", *PRIOR_CLAIM_NUMBERS,
-                      "fpp_tool")
 
 
 def public_claims(data: dict) -> dict:
@@ -1765,6 +1760,13 @@ SWEEP_QUERY = ("distinct target_id of runs with status done, the signal's detect
                "not starting 'recheck:', on targets of the signal's source")
 
 
+def sweep_size_of(store: Store, signal: dict, source: str | None) -> int:
+    """``Store.sweep_size`` for the signal's detector and search version on ``source`` (kbonus_bkg when None): the
+    count ``calibration_block`` stores and ``fingerprint`` watches."""
+    return store.sweep_size(source or "kbonus_bkg", str(signal.get("detector") or ""),
+                            str(signal.get("detector_version") or ""))
+
+
 def calibration_block(store: Store, signal: dict, source: str, rows: list[dict], fap, target_id: str) -> dict:
     """The ``calibration`` block the false-alarm sentence reads (spec 11.4): ``sweep_size``, the targets the sweep
     searched with the signal's search (``Store.sweep_size``, by ``SWEEP_QUERY``; None when the count is 0, a store
@@ -1772,7 +1774,7 @@ def calibration_block(store: Store, signal: dict, source: str, rows: list[dict],
     for, ``null_stars`` (the distinct stars of the null calibration other than this target), ``null_searches``
     (``fap.n``) and ``expected_by_chance``, the sweep size times the FAP (None without either)."""
     detector, version = str(signal.get("detector") or ""), str(signal.get("detector_version") or "")
-    size = store.sweep_size(source, detector, version) or None
+    size = sweep_size_of(store, signal, source) or None
     stars = {str(r.get("target_id")) for r in rows if r.get("target_id") and r.get("target_id") != target_id}
     return {"sweep_size": size, "sweep_source": source, "sweep_detector": detector,
             "sweep_detector_version": version, "sweep_query": SWEEP_QUERY, "null_stars": len(stars),
@@ -1795,7 +1797,8 @@ def generate(store: Store, blob, settings, target_id: str, *, signal_id: int | N
     decisions = store.decisions(sid)
     decision = decisions[0]["decision"] if decisions else None
     source = _target_dict(store, target_id).get("source") or "kbonus_bkg"
-    fp = fingerprint(tests, signal["final_status"], decision, calibration_rows(settings.data_dir, source))
+    fp = fingerprint(tests, signal["final_status"], decision, calibration_rows(settings.data_dir, source),
+                     sweep_size_of(store, signal, source))
     data_path = Path(settings.data_dir) / "dossiers" / target_id / "dossier_data.json"
     old = store.dossier(target_id)
     if (old is not None and not force and old["tests_fingerprint"] == fp and old["signal_id"] == sid
@@ -1983,17 +1986,39 @@ def _inline_fonts(css: str, fonts: Path) -> str:
     return _FONT_URL.sub(data_uri, css)
 
 
+def page_texts(data: dict) -> dict:
+    """The sentences the dossier page, served or standalone, prints in the pack's own words (spec 11.1, 11.2), so
+    the page says what the README says: ``fpp_lead`` the TRICERATOPS headline (``crosscheck.headline``) and
+    ``fpp_value`` its median, both None without a complete, current cross-check; ``in_house`` the four-scenario
+    estimate as a lower bound naming the scenarios it lacks (``zenodo.in_house_text``); ``class_text`` where the
+    medians fall on Giacalone et al.'s scale, the class name as a label only (``crosscheck.class_label_text``);
+    ``prior`` and ``comparison`` the prior-claim sentence and its sigma comparison (``pack.prior_claim_sentence``,
+    ``pack.comparison_text``), None without a claim."""
+    from skysift import pack, zenodo  # pack imports this module
+
+    lead = cc.headline(data)
+    block = data.get("cross_check") or {}
+    in_house = zenodo.in_house_text(data)
+    return {"fpp_lead": f"{lead}." if lead else None,
+            "fpp_value": cc.probability_text(block["fpp"]) if lead else None,
+            "in_house": f"{in_house[:1].upper()}{in_house[1:]}.",
+            "class_text": cc.class_label_text(block.get("class")) if cc.complete(block) else None,
+            "prior": pack.prior_claim_sentence(data), "comparison": pack.comparison_text(data)}
+
+
 def export_html(data: dict, static_dir: Path = STATIC_DIR, data_dir: Path | None = None) -> str:
     """One standalone file: the dashboard's stylesheet (tokens and components) with the fonts as data URIs,
     ``dossier.css``, the JSON in ``<script id="dossier-data" type="application/json">`` (every ``/`` escaped, so no
     ``</`` and no URL appears in the markup) and ``dossier.js``, which draws the page and its own level toggle. Nothing
     is loaded from anywhere else. Prior claims are cut to their public fields (``public_claims``), and with
     ``data_dir`` every local path in the data is cut first (``public_paths``), as the pack does: the file is meant for
-    someone outside the laptop."""
+    someone outside the laptop. ``page_texts`` (the pack's sentences the page prints, spec 11.2) joins the JSON."""
     static_dir = Path(static_dir)
+    texts = page_texts(data)
     data = public_claims(data)
     if data_dir is not None:
         data = public_paths(data, data_dir)
+    data = {**data, "page_texts": texts}
     app_css = _inline_fonts((static_dir / "app.css").read_text(encoding="utf-8"), static_dir / "fonts")
     css = (static_dir / "dossier.css").read_text(encoding="utf-8")
     js = (static_dir / "dossier.js").read_text(encoding="utf-8")

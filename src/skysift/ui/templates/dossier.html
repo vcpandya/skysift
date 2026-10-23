@@ -63,7 +63,10 @@
     {%- if status.reviewer and status.label not in status.reviewer %}{{ reviewer_pill(status.reviewer) }}{% endif %}
     {{ pill("pass" if (status.final_status or "").startswith("candidate") else "muted", status.label or status.final_status or "unknown", "/partials/signals/" ~ signal_id ~ "/verdict") }}
     <a class="btn prob-link" href="#checks"><span class="prob-name">False alarm</span> {{ fap.words or "not yet calibrated" }}</a>
-    <a class="btn prob-link" href="#checks"><span class="prob-name">{{ fpp.label or "False positive" }}</span> {{ fpp.words or "not computed" }}{% if not fpp.signed_off %} <span class="chip-provisional">provisional</span>{% endif %}</a>
+    {%- if texts and texts.fpp_lead %}
+    <a class="btn prob-link" href="#checks"><span class="prob-name">False positive, TRICERATOPS</span> {{ texts.fpp_value }}</a>
+    {%- endif %}
+    <a class="btn prob-link" href="#checks"><span class="prob-name">{{ fpp.label or "False positive" }}, in-house</span> {{ fpp.words or "not computed" }}{% if not fpp.signed_off %} <span class="chip-provisional">provisional</span>{% endif %}</a>
   </div>
   <div class="dossier-actions">
     <a class="btn primary" href="/dossiers/{{ target_id }}/export.html">Download standalone page</a>
@@ -220,14 +223,14 @@
 <section id="checks" class="dossier-section" aria-labelledby="checks-title">
   {{ section_head("03", "checks", "The checks", (status.headline or "") ~ ". Most repeating dips are not planets: they are eclipsing binaries, blended neighbours or instrument effects. Each check below looks for one of them.") }}
   {% with rows = why_rows, show_numbers = True, recheck_history = [] %}{% include "partials/why.html" %}{% endwith %}
-  {% with link = False, block_id = "probabilities", heading_id = "probabilities-page" %}{% include "partials/probabilities.html" %}{% endwith %}
+  {% with link = False, block_id = "probabilities", heading_id = "probabilities-page", fpp_lead = texts.fpp_lead, fpp_in_house = texts.in_house %}{% include "partials/probabilities.html" %}{% endwith %}
   {%- set cc = data.cross_check %}
   <div class="dossier-crosscheck">
     <h3>Cross-check</h3>
     {%- macro g3(x) %}{{ "–" if x is none else "%.3g" | format(x) }}{% endmacro %}
     {%- macro spread(block, m) %}<span class="mono">{{ g3(block[m]) }}</span> (16th to 84th percentile <span class="mono">{{ g3(block[m ~ "_p16"]) }} to {{ g3(block[m ~ "_p84"]) }}</span>){% endmacro %}
     {%- if cc and cc.runs is defined %}
-    <p>An estimate with TRICERATOPS {{ cc.tool_version }} (Giacalone et al. 2021) over {{ cc.n_runs }} runs{% if cc.n_degenerate %}, {{ cc.n_degenerate }} degenerate and left out{% endif %}: median false-positive probability {{ spread(cc, "fpp") }}, {{ spread(cc, "fpp_no_stp") }} without a planet transiting an unresolved bound companion (STP), which SkySift's model leaves out, and nearby false-positive probability {{ spread(cc, "nfpp") }}. On Giacalone et al.'s scale the medians {% if cc["class"] == "validated" %}fall inside the paper's validation lines (FPP &lt; 0.015 and NFPP &lt; 0.001), which the paper could not set at 30-minute cadence, so it is not called validated here{% else %}read as <b class="crosscheck-class">{{ cc["class"] }}</b>{% endif %}; the classes are labels and never block the live draft. {% if cc.current %}It was made for this dossier's period, depth and neighbours.{% else %}It was made for an earlier dossier (the period, the depth or the neighbours have changed since), so it does not count until it is run again.{% endif %}</p>
+    <p>An estimate with TRICERATOPS {{ cc.tool_version }} (Giacalone et al. 2021) over {{ cc.n_runs }} runs{% if cc.n_degenerate %}, {{ cc.n_degenerate }} degenerate and left out{% endif %}: median false-positive probability {{ spread(cc, "fpp") }}, {{ spread(cc, "fpp_no_stp") }} without a planet transiting an unresolved bound companion (STP), which SkySift's model leaves out, and nearby false-positive probability {{ spread(cc, "nfpp") }}. {% if texts.class_text %}{{ texts.class_text }} {% endif %}The cross-check never blocks the live draft. {% if cc.current %}It was made for this dossier's period, depth and neighbours.{% else %}It was made for an earlier dossier (the period, the depth or the neighbours have changed since), so it does not count until it is run again.{% endif %}</p>
     {%- if cc.caveats %}
     <ul class="dossier-small">{% for c in cc.caveats %}<li>{{ c }}</li>{% endfor %}</ul>
     {%- endif %}

@@ -545,8 +545,12 @@ def comparison_text(data: dict, tex: bool = False) -> str | None:
     if "fpp" in cmp:
         f = cmp["fpp"]
         theirs = f"{f['theirs']:,g}" + (f" ({f['tool']})" if f["tool"] else "")
-        clause = (f"false-positive probability of {theirs} sits beside our {cc.probability_text(f['ours'])} "
-                  f"({f['ours_tool']})" if f["ours"] is not None else f"false-positive probability is {theirs}")
+        ours = None if f["ours"] is None else cc.probability_text(f["ours"])
+        # the tool is named once on each side: "our TRICERATOPS 0.012", "our 0.0016 (SkySift's ... estimate)"
+        ours = (None if ours is None else f"TRICERATOPS {ours}" if f["ours_tool"] == "TRICERATOPS"
+                else f"{ours} ({f['ours_tool']})")
+        clause = (f"false-positive probability of {theirs} sits beside our {ours}" if ours is not None
+                  else f"false-positive probability is {theirs}")
         sentence = f"{sentence}; its {clause}" if sentence else f"The claim's {clause}"
     if not sentence:
         return None
@@ -677,8 +681,9 @@ def errors_methods_text(data: dict) -> str | None:
 
 
 def cross_check_sentence(data: dict, tex: bool = False) -> str | None:
-    """The TRICERATOPS cross-check beside SkySift's own estimate (``crosscheck.comparison_sentence``), for the four
-    texts; None without a cross-check made for this dossier's inputs, which the texts then leave out."""
+    """The TRICERATOPS cross-check (``crosscheck.comparison_sentence``) in full, for the Research Note (the plain texts
+    print the headline first and the form that refers back to it, ``cross_check_after``); None without a cross-check
+    made for this dossier's inputs, which the texts then leave out."""
     return cc.comparison_sentence(data, tex=tex)
 
 
@@ -1308,6 +1313,8 @@ def numbers(data: dict, tex: bool = False, after_bjd: float | None = None) -> di
         "in_house_text": in_house_text(data), "in_house_capital": _capital(in_house_text(data)),
         "both_tools": both_tools(data),
         "cross_check_sentence": cross_check_sentence(data, tex),
+        # the plain texts print the headline in fpp_text first, so their cross-check sentence refers back to it
+        "cross_check_after": cc.comparison_sentence(data, after_headline=True),
         "cross_check_block": cc.verdict(data.get("cross_check"))[1],
         "cross_check_flag": cc.owner_flag(data),
         "tess_text": tess_text(data, tex), "tess_row": tess_module.readme_row(data.get("tess")),
@@ -1318,7 +1325,7 @@ def numbers(data: dict, tex: bool = False, after_bjd: float | None = None) -> di
         "comparison_text": comparison_text(data, tex), "comparison_plain": comparison_text(data),
         "priority_text": priority_sentence(data),
         "caveat_text": " ".join(f"{c['title'].rstrip('.')}." for c in caveats) or "No caveat is recorded.",
-        "window_h": _f(plots.get("window_h"), 1), "bin_minutes": bin_minutes(data),
+        "window_h": window_hours(data), "bin_minutes": bin_minutes(data),
         "model_words": "transit fit" if plots.get("model_kind") == "fit" else "box model of the detection",
         "fold_words": fold_words(data),
         # the signal section and the README's depth row say which ephemeris folded (spec 11.3); a dossier before
@@ -1329,6 +1336,18 @@ def numbers(data: dict, tex: bool = False, after_bjd: float | None = None) -> di
                               if eph.get("fold_ephemeris") and eph.get("depth_source") else ""),
         "param_rows": param_rows(data), "commands": prov.get("commands") or [],
     }
+
+
+def window_hours(data: dict) -> str | None:
+    """The fold window's half-width in hours as the caption prints it: the stored ``plots.window_h``, else, for a
+    dossier without its plots (the golden block keeps none), the same rule from the signal: the smaller of
+    ``dossier.FOLD_WINDOW_DURATIONS`` search durations and half the period."""
+    stored = _num((data.get("plots") or {}).get("window_h"))
+    if stored is None:
+        sig = data.get("signal") or {}
+        dur, period = _num(sig.get("duration")), _num(sig.get("period"))
+        stored = min(ds.FOLD_WINDOW_DURATIONS * dur, 0.5 * period) * 24.0 if dur and period else None
+    return _f(stored, 1)
 
 
 def bin_minutes(data: dict) -> str | None:
@@ -1386,7 +1405,7 @@ def archive_paragraph(data: dict, doi: str, tic: str | None) -> str:
     where = f" (Gaia DR3 {n['gaia_id']}, RA {n['ra']} deg, Dec {n['dec']} deg)" if n["gaia_id"] else ""
     rp = f", which gives a planet radius of {n['rp_text']} Earth radii" if n["rp_text"] else ""
     exofop = f"under TIC {tic}" if tic else f"on the {n['name']} page"
-    cross = f" {n['cross_check_sentence']}" if n["cross_check_sentence"] else ""
+    cross = f" {n['cross_check_after']}" if n["cross_check_after"] else ""
     claims = prior_claims(data)
     if claims:
         c = claims[0]
@@ -1397,7 +1416,8 @@ def archive_paragraph(data: dict, doi: str, tic: str | None) -> str:
                    f"paper (doi:{PAPER_DOI_PLACEHOLDER}), since the archive takes parameters from such a paper and "
                    "not from the Research Note of the AAS that reported the vetting "
                    f"(doi:{RNAAS_DOI_PLACEHOLDER}). SkySift (search version {n['search_version']}, commit "
-                   f"{n['commit']}) {verb} the KBonus Kepler Background light curves{note}. ")
+                   f"{n['commit']}) {verb} the KBonus Kepler Background light curves{note}. "
+                   + (f"{n['comparison_plain']} " if n["comparison_plain"] else ""))
     else:
         opening = (f"I write about a transit candidate on {n['name']}{where}, now in an accepted refereed paper "
                    f"(doi:{PAPER_DOI_PLACEHOLDER}), since the archive takes parameters from such a paper and not "
@@ -1589,10 +1609,13 @@ def gate_problems(raw: dict) -> list[str]:
     if ds.pixel_verdict_disagrees(raw):
         out.append("the pixel rerun disagrees with the reviewer's decision; a reviewer looks again first")
     note = render_note(raw)
-    words = note_words(note)["total"]
-    if words > NOTE_LIMITS["total"]:
-        out.append(f"the Research Note has {words:,} words, over the RNAAS limit of {NOTE_LIMITS['total']:,}; "
-                   "shorten it first")
+    counts = note_words(note)
+    if counts["total"] > NOTE_LIMITS["total"]:
+        out.append(f"the Research Note has {counts['total']:,} words, over the RNAAS limit of "
+                   f"{NOTE_LIMITS['total']:,}; shorten it first")
+    # every other RNAAS limit (the abstract's 150 words, one figure or table), in note_problems' words
+    out.extend(f"the Research Note breaks an RNAAS limit: {p}"
+               for p in note_problems(counts, note) if not p.startswith("the note has") or "figures" in p)
     if ds.prior_claims_unchecked(raw):
         out.append("prior claims on the signal were not checked (no docs/candidates folder)")
     # spec 11.1: every prior claim states how SkySift's result stands to it, and no text calls it blind
@@ -2140,7 +2163,7 @@ def _approval(store: Store, target_id: str, signal_id: int, data_dir) -> tuple[b
     row = store.dossier(target_id) or {}
     source = ds._target_dict(store, target_id).get("source")
     fp = ds.fingerprint(store.latest_tests(signal_id), sig["final_status"], sig.get("decision"),
-                        ds.calibration_rows(data_dir, source))
+                        ds.calibration_rows(data_dir, source), ds.sweep_size_of(store, sig, source))
     if ds.pick_signal(store, target_id)["id"] != signal_id:
         return approved, "another signal is now the target's best"
     if row.get("tests_fingerprint") != fp:
@@ -2428,7 +2451,9 @@ def _write_pack(out_dir: Path, data: dict, raw: dict, row: dict, lc, fnorm, targ
            jsonutil.dumps(_calibration(raw, data, settings.data_dir), indent=1))
     _write(out_dir / MARKER, jsonutil.dumps(_versions(data, row, now, Figure, zip_path.name, creators_source),
                                             indent=1))
-    metadata = metadata_from(data, citation, prior=prior_claim_sentence(data))
+    # spec 11.1: the relationship sentence and the comparison sentence, as the README prints them
+    prior = " ".join(x for x in (prior_claim_sentence(data), comparison_text(data)) if x) or None
+    metadata = metadata_from(data, citation, prior=prior)
     _write(out_dir / "zenodo_metadata.json", jsonutil.dumps(metadata, indent=1))
     for name, source, _what in _exofop_list(target_id, date, png, pixels_figure):
         shutil.copyfile(out_dir / source, out_dir / "exofop" / name)

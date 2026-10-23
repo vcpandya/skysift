@@ -1519,8 +1519,14 @@ def test_pack_prints_the_cross_check_and_the_gate_refuses_without_one(env_with_d
     assert sentence.startswith("TRICERATOPS 1.1.0 (Giacalone et al. 2021), run on the KBonus light curve with Kepler "
                                "limb darkening and Gaia DR3 field stars")
     assert "16th to 84th percentile" in sentence and "without a planet transiting an unresolved bound" in sentence
+    # M5: the plain texts print the median once, in the headline, and the cross-check sentence refers back to it
+    after = cross_check.comparison_sentence({**_stored(env), "cross_check": block}, after_headline=True)
+    assert after.startswith("The TRICERATOPS values are medians over ")
     for name in ("README.md", "exofop/note.txt", "archive_email.txt"):
-        assert sentence in (rep.out_dir / name).read_text(encoding="utf-8"), name
+        text = (rep.out_dir / name).read_text(encoding="utf-8")
+        assert after in text and sentence not in text, name
+        own = "\n".join(line for line in text.splitlines() if not line.startswith("> "))   # the README quotes the email
+        assert own.count("gives a false-positive probability of 0.012") + own.count("gives 0.012") == 1, name
     readme = (rep.out_dir / "README.md").read_text(encoding="utf-8")
     assert "waits on the cross-check" not in readme and "For the owner" not in readme
     tex = (rep.out_dir / "note" / "note.tex").read_text(encoding="utf-8")
@@ -1600,6 +1606,21 @@ def test_the_caption_quotes_the_stored_fold_bin(env_with_dossier):
     assert "bins of 22.5 minutes" in tex
     old = {**data, "plots": {k: v for k, v in data["plots"].items() if k != "bin_minutes"}}
     assert f"bins of {dur * 1440 / 8:.1f}".removesuffix(".0") in render_note(old)
+
+
+def test_the_caption_quotes_the_fold_window_with_or_without_the_plots(env_with_dossier):
+    """The golden block keeps no plots, so the caption of a dossier without them works the window out from the signal
+    (the smaller of four search durations and half the period), never "within  hours"."""
+    data = _with_errors(env_with_dossier.data)
+    assert f"within {data['plots']['window_h']:.1f} hours of mid-transit" in render_note(data)
+    bare = {k: v for k, v in data.items() if k != "plots"}
+    sig = data["signal"]
+    window = min(4 * sig["duration"], 0.5 * sig["period"]) * 24
+    assert f"within {window:.1f} hours of mid-transit" in render_note(bare)
+    golden = json.loads((Path(__file__).parents[1] / "golden" / "kic-006146676-generated.json").read_text(
+        encoding="utf-8"))
+    assert "plots" not in golden and pack_module.window_hours(golden) == "12.0"
+    assert re.search(r"within \d+\.\d hours", render_note(_live_shape("validated")))
 
 
 def test_the_live_gate_refuses_a_dirty_or_unknown_commit(env_with_dossier):
@@ -1701,6 +1722,14 @@ def test_a_prior_claim_makes_every_text_a_vetting_and_never_a_blind_recovery(env
     for name in ("README.md", "note/note.tex"):
         assert "a re-detection" in texts[name] and "the search itself used no prior ephemeris" in texts[name], name
         assert "Against that claim the period differs by" in texts[name], name
+    # I-2: the prior-claim paragraph keeps its blank line before the next one; M1: its comparison reaches every text
+    comparison = pack_module.comparison_text(env.data)
+    assert comparison and comparison.startswith("Against that claim the period differs by")
+    assert re.search(r"^Prior claim: .+" + re.escape(comparison) + r"\n\nThis pack was built", texts["README.md"],
+                     re.MULTILINE)
+    assert re.search(r"^Prior claim: .+" + re.escape(comparison) + r"\n\nEphemeris:", texts["exofop/note.txt"],
+                     re.MULTILINE)
+    assert comparison in texts["archive_email.txt"]
     # the citation, the bibliography and where the claim's date and DOI are printed stay as Task 8 set them
     note = texts["note/note.tex"]
     assert r"\citet{mehta2026}" in note
@@ -1734,7 +1763,8 @@ def test_a_prior_claim_makes_every_text_a_vetting_and_never_a_blind_recovery(env
     # item 10 of Task 9: the Zenodo description names the claim in the README's own words, with its DOI and date
     description = json.loads((rep.out_dir / "zenodo_metadata.json").read_text(encoding="utf-8"))["description"]
     prior = pack_module.prior_claim_sentence(env.data)
-    assert f"Prior claim: {prior}" in texts["README.md"] and f"<p>Prior claim: {zenodo._html(prior)}</p>" in description
+    assert f"Prior claim: {prior}" in texts["README.md"]
+    assert f"<p>Prior claim: {zenodo._html(prior)} {zenodo._html(comparison)}</p>" in description
     assert PRIOR_DOI in description and "13 October 2026" in description
     assert "a re-detection" in description and not re.search(r"\bblind\b", description, re.IGNORECASE)
 
@@ -1820,9 +1850,30 @@ def test_the_gate_refuses_an_abstract_with_the_in_house_fpp_alone(env_with_dossi
     env = env_with_dossier
     _store_errors(env)
     _store_cross_check(env)
-    monkeypatch.setattr(cross_check, "headline", lambda data, tex=False: None)
+    monkeypatch.setattr(cross_check, "headline", lambda data, tex=False, named=True: None)
     assert ("the abstract carries the in-house false-positive probability without the TRICERATOPS one"
             in pack_module.gate_problems(_stored_with_cross_check(env)))
+
+
+def test_the_gate_refuses_a_151_word_abstract_under_the_total(env_with_dossier, monkeypatch):
+    """M8: the gate refuses on every RNAAS limit note_problems names, the abstract's 150 words included, not on the
+    total alone."""
+    env = env_with_dossier
+    _store_errors(env)
+    _store_cross_check(env)
+    data = _stored_with_cross_check(env)
+    real = pack_module.render_note
+    words = note_words(real(data))
+    assert words["abstract"] <= NOTE_LIMITS["abstract"]
+    assert words["total"] + 151 - words["abstract"] <= NOTE_LIMITS["total"]        # the total stays inside
+    pad = " ".join(["more"] * (151 - words["abstract"]))
+    monkeypatch.setattr(pack_module, "render_note", lambda raw: real(raw).replace(r"\begin{abstract}",
+                                                                                  r"\begin{abstract}" + pad + " ", 1))
+    assert note_words(pack_module.render_note(data))["abstract"] == 151
+    assert ("the Research Note breaks an RNAAS limit: the abstract has 151 words, over the limit of 150"
+            in pack_module.gate_problems(data))
+    monkeypatch.setattr(pack_module, "render_note", real)
+    assert not [p for p in pack_module.gate_problems(data) if "RNAAS" in p]
 
 
 # ---------------------------------------------------------------------------------------------------- fix round 1
@@ -2285,3 +2336,67 @@ def test_the_note_names_the_photometry_the_aperture_ratio_and_the_predicted_leak
     assert pack_module.leak_sentence(data) == (
         "KIC 5689116's optimal aperture dims by 130 ± 42 ppm, where this star's light alone (3.0 percent of that "
         "aperture under the PSF model of the pixel check) predicts 61 ppm.")
+
+
+# ---------------------------------------------------------------------------------------------------- Task 11 fix round 1
+
+def test_the_prior_claim_words_have_one_source():
+    """M2: dossier.py takes the prior-claim names from pack_text, and the standalone page prints the pack's sentences
+    (dossier.page_texts) instead of a relationship map of its own."""
+    assert dossier_module.RELATIONSHIPS is pack_text.RELATIONSHIPS
+    assert pack_text.RELATIONSHIPS == tuple(pack_text.RELATIONSHIP_WORDS) == tuple(pack_text.RELATIONSHIP_VERBS)
+    assert dossier_module.PRIOR_CLAIM_PUBLIC is pack_text.PRIOR_CLAIM_PUBLIC
+    assert dossier_module.PRIOR_CLAIM_NUMBERS is pack_text.PRIOR_CLAIM_NUMBERS
+    js = (dossier_module.STATIC_DIR / "dossier.js").read_text(encoding="utf-8")
+    assert "D.page_texts" in js
+    for key, words in pack_text.RELATIONSHIP_WORDS.items():
+        assert words not in js and f'"{key}"' not in js, key
+
+
+def test_the_sweep_size_joins_the_dossier_fingerprint():
+    """M3: a dossier whose false-alarm sentence quotes a sweep size goes stale when the sweep grows."""
+    tests = [{"id": 1}, {"id": 2}]
+    base = dossier_module.fingerprint(tests, "candidate", None, 850, 1579)
+    assert base == dossier_module.fingerprint(tests, "candidate", None, 850, 1579)
+    assert base != dossier_module.fingerprint(tests, "candidate", None, 850, 1600)
+    assert base != dossier_module.fingerprint(tests, "candidate", None, 850)
+    assert dossier_module.fingerprint(tests, "candidate", None, 850) == dossier_module.fingerprint(
+        tests, "candidate", None, 850, 0)
+
+
+@pytest.mark.parametrize(("x", "words"), [(0.49, "fewer than one such peak is"), (0.5, "about one such peak is"),
+                                          (1.49, "about one such peak is"), (2.5, "about 3 such peaks are"),
+                                          (30.5, "about 31 such peaks are")])
+def test_the_expected_peak_count_rounds_half_up(x, words):
+    """M4: half up, never Python's banker's rounding (round(2.5) is 2)."""
+    assert zenodo._expected(x) == words
+
+
+def test_the_page_texts_lead_with_triceratops_and_carry_the_prior_claim(env_prior):
+    """I-1 and M1: the page's sentences are the pack's: the TRICERATOPS headline with its no-STP value and the
+    no-class clause, the in-house estimate as a lower bound naming the scenarios it lacks, the class name as a label
+    only, and the prior claim with its comparison."""
+    data = {**env_prior.data, "cross_check": _validated_block(env_prior.data)}
+    texts = dossier_module.page_texts(data)
+    assert texts["fpp_lead"] == f"{cross_check.headline(data)}."
+    assert texts["fpp_lead"].startswith("TRICERATOPS 1.1.0 gives a false-positive probability of 0.012 (")
+    assert cross_check.NO_CLASS_CLAUSE in texts["fpp_lead"] and "(Giacalone et al. 2021)" in texts["fpp_lead"]
+    assert texts["fpp_value"] == "0.012"
+    assert texts["in_house"].startswith("A four-scenario estimate without a bound-companion or diluted-planet "
+                                        "scenario gives ") and "a lower bound" in texts["in_house"]
+    assert cross_check.NO_CLASS_CLAUSE in texts["class_text"] and "'validated'" in texts["class_text"]
+    for text in texts.values():
+        assert "read as" not in (text or "") and "validation lines" not in (text or "")
+    assert texts["prior"] == pack_module.prior_claim_sentence(data)
+    assert texts["comparison"] == pack_module.comparison_text(data) and texts["comparison"]
+    stale = dossier_module.page_texts({**data, "cross_check": {**data["cross_check"], "current": False}})
+    assert stale["fpp_lead"] is None and stale["fpp_value"] is None and stale["in_house"] == texts["in_house"]
+    bare = dossier_module.page_texts({k: v for k, v in data.items() if k not in ("cross_check", "prior_claims")})
+    assert bare["fpp_lead"] is None and bare["class_text"] is None and bare["prior"] is None
+    assert bare["comparison"] is None
+
+
+def _validated_block(data: dict) -> dict:
+    from tests.unit.test_crosscheck import fake_result
+    block = fake_result(cross_check.inputs_fingerprint(data), fpp=0.012, nfpp=1e-4)
+    return cross_check.with_current({**block, "current": True}, data)

@@ -14,7 +14,7 @@ This candidate is not yet approved by a reviewer. Build the record, but do not f
 {{ n.summary }}
 {% if n.prior_plain %}
 
-Prior claim: {{ n.prior_plain }}{% if n.comparison_plain %} {{ n.comparison_plain }}{% endif %}
+Prior claim: {{ n.prior_plain }}{{ (" " ~ n.comparison_plain) if n.comparison_plain else "" }}
 {% endif %}
 
 This pack was built on {{ f.built_words }} by SkySift (pack format {{ f.pack_version }}) from the dossier generated on {{ n.generated_words }} for signal {{ n.signal_id }} (search version {{ n.search_version }}, ladder version {{ n.ladder_version }}). Every number below comes from that dossier.
@@ -66,10 +66,10 @@ Pixel offset:{% if n.offset_text %} {{ n.offset_text }}{% endif %}{% if n.hand_b
 
 {{ n.fap_text }}
 
-{{ n.fpp_text }}{% if n.beb_radius_text %} {{ n.beb_radius_text }}{% endif %}
-{% if n.cross_check_sentence %}
+{{ n.fpp_text }}{{ (" " ~ n.beb_radius_text) if n.beb_radius_text else "" }}
+{% if n.cross_check_after %}
 
-{{ n.cross_check_sentence }}
+{{ n.cross_check_after }}
 {% endif %}
 {% if n.both_tools %}
 

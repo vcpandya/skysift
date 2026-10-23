@@ -16,7 +16,7 @@ from markupsafe import Markup
 
 from skysift import dossier as ds
 from skysift import jsonutil
-from skysift.pack import STEP_TEXTS, STEPS, offset_sentence, prior_claim_sentence
+from skysift.pack import STEP_TEXTS, STEPS, offset_sentence
 from skysift.pack_text import pm_digits as _pm_digits
 from skysift.ui import queries
 from skysift.ui.app import render, require_token
@@ -210,12 +210,14 @@ def dossier_page(request: Request, target_id: str):
     seasons, close = pixel_seasons(data)
     rows = _tiles(request, queries.final_set(st.store, None, target_id=target_id))
     look = data.get("look")
+    texts = ds.page_texts(data) if data else {}   # the pack's sentences (spec 11.1, 11.2)
     return render(request, "dossier.html", dz=dz, data=data, target_id=target_id, r=rows[0] if rows else None,
                   page_title=(data.get("target") or {}).get("name") or target_id,
                   why_rows=data.get("why") or [], ladder=_ladder_rows(data.get("tests") or []),
                   seasons=seasons, close_call=close, notices=_section_notices(data), err_digits=err_digits,
                   offset_text=offset_sentence(data) if data else None,
-                  prior_text=prior_claim_sentence(data) if data else None,
+                  texts=texts,
+                  prior_text=" ".join(x for x in (texts.get("prior"), texts.get("comparison")) if x) or None,
                   payload=_payload(data) if data else None, sections=SECTION_IDS,
                   look_svg=Markup(planet_svg(look, 180)) if look else None,
                   look_words=look_sentence(look, look) if look else None,

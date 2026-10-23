@@ -146,7 +146,7 @@ PROVISIONAL = ", provisional until its factor tables are reviewed"
 def _expected(x: float) -> str:
     """How many peaks the sweep should hold by chance, as ``FAP_SWEEP`` prints it: "about 31 such peaks are",
     "about one such peak is", "fewer than one such peak is" below 0.5."""
-    n = round(x)
+    n = math.floor(x + 0.5)          # half up: 0.5 is "about one", 2.5 "about 3"
     if n < 1:
         return "fewer than one such peak is"
     return "about one such peak is" if n == 1 else f"about {n:,} such peaks are"
@@ -196,7 +196,7 @@ def probability_sentences(data: dict) -> tuple[str, str]:
     fpp = data.get("fpp") or {}
     fap_text = fap_sentence(data)
     pixels = "" if fpp.get("pixels", True) else " (no pixel data yet)"
-    head = cc.headline(data)
+    head = cc.headline(data, named=False)
     if head is not None:
         return fap_text, f"False-positive probability{pixels}: {head}; {in_house_text(data)}."
     if fpp.get("neighbours_known") is False:

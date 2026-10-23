@@ -606,15 +606,17 @@ def stale_reason(store: Store, row: dict, best_signal_id: int | None = None) -> 
     with store.session() as s:
         sig = s.get(SignalRow, sid)
         status = sig.final_status if sig is not None else None
+        search = {"detector": sig.detector, "detector_version": sig.detector_version} if sig is not None else {}
     decisions = store.decisions(sid)
+    source = ds._target_dict(store, row["target_id"]).get("source")
     fp = ds.fingerprint(store.latest_tests(sid), status, decisions[0]["decision"] if decisions else None,
-                        ds.calibration_rows(ds.data_dir_of(row["data_path"]),
-                                            ds._target_dict(store, row["target_id"]).get("source")))
+                        ds.calibration_rows(ds.data_dir_of(row["data_path"]), source),
+                        ds.sweep_size_of(store, search, source))
     if fp == row.get("tests_fingerprint"):
         return None
     if status != row.get("status_at_generation"):
         return "the signal's status changed"
-    return "the checks, the reviewer's decision or the null calibration changed"
+    return "the checks, the reviewer's decision, the null calibration or the sweep size changed"
 
 
 def _tile_facts(data: dict | None) -> dict:

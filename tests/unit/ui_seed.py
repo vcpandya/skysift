@@ -498,6 +498,7 @@ def seed_dossier(store: Store, data_dir, target_id: str = STAGE2_TARGET) -> dict
                          data_path=str(path), search_version=sig["detector_version"],
                          ladder_version=ladder, dossier_version=ds.DOSSIER_VERSION, fap=fap["fap"],
                          fpp=fpp["value"], fap_detail=fap, fpp_detail=fpp,
-                         tests_fingerprint=ds.fingerprint(tests, sig["final_status"], decision),
+                         tests_fingerprint=ds.fingerprint(tests, sig["final_status"], decision, 0,
+                                                          ds.sweep_size_of(store, sig, target.get("source"))),
                          status_at_generation=sig["final_status"])
     return json.loads(text)

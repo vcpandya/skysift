@@ -213,7 +213,7 @@ def ephemeris_sentence(data: dict) -> str:
     return ", ".join(p for p in parts if p)
 
 
-# what the public texts may say about a prior claim (dossier.PRIOR_CLAIM_PUBLIC holds the same names)
+# what the public texts may say about a prior claim; dossier.py imports these names from here, their one source
 PRIOR_CLAIM_NUMBERS = ("period_days", "period_err_days", "t0_bjd", "t0_err_days", "depth_ppm", "depth_err_ppm", "fpp")
 PRIOR_CLAIM_PUBLIC = ("doi", "date", "author", "title", "relationship", "development_note", *PRIOR_CLAIM_NUMBERS,
                       "fpp_tool")
@@ -223,6 +223,9 @@ RELATIONSHIP_WORDS = {"re-detection": "a re-detection",
                       "vetting-only": "a vetting of the claim's signal, not a detection"}
 RELATIONSHIP_VERBS = {"re-detection": "re-detected it in its sweep of",
                       "blind-recovery": "found it in its sweep of", "vetting-only": "vetted it on"}
+# how SkySift's result stands to a prior claim: found again knowing of the claim, found before knowing of it, or only
+# vetted on the claim's ephemeris (the values prior_claims.json may give)
+RELATIONSHIPS = tuple(RELATIONSHIP_WORDS)
 
 
 def prior_claims(data: dict) -> list[dict]:

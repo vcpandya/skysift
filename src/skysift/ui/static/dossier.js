@@ -453,21 +453,11 @@
     };
     // 01 to 08
     para(0, `Every ${fmt(E.period_days, 2)} days the star dims by ${fmt(E.depth_ppm)} parts per million for ${fmt(E.duration_h, 1)} hours.`, "lede");
-    // a prior public claim on the signal, as skysift.pack.prior_claim_sentence words it: the relationship of
-    // SkySift's result to the earliest claim and its development note (spec 11.1; pack_text.RELATIONSHIP_WORDS)
-    const claims = (Array.isArray(D.prior_claims) ? D.prior_claims : []).filter((c) => c && c.doi);
-    if (claims.length) {
-      const months = ["January", "February", "March", "April", "May", "June", "July", "August", "September",
-        "October", "November", "December"];
-      const day = (iso) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso || ""); return m ? `${+m[3]} ${months[+m[2] - 1]} ${m[1]}` : (iso || ""); };
-      const said = claims.map((c, i) => `${c.author} ${i ? "reported it again" : "reported this signal first"}, in "${c.title}" (Zenodo, ${day(c.date)}, doi:${c.doi})`);
-      const words = {"re-detection": "a re-detection",
-        "blind-recovery": "a recovery made before SkySift knew of the claim",
-        "vetting-only": "a vetting of the claim's signal, not a detection"};
-      const rel = words[claims[0].relationship] || "", note = (claims[0].development_note || "").trim();
-      const tail = rel ? `; SkySift's result is ${rel}${note ? `: ${note}` : ""}.` : (note ? `; ${note}.` : ".");
-      para(0, `${said.join(", and ")}${tail}`, "prior-claim");
-    }
+    // the pack's own sentences (dossier.page_texts, spec 11.1 and 11.2): the prior claim with its sigma comparison,
+    // the TRICERATOPS headline and the in-house lower bound after it. The page words none of them itself, so the
+    // relationship words have one source, skysift.pack_text.RELATIONSHIP_WORDS
+    const PT = D.page_texts || {};
+    para(0, [PT.prior, PT.comparison].filter(Boolean).join(" "), "prior-claim");
     fig(0, "fold", "The folded light curve: single cadences, their bins and the model.");
     fig(0, "spectrum", "The detection spectrum, with the aliases of the period marked.", true);
     const T = D.timing;
@@ -518,8 +508,12 @@
     para(2, st.headline ? `${st.headline}.` : "", "lede");
     list(2, (D.why || []).map((w) => [`${w.name}: ${w.status}.`, w.sentence]));
     const fap = D.fap || {}, fpp = D.fpp || {};
+    // the false-positive items lead with the TRICERATOPS headline when a current cross-check exists; the in-house
+    // estimate follows as a lower bound that names the scenarios it lacks (spec 11.2)
     list(2, [[`False alarm: ${fap.words || "not yet calibrated"}.`, fap.sentence_not_covered],
-      [`${fpp.label || "False positive"}: ${fpp.words || "not computed"}${fpp.signed_off ? "" : " (provisional)"}.`, fpp.sentence_not_covered]]);
+      ...(PT.fpp_lead ? [["False-positive probability:", PT.fpp_lead]] : []),
+      [`${fpp.label || "False positive"}, in-house: ${fpp.words || "not computed"}${fpp.signed_off ? "" : " (provisional)"}.`,
+        [PT.in_house, fpp.sentence_not_covered].filter(Boolean).join(" ")]]);
     // the cross-check, as the dashboard's section 03 draws it
     const CC = D.cross_check;
     const g3 = (x) => (isNum(x) ? String(Number(x.toPrecision(3))) : "–");
@@ -527,11 +521,8 @@
     const spread = (m) => `${g3(CC[m])} (16th to 84th percentile ${g3(CC[`${m}_p16`])} to ${g3(CC[`${m}_p84`])})`;
     sec(2).appendChild(h("h3", null, "Cross-check"));
     if (CC && Array.isArray(CC.runs)) {
-      // the validated class is never named and withdrawn in one breath (the pack's phrase)
-      const cls = CC.class === "validated"
-        ? "fall inside the paper's validation lines (FPP < 0.015 and NFPP < 0.001), which the paper could not set at 30-minute cadence, so it is not called validated here"
-        : `read as ${CC.class}`;
-      para(2, `An estimate with TRICERATOPS ${CC.tool_version} (Giacalone et al. 2021) over ${CC.n_runs} runs${CC.n_degenerate ? `, ${CC.n_degenerate} degenerate and left out` : ""}: median false-positive probability ${spread("fpp")}, ${spread("fpp_no_stp")} without a planet transiting an unresolved bound companion (STP), which SkySift's model leaves out, and nearby false-positive probability ${spread("nfpp")}. On Giacalone et al.'s scale the medians ${cls}; the classes are labels and never block the live draft. ${CC.current
+      // the class name is only the label of where the medians fall (crosscheck.class_label_text, spec 11.2)
+      para(2, `An estimate with TRICERATOPS ${CC.tool_version} (Giacalone et al. 2021) over ${CC.n_runs} runs${CC.n_degenerate ? `, ${CC.n_degenerate} degenerate and left out` : ""}: median false-positive probability ${spread("fpp")}, ${spread("fpp_no_stp")} without a planet transiting an unresolved bound companion (STP), which SkySift's model leaves out, and nearby false-positive probability ${spread("nfpp")}. ${PT.class_text ? `${PT.class_text} ` : ""}The cross-check never blocks the live draft. ${CC.current
         ? "It was made for this dossier's period, depth and neighbours."
         : "It was made for an earlier dossier (the period, the depth or the neighbours have changed since), so it does not count until it is run again."}`);
       if ((CC.caveats || []).length) {

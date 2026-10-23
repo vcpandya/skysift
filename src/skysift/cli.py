@@ -377,7 +377,7 @@ def crosscheck_command(target: str = typer.Option(..., "--target", help="The tar
                                                          "the stored dossier into this folder."),
                        result: str | None = typer.Option(None, "--import", help="Store this result file of "
                                                          "tools/triceratops_check.py on the dossier.")):
-    """The independent false-positive cross-check. --export writes inputs.json, lightcurve.csv and the pixel files
+    """The TRICERATOPS false-positive cross-check. --export writes inputs.json, lightcurve.csv and the pixel files
     for tools/triceratops_check.py, which runs under .venv-triceratops; --import checks its result file and stores it
     on the dossier with whether it was made for the stored dossier's inputs. Prints JSON. Exits 1 without a dossier,
     2 for a bad result file, an export that found no pixel file or a dossier below the current version."""

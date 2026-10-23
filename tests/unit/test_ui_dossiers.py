@@ -1,6 +1,7 @@
 """The Dossiers section of the dashboard (dossiers plan Task 5): the tiles with their two separate probabilities, the
 dossier page in both modes, the standalone download, the dossier jobs, the pack steps, the planet thumbnail and the
 Probabilities block of the verdict popup. TestClient against the dashboard seed with one hand-made dossier."""
+import html as html_module
 import json
 import sys
 import xml.etree.ElementTree as ET
@@ -788,7 +789,15 @@ def test_dossier_page_shows_the_cross_check_block(seeded_dossier):
         assert "16th to 84th percentile" in checks and "0.013 to 0.026" in checks
         assert "without a planet transiting an unresolved bound companion (STP)" in checks and "0.0146" in checks
         assert "nearby false-positive probability" in checks and "0.0001 to 0.0001" in checks
-        assert "read as" in checks and "likely planet" in checks and "never block the live draft" in checks
+        # I-1 (spec 11.2): the class name is a label of where the medians fall, never a reading of the signal
+        plain = html_module.unescape(checks)
+        assert "read as" not in plain and "region the paper labels 'likely planet'" in plain
+        assert f"TRICERATOPS places the signal {cc.NO_CLASS_CLAUSE}" in plain and "never blocks the live draft" in plain
+        # the false-positive items lead with the TRICERATOPS headline; the in-house lower bound follows
+        lead = f"{cc.headline({**data, 'cross_check': cc.with_current(result, data)})}."
+        assert lead.startswith("TRICERATOPS 1.1.0 gives a false-positive probability of ") and lead in plain
+        assert plain.index(lead) < plain.index(", in-house") < plain.index("a lower bound")
+        assert "without a bound-companion or diluted-planet scenario" in plain
         assert "made for this dossier" in checks and "earlier dossier" not in checks
         assert "Kepler table" in checks and chr(0x2014) not in checks
     app.state.store.set_cross_check(STAGE2_TARGET, {**result, "inputs_sha256": "0" * 64, "current": True})
@@ -816,7 +825,9 @@ def test_the_standalone_page_carries_a_cross_check_imported_after_its_export(see
     blob = after.split('<script id="dossier-data" type="application/json">')[1].split("</script>")[0]
     block = json.loads(blob)["cross_check"]
     assert block["fpp"] == 0.0234 and block["nfpp"] == 0.0012 and block["current"] is True
-    assert "over ${CC.n_runs} runs" in after and "16th to 84th percentile" in after and "medians ${cls}" in after
+    assert "over ${CC.n_runs} runs" in after and "16th to 84th percentile" in after and "PT.class_text" in after
+    texts = json.loads(blob)["page_texts"]          # the headline follows the imported block (spec 11.2)
+    assert texts["fpp_lead"].startswith("TRICERATOPS 1.1.0 gives a false-positive probability of 0.023 (")
 
 
 def test_the_pixel_section_quotes_the_offset_against_the_rule(seeded_dossier):
@@ -865,31 +876,56 @@ def test_section_01_presents_a_prior_claim_with_its_relationship(seeded_dossier)
     assert "Kuber Mehta reported this signal first" in signal and "doi:10.5281/zenodo.23325261" in signal
     assert "13 October 2026" in signal
     assert "result is a re-detection: the sweep" in signal and "the search itself used no prior ephemeris" in signal
+    # M1: the comparison with the claim's numbers follows the claim on the page, as in the README
+    from skysift import pack
+    claimed = {**data, "prior_claims": [PRIOR_CLAIM]}
+    comparison = pack.comparison_text(claimed)
+    assert comparison and html_module.unescape(signal).count(f"{pack.prior_claim_sentence(claimed)} {comparison}") == 1
     export = client.get(f"/dossiers/{STAGE2_TARGET}/export.html").text
-    assert '"prior_claims":[{' in export.replace(" ", "") and "a recovery made before SkySift knew of" in export
+    assert '"prior_claims":[{' in export.replace(" ", "")
+    # M2: the standalone script prints the pack's sentences from the JSON (dossier.page_texts), with no word map
+    blob = re.search(r'<script id="dossier-data" type="application/json">(.*?)</script>', export, re.DOTALL).group(1)
+    texts = json.loads(blob)["page_texts"]
+    assert texts["prior"] == pack.prior_claim_sentence(claimed) and texts["comparison"] == comparison
+    assert "a recovery made before SkySift knew of" not in export
     for page in (signal, export):
         # the relationship key "blind-recovery" is data the script maps to words, never prose
         assert not re.search(r"\bblind\b(?!-recovery)", page, re.IGNORECASE) and "independent recovery" not in page
 
 
 def test_the_validated_class_is_not_named_and_withdrawn_in_one_breath(seeded_dossier):
-    """Addendum to Task 8: medians inside Giacalone et al.'s validation lines read in the pack's words, without the
-    bold label, on the page and in the standalone script; "the paper's", never "its", for the paper."""
-    import html
+    """Addendum to Task 8, and Task 11 fix round 1 (I-1, spec 11.2): medians inside Giacalone et al.'s validation
+    lines are in none of its validation classes, the class name a label of where they fall; the page and the
+    standalone page lead their false-positive items with the TRICERATOPS headline, the in-house estimate after it
+    as a lower bound, the hero's TRICERATOPS pill before the in-house one."""
+    import re
 
     from skysift import crosscheck as cc
     from tests.unit.test_crosscheck import fake_result
     client, app, _ids, data = seeded_dossier
     app.state.store.set_cross_check(STAGE2_TARGET, fake_result(cc.inputs_fingerprint(data), fpp=0.012, nfpp=1e-4))
-    checks = client.get(f"/dossiers/{STAGE2_TARGET}").text.split('id="checks"')[1].split('id="pixels"')[0]
-    words = ("the medians fall inside the paper's validation lines (FPP < 0.015 and NFPP < 0.001), which the paper "
-             "could not set at 30-minute cadence, so it is not called validated here")
-    assert words in html.unescape(checks)
-    assert 'class="crosscheck-class">validated' not in checks and "read as" not in checks
-    assert "its section 4.2" not in checks
+    page = html_module.unescape(client.get(f"/dossiers/{STAGE2_TARGET}").text)
+    checks = page.split('id="checks"')[1].split('id="pixels"')[0]
+    label = (f"TRICERATOPS places the signal {cc.NO_CLASS_CLAUSE} (Giacalone et al. 2021); its medians sit in the "
+             "region the paper labels 'validated', a place on the scale and not a class of the signal.")
+    assert label in checks
+    lead = ("TRICERATOPS 1.1.0 gives a false-positive probability of 0.012 (0.012 without a planet on an unresolved "
+            f"bound companion), {cc.NO_CLASS_CLAUSE} (Giacalone et al. 2021).")
+    assert lead in checks and checks.index(lead) < checks.index(", in-house") < checks.index("a lower bound")
+    for bad in ("validation lines", "read as", "its section 4.2", 'class="crosscheck-class"', "likely planet"):
+        assert bad not in checks, bad
+    hero = page.split('class="hero-verdict"')[1].split("</div>")[0]
+    assert hero.index("False positive, TRICERATOPS</span> 0.012") < hero.index(", in-house</span>")
+    # the standalone page: the script draws the same sentences from the JSON's page_texts, and words none itself
     export = client.get(f"/dossiers/{STAGE2_TARGET}/export.html").text
-    assert "fall inside the paper's validation lines (FPP < 0.015 and NFPP < 0.001)" in export
-    assert "its section 4.2" not in export and "read as ${CC.class}" in export
+    blob = re.search(r'<script id="dossier-data" type="application/json">(.*?)</script>', export, re.DOTALL).group(1)
+    texts = json.loads(blob)["page_texts"]
+    assert texts["fpp_lead"] == lead and texts["class_text"] == label and "a lower bound" in texts["in_house"]
+    script = export.split('</script>\n<script>')[1]
+    assert '["False-positive probability:", PT.fpp_lead]' in script and "PT.class_text" in script
+    assert script.index("PT.fpp_lead") < script.index(", in-house: ")
+    for bad in ("validation lines", "read as", "likely planet", "${CC.class}"):
+        assert bad not in script, bad
 
 
 def test_section_03_carries_the_tess_statement(seeded_dossier):

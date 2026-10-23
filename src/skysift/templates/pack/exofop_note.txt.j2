@@ -9,7 +9,7 @@ SkySift {% if n.prior_plain %}vetting of the {% endif %}transit candidate on {{ 
 Found in the KBonus Kepler Background light curve (Martinez-Palomera, Hedges and Dotson 2023, AJ 166, 265; data doi:10.17909/7jbr-w430); Kepler recorded this star only in other targets' pixels.
 {% if n.prior_plain %}
 
-Prior claim: {{ n.prior_plain }}{% if n.comparison_plain %} {{ n.comparison_plain }}{% endif %}
+Prior claim: {{ n.prior_plain }}{{ (" " ~ n.comparison_plain) if n.comparison_plain else "" }}
 {% endif %}
 
 Ephemeris: {{ n.ephemeris_text }}; {{ n.n_events }} transits, SDE {{ n.sde }}, S/N {{ n.snr }}.{% if n.timed %} Reference mid-transit BJD_TDB {{ n.t_ref_bjd_pm }} at epoch {{ n.epoch_ref }}; {{ n.n_used }} of {{ n.n_measured }} timed transits fit the linear ephemeris with an rms of {{ n.rms_min }} min.{% else %} Allow at least one duration either side of a predicted time.{% endif %} Found by SkySift (search version {{ n.search_version }}, commit {{ n.commit }}).
@@ -21,8 +21,8 @@ Pixels: {{ n.pixel_plain }}
 
 {{ n.fap_text }}
 {{ n.fpp_text }}
-{% if n.cross_check_sentence %}
-{{ n.cross_check_sentence }}
+{% if n.cross_check_after %}
+{{ n.cross_check_after }}
 {% endif %}
 {% if n.tess_exofop %}
 {{ n.tess_exofop }}

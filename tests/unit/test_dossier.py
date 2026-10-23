@@ -37,6 +37,7 @@ from skysift.dossier import (
     fingerprint,
     gaia_refused,
     generate,
+    page_texts,
     pick_signal,
     rank_key,
     status_label,
@@ -422,7 +423,8 @@ def test_export_is_one_file_without_external_urls(env):
     assert "data-level" in html                                                        # its own toggle
     assert "/static/" not in html and EM_DASH not in html
     blob = re.search(r'<script id="dossier-data" type="application/json">(.*?)</script>', html, re.DOTALL).group(1)
-    assert json.loads(blob) == data                                                    # the JSON round-trips
+    embedded = json.loads(blob)                                                       # the JSON round-trips,
+    assert embedded.pop("page_texts") == page_texts(data) and embedded == data        # the page's sentences added
 
 
 def test_seed_dossier_has_the_keys_generate_writes(env):

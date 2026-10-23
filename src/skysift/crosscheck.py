@@ -618,6 +618,16 @@ CLASS_PHRASES = {
 }
 
 
+def class_label_text(cls: str | None) -> str | None:
+    """Where the medians fall on Giacalone et al.'s scale, as the dossier page prints it (spec 11.2):
+    ``NO_CLASS_CLAUSE`` first, then the class name as the label of that place on the scale, never as a reading of
+    the signal. None without a class (a block of the earlier format)."""
+    if not cls:
+        return None
+    return (f"TRICERATOPS places the signal {NO_CLASS_CLAUSE} {CITATION}; its medians sit in the region the paper "
+            f"labels '{cls}', a place on the scale and not a class of the signal.")
+
+
 def dominant_scenario(block: dict) -> dict | None:
     """The false-positive scenario (any but TP, PTP and DTP) with the largest probability in the median run's table:
     {"id", "scenario", "prob"}, or None without one."""
@@ -661,33 +671,47 @@ def _current(data: dict) -> dict | None:
     return block if complete(block) and block.get("current") is True else None
 
 
-def headline(data: dict, tex: bool = False) -> str | None:
+def headline(data: dict, tex: bool = False, named: bool = True) -> str | None:
     """The false-positive probability every public text leads with (spec 11.2): the TRICERATOPS median full FPP,
     its value without STP and ``NO_CLASS_CLAUSE``, citing Giacalone et al. 2021; None without a complete, current
-    cross-check. With ``tex`` a LaTeX ``Raw`` citing ``giacalone2021``."""
+    cross-check. ``named`` False drops "a false-positive probability of", for a text whose label already names it
+    ("False-positive probability: TRICERATOPS 1.1.0 gives 0.012 ..."). With ``tex`` a LaTeX ``Raw`` citing
+    ``giacalone2021``."""
     block = _current(data)
     if block is None:
         return None
-    words = (f"TRICERATOPS {block['tool_version']} gives a false-positive probability of {_p(block['fpp'])} "
+    what = "a false-positive probability of " if named else ""
+    words = (f"TRICERATOPS {block['tool_version']} gives {what}{_p(block['fpp'])} "
              f"({_p(block['fpp_no_stp'])} without a planet on an unresolved bound companion), {NO_CLASS_CLAUSE}")
     if tex:
         return Raw(tex_escape(words) + r" \citep{giacalone2021}")
     return f"{words} {CITATION}"
 
 
-def comparison_sentence(data: dict, tex: bool = False) -> str | None:
+def comparison_sentence(data: dict, tex: bool = False, after_headline: bool = False) -> str | None:
     """For the pack's texts: the method (the TRICERATOPS version, the KBonus light curve, Kepler limb darkening,
     the package's Gaia DR3 field-star population; ruling u), the medians of the full FPP, the FPP without STP and the
     NFPP each with its 16th to 84th percentile range and the run count (ruling s), ``NO_CLASS_CLAUSE`` where the
-    class on Giacalone et al.'s scale stood (spec 11.2; ``CLASS_PHRASES`` stay for the dossier page) and the dominant
-    scenario when the full FPP is at or above 0.5. SkySift's own estimate is not set beside it here: the texts print
-    it after, as the in-house sentence (``zenodo.in_house_text``). None without a current cross-check of the present
-    format. With ``tex`` a LaTeX ``Raw`` citing ``giacalone2021``."""
+    class on Giacalone et al.'s scale stood (spec 11.2; ``CLASS_PHRASES`` stay for the dossier page's JSON) and the
+    dominant scenario when the full FPP is at or above 0.5. SkySift's own estimate is not set beside it here: the
+    texts print it after, as the in-house sentence (``zenodo.in_house_text``). ``after_headline`` gives the form for
+    a text that has just printed ``headline`` (the README, the ExoFOP note and the archive email): it refers back to
+    those medians and adds their ranges, the NFPP, the run count and the method, so the tool's median is printed
+    once. None without a current cross-check of the present format. With ``tex`` a LaTeX ``Raw`` citing
+    ``giacalone2021``."""
     block = _current(data)
     if block is None:
         return None
     n, deg = block["n_runs"], block["n_degenerate"]
     left_out = f", {deg} degenerate run{'s' if deg != 1 else ''} left out" if deg else ""
+    dominant = dominant_sentence(block)
+    if after_headline:
+        text = (f"The TRICERATOPS values are medians over {n} runs{left_out}, on the KBonus light curve with Kepler "
+                f"limb darkening and Gaia DR3 field stars (16th to 84th percentile {range_text(block, 'fpp')}, and "
+                f"{range_text(block, 'fpp_no_stp')} without STP, a scenario absent from SkySift's model); the nearby "
+                f"false-positive probability is {_p(block['nfpp'])} ({range_text(block, 'nfpp')}).")
+        text += f" {dominant}" if dominant else ""
+        return Raw(tex_escape(text)) if tex else text
     head = f"TRICERATOPS {block['tool_version']} "
     rest = (", run on the KBonus light curve with Kepler limb darkening and Gaia DR3 field stars, gives "
             f"a median false-positive probability of {_p(block['fpp'])} (16th to 84th percentile "
@@ -695,7 +719,6 @@ def comparison_sentence(data: dict, tex: bool = False) -> str | None:
             "planet transiting an unresolved bound companion (STP), absent from SkySift's model, and a nearby "
             f"false-positive probability of {_p(block['nfpp'])} ({range_text(block, 'nfpp')}) over {n} "
             f"runs{left_out}, {NO_CLASS_CLAUSE}.")
-    dominant = dominant_sentence(block)
     if dominant:
         rest += f" {dominant}"
     if tex:
