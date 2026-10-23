@@ -1,6 +1,6 @@
 {
  "dossier_version": "5",
- "generated": "2026-10-23T03:17:40.666773+00:00",
+ "generated": "2026-10-23T05:21:24.367743+00:00",
  "target": {
   "target_id": "kic-006146676",
   "source": "kbonus_bkg",
@@ -2199,6 +2199,9 @@
    "source": "Mamajek dwarf table at BP-RP 1.897 +- 0.10 (if E(BP-RP) = 0.2)"
   },
   "caveats": [],
+  "ruwe": 0.9448721,
+  "non_single_star": 0,
+  "ebpminrp_gspphot": 0.27,
   "gaia_errors": []
  },
  "planet": {
@@ -4973,6 +4976,6 @@
    "rung4_novelty": "4",
    "rung5_pixels": "4"
   },
-  "git_commit": "48972fd"
+  "git_commit": "4e45c1b"
  }
 }
