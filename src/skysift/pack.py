@@ -67,8 +67,9 @@ from skysift.exofop import (
 )
 from skysift.exofop import prior_fields as exofop_prior_fields
 from skysift.lc.loader import LightCurveLoader
-from skysift.lc.transit_model import A_LABEL_FITTED, A_LABEL_STELLAR, UNCONSTRAINED
+from skysift.lc.transit_model import A_LABEL_FITTED, A_LABEL_STELLAR, CONSTRAINED_DELTA_CHI2, UNCONSTRAINED
 from skysift.pack_rows import (
+    B_PRIOR_LABEL,
     CROWDSAP_DEFINITION,
     PSFFRAC_DEFINITION,
     SHAPE_ROWS,
@@ -101,6 +102,7 @@ from skysift.pack_text import (
     pm_text,
     prior_claims,
     quantities,
+    reason_words,
     tex_escape,
     value_text,
 )
@@ -110,6 +112,7 @@ from skysift.zenodo import (
     KBONUS_DOI,
     ZenodoClient,
     ZenodoError,
+    fap_rate_clause,
     in_house_text,
     metadata_from,
     probability_sentences,
@@ -147,7 +150,7 @@ FINAL_PLACEHOLDERS = ("XXXXXXX", "to be minted", "TO FILL IN", SOFTWARE_DOI_PLAC
 FINAL_TEXTS = ("note/note.tex", "README.md", "exofop/note.txt", "archive_email.txt", "zenodo_metadata.json")
 FINAL_NEEDS_LIVE = "--final needs --zenodo-live: the record's DOI is reserved on zenodo.org"
 # the follow-up clause names the telescope class only for a deep enough dip on a bright enough star
-FOLLOWUP_REACH = ", within reach of a 1 to 2 m telescope"
+FOLLOWUP_REACH = ", within reach of a 1 to 2 m telescope at a few hundred ppm per 10 minutes"
 FOLLOWUP_REACH_DEPTH_PPM, FOLLOWUP_REACH_GMAG = 1000.0, 17.0
 # the limits of the transit model, in the words of the referee pack spec (section 6)
 MODEL_CLAUSE = "a quadratic limb-darkened model on a circular orbit, integrated over the {exposure}-minute exposure"
@@ -283,17 +286,24 @@ def note_words(tex: str) -> dict:
     return out
 
 
-def note_problems(words: dict, tex: str = "") -> list[str]:
-    """What breaks the RNAAS limits (``NOTE_LIMITS``), in words; empty when the note fits."""
+def note_limit_problems(words: dict, tex: str = "") -> list[tuple[str, str]]:
+    """What breaks the RNAAS limits (``NOTE_LIMITS``) as (limit, words) pairs, the limit a ``NOTE_LIMITS`` key, so a
+    caller picks limits by key, not by matching the words (the Task 11 re-review); empty when the note fits."""
     out = []
     if words["total"] > NOTE_LIMITS["total"]:
-        out.append(f"the note has {words['total']:,} words, over the limit of {NOTE_LIMITS['total']:,}")
+        out.append(("total", f"the note has {words['total']:,} words, over the limit of {NOTE_LIMITS['total']:,}"))
     if words["abstract"] > NOTE_LIMITS["abstract"]:
-        out.append(f"the abstract has {words['abstract']} words, over the limit of {NOTE_LIMITS['abstract']}")
+        out.append(("abstract",
+                    f"the abstract has {words['abstract']} words, over the limit of {NOTE_LIMITS['abstract']}"))
     displays = len(re.findall(r"\\begin\{(figure|table|deluxetable)\*?\}", tex))
     if displays > NOTE_LIMITS["figures_or_tables"]:
-        out.append(f"the note has {displays} figures and tables; RNAAS takes one")
+        out.append(("figures_or_tables", f"the note has {displays} figures and tables; RNAAS takes one"))
     return out
+
+
+def note_problems(words: dict, tex: str = "") -> list[str]:
+    """What breaks the RNAAS limits (``NOTE_LIMITS``), in words; empty when the note fits."""
+    return [text for _limit, text in note_limit_problems(words, tex)]
 
 
 # ---------------------------------------------------------------------------------------------------- the numbers
@@ -342,6 +352,9 @@ BIBLIOGRAPHY = (
      r"Bryson, S.~T., Jenkins, J.~M., Gilliland, R.~L., et~al. 2013, PASP, 125, 889"),
     ("christ2019", r"{Christ} et~al.(2019)", r"Christ, C.~N., Montet, B.~T., \& Fabrycky, D.~C. 2019, AJ, 157, 235"),
     ("claret2011", r"{Claret} \& {Bloemen}(2011)", r"Claret, A., \& Bloemen, S. 2011, A\&A, 529, A75"),
+    ("coughlin2017", r"{Coughlin}(2017)",
+     (r"Coughlin, J.~L. 2017, Planet Detection Metrics: Robovetter Completeness and Effectiveness for Data Release "
+      r"25, KSCI-19114-002 (NASA Ames Research Center)")),
     ("deeg2015", r"{Deeg}(2015)", r"Deeg, H.~J. 2015, arXiv:1503.05368"),
     ("dressing2015", r"{Dressing} \& {Charbonneau}(2015)",
      r"Dressing, C.~D., \& Charbonneau, D. 2015, ApJ, 807, 45"),
@@ -357,6 +370,7 @@ BIBLIOGRAPHY = (
     ("guerrero2021", r"{Guerrero} et~al.(2021)",
      r"Guerrero, N.~M., Seager, S., Huang, C.~X., et~al. 2021, ApJS, 254, 39"),
     ("holczer2016", r"{Holczer} et~al.(2016)", r"Holczer, T., et~al. 2016, ApJS, 225, 9"),
+    ("kipping2010", r"{Kipping}(2010)", r"Kipping, D.~M. 2010, MNRAS, 407, 301"),
     ("kirk2016", r"{Kirk} et~al.(2016)", r"Kirk, B., Conroy, K., Pr{\v s}a, A., et~al. 2016, AJ, 151, 68"),
     ("kbonus", r"{Mart{\'\i}nez-Palomera} et~al.(2023a)",
      r"Mart{\'\i}nez-Palomera, J., Hedges, C., \& Dotson, J. 2023a, AJ, 166, 265, doi:10.3847/1538-3881/ad0727"),
@@ -376,6 +390,8 @@ BIBLIOGRAPHY = (
      r"Ricker, G.~R., Winn, J.~N., Vanderspek, R., et~al. 2015, JATIS, 1, 014003"),
     ("rogers2015", r"{Rogers}(2015)", r"Rogers, L.~A. 2015, ApJ, 801, 41"),
     ("schmitt2014", r"{Schmitt} et~al.(2014)", r"Schmitt, J.~R., et~al. 2014, AJ, 148, 28"),
+    ("seager2003", r"{Seager} \& {Mall{\'e}n-Ornelas}(2003)",
+     r"Seager, S., \& Mall{\'e}n-Ornelas, G. 2003, ApJ, 585, 1038"),
     ("skrutskie2006", r"{Skrutskie} et~al.(2006)",
      r"Skrutskie, M.~F., Cutri, R.~M., Stiening, R., et~al. 2006, AJ, 131, 1163"),
     ("stassun2018", r"{Stassun} et~al.(2018)",
@@ -393,9 +409,10 @@ BIBLIOGRAPHY = (
 
 # spec 11.1: words no public text may carry (case-insensitive); "independent" is kept for the vetting ladder alone
 FORBIDDEN_WORDS = (r"\bblind\b", r"\bindependent recovery\b")
-# spec 11.2: what the two false-positive estimates share once the pixels are counted, and what neither excludes
-BOTH_TOOLS = ("Both tools exclude a nearby or background eclipsing binary once the pixels are counted; an unresolved "
-              "bound companion is the open channel.")
+# spec 11.2 as amended at the round-2 final review (minor 5): what TRICERATOPS computed, since its nearby
+# false-positive probability is the weight it gives the neighbours the pixel offset excludes, and what is still open
+BOTH_TOOLS = ("TRICERATOPS's nearby false-positive weight sits on neighbours the pixels exclude; a run without them is "
+              "a follow-up; an unresolved bound companion is the open channel.")
 COMPARED = ("period", "epoch", "depth")         # the claim's quantities set against the dossier's, in this order
 
 
@@ -691,19 +708,12 @@ ERRORS_CITES = (("deeg2015", "timed"), ("holczer2016", "timed"), ("schmitt2014",
 
 
 def errors_pointer(data: dict) -> str | None:
-    """The note's stand-in for ``methods_sentence`` (Task 8 fix round 3, under 25 words, no citation): where the
-    ephemeris and shape errors come from, and that the method is in the README. It is the note's first pointer, so
-    it names the README as the Zenodo pack's (fix round 4, M-3; ``PACK_README``) and the TESS sentence's later
-    pointer says "the README" alone. None when neither block is ok."""
-    timed, boot = _timed(data), _bootstrapped(data)
-    if timed and boot:
-        return ("The errors come from per-transit fits, a weighted linear fit and a bootstrap over transits (methods "
-                f"in {PACK_README}).")
-    if timed:
-        return f"The ephemeris errors come from per-transit fits and a weighted linear fit (method in {PACK_README})."
-    if boot:
-        return f"The transit-parameter errors come from a bootstrap over transits (method in {PACK_README})."
-    return None
+    """The note's stand-in for ``methods_sentence`` (Task 8 fix round 3, no citation): the clause "methods in the
+    Zenodo pack's README" that closes the signal section's ephemeris sentence, in brackets, when the ephemeris or the
+    shape errors have a method to point to (the round-2 word budget: the sentence naming the methods is the
+    README's). It is the note's first pointer, so it names the README as the Zenodo pack's (fix round 4, M-3;
+    ``PACK_README``) and the TESS sentence's later pointer says "the README" alone. None when neither block is ok."""
+    return f"methods in {PACK_README}" if _timed(data) or _bootstrapped(data) else None
 
 
 def errors_methods_text(data: dict) -> str | None:
@@ -747,7 +757,8 @@ def tess_text(data: dict, tex: bool = False) -> str:
 
 
 def _plain_tex(text: str) -> str:
-    return (str(text).replace(r"\&", "&").replace("~", " ").replace(r"{\'\i}", "í").replace(r"{\v s}", "š"))
+    return (str(text).replace(r"\&", "&").replace("~", " ").replace(r"{\'\i}", "í").replace(r"{\v s}", "š")
+            .replace(r"{\'e}", "é"))
 
 
 def plain_reference(key: str) -> str:
@@ -775,6 +786,70 @@ def in_house_method_text(data: dict) -> str:
     return IN_HOUSE_METHOD.format(occurrence=" and ".join(OCCURRENCE_WORDS[k] for k in _occurrence_keys(data)))
 
 
+SHAPE_PRECEDENT = "Seager and Mallén-Ornelas 2003; Kipping 2010"
+
+
+def b_set_by_prior(data: dict) -> bool:
+    """Whether the quoted b and a/R* are the density-prior fit's because the data leave them unconstrained
+    (``shape.comparison``: the prior fit quoted, ``constrained`` False)."""
+    shape = data.get("shape") if isinstance(data.get("shape"), dict) else {}
+    cmp = shape.get("comparison") or {}
+    return cmp.get("quoted") == "prior" and cmp.get("constrained") is False
+
+
+def shape_fit_text(data: dict) -> str | None:
+    """The README's evidence for the shape call (round-2 final review, I-4): the density-prior fit's b and a/R*, the
+    free fit's b, a/R* and stellar density beside the host's, the chi-square difference against the rule of
+    ``CONSTRAINED_DELTA_CHI2``, and the reading, with its precedent (Seager and Mallén-Ornelas 2003 for the density
+    from the transit shape; Kipping 2010). The note keeps "unconstrained at this cadence" without them (the word
+    limit). None unless the prior fit is quoted because the data do not constrain b and a/R*."""
+    if not b_set_by_prior(data):
+        return None
+    shape = data["shape"]
+    free = (shape.get("fits") or {}).get("free") or {}
+    delta = _num(shape["comparison"].get("delta_chi2"))
+    b_prior = shape.get("b") or {}
+    b_text = pm_text(b_prior.get("median"), b_prior.get("minus"), b_prior.get("plus"))
+    a_text = value_text((data.get("planet") or {}).get("a_over_r")) or value_text(shape.get("a_over_r"))
+    fb, fa, frho = (_num(free.get(k)) for k in ("b", "a_over_r", "density_gcc"))
+    if free.get("ok") is not True or None in (fb, fa, delta) or b_text is None:
+        return None
+    host = value_text((data.get("star") or {}).get("density_gcc"))
+    rho = (f" (a stellar density of {frho:.1f} g/cm3 against the host's {host} g/cm3)"
+           if frho is not None and host else "")
+    return (f"Shape fit: {B_PRIOR_LABEL} b is {b_text} and a/R* {a_text} {A_LABEL_STELLAR}. The free fit "
+            f"gives b of {fb:.2f} and a/R* of {fa:.1f}{rho}, with a chi-square lower by only {delta:.2f}, within the "
+            f"rule of {CONSTRAINED_DELTA_CHI2:g}: the data do not constrain them; the quoted values follow the host's "
+            f"density ({SHAPE_PRECEDENT}).")
+
+
+def fap_method_text(data: dict) -> str | None:
+    """The README's clause on the null searches behind the false-alarm probability (round-2 final review, minor 6):
+    the inverted and scrambled light curves follow Thompson et al. (2018) and Coughlin (2017); the null stars come
+    from the calibration pilot, a selection apart from the sweep (``calibration.null_stars_in_sweep`` of them in it,
+    when stored); and which kind of null reached the signal's SDE (``fap.k_by_kind``), all inverted meaning
+    systematics, not white noise, set the tail. None without a calibrated FAP."""
+    fap, calib = data.get("fap") or {}, data.get("calibration") or {}
+    if not (fap.get("calibrated") and fap.get("n")):
+        return None
+    parts = [("The null searches are the inverted and scrambled light curves of Thompson et al. (2018) and "
+              "Coughlin (2017)")]
+    stars, inside = calib.get("null_stars"), calib.get("null_stars_in_sweep")
+    if isinstance(stars, int) and stars:
+        parts.append(f"the {stars:,} null stars come from the calibration pilot, a selection apart from the sweep"
+                     + (f" ({inside:,} of them are in it)" if isinstance(inside, int) else ""))
+    k, kinds = fap.get("k"), {kind: n for kind, n in (fap.get("k_by_kind") or {}).items() if n}
+    if isinstance(k, int) and k and kinds:
+        if len(kinds) == 1:
+            kind = next(iter(kinds))
+            parts.append(f"all {k} null searches that reached the signal's SDE are {kind} light curves"
+                         + (", so systematics, not white noise, set the tail" if kind == "inverted" else ""))
+        else:
+            parts.append(f"of the {k} that reached the signal's SDE, "
+                         + _listed([f"{n} are {kind}" for kind, n in sorted(kinds.items())]))
+    return "; ".join(parts) + "."
+
+
 # M-1 of the Task 13 review: where the note's wording is shorter than the specification's, the README says so; every
 # number and claim is in both
 def note_forms(data: dict) -> str | None:
@@ -793,9 +868,8 @@ def note_forms(data: dict) -> str | None:
     if cross_check_sentence(data) is not None:
         items.append(f"it says \"{cc.NO_CLASS_SHORT}\" for the validation classes of TRICERATOPS")
     if tess_module.note_sentence(data.get("tess"), short=True) != tess_module.note_sentence(data.get("tess")):
-        items.append("it gives TESS as the sector count, the predicted folded significance and the verdict, "
-                     "\"predicted\" standing for \"no TESS data were examined\" (the windows, the dilution and the "
-                     "noise are in the TESS row above)")
+        items.append("it gives TESS as the sector count, the predicted folded significance and the verdict (the "
+                     "windows, the dilution and the noise are in the TESS row above)")
     claims = prior_claims(data)
     if claims and claims[0].get("development_note_short"):
         items.append("it gives the claim's development note as \"" + claims[0]["development_note_short"] + "\"")
@@ -808,9 +882,13 @@ def note_forms(data: dict) -> str | None:
 def readme_works(data: dict) -> list[str]:
     """The works the README cites where the note does not: the in-house method (Morton 2012 and the occurrence
     rates, ``in_house_method_text``); the habitable zone (Kopparapu et al. 2013) and its sub-Neptune caveat (Rogers
-    2015; Fulton et al. 2017), when ``hz_text`` is printed."""
+    2015; Fulton et al. 2017), when ``hz_text`` is printed; the shape call's precedent (Seager and Mallén-Ornelas
+    2003; Kipping 2010) with ``shape_fit_text``; Coughlin 2017 with ``fap_method_text`` (Thompson et al. 2018 is in
+    ``README_REFERENCES`` already)."""
     return (["morton2012", *_occurrence_keys(data)] + [k for k, _w in _star_method_keys(data)]
-            + (["kopparapu2013", "rogers2015", "fulton2017"] if hz_text(data) else []))
+            + (["kopparapu2013", "rogers2015", "fulton2017"] if hz_text(data) else [])
+            + (["seager2003", "kipping2010"] if shape_fit_text(data) else [])
+            + (["coughlin2017"] if fap_method_text(data) else []))
 
 
 def _star_method_keys(data: dict) -> list[tuple[str, str]]:
@@ -852,14 +930,17 @@ def readme_references(data: dict) -> list[str]:
     out = [plain_reference(k) for k, _label, _text in BIBLIOGRAPHY if k in keys]
     out += [_plain_tex(text) for _key, _label, text in prior_bib(data)]
     out += [f"{plain_reference(k)} ({what})" for k, what in README_REFERENCES]
-    return sorted(out, key=_by_author)        # by the first author's name (Task 13 review M-4)
+    return sorted(out, key=_by_author)        # by the first author, then the year (Task 13 review M-4)
 
 
-def _by_author(reference: str) -> str:
-    """A reference's sort key: its text without accents, in lower case ("Martínez-Palomera" sorts as "martinez")."""
+def _by_author(reference: str) -> tuple[str, str, str]:
+    """A reference's sort key: the first author's family name without accents, in lower case ("Martínez-Palomera"
+    sorts as "martinez"), then the year with its letter (Mann 2015 before Mann 2019, whoever the co-authors are),
+    then the whole text (the Task 13 re-review)."""
     import unicodedata
-    plain = unicodedata.normalize("NFKD", reference)
-    return "".join(c for c in plain if not unicodedata.combining(c)).lower()
+    plain = "".join(c for c in unicodedata.normalize("NFKD", reference) if not unicodedata.combining(c)).lower()
+    year = re.search(r"\b(1[89]|20)\d\d[a-z]?\b", plain)
+    return plain.split(",")[0], year.group(0) if year else "", plain
 
 
 def tess_methods_text(data: dict) -> str | None:
@@ -1053,7 +1134,7 @@ def secondary_sentence(data: dict, tex: bool = False, short: bool = False) -> st
             parts.append(f", the strongest dip elsewhere {top} ppm at phase {phase} ({sigma} sigma)")
             pos = _f(_metrics(data, "rung2_shape").get("sigma_pos"), 1)
             if pos:
-                parts.append(f", and positive excursions reach {pos} sigma")
+                parts.append(f", and positive excursions in the same fold reach {pos} sigma")
         return _joined(tex, *parts, ".")
     if limit:
         parts.append(f" (3-sigma upper limit {limit} ppm){albedo_text(data)}")
@@ -1089,6 +1170,50 @@ def trend_sentence(data: dict, tex: bool = False, clause: bool = False) -> str |
                    f" ppm per year ({sigma:.1f} sigma, errors scaled by the scatter).")
 
 
+def stability_sentence(data: dict) -> str | None:
+    """Rung 3 on the fold (the stability block, Task 10), else rung 3's own row, in words: "The depth agrees across N
+    quarter groups (quarters taken modulo 4; chi-squared X for D degrees of freedom, p = P)."; the groups are quarters
+    modulo 4, "season" being the Kepler roll season of the pixel check (spec 11.6). None without the numbers."""
+    stab = data.get("stability")
+    st = (stab.get("metrics") or {}) if isinstance(stab, dict) and stab.get("metrics") else _metrics(
+        data, "rung3_stability")
+    if not st:
+        return None
+    n_groups = st.get("n_seasons", len(st.get("season_depths") or {}))
+    chi2, dof, p = _f(st.get("chi2"), 1), st.get("dof"), _f(st.get("p_value"), 2)
+    if not (n_groups and chi2 is not None and dof is not None):
+        return None
+    return (f"The depth agrees across {n_groups} quarter groups (quarters taken modulo 4; chi-squared {chi2} for "
+            f"{dof} degrees of freedom" + (f", p = {p})." if p else ")."))
+
+
+def vetting_texts(data: dict) -> dict:
+    """The dossier page's copies of the note's vetting sentences in the README's words (round-2 final review, I-2):
+    ``shape``, ``parity``, ``secondary`` and ``stability``, each None when it does not apply."""
+    return {"shape": shape_sentence(data), "parity": parity_sentence(data), "secondary": secondary_sentence(data),
+            "stability": stability_sentence(data)}
+
+
+def star_texts(data: dict) -> str | None:
+    """The note's Gaia flags and reddening sentences in plain text, for the dossier page (I-2); None without
+    either."""
+    flags, red = gaia_flags_text(data), reddening_text(data)
+    parts = [f"{flags[:1].upper()}{flags[1:]}." if flags else None, f"{red}." if red else None]
+    return " ".join(p for p in parts if p) or None
+
+
+def fold_text(data: dict) -> str | None:
+    """The figure's fold in words, as the note's caption gives it, for the dossier page (I-2): "Folded on the P day
+    <ephemeris>, within W hours of mid-transit, in bins of B minutes."; None without a period."""
+    period = quantities(data).get("period")
+    if period is None:
+        return None
+    window, bins = window_hours(data), bin_minutes(data)
+    return (f"Folded on the {period} day {fold_words(data)}" + (f", within {window} hours of mid-transit" if window
+                                                                else "")
+            + (f", in bins of {bins} minutes" if bins else "") + ".")
+
+
 def _vetting_sentences(data: dict, tex: bool = False) -> list[str]:
     """Rungs 1 to 4 in words, from their stored metrics and the dossier's error blocks (the transit fit, odd and even,
     the secondary); a rung that did not pass says so with its reason. With ``tex`` the sentences with errors are
@@ -1104,17 +1229,9 @@ def _vetting_sentences(data: dict, tex: bool = False) -> list[str]:
         out.append(s)
     out += [s for s in (shape_sentence(data, tex), parity_sentence(data, tex, stacked=not tex),
                         secondary_sentence(data, tex, short=tex)) if s]
-    # rung 3 on the fold (the stability block, Task 10), else rung 3's own row; its groups are quarters modulo 4,
-    # "quarter groups", "season" being the Kepler roll season of the pixel check (spec 11.6)
-    stab = data.get("stability")
-    st = (stab.get("metrics") or {}) if isinstance(stab, dict) and stab.get("metrics") else _metrics(
-        data, "rung3_stability")
-    if st:
-        n_groups = st.get("n_seasons", len(st.get("season_depths") or {}))
-        chi2, dof, p = _f(st.get("chi2"), 1), st.get("dof"), _f(st.get("p_value"), 2)
-        if n_groups and chi2 is not None and dof is not None:
-            out.append(f"The depth agrees across {n_groups} quarter groups (quarters taken modulo 4; chi-squared "
-                       f"{chi2} for {dof} degrees of freedom" + (f", p = {p})." if p else ")."))
+    stability = stability_sentence(data)
+    if stability:
+        out.append(stability)
     trend = trend_sentence(data, tex, clause=tex and bool(out) and out[-1].startswith("The depth agrees"))
     if trend and tex and out and out[-1].startswith("The depth agrees"):
         out[-1] = _joined(tex, out[-1][:-1], trend)            # one clause of that sentence (addendum cut 7)
@@ -1151,17 +1268,18 @@ def _seasons_phrase(near: int, voting: list[dict], silent: list[dict]) -> str:
 
 
 def _silent_sentence(silent: list[dict]) -> str:
-    """The seasons that did not vote, each with its stored reason."""
+    """The seasons that did not vote, each with its stored reason as one clause (``reason_words``): "Season 3 did not
+    vote: box cut, ambiguous at 1.8 sigma." (no brackets inside brackets, round-2 final review, minor 10)."""
     def label(s: dict) -> str:
         return str(s.get("season")) if s.get("season") is not None else "?"
     if not silent:
         return ""
     if len(silent) == 1:
         s = silent[0]
-        return f"Season {label(s)} did not vote ({s.get('non_voting_reason') or 'no reason stored'})."
+        return f"Season {label(s)} did not vote: {reason_words(s.get('non_voting_reason'))}."
     names = ", ".join(label(s) for s in silent[:-1]) + f" and {label(silent[-1])}"
-    why = "; ".join(f"season {label(s)}: {s.get('non_voting_reason') or 'no reason stored'}" for s in silent)
-    return f"Seasons {names} did not vote ({why})."
+    why = "; ".join(f"season {label(s)} {reason_words(s.get('non_voting_reason'))}" for s in silent)
+    return f"Seasons {names} did not vote: {why}."
 
 
 def _first(value) -> float | None:
@@ -1377,8 +1495,9 @@ def hz_text(data: dict) -> str | None:
 
 
 def followup_text(data: dict, after_bjd: float) -> str | None:
-    """One clause for observers (spec 11.6): "A transit in <year> is predicted to within W minutes (1 sigma) and needs
-    photometry at about D ppm on a G <g> star[, within reach of a 1 to 2 m telescope]." from the first transit after
+    """One clause for observers (spec 11.6): "A transit in <year> is predicted to within W minutes (1 sigma): a D ppm
+    transit on a G <g> star[, within reach of a 1 to 2 m telescope at a few hundred ppm per 10 minutes]." (the depth
+    is the transit's, not the precision it needs; round-2 final review, minor 3) from the first transit after
     ``after_bjd`` (``pack_rows.next_transits``) and the depth at two significant figures; the telescope class only
     for a depth of at least ``FOLLOWUP_REACH_DEPTH_PPM`` on a star of G at most ``FOLLOWUP_REACH_GMAG``. None
     without a timing fit."""
@@ -1390,8 +1509,8 @@ def followup_text(data: dict, after_bjd: float) -> str | None:
     star = f" on a G {gmag:.1f} star" if gmag is not None else ""
     reach = (FOLLOWUP_REACH if depth >= FOLLOWUP_REACH_DEPTH_PPM and gmag is not None and gmag <= FOLLOWUP_REACH_GMAG
              else "")
-    return (f"A transit in {nxt[0]['date'][-4:]} is predicted to within {nxt[0]['window_min']:.0f} minutes (1 sigma) "
-            f"and needs photometry at about {rounded:,.0f} ppm{star}{reach}.")
+    return (f"A transit in {nxt[0]['date'][-4:]} is predicted to within {nxt[0]['window_min']:.0f} minutes (1 sigma): "
+            f"a {rounded:,.0f} ppm transit{star}{reach}.")
 
 
 def _hz_where(planet: dict) -> str | None:
@@ -1626,7 +1745,8 @@ def numbers(data: dict, tex: bool = False, after_bjd: float | None = None) -> di
         "parity_sigma_text": _f((data.get("parity") or {}).get("difference_sigma"), 1) if pair else None,
         "stacked_parity_text": stacked_parity_text(data),
         "secondary_text": secondary_sentence(data, tex), "albedo_text": albedo_text(data),
-        "secondary_plain": secondary_sentence(data),
+        "secondary_plain": secondary_sentence(data), "trend_plain": trend_sentence(data),
+        "shape_fit": shape_fit_text(data), "fap_method": fap_method_text(data),
         "secondary_pm": pm_text(sec.get("depth_ppm"), sec.get("err_ppm"), sec.get("err_ppm"), nd=0, comma=True),
         "secondary_limit": _f(sec.get("limit_3sigma_ppm"), 0, True),
         "shape_text": shape_sentence(data, tex),
@@ -1745,13 +1865,12 @@ def abstract_text(data: dict) -> str:
     rp = (data.get("planet") or {}).get("rp_rearth")
     if isinstance(rp, dict) and _num(rp.get("median")) is not None:
         parts.append(f"The planet would be about {_num(rp['median']):.1f} Earth radii.")
-    fap = data.get("fap") or {}
-    against = (f" against {fap['n']:,} null searches of other KBonus stars" if fap.get("calibrated") and fap.get("n")
-               else "")
+    # the false-alarm rate per star with what it means across the sweep (round-2 final review, I-1), never the
+    # per-star number alone; the SDE and S/N stay in the body
     # spec 11.2: the TRICERATOPS headline first when a current cross-check exists, the in-house estimate after it
     head = cc.headline(data, short=True)          # the note's short class clause (addendum cut 8)
     fpp_part = f"{head}; {in_house_text(data)}" if head else in_house_text(data)
-    parts.append(f"The false-alarm probability{against} is {fap.get('words') or 'not computed'}; {fpp_part}.")
+    parts.append(f"{_capital(fap_rate_clause(data))}; {fpp_part}.")
     parts.append("It remains a candidate until follow-up confirms it.")
     return " ".join(parts)
 
@@ -1883,7 +2002,7 @@ def render_note(data: dict, doi_placeholder: str = DOI_PLACEHOLDER, *, citation:
     ``note.tex.j2`` (title, abstract, sections, one figure, references), citing exactly the works the dossier used.
     A sandbox DOI is printed with the words that it must be replaced before submission. ``panels`` is whether the
     figure is matplotlib's panelled ``figure1`` (the caption names the panels) or the fold alone of ``figure1.svg``;
-    the code DOI comes from ``citation`` (``code_sentence``)."""
+    the code DOI comes from ``citation`` (``code_doi``)."""
     refs = references(data)
     bib = sorted([(key, Raw(label), Raw(text)) for key, label, text in BIBLIOGRAPHY if refs.get(key)]
                  + prior_bib(data), key=lambda item: item[0])
@@ -1891,7 +2010,7 @@ def render_note(data: dict, doi_placeholder: str = DOI_PLACEHOLDER, *, citation:
     note = f", a {SANDBOX_DOI_NOTE}" if doi.startswith(SANDBOX_DOI_PREFIX) else ""
     body = _env(tex=True).get_template("note.tex.j2").render(
         n=numbers(data, tex=True), refs=refs, bib=bib, doi=doi, doi_note=note, authors=_authors(citation),
-        code_sentence=code_sentence(citation), code_doi=code_doi(citation), panels=panels)
+        code_doi=code_doi(citation), panels=panels)
     return AASTEX_FRAME.read_text(encoding="utf-8") + "\n" + body
 
 
@@ -1905,7 +2024,7 @@ EXOFOP_CONTENTS = (("lightcurve", "data/lightcurve.csv",
                    ("centroids", "figures/centroids.{ext}", "the per-season difference images and centroids"))
 
 BEB_RADIUS = ("The background-binary term uses the pixel exclusion radius, max(3 sigma, 0.5 arcsec), as its "
-              "confusion radius (spec 11.5; 2.0 arcsec before).")
+              "confusion radius; it was 2.0 arcsec in model 2.")
 FILE_NOTES = {
     "README.md": "these instructions",
     "note/note.tex": "the Research Note draft (AASTeX v7)",
@@ -2017,10 +2136,13 @@ def gate_problems(raw: dict) -> list[str]:
     made under an older pixel rule (``dossier.pixel_rule_stale``), a pixel rerun that disagrees with the reviewer
     (``dossier.pixel_verdict_disagrees``), prior claims that were not checked (``dossier.prior_claims_unchecked``)
     and a rendered Research Note over the RNAAS limit of 1,500 words (``note_words``; the TESS statement itself never
-    blocks); and, after spec 11.1 and 11.2, a prior claim without a relationship, a ``FORBIDDEN_WORDS`` match in
-    the Research Note, the abstract, the archive email or the ExoFOP notes field (the README and the upload note
-    print the same sentence functions), and an abstract without the TRICERATOPS probability when a cross-check of
-    the present format is stored. Empty when the dossier may go to zenodo.org."""
+    blocks), or over another RNAAS limit (``note_limit_problems``); and, after spec 11.1 and 11.2, a prior claim
+    without a relationship, a prior claim whose period, epoch or depth sits more than ``PRIOR_MISMATCH_SIGMA`` from
+    ours (``PRIOR_MISMATCH``), a ``FORBIDDEN_WORDS`` match in the Research Note, the abstract, the archive email, the
+    ExoFOP notes field or the Zenodo title and description (the README and the upload note print the same sentence
+    functions), and an abstract or a Zenodo description without the TRICERATOPS probability ahead of the in-house
+    one when a current cross-check is stored (a stale one is refused once, by ``crosscheck.verdict``). Empty when the
+    dossier may go to zenodo.org."""
     out = []
     for key, what in (("timing", "the ephemeris"), ("shape", "the transit shape")):
         block = raw.get(key)
@@ -2044,9 +2166,9 @@ def gate_problems(raw: dict) -> list[str]:
     if counts["total"] > NOTE_LIMITS["total"]:
         out.append(f"the Research Note has {counts['total']:,} words, over the RNAAS limit of "
                    f"{NOTE_LIMITS['total']:,}; shorten it first")
-    # every other RNAAS limit (the abstract's 150 words, one figure or table), in note_problems' words
+    # every other RNAAS limit (the abstract's 150 words, one figure or table), picked by limit, not by its words
     out.extend(f"the Research Note breaks an RNAAS limit: {p}"
-               for p in note_problems(counts, note) if not p.startswith("the note has") or "figures" in p)
+               for limit, p in note_limit_problems(counts, note) if limit != "total")
     if ds.prior_claims_unchecked(raw):
         out.append("prior claims on the signal were not checked (no docs/candidates folder)")
     # spec 11.1: every prior claim states how SkySift's result stands to it, and no text calls it blind
@@ -2054,19 +2176,50 @@ def gate_problems(raw: dict) -> list[str]:
         if not claim.get("relationship"):
             out.append(f"prior claim doi:{claim['doi']} has no relationship (re-detection, blind-recovery or "
                        "vetting-only)")
+    # a claim whose numbers sit far from this signal was filed on another star or misread (final review, minor 10)
+    cmp = prior_comparison(raw) or {}
+    if any(isinstance(cmp.get(k), dict) and (cmp[k].get("sigma") or 0) > PRIOR_MISMATCH_SIGMA for k in COMPARED):
+        out.append(PRIOR_MISMATCH)
     abstract = abstract_text(raw)
+    zenodo = metadata_from(raw, None, prior=zenodo_prior(raw))
+    description = re.sub(r"<[^>]+>", " ", zenodo["description"])
     texts = (("Research Note", note), ("abstract", abstract),
              ("archive email", archive_paragraph(raw, DOI_PLACEHOLDER, None)),
-             ("ExoFOP notes field", exofop_prior_fields(raw).get("notes", "")))
+             ("ExoFOP notes field", exofop_prior_fields(raw).get("notes", "")),
+             ("Zenodo title", zenodo["title"]), ("Zenodo description", description))
     for name, text in texts:
         for pattern in FORBIDDEN_WORDS:
             found = re.search(pattern, text, re.IGNORECASE)
             if found:
                 out.append(f"the {name} says '{found.group(0)}', which spec 11.1 rules out")
-    # spec 11.2: with a cross-check, the abstract leads with its probability, never the in-house one alone
-    if cc.complete(raw.get("cross_check")) and "TRICERATOPS" not in abstract:
-        out.append("the abstract carries the in-house false-positive probability without the TRICERATOPS one")
+    # spec 11.2: with a current cross-check (a stale one is refused above, once: final review, minor 1), the abstract
+    # and the Zenodo description lead with its probability, never the in-house one alone or first
+    block = raw.get("cross_check")
+    if cc.complete(block) and block.get("current") is True:
+        for name, text in (("abstract", abstract), ("Zenodo description", description)):
+            if not _triceratops_first(text):
+                out.append(f"the {name} carries the in-house false-positive probability without the TRICERATOPS "
+                           "one")
     return out
+
+
+PRIOR_MISMATCH_SIGMA = 5.0      # a compared quantity further than this from the prior claim's is a mismatch
+PRIOR_MISMATCH = "the prior claim does not match this signal; check the claim's star and numbers"
+
+
+def _triceratops_first(text: str) -> bool:
+    """Whether ``text`` names the TRICERATOPS probability, and before the in-house four-scenario estimate when it
+    names that too (spec 11.2's order)."""
+    if "TRICERATOPS" not in text:
+        return False
+    own = text.find("four-scenario estimate")
+    return own < 0 or text.find("TRICERATOPS") < own
+
+
+def zenodo_prior(data: dict) -> str | None:
+    """The Zenodo description's prior-claim paragraph (spec 11.1): the relationship sentence and the comparison
+    sentence, as the README prints them; None without a claim."""
+    return " ".join(x for x in (prior_claim_sentence(data), comparison_text(data)) if x) or None
 
 
 def independent_periods(period: float, others, tolerance: float = 0.02) -> list[float]:
@@ -2931,7 +3084,7 @@ def _write_pack(out_dir: Path, data: dict, raw: dict, row: dict, lc, fnorm, targ
     _write(out_dir / MARKER, jsonutil.dumps(_versions(data, row, now, Figure, zip_path.name, creators_source),
                                             indent=1))
     # spec 11.1: the relationship sentence and the comparison sentence, as the README prints them
-    prior = " ".join(x for x in (prior_claim_sentence(data), comparison_text(data)) if x) or None
+    prior = zenodo_prior(data)
     metadata = metadata_from(data, citation, prior=prior)
     _write(out_dir / "zenodo_metadata.json", jsonutil.dumps(metadata, indent=1))
     for name, source, _what in _exofop_list(target_id, date, png, pixels_figure):

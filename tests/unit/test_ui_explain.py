@@ -85,7 +85,7 @@ def test_why_sentences_carry_the_deciding_numbers(seed_detail):
     assert "No match in 4 catalogues" in rows["rung4_novelty"].sentence
     assert "3 of 3 seasons" in rows["rung5_pixels"].sentence and rows["rung5_pixels"].status == "pass"
     numbers = rows["rung5_pixels"].numbers
-    assert "archive season 3: not voting (box incomplete: target)" in numbers
+    assert "archive season 3: not voting, box incomplete, target" in numbers
     assert ("archive season 0: 0.13 ± 0.05 px from the star, 2.75 from the neighbour, 40.9 σ nearer the star"
             in numbers)
     assert "quarter group 0: 2,150 ± 110 ppm" in rows["rung3_stability"].numbers           # rung 3: quarter mod 4
@@ -308,7 +308,7 @@ def test_a_season_without_box_keys_renders_as_before():
         ("archive season 0: 0.13 ± 0.05 px from the star, 2.75 from the neighbour, 40.9 σ nearer the star; "
          "archive season 1: 0.11 ± 0.07 px from the star, 2.83 from the neighbour, 20.5 σ nearer the star; "
          "archive season 2: 0.19 ± 0.08 px from the star, 2.71 from the neighbour, 17.5 σ nearer the star; "
-         "archive season 3: not voting (box incomplete: target); 28 transits in 15 quarters; "
+         "archive season 3: not voting, box incomplete, target; 28 transits in 15 quarters; "
          "the neighbour's own light at the transits: 14 ± 31 ppm"))
     row = {"rung": "rung5_pixels", "status": "pass",
            "reason": "the dip is on the target in 3/3 seasons (centroid >= 17.5 sigma nearer)",

@@ -402,13 +402,19 @@ class Store:
 
     def sweep_size(self, source: str, detector: str, detector_version: str) -> int:
         """The targets the sweep searched with this search: distinct target ids of done runs of ``detector`` at
-        ``detector_version`` on targets of ``source``, recheck runs left out (SWEEP_QUERY in the dossier)."""
-        q = (select(func.count(func.distinct(RunRow.target_id)))
+        ``detector_version`` on targets of ``source``, recheck runs left out (SWEEP_QUERY in the dossier;
+        ``sweep_targets`` lists them)."""
+        return len(self.sweep_targets(source, detector, detector_version))
+
+    def sweep_targets(self, source: str, detector: str, detector_version: str) -> set[str]:
+        """The target ids ``sweep_size`` counts (the same query), so a caller can ask which other stars the sweep
+        searched, such as the null-calibration stars it shares (round-2 final review, minor 6)."""
+        q = (select(RunRow.target_id).distinct()
              .join(TargetRow, TargetRow.target_id == RunRow.target_id)
              .where(RunRow.status == "done", RunRow.detector == detector, RunRow.detector_version == detector_version,
                     RunRow.job_key.not_like(f"{RECHECK_JOB_PREFIX}%"), TargetRow.source == source))
         with self.session() as s:
-            return int(s.scalar(q) or 0)
+            return {str(t) for t in s.scalars(q)}
 
     def add_signal(self, sig: Signal, run_id: int, parent_signal_id: int | None = None,
                    ladder_version: str | None = None, branch: str | None = None) -> int:

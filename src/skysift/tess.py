@@ -473,13 +473,15 @@ def note_sentence(block: dict | None, tex: bool = False, readme: bool = True, fi
 
 def _short_sentence(b: dict | None) -> str | None:
     """The note's TESS sentence (Task 13 fix round 1, cut 11): the sector count, the folded significance under the
-    conservative and the nominal noise and the verdict; None unless transits fell in counted windows."""
+    conservative and the nominal noise and the verdict, with any sector TESScut lists that is not assessed (``_skipped``)
+    and ``NO_DATA_EXAMINED`` (round-2 final review, minor 9 and the Task 13 re-review); None unless transits fell in
+    counted windows."""
     if not isinstance(b, dict) or not b.get("available") or not b.get("sectors") or not b.get("n_transits"):
         return None
     k, sig = len(b["sectors"]), b["significance"]
-    return (f"TESS observed the star in {k} sector{'s' if k != 1 else ''}; the predicted folded significance is "
-            f"{_s(sig['folded_conservative'])} to {_s(sig['folded_nominal'])} sigma, so "
-            f"{VERDICT_PHRASES[b['verdict']]}.")
+    return (f"TESS observed the star in {k} sector{'s' if k != 1 else ''}{_skipped(b)}; the predicted folded "
+            f"significance is {_s(sig['folded_conservative'])} to {_s(sig['folded_nominal'])} sigma, so "
+            f"{VERDICT_PHRASES[b['verdict']]}{NO_DATA_EXAMINED}.")
 
 
 def _plain_sentence(b: dict | None) -> str:

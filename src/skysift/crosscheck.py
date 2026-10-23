@@ -609,25 +609,15 @@ def range_text(block: dict, metric: str) -> str:
     return f"{_p(block.get(f'{metric}_p16'))} to {_p(block.get(f'{metric}_p84'))}"
 
 
-CLASS_PHRASES = {
-    "validated": ("the medians fall inside the paper's validation lines (FPP below 0.015, NFPP below 0.001), which "
-                  "the paper could not set at the 30-minute cadence of these data (its section 4.2), so the signal "
-                  "is not called validated here"),
-    "likely planet": "the medians fall in the paper's class 'likely planet' (FPP below 0.5, NFPP below 0.001)",
-    "likely nearby false positive": ("the medians fall in the paper's class 'likely nearby false positive' (NFPP "
-                                     "above 0.1)"),
-    "candidate": "the medians fall in none of the paper's classes, so the signal stays a candidate",
-}
-
-
-CLASS_LABEL = "The medians fall where Giacalone et al. (2021) label '{cls}'; no class applies at 30-minute cadence."
+# the page's class text (round-2 final review, minor 7): naming a class and withdrawing it in one breath read as a
+# verdict, so the page keeps only the clause that no class applies
+CLASS_LABEL = "No validation class applies at 30-minute cadence (Giacalone et al. 2021)."
 
 
 def class_label_text(cls: str | None) -> str | None:
-    """Where the medians fall on Giacalone et al.'s scale, wherever it prints (the dossier page; the controller's
-    wording ruling of Task 13): ``CLASS_LABEL``, the class name the label of a place on the scale, never a reading of
-    the signal. None without a class (a block of the earlier format)."""
-    return CLASS_LABEL.format(cls=cls) if cls else None
+    """The dossier page's sentence on Giacalone et al.'s classes: ``CLASS_LABEL``, that none applies at 30-minute
+    cadence, whatever class the medians fall in; None without a class (a block of the earlier format)."""
+    return CLASS_LABEL if cls else None
 
 
 def dominant_scenario(block: dict) -> dict | None:
@@ -704,7 +694,7 @@ def comparison_sentence(data: dict, tex: bool = False, after_headline: bool = Fa
     """For the pack's texts: the method (the TRICERATOPS version, the KBonus light curve, Kepler limb darkening,
     the package's Gaia DR3 field-star population; ruling u), the medians of the full FPP, the FPP without STP and the
     NFPP each with its 16th to 84th percentile range and the run count (ruling s), ``NO_CLASS_CLAUSE`` where the
-    class on Giacalone et al.'s scale stood (spec 11.2; ``CLASS_PHRASES`` stay for the dossier page's JSON) and the
+    class on Giacalone et al.'s scale stood (spec 11.2) and the
     dominant scenario when the full FPP is at or above 0.5. SkySift's own estimate is not set beside it here: the
     texts print it after, as the in-house sentence (``zenodo.in_house_text``). ``after_headline`` gives the form for
     a text that has just printed ``headline`` (the README, the ExoFOP note and the archive email): it refers back to

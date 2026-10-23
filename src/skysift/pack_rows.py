@@ -45,6 +45,10 @@ def _comparison(data: dict) -> dict:
     return (shape.get("comparison") or {}) if isinstance(shape, dict) else {}
 
 
+# the README table's b row when the density prior sets b (round-2 final review, I-4)
+B_PRIOR_LABEL = "with the density prior"
+
+
 def a_over_r_fitted(data: dict) -> bool:
     """Whether the texts quote the fitted a/R* (``shape.comparison.a_over_r_label`` "fitted": the shape constrains it,
     or there is no density prior) rather than the one from the stellar parameters. A dossier before version 5 quotes
@@ -90,7 +94,11 @@ def param_rows(data: dict, *, both_a_over_r: bool = False) -> list[dict]:
     point_source = FIT_SOURCE if v5 else "rung 2 transit fit (uniform disc)"
     if sh.get("fit_ok") is True and shape:
         ok = (data.get("shape") or {}).get("ok") is True
-        for key, name in (("k", "radius ratio"), ("b", "impact parameter")):
+        cmp = _comparison(data)
+        # round-2 final review, I-4: a b the density prior sets says so in its own row
+        b_name = (f"impact parameter ({B_PRIOR_LABEL})"
+                  if cmp.get("quoted") == "prior" and cmp.get("constrained") is False else "impact parameter")
+        for key, name in (("k", "radius ratio"), ("b", b_name)):
             r = shape.get(key)
             if r is None:
                 continue

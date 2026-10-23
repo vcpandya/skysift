@@ -174,7 +174,10 @@ def test_a_prior_claim_says_found_again_once():
              "SkySift's result is a re-detection: the search itself used no prior ephemeris.")
     text = metadata_from(DATA, None, prior=prior)["description"]
     assert text.count("a re-detection") == 1       # once, in the prior claim, not again at the close
-    assert "submission pack of a transit candidate found by the SkySift engine" in text
+    # round-2 final review, I-3: with a prior claim the record says vetted, not found, and takes the note's title
+    assert "submission pack of a transit candidate vetted by the SkySift engine" in text and " found by" not in text
+    assert metadata_from(DATA, None, prior=prior)["title"].startswith("SkySift vetting of the ")
+    assert "submission pack of a transit candidate found by" in metadata_from(DATA, None)["description"]
 
 
 FAP = {"calibrated": True, "k": 38, "n": 1998, "words": "1 in 51", "fap": 0.019509755}
@@ -189,3 +192,18 @@ def test_the_false_alarm_sentence_names_the_nulls_and_the_sweep():
     fap, _fpp = zenodo.probability_sentences({"fap": FAP, "calibration": {"sweep_size": None, "null_stars": 999}})
     assert fap.endswith("reached the signal's SDE; the vetting ladder, not the SDE, separates the candidate from "
                         "such peaks.") and "of this source" not in fap
+
+
+def test_the_abstract_clause_gives_the_rate_per_star_and_the_sweep_expectation():
+    """Round-2 final review, I-1: "null searches give a false-alarm rate of 1 in 170 per star, about 9 such peaks
+    expected across the 1,579-star sweep"; the sweep part only with a stored sweep size."""
+    fap = {"calibrated": True, "n": 1998, "words": "1 in 170", "fap": 0.0058}
+    clause = zenodo.fap_rate_clause({"fap": fap, "calibration": {"sweep_size": 1579}})
+    assert clause == ("null searches give a false-alarm rate of 1 in 170 per star, about 9 such peaks expected "
+                      "across the 1,579-star sweep")
+    assert zenodo.fap_rate_clause({"fap": fap, "calibration": {}}) == ("null searches give a false-alarm rate of "
+                                                                       "1 in 170 per star")
+    assert zenodo.fap_rate_clause({"fap": {**fap, "calibrated": False}}) == ("the false-alarm probability is not "
+                                                                            "computed")
+    assert zenodo.expected_peaks(0.3) == "fewer than one such peak" and zenodo.expected_peaks(1.2) == \
+        "about one such peak"

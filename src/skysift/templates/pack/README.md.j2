@@ -58,6 +58,10 @@ Star:{% if n.star_method_text %} {{ n.star_method_text }}{% endif %}{% if n.redd
 
 Ephemeris and transit-parameter errors (the note's signal section points here): {{ n.errors_methods }}
 {% endif %}
+{% if n.shape_fit %}
+
+{{ n.shape_fit }}
+{% endif %}
 
 {% if n.note_forms %}
 
@@ -71,20 +75,24 @@ Note wording: {{ n.note_forms }}
 
 CROWDSAP and PSFFRAC are KBonus header keywords. CROWDSAP is {{ crowdsap_definition }}; PSFFRAC is {{ psffrac_definition }}.
 {% endif %}
-{% if n.secondary_plain %}
+{% if n.secondary_plain or n.trend_plain %}
 
-Phase 0.5 and the red noise: {{ n.secondary_plain }} The margins are rung 2's model-shift test (the largest positive excursion and the tertiary dip in the same fold).
+Phase 0.5 and the red noise:{% if n.secondary_plain %} {{ n.secondary_plain }} The margins are rung 2's model-shift test (the largest positive excursion and the tertiary dip in the same fold).{% endif %}{% if n.trend_plain %} {{ n.trend_plain }}{% endif %}{{ "" }}
 {% endif %}
 {% if n.offset_text or n.hand_built_text %}
 
 Pixel offset:{% if n.offset_text %} {{ n.offset_text }}{% endif %}{% if n.hand_built_text %} {{ n.hand_built_text }}{% endif %}{{ "" }}
+{% endif %}
+{% if n.dilution_text %}
+
+Photometry and dilution: {{ n.dilution_text }}
 {% endif %}
 {% if n.leak_method %}
 
 {{ n.leak_method }}
 {% endif %}
 
-{{ n.fap_text }}
+{{ n.fap_text }}{{ (" " ~ n.fap_method) if n.fap_method else "" }}
 
 {{ n.fpp_text }} {{ n.in_house_method }}{{ (" " ~ n.beb_radius_text) if n.beb_radius_text else "" }}
 {% if n.cross_check_after %}

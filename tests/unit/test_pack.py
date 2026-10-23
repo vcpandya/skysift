@@ -584,7 +584,7 @@ def test_a_season_that_did_not_vote_is_named_and_its_null_depths_are_skipped(env
     data = _with_a_silent_season(env_with_dossier.data)
     text = pack_module.pixel_sentence(data)
     assert "the dip is nearer this star than its brightest neighbour in 2 of 2 seasons that voted" in text
-    assert "Season 3 did not vote (box incomplete: target)." in text and "nan" not in text
+    assert "Season 3 did not vote: box incomplete, target." in text and "nan" not in text
     assert "A two-source fit gives a median depth of 2,550 ppm on this star" in text  # the voting seasons only
     abstract = pack_module.abstract_text(data)
     assert "nearer this star than its brightest neighbour in 2 of 2 seasons that voted" in abstract
@@ -647,7 +647,7 @@ def test_pixel_sentence_without_box_keys_is_unchanged(env_with_dossier):
         "away, with an exclusion radius of 0.50 arcsec (max(3 sigma, 0.5 arcsec)) within which a background source "
         "is not excluded; the nearest Gaia source beyond it is Gaia DR3 2101234567890120001 at 6.6 arcsec from the "
         "centroid (G = 19.8). A two-source fit gives a median depth of 2,213 ppm on this star and -21 ppm on the "
-        "neighbour. Season 3 did not vote (box incomplete: target).")
+        "neighbour. Season 3 did not vote: box incomplete, target.")
 
 
 def test_a_crashed_build_leaves_no_folder_that_blocks_the_retry(env_with_dossier, monkeypatch):
@@ -1272,7 +1272,8 @@ def test_readme_defines_crowdsap_and_psffrac(env_with_dossier):
     assert "| target light fraction (CROWDSAP) | 0.90 |" in text and "| PSF flux fraction (PSFFRAC) | 0.90 |" in text
     assert text.count("CROWDSAP is the fraction of the light in the aperture that belongs to the target") == 1
     assert "PSFFRAC is the fraction of the target's PSF flux inside the KBonus aperture" in text
-    assert "KBonus header keywords" in text and "crowding" not in text
+    # round-2 final review, I-2: "crowding" only in the PSF-photometry statement the note prints
+    assert "KBonus header keywords" in text and text.count("crowding") == text.count("no crowding correction")
 
 
 def test_readme_without_a_parity_difference_or_a_timing_fit(env_with_dossier):
@@ -1571,10 +1572,10 @@ def test_the_note_names_its_methods_and_cites_them(env_with_dossier):
     tex = render_note(data)
     signal = tex.split(r"\section{The signal}")[1].split(r"\section{")[0]
     # Task 8 fix round 3: the note keeps a pointer without citations, the sentence and its works are in the README;
-    # fix round 4, M-3: the note's first pointer says which README
-    assert ("The errors come from per-transit fits, a weighted linear fit and a bootstrap over transits (methods in "
-            "the Zenodo pack's README).") in " ".join(signal.split())
-    assert len(pack_module.errors_pointer(data).split()) <= 25
+    # fix round 4, M-3: the note's first pointer says which README; round-2 word budget: a clause closing the
+    # ephemeris sentence
+    assert "on the linear-fit ephemeris (methods in the Zenodo pack's README)." in " ".join(signal.split())
+    assert pack_module.errors_pointer(data) == "methods in the Zenodo pack's README"
     assert "deeg2015" not in tex and "holczer2016" not in tex and "schmitt2014" not in tex
     assert "It remains a candidate until follow-up confirms it." not in signal   # the abstract says it
     readme = render_readme(data, {})
@@ -1610,8 +1611,7 @@ def test_the_note_names_its_methods_and_cites_them(env_with_dossier):
     assert "(methods in the README" not in render_note(bare) and "transit-parameter errors (the" not in \
         render_readme(bare, {})
     timed_only = {**data, "shape": {"ok": False, "reason": "y"}}
-    assert pack_module.errors_pointer(timed_only).endswith("a weighted linear fit (method in the Zenodo pack's "
-                                                           "README).")
+    assert pack_module.errors_pointer(timed_only) == "methods in the Zenodo pack's README"
     assert "Schmitt" not in pack_module.errors_methods_text(timed_only)
 
 
@@ -2145,9 +2145,16 @@ def test_the_live_shape_stays_inside_the_word_limit_with_margin(cross, prior):
     without a prior claim, 1,426 and 1,454 with one, before the golden carries the star's Gaia flags. Task 13 fix
     round 1 (I-2) gives the shape the rung 1 row, the stored caveats with an error caveat and panel (d), which a
     live note carries and the golden leaves out, and its cuts 10 to 14 hold the 1,480 margin on that shape: 1,348
-    and 1,376 without a prior claim, 1,447 and 1,475 with one (validated, dominant)."""
+    and 1,376 without a prior claim, 1,447 and 1,475 with one (validated, dominant). The round-2 final review's
+    additions (I-1, minors 4, 5 and 9, the skipped sector) and its pointer cut (the errors pointer as a clause, the
+    Pack line without its gloss): 1,347 and 1,375 without, 1,451 and 1,479 with one. I-1: the abstract carries the
+    sweep-wide expectation and stays at or under 150 words on every shape (144 without a prior claim, 148 with)."""
     words = _check_live_shape(cross, prior)
     assert words["total"] <= LIVE_SHAPE_LIMIT, words
+    assert words["abstract"] <= NOTE_LIMITS["abstract"], words
+    abstract = " ".join(render_note(_live_shape(cross, prior)).split(r"\begin{abstract}")[1].split())
+    assert ("Null searches give a false-alarm rate of 1 in 170 per star, about 9 such peaks expected across the "
+            "1,579-star sweep;") in abstract
     assert not [p for p in pack_module.gate_problems(_live_shape(cross, prior)) if "words" in p]
 
 
@@ -2301,6 +2308,11 @@ def test_one_a_over_r_in_the_texts_and_both_in_the_ephemeris_csv(env_with_dossie
     _store_errors(env_with_dossier)
     texts = _texts(_build(env_with_dossier))
     valued = re.compile(r"a/R\*[^\n.;,]{0,60}?\d")
+    # round-2 final review, I-4: the README's shape-fit sentence gives the free fit's a/R* beside the quoted one as
+    # the evidence for the shape call; every other text keeps one
+    shape_fit = pack_module.shape_fit_text(_stored(env_with_dossier))
+    assert shape_fit is None or shape_fit in texts["README.md"]
+    texts = {**texts, "README.md": texts["README.md"].replace(shape_fit or "", "")}
     counts = {name: valued.findall(texts[name])
               for name in ("README.md", "note/note.tex", "exofop/note.txt", "archive_email.txt")}
     assert len(counts["README.md"]) == len(counts["note/note.tex"]) == 1, counts
@@ -2434,7 +2446,9 @@ def test_the_page_texts_lead_with_triceratops_and_carry_the_prior_claim(env_prio
     assert texts["fpp_value"] == "0.012"
     assert texts["in_house"].startswith("A four-scenario estimate without a bound-companion or diluted-planet "
                                         "scenario gives ") and "a lower bound" in texts["in_house"]
-    assert "no class applies at 30-minute cadence" in texts["class_text"] and "'validated'" in texts["class_text"]
+    # round-2 final review, minor 7: the page's class text is the clause alone
+    assert texts["class_text"] == cross_check.CLASS_LABEL
+    assert texts["class_text"] == "No validation class applies at 30-minute cadence (Giacalone et al. 2021)."
     for text in texts.values():
         assert "read as" not in (text or "") and "validation lines" not in (text or "")
     assert texts["prior"] == pack_module.prior_claim_sentence(data)
@@ -2639,8 +2653,8 @@ def test_one_clause_gives_the_follow_up_window_and_the_photometry(env_with_dossi
     text = pack_module.followup_text(data, after)
     depth = float(f"{data['ephemeris']['depth_ppm']:.2g}")
     assert text == (f"A transit in {nxt['date'][-4:]} is predicted to within {nxt['window_min']:.0f} minutes "
-                    f"(1 sigma) and needs photometry at about {depth:,.0f} ppm on a G "
-                    f"{data['target']['gmag']:.1f} star, within reach of a 1 to 2 m telescope.")
+                    f"(1 sigma): a {depth:,.0f} ppm transit on a G {data['target']['gmag']:.1f} star, within reach "
+                    "of a 1 to 2 m telescope at a few hundred ppm per 10 minutes.")
     assert pack_module.followup_text({**data, "timing": None}, after) is None
 
 
@@ -2754,7 +2768,154 @@ def test_the_note_gives_the_short_tess_sentence_and_leaves_the_follow_up_to_the_
     data = _live_shape("dominant", True)
     flat = " ".join(render_note(data).split())
     sig = data["tess"]["significance"]
-    assert (f"TESS observed the star in {len(data['tess']['sectors'])} sectors; the predicted folded significance "
-            f"is {sig['folded_conservative']:.2f} to {sig['folded_nominal']:.2f} sigma, so TESS is not expected to "
-            r"have detected the transit at the nominal noise \citep[methods in the README]{christ2019}.") in flat
+    # round-2 final review: the skipped sector again (Task 13 parked minor) and "no TESS data were examined" (minor 9)
+    assert (f"TESS observed the star in {len(data['tess']['sectors'])} sectors, and Sector 109, not assessed; the "
+            f"predicted folded significance is {sig['folded_conservative']:.2f} to {sig['folded_nominal']:.2f} sigma, "
+            "so TESS is not expected to have detected the transit at the nominal noise; no TESS data were examined "
+            r"\citep[methods in the README]{christ2019}.") in flat
     assert "is predicted to within" not in flat
+
+
+# ------------------------------------------------------------------------------------------ round-2 final review
+
+def _golden() -> dict:
+    return json.loads(GOLDEN.read_text(encoding="utf-8"))
+
+
+def test_the_gate_refuses_a_prior_claim_far_from_the_signal():
+    """Minor 10: a prior claim whose period, epoch or depth sits more than 5 sigma from ours is refused with one line
+    (KIC 5689121's claim on KIC 6146676's golden); the claim on its own star is not."""
+    golden = _golden()
+    golden["prior_claims"] = [{k: PRIOR_CLAIM[k] for k in dossier_module.PRIOR_CLAIM_PUBLIC}]
+    assert pack_module.gate_problems(golden).count(pack_module.PRIOR_MISMATCH) == 1
+    assert pack_module.PRIOR_MISMATCH == ("the prior claim does not match this signal; check the claim's star and "
+                                          "numbers")
+    assert pack_module.PRIOR_MISMATCH not in pack_module.gate_problems(LIVE_5689121)
+    assert pack_module.PRIOR_MISMATCH not in pack_module.gate_problems(_golden())
+
+
+def test_a_stale_cross_check_is_refused_once():
+    """Minor 1: a stale cross-check is refused by its own reason, not again for the FPP order of the abstract and
+    the Zenodo description."""
+    golden = _golden()
+    assert golden["cross_check"]["current"] is False
+    problems = pack_module.gate_problems(golden)
+    assert not [p for p in problems if "in-house false-positive probability without" in p]
+    assert cross_check.verdict(golden["cross_check"])[1] in problems
+
+
+def test_with_a_prior_claim_the_zenodo_record_is_titled_as_the_note_and_the_gate_reads_it(monkeypatch):
+    """I-3: with a prior claim the Zenodo title is the note's, the description says vetted and carries the
+    comparison sentence, and the gate scans the title and the description for the forbidden words."""
+    data = {**_golden(), "prior_claims": LIVE_5689121["prior_claims"]}
+    meta = zenodo.metadata_from(data, None, prior=pack_module.zenodo_prior(data))
+    assert meta["title"] == "SkySift vetting of the 40.291 day transit candidate on KIC 6146676"
+    assert "candidate vetted by the SkySift engine" in meta["description"]
+    assert str(pack_module.comparison_text(data)) in meta["description"]
+    assert zenodo.metadata_from(_golden(), None)["title"].startswith("SkySift candidate KIC 6146676: ")
+    monkeypatch.setattr(pack_module, "FORBIDDEN_WORDS", (r"\bvetting of\b",))
+    problems = pack_module.gate_problems(data)
+    assert "the Zenodo title says 'vetting of', which spec 11.1 rules out" in problems
+
+
+def test_the_follow_up_both_tools_and_radius_sentences_read_as_the_review_asks():
+    """Minors 2, 3 and 5: the follow-up clause gives the transit's depth and the telescope class, BOTH_TOOLS says
+    where the nearby weight sits, and the background-binary radius says what model 2 used."""
+    golden = _golden()
+    text = pack_module.followup_text(golden, 2461000.0)
+    assert text.endswith(": a 2,200 ppm transit on a G 16.2 star, within reach of a 1 to 2 m telescope at a few "
+                         "hundred ppm per 10 minutes.")
+    faint = {**golden, "target": {**golden["target"], "gmag": 18.0}}
+    assert pack_module.followup_text(faint, 2461000.0).endswith("ppm transit on a G 18.0 star.")
+    assert pack_module.BOTH_TOOLS == ("TRICERATOPS's nearby false-positive weight sits on neighbours the pixels "
+                                      "exclude; a run without them is a follow-up; an unresolved bound companion is "
+                                      "the open channel.")
+    assert pack_module.BEB_RADIUS.endswith("as its confusion radius; it was 2.0 arcsec in model 2.")
+    assert "spec 11.5" not in pack_module.BEB_RADIUS
+
+
+def test_the_readme_gives_the_shape_call_with_its_evidence_and_the_note_does_not_cite_it():
+    """I-4: the README's b row says "with the density prior"; a sentence gives the free fit, the chi-square
+    difference against the rule of 2 and the reading, citing Seager and Mallén-Ornelas (2003) and Kipping (2010),
+    both in the README's list; the note keeps "unconstrained at this cadence" without them."""
+    golden = _golden()
+    assert pack_module.b_set_by_prior(golden)
+    readme = render_readme(golden, {})
+    assert "| impact parameter (with the density prior) | 0.468 +0.052/-0.058" in readme
+    text = pack_module.shape_fit_text(golden)
+    assert text.startswith("Shape fit: with the density prior b is 0.468 +0.052/-0.058 and a/R* 77.9")
+    assert ("with a chi-square lower by only 0.27, within the rule of 2: the data do not constrain them; the quoted "
+            "values follow the host's density (Seager and Mallén-Ornelas 2003; Kipping 2010).") in text
+    assert text in readme
+    assert "- Seager, S., & Mallén-Ornelas, G. 2003, ApJ, 585, 1038" in readme
+    assert "- Kipping, D. M. 2010, MNRAS, 407, 301" in readme
+    tex = render_note(golden)
+    assert UNCONSTRAINED in " ".join(tex.split())
+    assert "seager2003" not in tex and "kipping2010" not in tex
+    free = {**golden, "shape": {**golden["shape"], "comparison": {**golden["shape"]["comparison"],
+                                                                     "constrained": True}}}
+    assert pack_module.shape_fit_text(free) is None
+    assert "(with the density prior)" not in render_readme(free, {})
+
+
+def test_the_readme_says_where_the_null_stars_come_from_and_what_sets_the_tail():
+    """Minor 6: the README's false-alarm paragraph cites Thompson et al. (2018) and Coughlin (2017), says the null
+    stars are the calibration pilot's with 10 of them in the sweep, and that every exceedance is an inverted null."""
+    golden = _golden()
+    golden["calibration"] = {**golden["calibration"], "null_stars_in_sweep": 10}
+    text = pack_module.fap_method_text(golden)
+    assert text.startswith("The null searches are the inverted and scrambled light curves of Thompson et al. (2018) "
+                           "and Coughlin (2017); the 999 null stars come from the calibration pilot, a selection "
+                           "apart from the sweep (10 of them are in it); ")
+    assert text.endswith("all 11 null searches that reached the signal's SDE are inverted light curves, so "
+                         "systematics, not white noise, set the tail.")
+    readme = render_readme(golden, {})
+    assert text in readme and "- Coughlin, J. L. 2017, Planet Detection Metrics" in readme
+    mixed = {**golden, "fap": {**golden["fap"], "k_by_kind": {"inverted": 8, "scrambled": 3}}}
+    assert "of the 11 that reached the signal's SDE, 8 are inverted and 3 are scrambled." in \
+        pack_module.fap_method_text(mixed)
+    assert pack_module.fap_method_text({**golden, "fap": {**golden["fap"], "calibrated": False}}) is None
+
+
+def test_the_readme_references_sort_by_first_author_then_year():
+    """Task 13 parked minor: the README's list sorts by the first author's family name, accents folded, then the
+    year."""
+    refs = pack_module.readme_references(_golden())
+    keys = [pack_module._by_author(r)[:2] for r in refs]
+    assert keys == sorted(keys)
+    mann = [r for r in refs if r.startswith("Mann, A. W.")]
+    assert len(mann) == 2 and "2015" in mann[0] and "2019" in mann[1]
+    assert pack_module._by_author("Martínez-Palomera, J., Hedges, C. 2023a, AJ")[0] == "martinez-palomera"
+
+
+def test_the_silent_seasons_and_the_secondary_read_without_nested_brackets():
+    """Minor 10 and the Task 13 parked minor: a non-voting season's reason is one clause; the note's short secondary
+    keeps "in the same fold"."""
+    assert pack_module._silent_sentence([{"season": 3, "non_voting_reason": "box cut: ambiguous (1.8 sigma)"}]) == \
+        "Season 3 did not vote: box cut, ambiguous at 1.8 sigma."
+    assert pack_module._silent_sentence([{"season": 0, "non_voting_reason": "box cut"},
+                                         {"season": 3, "non_voting_reason": None}]) == \
+        "Seasons 0 and 3 did not vote: season 0 box cut; season 3 no reason stored."
+    assert pack_text.reason_words("too few points (0.5 sigma)") == "too few points at 0.5 sigma"
+    assert pack_text.reason_words("") == "no reason stored"
+    short = str(pack_module.secondary_sentence(_golden(), True, short=True))
+    assert ", and positive excursions in the same fold reach 5.2 sigma" in short
+
+
+def test_the_exofop_planet_file_credits_the_first_finder():
+    """Minor 8: the planet file's discovery names the prior claim's author with a prior claim, SkySift otherwise."""
+    assert exofop.discovery(LIVE_5689121) == "Mehta (2026), Zenodo"
+    assert exofop.discovery(_golden()) == exofop.EXOFOP_DISCOVERY == "SkySift (Kepler)"
+
+
+def test_the_note_readme_upload_note_and_page_carry_the_same_round_2_numbers():
+    """I-2: the leak, the depth trend and the sweep expectation are printed with the same numbers in the Research
+    Note, the README, the ExoFOP upload note and the dossier page's texts."""
+    golden = _golden()
+    page = " ".join(str(v) for v in dossier_module.page_texts(golden).values() if v)
+    texts = {"note": " ".join(pack_module._plain_tex(render_note(golden)).split()),
+             "readme": render_readme(golden, {}), "exofop": pack_module._render_plain("exofop_note.txt.j2", golden, {}), "page": page}
+    for number in ("4 ppm", "-9 ± 12 ppm", "228 ± 90 ppm per year", "1,579-star sweep", "about 9 such peaks"):
+        for name, text in texts.items():
+            flat = " ".join(text.replace("$\\pm$", "±").split())
+            assert number in flat, (number, name)

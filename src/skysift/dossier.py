@@ -1798,13 +1798,18 @@ def calibration_block(store: Store, signal: dict, source: str, rows: list[dict],
     """The ``calibration`` block the false-alarm sentence reads (spec 11.4): ``sweep_size``, the targets the sweep
     searched with the signal's search (``Store.sweep_size``, by ``SWEEP_QUERY``; None when the count is 0, a store
     of recheck runs only or a signal of another search version), the source, detector and version it was counted
-    for, ``null_stars`` (the distinct stars of the null calibration other than this target), ``null_searches``
-    (``fap.n``) and ``expected_by_chance``, the sweep size times the FAP (None without either)."""
+    for, ``null_stars`` (the distinct stars of the null calibration other than this target), ``null_stars_in_sweep``
+    (how many of them the sweep searched too, ``Store.sweep_targets``: the calibration pilot is a selection apart
+    from the sweep; None without a sweep size; round-2 final review, minor 6), ``null_searches`` (``fap.n``) and
+    ``expected_by_chance``, the sweep size times the FAP (None without either)."""
     detector, version = str(signal.get("detector") or ""), str(signal.get("detector_version") or "")
     size = sweep_size_of(store, signal, source) or None
     stars = {str(r.get("target_id")) for r in rows if r.get("target_id") and r.get("target_id") != target_id}
+    inside = (len(stars & store.sweep_targets(source or "kbonus_bkg", detector, version)) if size is not None
+              else None)
     return {"sweep_size": size, "sweep_source": source, "sweep_detector": detector,
             "sweep_detector_version": version, "sweep_query": SWEEP_QUERY, "null_stars": len(stars),
+            "null_stars_in_sweep": inside,
             "null_searches": fap.n,
             "expected_by_chance": size * fap.fap if size is not None and fap.fap is not None else None}
 
@@ -2022,17 +2027,44 @@ def page_texts(data: dict) -> dict:
     estimate as a lower bound naming the scenarios it lacks (``zenodo.in_house_text``); ``class_text`` where the
     medians fall on Giacalone et al.'s scale, the class name as a label only (``crosscheck.class_label_text``);
     ``prior`` and ``comparison`` the prior-claim sentence and its sigma comparison (``pack.prior_claim_sentence``,
-    ``pack.comparison_text``), None without a claim."""
+    ``pack.comparison_text``), None without a claim. Since the round-2 final review (I-2), every number the
+    Research Note prints reaches the page too, in the README's sentences: ``fap`` the false-alarm sentence with its
+    sweep-wide expectation (``zenodo.fap_sentence``); ``dilution`` the photometry statement, the aperture ratio
+    against CROWDSAP with its shortfall and the predicted leak beside the measured dip (``pack.dilution_sentence``);
+    ``trend`` the depth trend with its direction when it is printed (``pack.trend_sentence``); ``shape``,
+    ``parity``, ``secondary`` and ``stability`` the vetting sentences (``pack.vetting_texts``); ``pixels`` the
+    centroid sentence (``pack.pixel_sentence``); ``star`` the Gaia flags and the reddening (``pack.star_texts``);
+    ``cross_check`` the TRICERATOPS sentence with its ranges (``crosscheck.comparison_sentence``); ``tess`` the
+    note's TESS sentence; and ``fold`` the figure's fold (``pack.fold_text``). Each None when it does not apply."""
     from skysift import pack, zenodo  # pack imports this module
 
     lead = cc.headline(data)
     block = data.get("cross_check") or {}
     in_house = zenodo.in_house_text(data)
+    fap = data.get("fap") or {}
     return {"fpp_lead": f"{lead}." if lead else None,
             "fpp_value": cc.probability_text(block["fpp"]) if lead else None,
             "in_house": f"{in_house[:1].upper()}{in_house[1:]}.",
             "class_text": cc.class_label_text(block.get("class")) if cc.complete(block) else None,
-            "prior": pack.prior_claim_sentence(data), "comparison": pack.comparison_text(data)}
+            "prior": pack.prior_claim_sentence(data), "comparison": pack.comparison_text(data),
+            "fap": zenodo.fap_sentence(data) if fap.get("calibrated") else None,
+            "dilution": pack.dilution_sentence(data), "trend": pack.trend_sentence(data),
+            **pack.vetting_texts(data), "pixels": pack.pixel_sentence(data) if _rung(data.get("tests") or [],
+                                                                                   "rung5_pixels") else None,
+            "star": pack.star_texts(data), "cross_check": cc.comparison_sentence(data),
+            "tess": pack.tess_text(data) if (data.get("tess") or {}).get("available") else None,
+            "fold": pack.fold_text(data), "ephemeris": _ephemeris_words(data)}
+
+
+def _ephemeris_words(data: dict) -> str | None:
+    """"Ephemeris: <pack_text.ephemeris_sentence>; the star has G = 16.2." for the page (I-2), the G magnitude to the
+    note's one decimal; None without an ephemeris."""
+    from skysift.pack_text import ephemeris_sentence
+    text = ephemeris_sentence(data)
+    if not text:
+        return None
+    gmag = _num(data.get("target") or {}, "gmag")
+    return f"Ephemeris: {text}" + (f"; the star has G = {gmag:.1f}" if gmag is not None else "") + "."
 
 
 def export_html(data: dict, static_dir: Path = STATIC_DIR, data_dir: Path | None = None) -> str:

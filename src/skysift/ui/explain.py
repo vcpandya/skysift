@@ -14,7 +14,7 @@ from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime
 
 from skysift.config import Thresholds
-from skysift.pack_text import aperture_clause, pm_text
+from skysift.pack_text import aperture_clause, pm_text, reason_words
 from skysift.store.db import ENGINE_STATUSES, REVIEWER_DECIDED_REASON
 
 LADDER_ORDER = ["rung1_detection", "rung1_events", "rung2_shape", "rung3_stability", "rung4_novelty", "rung5_pixels"]
@@ -373,8 +373,8 @@ def _pixels(m: dict) -> tuple[str, str]:
     rows = []
     for s in seasons:
         if not season_votes(s):
-            rows.append(f"{season_name(s)}: not voting "
-                        f"({s.get('non_voting_reason') or 'no reason stored'})")
+            # one clause, no brackets inside brackets (round-2 final review, minor 10)
+            rows.append(f"{season_name(s)}: not voting, {reason_words(s.get('non_voting_reason'))}")
             continue
         d_star, d_nbr, err = (_num(s, k) for k in ("dist_target_pix", "dist_neighbour_pix", "centroid_sigma_pix"))
         sep = _num(s, "separation_sigma")

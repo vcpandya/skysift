@@ -1207,8 +1207,8 @@ def test_a_stamp_wcs_shifted_by_a_fifth_of_a_pixel_moves_only_the_catalogue_offs
 # and the note's short clause
 DEVELOPMENT_NOTE = ("the sweep's target list and the pipeline's tests used this star from 14 October 2026, the day "
                     "after the claim; the search itself used no prior ephemeris")
-DEVELOPMENT_NOTE_SHORT = ("the pipeline used this star as a test case from 14 October 2026, the day after the claim; "
-                          "the search used no prior ephemeris")
+DEVELOPMENT_NOTE_SHORT = ("the pipeline and the sweep's target list used this star as a test case from 14 October 2026, "
+                          "the day after the claim; the search used no prior ephemeris")
 PRIOR_CLAIM = {"doi": "10.5281/zenodo.23325261", "date": "2026-10-13", "author": "Kuber Mehta",
                "title": "Planethunt: archival evidence for the KIC 5689121 transit candidate",
                "status": "Research Note submitted 13 October 2026, reported not accepted",
@@ -1602,3 +1602,45 @@ def test_the_star_caveat_names_the_reddening_and_one_quarter_group_is_not_a_seas
     assert measured.endswith("colour and parallax") and "reddening" not in measured
     one = titles["The depth is measured in one quarter group only"]["text"]
     assert "1 quarter group" in one and "season" not in one
+
+
+def test_the_calibration_counts_the_null_stars_the_sweep_searched_too():
+    """Round-2 final review, minor 6: ``null_stars_in_sweep`` is how many of the null stars (this target left out)
+    the sweep searched with the signal's search; None without a sweep size."""
+    class Store:
+        def __init__(self, targets):
+            self.targets = targets
+
+        def sweep_size(self, source, detector, version):
+            return len(self.targets)
+
+        def sweep_targets(self, source, detector, version):
+            return set(self.targets)
+
+    class Fap:
+        n, fap = 6, 0.01
+
+    rows = [{"target_id": t} for t in ("a", "a", "b", "c", "me")]
+    signal = {"detector": "box_dip", "detector_version": "5"}
+    block = dossier_module.calibration_block(Store({"b", "me", "z"}), signal, "kbonus_bkg", rows, Fap(), "me")
+    assert block["null_stars"] == 3 and block["null_stars_in_sweep"] == 1
+    assert dossier_module.calibration_block(Store(set()), signal, "kbonus_bkg", rows, Fap(),
+                                            "me")["null_stars_in_sweep"] is None
+
+
+def test_the_page_texts_carry_every_sentence_the_note_prints():
+    """Round-2 final review, I-2: the dossier page prints the pack's own sentences for the false-alarm rate, the
+    dilution, the trend, the vetting, the pixels, the star, the cross-check, TESS, the fold and the ephemeris, so
+    README step 3's claim holds (every number of the note is on the page)."""
+    from skysift import pack
+    golden = json.loads((Path(__file__).parents[1] / "golden" / "kic-006146676-generated.json").read_text(
+        encoding="utf-8"))
+    texts = page_texts(golden)
+    for key in ("fap", "dilution", "trend", "shape", "parity", "secondary", "stability", "pixels", "star",
+                "cross_check", "tess", "fold", "ephemeris"):
+        assert key in texts, key
+    assert texts["fap"].startswith("False-alarm probability: 1 in 170.")
+    assert texts["dilution"] == pack.dilution_sentence(golden) and texts["trend"] == pack.trend_sentence(golden)
+    assert texts["fold"].startswith("Folded on the 40.29081 day linear-fit ephemeris, within ")
+    assert texts["ephemeris"].startswith("Ephemeris: ") and texts["ephemeris"].endswith("; the star has G = 16.2.")
+    assert texts["cross_check"] is None                     # the golden's cross-check is not current

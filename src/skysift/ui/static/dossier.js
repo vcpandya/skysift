@@ -458,6 +458,9 @@
     // relationship words have one source, skysift.pack_text.RELATIONSHIP_WORDS
     const PT = D.page_texts || {};
     para(0, [PT.prior, PT.comparison].filter(Boolean).join(" "), "prior-claim");
+    // every number the Research Note prints is on the page too, in the pack's sentences (round-2 final review, I-2)
+    para(0, PT.ephemeris, "pack-words only-expert dossier-small");
+    para(0, PT.fold, "pack-words only-expert dossier-small");
     fig(0, "fold", "The folded light curve: single cadences, their bins and the model.");
     fig(0, "spectrum", "The detection spectrum, with the aliases of the period marked.", true);
     const T = D.timing;
@@ -505,6 +508,10 @@
         ["Strongest secondary:", isNum(SEC.strongest_ppm) ? `${fmt(SEC.strongest_ppm)} ppm at phase ${fmt(SEC.strongest_phase, 2)} (${fmt(SEC.strongest_sigma, 1)} sigma)` : "not searched"],
         ["Geometric albedo limit:", albedo]]);
     }
+    para(1, PT.stability, "pack-words dossier-small");
+    para(1, PT.trend, "pack-words dossier-small");
+    para(1, PT.parity, "pack-words only-expert dossier-small");
+    para(1, PT.secondary, "pack-words only-expert dossier-small");
     para(2, st.headline ? `${st.headline}.` : "", "lede");
     list(2, (D.why || []).map((w) => [`${w.name}: ${w.status}.`, w.sentence]));
     const fap = D.fap || {}, fpp = D.fpp || {};
@@ -512,8 +519,10 @@
     // estimate follows as a lower bound that names the scenarios it lacks (spec 11.2)
     list(2, [[`False alarm: ${fap.words || "not yet calibrated"}.`, fap.sentence_not_covered],
       ...(PT.fpp_lead ? [["False-positive probability:", PT.fpp_lead]] : []),
-      [`${fpp.label || "False positive"}, in-house: ${fpp.words || "not computed"}${fpp.signed_off ? "" : " (provisional)"}.`,
+      // ", in-house" only beside a TRICERATOPS lead (the Task 11 re-review), as the served page labels it
+      [`${fpp.label || "False positive"}${PT.fpp_lead ? ", in-house" : ""}: ${fpp.words || "not computed"}${fpp.signed_off ? "" : " (provisional)"}.`,
         [PT.in_house, fpp.sentence_not_covered].filter(Boolean).join(" ")]]);
+    para(2, PT.fap, "pack-words dossier-small");
     // the cross-check, as the dashboard's section 03 draws it
     const CC = D.cross_check;
     const g3 = (x) => (isNum(x) ? String(Number(x.toPrecision(3))) : "–");
@@ -525,6 +534,7 @@
       para(2, `An estimate with TRICERATOPS ${CC.tool_version} (Giacalone et al. 2021) over ${CC.n_runs} runs${CC.n_degenerate ? `, ${CC.n_degenerate} degenerate and left out` : ""}: median false-positive probability ${spread("fpp")}, ${spread("fpp_no_stp")} without a planet transiting an unresolved bound companion (STP), which SkySift's model leaves out, and nearby false-positive probability ${spread("nfpp")}. ${PT.class_text ? `${PT.class_text} ` : ""}The cross-check never blocks the live draft. ${CC.current
         ? "It was made for this dossier's period, depth and neighbours."
         : "It was made for an earlier dossier (the period, the depth or the neighbours have changed since), so it does not count until it is run again."}`);
+      para(2, PT.cross_check, "pack-words only-expert dossier-small");
       if ((CC.caveats || []).length) {
         const ul = h("ul", "dossier-small");
         CC.caveats.forEach((c) => ul.appendChild(h("li", null, c)));
@@ -540,6 +550,7 @@
     sec(2).appendChild(h("h3", null, "TESS"));
     if (TS && TS.available) {
       para(2, TS.sentence || "");
+      para(2, PT.tess, "pack-words only-expert dossier-small");
       if (TS.methods) para(2, TS.methods, "dossier-small");
       const assessed = TS.verdict !== "not assessed";       // no counted sector: no table and no S/N line
       const dil = TS.dilution || {}, noise = TS.noise || {}, sg = TS.significance || {};
@@ -564,6 +575,7 @@
       sec(2).appendChild(h("h3", "only-expert", "Shape with errors"));
       const method = SH.method ? `${SH.method[0].toUpperCase()}${SH.method.slice(1)}` : "Bootstrap over transits";
       para(2, `${method}: ${fmt(SH.n_converged)} of ${fmt(SH.n_boot)} resamples converged. ${SHAPE_WORDS}${SH.ok ? "" : ` No bootstrap errors: ${SH.reason}.`}`, "only-expert");
+      para(2, PT.shape, "pack-words only-expert");
       if (SH.degenerate) para(2, `The fit is degenerate (${SH.degeneracy_reason}).`, "only-expert dossier-caveat");
       const row = (name, x, d) => (x && isNum(x.median) ? [`${name}:`, `${fmt(x.median, d)}${pmErr(x, d)}${isNum(x.point) && isNum(x.minus) ? `, full-data fit ${fmt(x.point, d)}` : ""}`] : null);
       const rows = [row("k, radius ratio", SH.k, 4), row("b, impact parameter", SH.b, 2), row(`a / R★${AR_FIT[(SH.comparison || {}).quoted] || ""}`, SH.a_over_r, 1),
@@ -605,6 +617,8 @@
           : `${lead}. Against ${OFF.reference || "the fitted position of the star"} (the star's direct-image centroid is not stored for every season) the difference-image centroid is offset by ${off}, not assessed from the star's own image. ${same}`)
         : `${lead}.`, "pixel-offset");
     }
+    para(3, PT.dilution, "pack-words dossier-small");
+    para(3, PT.pixels, "pack-words only-expert dossier-small");
     const close = (D.caveats || []).find((c) => c && c.key === "close_call");
     if (close) para(3, close.text, "dossier-caveat");
     const S = D.star || {}, PL = D.planet || {};
@@ -612,6 +626,7 @@
     list(4, [["Spectral type", S.spectral_type || "not known"], ["Distance", v(S.distance_pc, 0, "pc")], ["Temperature", v(S.teff, 0, "K")],
       ["Radius", v(S.radius, 3, "solar radii")], ["Mass", v(S.mass, 3, "solar masses")], ["Planet radius", v(PL.rp_rearth, 2, "Earth radii")],
       ["Orbit", v(PL.a_au, 3, "AU")], ["Equilibrium temperature", v(PL.teq_k, 0, "K")]]);
+    para(4, PT.star, "pack-words dossier-small");
     if (L) {
       [["look-star", "The star beside the Sun, to scale. The colour follows the surface temperature."],
         ["look-planet", "The planet beside Earth and Neptune, to scale. Its size is measured; its surface is a guess."],

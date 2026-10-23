@@ -16,6 +16,15 @@ class Raw(str):
     """Text that is already LaTeX: the note's template prints it as it is."""
 
 
+def reason_words(reason) -> str:
+    """A stored reason as one clause without brackets inside brackets (round-2 final review, minor 10): "box cut:
+    ambiguous (1.8 sigma)" reads "box cut, ambiguous at 1.8 sigma"; "no reason stored" when there is none."""
+    if not reason:
+        return "no reason stored"
+    text = re.sub(r"\s*\((-?[\d.]+ sigma)\)", r" at \1", str(reason))
+    return text.replace(": ", ", ")
+
+
 def _num(x) -> float | None:
     if isinstance(x, bool) or x is None:
         return None

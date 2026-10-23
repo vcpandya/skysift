@@ -542,3 +542,6 @@ def test_sweep_size_counts_the_done_sweep_runs_of_one_source_and_search(tmp_path
         s.finish_run(s.start_run(job, tid, "box_dip", version, "1"), status)
     assert s.sweep_size("kbonus_bkg", "box_dip", "5") == 3            # a, b and c; not d, e, f or g
     assert s.sweep_size("kbonus_bkg", "box_dip", "9") == 0
+    # round-2 final review, minor 6: the same targets by id, so the dossier can count the null stars in the sweep
+    assert s.sweep_targets("kbonus_bkg", "box_dip", "5") == {"a", "b", "c"}
+    assert s.sweep_targets("kbonus_bkg", "box_dip", "9") == set()

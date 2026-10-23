@@ -24,6 +24,19 @@ EXOFOP_STELLAR_COLUMNS = ("target", "tel", "telsize", "inst", "sp_type", "teff",
                           "dist_unc", "age", "age_unc", "snr", "fit", "tag", "group", "prop_period", "notes")
 EXOFOP_DISCOVERY = "SkySift (Kepler)"      # a blank discovery means TESS, so a Kepler candidate names its project
 EXOFOP_NOTES_MAX = 120
+
+
+def discovery(data: dict) -> str:
+    """The planet file's ``discovery``: with a prior claim the first finder, "Mehta (2026), Zenodo" (round-2 final
+    review, minor 8: the file must not credit SkySift with a signal another work reported first), else
+    ``EXOFOP_DISCOVERY``."""
+    claims = prior_claims(data)
+    if not claims:
+        return EXOFOP_DISCOVERY
+    first = claims[0]
+    family = str(first.get("author") or "").split()[-1:] or ["Unknown"]
+    year = str(first.get("date") or "")[:4]
+    return f"{family[0]} ({year}), Zenodo" if year else f"{family[0]}, Zenodo"
 TIC_PLACEHOLDER = "<TIC-TO-FILL>"
 
 
@@ -109,7 +122,7 @@ def render_exofop_planet(data: dict, date: str, tic: str | None, tag: str) -> st
     depth = _plain(eph.get("depth_ppm"), e["depth"], e["depth"], 0)
     duration = _plain(eph.get("duration_h"), e["duration_minus"], e["duration_plus"], 2)
     values = {"target": f"TIC{tic or TIC_PLACEHOLDER}.01", "flag": "newctoi", "disp": "PC",
-              "discovery": EXOFOP_DISCOVERY, "candname": _candname(data),
+              "discovery": discovery(data), "candname": _candname(data),
               "period": period[0], "period_unc": period[1], "epoch": epoch[0], "epoch_unc": epoch[1],
               "depth": depth[0], "depth_unc": depth[1], "duration": duration[0], "duration_unc": duration[1],
               "tag": tag, "prop_period": 0, "paper": "<PAPER-URL-TO-FILL>", "notes": "<NOTES-TO-FILL>",

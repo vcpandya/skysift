@@ -791,7 +791,7 @@ def test_dossier_page_shows_the_cross_check_block(seeded_dossier):
         assert "nearby false-positive probability" in checks and "0.0001 to 0.0001" in checks
         # I-1 (spec 11.2): the class name is a label of where the medians fall, never a reading of the signal
         plain = html_module.unescape(checks)
-        assert "read as" not in plain and cc.CLASS_LABEL.format(cls="likely planet") in plain     # Task 13 wording
+        assert "read as" not in plain and cc.CLASS_LABEL in plain         # final review minor 7
         assert "never blocks the live draft" in plain
         # the false-positive items lead with the TRICERATOPS headline; the in-house lower bound follows
         lead = f"{cc.headline({**data, 'cross_check': cc.with_current(result, data)})}."
@@ -906,7 +906,7 @@ def test_the_validated_class_is_not_named_and_withdrawn_in_one_breath(seeded_dos
     app.state.store.set_cross_check(STAGE2_TARGET, fake_result(cc.inputs_fingerprint(data), fpp=0.012, nfpp=1e-4))
     page = html_module.unescape(client.get(f"/dossiers/{STAGE2_TARGET}").text)
     checks = page.split('id="checks"')[1].split('id="pixels"')[0]
-    label = cc.CLASS_LABEL.format(cls="validated")      # the Task 13 wording: a place on the scale, not a class
+    label = cc.CLASS_LABEL          # round-2 final review, minor 7: only that no class applies
     assert label in checks
     lead = ("TRICERATOPS 1.1.0 gives a false-positive probability of 0.012 (0.012 without a planet on an unresolved "
             f"bound companion), {cc.NO_CLASS_CLAUSE} (Giacalone et al. 2021).")
@@ -922,7 +922,7 @@ def test_the_validated_class_is_not_named_and_withdrawn_in_one_breath(seeded_dos
     assert texts["fpp_lead"] == lead and texts["class_text"] == label and "a lower bound" in texts["in_house"]
     script = export.split('</script>\n<script>')[1]
     assert '["False-positive probability:", PT.fpp_lead]' in script and "PT.class_text" in script
-    assert script.index("PT.fpp_lead") < script.index(", in-house: ")
+    assert script.index("PT.fpp_lead") < script.index("PT.fpp_lead ? \", in-house\" : \"\"")   # only beside a lead
     for bad in ("validation lines", "read as", "likely planet", "${CC.class}"):
         assert bad not in script, bad
 
@@ -1043,3 +1043,49 @@ def test_the_probabilities_intro_has_a_lead_in_without_a_cross_check(seeded_doss
     page = html_module.unescape(client.get(f"/dossiers/{STAGE2_TARGET}").text)
     intro = page.split('class="prob-intro">')[1].split("</p>")[0]
     assert intro == "Two probabilities, the false alarm and the false positive. They are shown apart and never combined."
+
+
+_NUMBER = r"\d[\d,]*(?:\.\d+)?"
+
+
+def _numbers(text: str) -> set[str]:
+    """Every number in ``text``, thousands commas kept, a trailing comma or full stop dropped."""
+    import re
+    return {m.rstrip(",.") for m in re.findall(_NUMBER, text)}
+
+
+def _note_prose(tex: str) -> str:
+    """The Research Note's sentences from the abstract to the figure caption: the citation keys, the LaTeX commands
+    and the data-availability, software and bibliography blocks left out, so what is left is what a reader reads."""
+    import re
+    body = tex.split(r"\begin{abstract}")[1].split(r"\section{Data availability}")[0]
+    body = re.sub(r"\\keywords\{.*", " ", body)              # the UAT concept ids are not the note's numbers
+    body = re.sub(r"\\cite[pt]?(\[[^\]]*\]){0,2}\{[^}]*\}", " ", body)
+    body = re.sub(r"\\includegraphics(\[[^\]]*\])?\{[^}]*\}", " ", body)
+    body = body.replace("{,}", ",").replace(r"\pm", " ± ")
+    return re.sub(r"\\[a-zA-Z]+\*?", " ", body)
+
+
+def test_every_number_the_note_prints_is_on_the_dossier_page(seeded_dossier):
+    """Round-2 final review, I-2: README step 3 says the note says nothing the dossier page does not. On the golden
+    as a live draft has it (a current cross-check, a prior claim), every number in the note's prose is in the served
+    page's text."""
+    import re
+    from pathlib import Path
+
+    from skysift import crosscheck as cc
+    from skysift import pack
+    from tests.unit.test_crosscheck import fake_result
+    from tests.unit.test_dossier import PRIOR_CLAIM
+    client, app, _ids, _data = seeded_dossier
+    golden = json.loads((Path(__file__).parents[1] / "golden" / "kic-006146676-generated.json").read_text(
+        encoding="utf-8"))
+    golden["prior_claims"] = [{k: PRIOR_CLAIM[k] for k in ds.PRIOR_CLAIM_PUBLIC}]
+    Path(app.state.store.dossier(STAGE2_TARGET)["data_path"]).write_text(json.dumps(golden), encoding="utf-8")
+    app.state.store.set_cross_check(STAGE2_TARGET, fake_result(cc.inputs_fingerprint(golden), fpp=0.012, nfpp=1e-4))
+    stored = {**golden, "cross_check": cc.with_current(app.state.store.dossier(STAGE2_TARGET)["cross_check"], golden)}
+    page = html_module.unescape(client.get(f"/dossiers/{STAGE2_TARGET}").text)
+    text = re.sub(r"<[^>]+>", " ", page.split("<body")[1])
+    note = _note_prose(pack.render_note(stored))
+    missing = sorted(_numbers(note) - _numbers(text))
+    assert missing == [], missing

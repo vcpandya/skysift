@@ -145,6 +145,26 @@ IN_HOUSE_NO_NEIGHBOURS = ("the four-scenario estimate is not computed, since the
 PROVISIONAL = ", provisional until its factor tables are reviewed"
 
 
+def expected_peaks(x: float) -> str:
+    """How many peaks the sweep should hold by chance, as a noun phrase: "about 31 such peaks", "about one such
+    peak", "fewer than one such peak" below 0.5 (half up, as ``_expected``)."""
+    return _expected(x).removesuffix(" are").removesuffix(" is")
+
+
+def fap_rate_clause(data: dict) -> str:
+    """The abstract's false-alarm clause (round-2 final review, I-1): "null searches give a false-alarm rate of 1 in
+    170 per star, about 9 such peaks expected across the 1,579-star sweep", the sweep clause only with a stored
+    sweep size; "the false-alarm probability is not computed" without a calibrated FAP."""
+    fap, calib = data.get("fap") or {}, data.get("calibration") or {}
+    if not (fap.get("calibrated") and fap.get("n") is not None and fap.get("words")):
+        return "the false-alarm probability is not computed"
+    text = f"null searches give a false-alarm rate of {fap['words']} per star"
+    size, value = calib.get("sweep_size"), fap.get("fap")
+    if isinstance(size, int) and size > 0 and isinstance(value, (int, float)) and math.isfinite(value):
+        text += f", {expected_peaks(size * value)} expected across the {size:,}-star sweep"
+    return text
+
+
 def _expected(x: float) -> str:
     """How many peaks the sweep should hold by chance, as ``FAP_SWEEP`` prints it: "about 31 such peaks are",
     "about one such peak is", "fewer than one such peak is" below 0.5."""
@@ -214,7 +234,8 @@ def probability_sentences(data: dict, short: bool = False) -> tuple[str, str]:
 
 def metadata_from(data: dict, citation: dict | None, prior: str | None = None) -> dict:
     """The deposition metadata from a dossier's JSON and the parsed ``CITATION.cff`` (None when there is none):
-    a dataset titled "SkySift candidate <name>: ...", creators from the citation's authors, the summary, the prior
+    a dataset titled "SkySift candidate <name>: ..." (with a prior claim the note's title, "SkySift vetting of the
+    <P> day transit candidate on <name>"), creators from the citation's authors, the summary, the prior
     claim when there is one (``prior``: the README's sentence, ``pack.prior_claim_sentence``, with the claim's DOI and
     date), the ephemeris with its errors (``pack_text.ephemeris_sentence``, the sentence the ExoFOP note and the archive
     email quote), both probabilities and the caveats as the description, keywords, open access under CC BY 4.0, and
@@ -224,12 +245,19 @@ def metadata_from(data: dict, citation: dict | None, prior: str | None = None) -
     period = eph.get("period_days")
     what = f"a {period:.3f} d transit signal" if period else "a transit signal"
     what += " in Kepler photometry"
+    # with a prior claim the record is SkySift's vetting of another work's candidate, titled as the note is (spec
+    # 11.1; round-2 final review, I-3), and the description says vetted, not found
+    title = f"SkySift candidate {name}: {what}"
+    if prior:
+        title = (f"SkySift vetting of the {period:.3f} day transit candidate on {name}" if period
+                 else f"SkySift vetting of the transit candidate on {name}")
     creators = [c for a in (citation or {}).get("authors") or [] if isinstance(a, dict) and (c := _creator(a))]
     fap_text, fpp_text = probability_sentences(data)
     ephemeris = ephemeris_sentence(data)
+    how = "vetted" if prior else "found"
     paragraphs = [data.get("summary") or "", f"Prior claim: {prior}" if prior else "",
                   f"Ephemeris: {ephemeris}." if ephemeris else "", f"{fap_text} {fpp_text}",
-                  ("This record is the submission pack of a transit candidate found by the SkySift engine in the "
+                  (f"This record is the submission pack of a transit candidate {how} by the SkySift engine in the "
                    "KBonus Kepler Background light curves: the detrended light curve, the ephemeris and parameters "
                    "with their errors, the per-event depths, the vetting metrics, the figures, the standalone "
                    "dossier, a Research Note draft and the provenance of every query.")]
@@ -239,7 +267,7 @@ def metadata_from(data: dict, citation: dict | None, prior: str | None = None) -
     description = "".join(f"<p>{_html(p)}</p>" for p in paragraphs if p)
     return {
         "upload_type": "dataset",
-        "title": f"SkySift candidate {name}: {what}",
+        "title": title,
         "creators": creators or [{"name": PLACEHOLDER_CREATOR}],
         "description": description,
         "keywords": [*KEYWORDS, str(name)],

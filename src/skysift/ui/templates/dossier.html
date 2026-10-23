@@ -28,6 +28,13 @@
   {%- endif %}
 </header>
 {%- endmacro %}
+{#- the pack's own sentences (dossier.page_texts), so every number the Research Note prints is on the page too
+    (round-2 final review, I-2; README step 3) #}
+{% macro pack_words(texts, keys, cls="dossier-small") -%}
+{%- for k in keys %}{% if texts and texts.get(k) %}
+<p class="pack-words {{ cls }}" data-text="{{ k }}">{{ texts.get(k) }}</p>
+{%- endif %}{% endfor %}
+{%- endmacro %}
 {% block title %}SkySift · {{ page_title }}{% endblock %}
 {% block head %}<link rel="stylesheet" href="/static/dossier.css?v={{ git_commit }}">{% endblock %}
 {% block content %}
@@ -107,6 +114,7 @@
   {%- if prior_text %}
   <p class="prior-claim">{{ prior_text }}</p>
   {%- endif %}
+  {{ pack_words(texts, ["ephemeris", "fold"], "only-expert dossier-small") }}
   <figure class="dossier-fig">
     <figcaption>The folded light curve: single cadences, their bins with errors, and the {{ "fitted transit" if plots.model_kind == "fit" else "box the search found" }}.
       <span class="legend"><i class="sw sw-muted"></i>cadences <i class="sw sw-ion"></i>bins <i class="sw sw-solar"></i>model</span></figcaption>
@@ -218,12 +226,15 @@
     </table></div>
     {%- endif %}
   </div>
+  {{ pack_words(texts, ["stability", "trend"]) }}
+  {{ pack_words(texts, ["parity", "secondary"], "only-expert dossier-small") }}
 </section>
 
 <section id="checks" class="dossier-section" aria-labelledby="checks-title">
   {{ section_head("03", "checks", "The checks", (status.headline or "") ~ ". Most repeating dips are not planets: they are eclipsing binaries, blended neighbours or instrument effects. Each check below looks for one of them.") }}
   {% with rows = why_rows, show_numbers = True, recheck_history = [] %}{% include "partials/why.html" %}{% endwith %}
   {% with link = False, block_id = "probabilities", heading_id = "probabilities-page", fpp_lead = texts.fpp_lead, fpp_in_house = texts.in_house %}{% include "partials/probabilities.html" %}{% endwith %}
+  {{ pack_words(texts, ["fap"]) }}
   {%- set cc = data.cross_check %}
   <div class="dossier-crosscheck">
     <h3>Cross-check</h3>
@@ -231,6 +242,7 @@
     {%- macro spread(block, m) %}<span class="mono">{{ g3(block[m]) }}</span> (16th to 84th percentile <span class="mono">{{ g3(block[m ~ "_p16"]) }} to {{ g3(block[m ~ "_p84"]) }}</span>){% endmacro %}
     {%- if cc and cc.runs is defined %}
     <p>An estimate with TRICERATOPS {{ cc.tool_version }} (Giacalone et al. 2021) over {{ cc.n_runs }} runs{% if cc.n_degenerate %}, {{ cc.n_degenerate }} degenerate and left out{% endif %}: median false-positive probability {{ spread(cc, "fpp") }}, {{ spread(cc, "fpp_no_stp") }} without a planet transiting an unresolved bound companion (STP), which SkySift's model leaves out, and nearby false-positive probability {{ spread(cc, "nfpp") }}. {% if texts.class_text %}{{ texts.class_text }} {% endif %}The cross-check never blocks the live draft. {% if cc.current %}It was made for this dossier's period, depth and neighbours.{% else %}It was made for an earlier dossier (the period, the depth or the neighbours have changed since), so it does not count until it is run again.{% endif %}</p>
+    {{ pack_words(texts, ["cross_check"], "only-expert dossier-small") }}
     {%- if cc.caveats %}
     <ul class="dossier-small">{% for c in cc.caveats %}<li>{{ c }}</li>{% endfor %}</ul>
     {%- endif %}
@@ -246,6 +258,7 @@
     {%- if ts and ts.available %}
     {%- set dil, noise, sig = ts.dilution, ts.noise, ts.significance %}
     <p>{{ ts.sentence }}</p>
+    {{ pack_words(texts, ["tess"], "only-expert dossier-small") }}
     {%- if ts.methods %}
     <p class="dossier-small">{{ ts.methods }}</p>
     {%- endif %}
@@ -295,6 +308,7 @@
     {%- set sh = data.shape %}
     {%- if sh %}
     <h3>Shape with errors</h3>
+    {{ pack_words(texts, ["shape"], "") }}
     <p>{{ sh.method[:1] | upper }}{{ sh.method[1:] }}: {{ sh.n_converged | fmt }} of {{ sh.n_boot | fmt }} resamples converged. For the fitted rows (k, b, a/R*, T14 and the model depth) the value is the median of the resamples, minus and plus the 16th to 50th and 50th to 84th percentile spread about it, and the full-data fit stands beside it. The box depth carries the per-event scaled error, and the box duration's value is the median of the resamples.{% if not sh.ok %} No bootstrap errors: {{ sh.reason }}.{% endif %}</p>
     {%- if sh.degenerate %}
     <p class="dossier-caveat">The fit is degenerate ({{ sh.degeneracy_reason }}).</p>
@@ -346,6 +360,8 @@
   {%- if offset_text %}
   <p class="pixel-offset">{{ offset_text }}</p>
   {%- endif %}
+  {{ pack_words(texts, ["dilution"]) }}
+  {{ pack_words(texts, ["pixels"], "only-expert dossier-small") }}
   {%- if close_call %}
   <p class="dossier-caveat" role="note">{{ close_call }}</p>
   {%- endif %}
@@ -357,6 +373,7 @@
 <section id="star" class="dossier-section" aria-labelledby="star-title">
   {{ section_head("05", "star", "The star and the planet", ("Gaia's colour and parallax make the host " ~ (("a " ~ star.spectral_type ~ " star") if star.spectral_type else "a star of unknown type") ~ ". The transit gives the planet's size relative to the star; its size in Earth radii, its orbit and its temperature follow from the star and carry its errors.") if star.route != "none" else "The star could not be characterised from Gaia photometry, so the planet's size, orbit and temperature are not given.") }}
   {{ notice_list(notices.get("star", [])) }}
+  {{ pack_words(texts, ["star"]) }}
   <div class="dossier-pair">
     <dl class="dossier-kv">
       <div><dt>Spectral type</dt><dd>{{ star.spectral_type or "not known" }}</dd></div>
