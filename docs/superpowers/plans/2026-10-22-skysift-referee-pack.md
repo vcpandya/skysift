@@ -37,6 +37,11 @@
 8. **A target with no kept neighbour pixel file, or a rung 5 row without the PSF width** (files released by retention, a row from before the two-source fit): the predicted leak carries its reason, the texts print the measured dip alone, and nothing is fetched. Pinned by Task 12 `test_the_predicted_leak_is_the_targets_share_of_the_neighbours_aperture_times_the_depth`.
 9. **A sweep count of 0** (a store holding only recheck runs, or a signal of another search version): `calibration.sweep_size` is None and the false-alarm sentence drops the S clause for the ladder clause alone. Pinned by Task 11 `test_sweep_size_counts_the_done_sweep_runs_of_one_source_and_search` and `test_the_false_alarm_sentence_names_the_nulls_and_the_sweep`.
 10. **An SES cut that leaves fewer than three timed transits** (a shallow or long-period signal): the timing is not ok, every fold, rung 3 and the bootstrap stay on the search ephemeris, the texts say "search", and the live gate refuses as in item 1. Pinned by Task 10 `test_without_enough_ses_the_fold_stays_on_the_search_ephemeris`.
+11. **A star with no voting season, or a voting season without a PSF width** (KIC 10352243 has none; KIC 9243078's season 1 votes with no `psf_sigma_pix`): the export's `rung5_psf_sigma.sigma_pix` is None with its reason, the tool refuses the export with exit 2 and no flag overrides it, and `pixel_excluded` excludes nothing with the reason "rung 5 has no voting season". A season without a width is left out of the mean, not read as zero. Pinned by Task 14 `test_rung5_psf_sigma_is_the_mean_over_voting_seasons` and `test_tool_refuses_an_export_without_rung_5s_psf_width`, and Task 15 `test_a_season_without_a_vote_keeps_every_neighbour_and_no_voting_season_excludes_nothing`.
+12. **A neighbour with a missing vote** (a voting season without `dist_target_pix`, `centroid_sigma_axis_pix` or, for rung 5's own neighbour, `separation_sigma`): the neighbour is not excluded, its row says which season lacks what, and the third variant keeps it. A neighbour within 1 arcsec of the stamp separation that is not the nearest match (KIC 6146676's 10.94 arcsec star beside the 11.45 arcsec KIC 6146666) takes the geometric bound, never rung 5's vote. Pinned by Task 15 `test_pixel_excluded_takes_rung_5s_vote_for_its_neighbour_and_the_bound_for_the_others` and `test_a_season_without_a_vote_keeps_every_neighbour_and_no_voting_season_excludes_nothing`.
+13. **A dust-map query that gives NaN, or a distance beyond the map** (a sightline outside the Pan-STARRS footprint, a pixel whose samples are all NaN, a star beyond the map's reliable distance): NaN is never stored; the tool exits 2 with the `--store` instruction. Beyond the last distance bin the map's last value is carried, as `dustmaps` does, and the stored block says `reliable_distance: false`, which the texts print as a clause. Pinned by Task 16 `test_the_reddening_at_a_distance_follows_dustmaps` and `test_a_nan_sightline_stops_the_tool_with_the_store_instruction`.
+14. **A result file without the third variant** (every result of round 2, and any made by a tool before Task 15): the import refuses it ("the result is schema 2 (no schema key), not 3", or "the result file lacks variant_excluded"); a stored block of that format is not `complete`, so the page says it was stored by an earlier version and the live gate refuses. Pinned by Task 14 `test_the_import_refuses_a_result_before_schema_3` and Task 15 `test_the_import_requires_the_pixel_excluded_variant`.
+15. **A star the dossier would characterise but without a stored extinction** (a new target, or `docs/candidates/<target>/extinction.json` deleted): `dossier.generate` raises `stars.NoExtinction` naming the tool command, and `skysift dossier` exits 2; a star Gaia cannot characterise (route "none") needs none. Pinned by Task 16 `test_generate_refuses_a_characterised_star_without_a_stored_extinction` and `test_a_star_gaia_cannot_characterise_needs_no_extinction`.
 
 ---
 
@@ -57,6 +62,8 @@
 | `src/skysift/dossier.py`, `ephemeris.py`, `store/db.py`, `stars.py`, `fpp.py`, `lc/pixels.py` (round 2) | Tasks 10 to 13: `DOSSIER_VERSION = "5"`, the free and prior fits, the folds on the linear ephemeris, the SES cut, `stability`, `calibration`, `aperture`, `predicted_leak`, `depth_trend`, the exclusion radius in the BEB term (`FPP_MODEL_VERSION = "3"`), RUWE and NSS. |
 | `src/skysift/pack.py`, `pack_rows.py`, `pack_text.py`, `exofop.py`, `crosscheck.py`, `zenodo.py`, `tess.py`, `cli.py`, `templates/pack/*.j2` (round 2) | Tasks 11 to 13: `PACK_VERSION = "4"`, the vetting texts and the prior-claim comparison, the FPP headline, the sweep-wide false-alarm sentence, the gates, `docs/author.json` and `--final`. |
 | `tests/golden/regenerate.py` (new, round 2) | Task 10: rewrites the golden from a copy of the live store. No test imports it, since it reaches Gaia. |
+| `tools/triceratops_check.py`, `src/skysift/crosscheck.py`, `tools/leakage_note.py` (new) (round 3) | Tasks 14 and 15: the Kepler-pixel overlap shares under the budget cap, `rung5_psf_sigma`, `pixel_excluded`, the second run set with `remove_star`, export and result schema 3, the four numbers in every text. |
+| `src/skysift/stars.py`, `tools/extinction.py` (new), `docs/candidates/<target>/extinction.json` (new) (round 3) | Task 16: the Bayestar19 E(B-V) read from the map file under `.venv-triceratops`, stored per target, converted with the Gaia (E)DR3 law and propagated through the draws; `DOSSIER_VERSION = "6"` and `PACK_VERSION = "5"` from Task 15. |
 
 ---
 
@@ -1969,3 +1976,1242 @@ The live run of spec 11.7 follows these four tasks under Task 7's protocol:
 - repeat the four TRICERATOPS runs with the round-2 protocol, since the depth moves the fingerprint, and re-import them;
 - rebuild both packs;
 - run the full gate on the tip.
+
+---
+
+## Round 3 (spec section 12, after reading results-r2)
+
+Tasks 14 to 16 carry out spec section 12 (`docs/superpowers/specs/2026-10-22-skysift-referee-pack-design.md`, 12.1 to 12.4). They run in order: Task 15 reads Task 14's export keys and result schema, and Task 16 adds its block under the dossier version Task 15 sets. The golden is never edited by hand: Tasks 15 and 16 regenerate it with Task 10's helper (`tests/golden/regenerate.py`).
+
+**Run commands of round 3** are those of round 2: every command sets `PYTHONPATH=src`, and each task ends with its ruled test command on the files it touched and ruff:
+
+```
+PYTHONUTF8=1 PYTHONPATH=src C:\Research\skysift\.venv\Scripts\python.exe -m pytest <the task's test files> -q -p no:cacheprovider
+PYTHONUTF8=1 PYTHONPATH=src C:\Research\skysift\.venv\Scripts\python.exe -m ruff check src tests tools
+```
+
+`tools/extinction.py` alone runs under the other interpreter, `C:\Research\skysift\.venv-triceratops\Scripts\python.exe -I`, because it reads the dust map with `h5py`, which `.venv-triceratops` holds (h5py 3.16.0, astropy 7.2.3, numpy 1.26.4) and `.venv` does not. Its pure helpers need numpy and astropy only, so the engine's tests import them.
+
+**What the controller measured (23 October 2026), and what it means for Task 14.** In `results-r2/kic-006146676.json` every TIC star carries `box_factor` 1.0, and the G 12.8 star at 11.69 arcsec (TIC 169822655, Gaia DR3 2073896190925687296, the stamp's own KIC 6146666) took 0.1615 of the 0.16753 budget. Rung 5's PSF width over the four voting seasons of the live dossier is 0.58222301, 0.55311152, 0.54572735 and 0.59730051 px, so `sigma_5` = 0.5695906 px. Under the rule of spec 12.1 that star's overlap at 2.94 Kepler pixels is 0.005864, but its Kepler-band flux is 23.555 times the target's, so its share is 0.1381: 15 percent below the round-2 value, not "effectively zero" as 12.1 expects. The seven listed neighbours sum to 0.15488, under the budget, so the cap does not bind. Task 14 implements the rule as ruled and writes these numbers into the comparison note; the note says plainly that the rule leaves the G 12.8 star with most of its share, and the live runs wait for the controller's reading of it (Task 14 Step 8).
+
+**The extinction path (Task 16), and why.** Two paths were offered: the `dustmaps` package with the Bayestar19 file, and the Argonaut web API, one request per star through `net.fetch`. Neither works as offered on this machine, checked on 23 October 2026:
+- `argonaut.skymaps.info` refused TCP on ports 80 and 443 (curl: "Could not connect to server" after 21 s), and its API takes a JSON POST, which `net.fetch` (GET only) cannot send.
+- `dustmaps` 1.0.14 requires `healpy`, and healpy 1.20.1 publishes wheels for macOS and Linux only (PyPI file list), so `uv pip install dustmaps` on Windows would try to build healpy from source; `dustmaps.bayestar` imports healpy at module level.
+
+The plan takes a third path that installs nothing: download `bayestar2019.h5` once from Harvard Dataverse (doi:10.7910/DVN/2EJ9TX, file id 3424724, 727,902,836 bytes, MD5 ab815d2fd3068d1b81a1bd61fb18a722; the dataset's other file, `bayestar2019.fits.gz`, is the 543 MB one) and read it in `tools/extinction.py` with h5py, which `.venv-triceratops` already holds. The tool does the two things `dustmaps` does: the nested HEALPix pixel of the sightline (`ang2pix_nest`, about 30 lines of numpy, checked against the 12 base-pixel centres and the nesting rule) and the distance interpolation of `BayestarQuery.query` (copied rule by rule from `dustmaps/bayestar.py`). It is lighter than the alternatives in every way that matters here: no package install into either venv, no build toolchain, no external service in the run, and five stars read in seconds from a file whose checksum is recorded. The download needs Vikram's yes first (Task 16 Step 7).
+
+**Word budget.** Task 15 adds the variant's two medians and the dominant-scenario sentence to the note, and Task 16 one reddening clause. Each task ends with the live-shape limit test (`-k live_shape -vv`) and records the four counts in its commit message; Task 16 Step 13 gives the cut order if a count passes 1,480.
+
+---
+
+### Task 14: Leakage shares from the Kepler-pixel overlap, the budget as a cap, export and result schema 3 (spec 12.1)
+
+**Files:**
+- Modify: `tools/triceratops_check.py`.
+  - Lines 36 to 49: the docstring's "Flux shares" paragraph (the rule of spec 12.1 replaces ruling n's quota).
+  - Lines 105 to 123: constants. `PIXEL_ARCSEC` and `PSF_SIGMA_PIX` stay (they define `share_before`); add `EXPORT_SCHEMA`, `RESULT_SCHEMA`, `KEPLER_PIX_ARCSEC`, `OVERLAP`.
+  - Lines 124 to 145: `CAVEATS` gains `PRF_CAVEAT`.
+  - Lines 280 to 351: `offset_box_factor` (numbers unchanged), new `_box_fraction`, `overlap`, `budget_shares`; `leakage_shares` rewritten.
+  - Lines 354 to 364: `leakage_caveat`.
+  - Lines 397 to 417: `export_problems` (schema and `rung5_psf_sigma`).
+  - Lines 549 to 571: `star_rows` (`overlap`, `weight`, `share_before`).
+  - Lines 574 to 594: `assemble_result` (`schema`).
+  - Lines 660 to 675: `checkpoint_key` (the PSF width in `flux_shares`).
+  - Lines 804 to 812 and 839 to 892 of `main`: the refusal without a PSF width, the separations and the width passed to `leakage_shares`.
+- Modify: `src/skysift/crosscheck.py`.
+  - Lines 32 to 46: `EXPORT_SCHEMA`, `RESULT_SCHEMA`, `PSF_SIGMA_SOURCE`; `RESULT_KEYS` gains `"schema"`.
+  - After `_leak` (lines 268 to 277): new `rung5_psf_sigma`.
+  - Lines 404 to 417: `inputs.json` gains `"schema"` and `"rung5_psf_sigma"`.
+  - Lines 471 to 524: `validate_result` checks the schema first.
+- Create: `tools/leakage_note.py` (writes the comparison note; imports `tools.triceratops_check` helpers and runs under `.venv`).
+- Create: `docs/superpowers/notes/2026-10-23-leakage-shares.md` (written by Step 7, never by hand).
+- Test: `tests/unit/test_crosscheck.py`.
+  - Lines 80 to 92: `fake_result` gains `"schema": 3`.
+  - Lines 559 to 610: the two round-2 leakage tests keep their numbers on `share_before` through `tc.budget_shares` and call `leakage_shares` with the new arguments.
+  - Lines 788 to 805: the added-star test keeps `offset_box_factor` and checks `share_before`.
+  - Lines 824 to 851: the old-export test's message list gains the two schema problems, and the `export_problems` call at lines 848 to 850 gains `"schema": 3` and `"rung5_psf_sigma": LIVE_PSF`.
+  - Lines 987 to 1000: `star_rows` rows carry `overlap`, `weight` and `share_before`.
+  - New tests below.
+
+**Interfaces:**
+- Consumes:
+  - `dossier.season_votes(season) -> bool`, `dossier._pixel_seasons(metrics) -> list[dict]`, `dossier._metrics(tests, rung) -> dict`, `dossier._num(m, key) -> float | None`.
+  - Rung 5's stored season fields `voting`, `season`, `psf_sigma_pix` (the two-source fit's Gaussian width in Kepler pixels).
+  - `results-r2/kic-006146676.json` `stars` rows: `id`, `sep_arcsec`, `gmag`, `kepler_flux`, `share`, `gaia_source_id`; `settings.flux_shares.budget`; `nfpp`, `nfpp_p16`, `nfpp_p84`.
+  - `skysift.lc.pixels.PIX_ARCSEC` (3.98), pinned equal to the tool's copy by a test.
+- Produces:
+```python
+# tools/triceratops_check.py
+EXPORT_SCHEMA = 3                   # skysift.crosscheck.EXPORT_SCHEMA
+RESULT_SCHEMA = 3                   # skysift.crosscheck.RESULT_SCHEMA
+KEPLER_PIX_ARCSEC = 3.98            # skysift.lc.pixels.PIX_ARCSEC (the engine is not importable here; a test pins it)
+OVERLAP = "Kepler-pixel overlap, capped by the contamination budget"
+PRF_CAVEAT = ("The shares use a Gaussian of rung 5's fitted width over the target's 3 x 3 box, which has no PRF "
+              "wings, so each is a floor on the light that neighbour leaks into the KBonus PSF light curve (Bryson "
+              "et al. 2013 on PRF-fit decontamination; Martinez-Palomera et al. 2023 on the KBonus photometry).")
+def _box_fraction(d_pix: float, s_pix: float) -> float
+    # [Phi((1.5 - d) / s) - Phi((-1.5 - d) / s)] / [Phi(1.5 / s) - Phi(-1.5 / s)], Phi the standard normal CDF
+def offset_box_factor(sep_arcsec) -> float          # unchanged: _box_fraction(|sep| / PIXEL_ARCSEC, PSF_SIGMA_PIX)
+def overlap(sep_arcsec, sigma_pix) -> float
+    # spec 12.1: _box_fraction(|sep| / KEPLER_PIX_ARCSEC, sigma_pix); 1.0 for a separation that is None or not
+    # finite; ValueError("overlap needs rung 5's PSF width, a finite number above 0, not <value>") otherwise
+def budget_shares(stars, crowdsap, gmags, box_factors=None) -> tuple[list[float], list[float | None]]
+    # the round-2 rule, kept for share_before: (g, the normalised Kepler-band box fractions, one per row; the
+    # shares B g_i / sum_{j>0} g_j, None for the target and every row when CROWDSAP is not in (0, 1]); exactly the
+    # numbers leakage_shares gave before this task
+def leakage_shares(stars, crowdsap, gmags, tdepth: float, seps_arcsec, sigma_pix: float | None,
+                   box_factors=None) -> dict
+    # stars: the package's rows after calc_depths, the target first ("ID", "Tmag", "fluxratio"); seps_arcsec: one
+    # separation per row (the TIC row's "sep (arcsec)", the stored separation for a star the tool added).
+    # With CROWDSAP C in (0, 1] and a finite sigma_pix above 0: B = (1 - C) / C; for every row i > 0,
+    # w_i = overlap(sep_i, sigma_pix) * f_i with f_i = 10^(-0.4 (G_i - G_t)) (band "Gaia G") or, without both G,
+    # 10^(-0.4 (T_i - T_t)) (band "Tmag"), or 0 (band None) without either; S_w = sum w_i; scale = min(1, B / S_w)
+    # (1 when S_w is 0); share_i = w_i * scale; S = sum share_i; fluxratio_target = 1 / (1 + S),
+    # fluxratio_i = share_i / (1 + S); the target keeps tdepth and star i needs tdepth / share_i, 0 above 1 or
+    # without a share. Without such a C or such a sigma the package's box stands, as before (source BOX).
+    # Returns {"source": OVERLAP | BOX, "budget": B | None, "contaminating_fraction": 1 - C | None, "crowdsap",
+    #  "sigma_pix", "weight_sum": S_w | None, "capped": S_w > B | None, "scale": scale | None,
+    #  "rows": [{"id", "g_package", "box_factor", "band", "kepler_flux" (f_i from G, None without it), "g"
+    #  (budget_shares' g), "overlap" (None for the target), "weight" (None for the target), "share_before"
+    #  (budget_shares' share), "share" (None for the target), "fluxratio", "tdepth", "source"}]}
+def star_rows(...) -> list[dict]     # each row also carries "overlap", "weight" and "share_before"
+def assemble_result(runs, stars, settings, inputs, version) -> dict     # gains "schema": RESULT_SCHEMA first
+# export_problems(): + "the export is schema <value>, not 3" and "the export has no rung5_psf_sigma key"
+# main(): with "rung5_psf_sigma" present and its sigma_pix None (or not finite, or not above 0), exit 2 with
+#   "rung 5 has no fitted PSF width for this star (<reason>), so the Kepler-pixel overlap cannot be computed; no run
+#   is started" before the package's constructor; --allow-old-export does not override it
+# checkpoint_key(): "flux_shares" holds {"source", "budget", "crowdsap", "sigma_pix"}
+
+# src/skysift/crosscheck.py
+EXPORT_SCHEMA = 3
+RESULT_SCHEMA = 3
+PSF_SIGMA_SOURCE = "rung 5's two-source fit (psf_sigma_pix), mean over the voting seasons with a width"
+RESULT_KEYS = ("schema", "tool", "tool_version", ...)         # "schema" first, the rest as before
+def rung5_psf_sigma(data: dict) -> dict
+    # {"sigma_pix": mean of psf_sigma_pix over the seasons that vote (dossier.season_votes) with a finite width
+    #  above 0 | None, "seasons": their season numbers in order, "per_season": {str(season): width},
+    #  "source": PSF_SIGMA_SOURCE, "reason": None | "rung 5 has not run" | "rung 5 has no voting season with a
+    #  fitted PSF width"}
+# inputs.json gains "schema": EXPORT_SCHEMA and "rung5_psf_sigma": rung5_psf_sigma(data)
+# validate_result(): first, a result without "schema" raises BadResult("the result is schema 2 (no schema key), not
+#   3: it was made before round 3 (spec 12) without the Kepler-pixel shares; run the tool again"), and another
+#   value "the result is schema <value>, not 3: ..." with the same tail
+
+# tools/leakage_note.py
+NOTE_WITHIN_ARCSEC = 21.0           # the note lists the stars within this of the target (seven for KIC 6146676)
+def note_rows(result: dict, sigma_pix: float) -> list[dict]
+    # result["stars"] other than the first (the target) with a finite sep_arcsec at or below NOTE_WITHIN_ARCSEC,
+    # sorted by separation: {"id", "gaia_source_id", "sep_arcsec", "sep_pix" (sep / KEPLER_PIX_ARCSEC), "gmag",
+    # "kepler_flux", "overlap", "share_before" (the stored share), "share"}; share = overlap * kepler_flux * scale,
+    # scale = min(1, budget / the same product summed over every non-target row with a kepler_flux); a row without
+    # kepler_flux gets share None
+def render(result: dict, sigma: dict, rows: list[dict], after: dict | None = None) -> str
+def main(argv: list[str] | None = None) -> int
+    # --result <results-r2 json> --dossier <dossier_data.json> --out <note.md> [--after <round-3 result json>]
+```
+
+- [ ] **Step 1: Write the failing tool tests** in `tests/unit/test_crosscheck.py`. The numbers are KIC 6146676's: the four rows are the target and the three nearest TIC stars of `results-r2/kic-006146676.json`, and the expected values were computed from them on 23 October 2026 with the rule of spec 12.1.
+
+```python
+SIGMA_5 = 0.5695905975              # KIC 6146676: rung 5's psf_sigma_pix, mean over its four voting seasons
+R2_STARS = [                        # results-r2/kic-006146676.json: the target and the three nearest TIC stars
+    {"ID": "169822650", "Tmag": 15.1926, "fluxratio": 0.6157398795699183, "sep (arcsec)": 0.0},
+    {"ID": "1879962333", "Tmag": 19.0349, "fluxratio": 0.007575984235464079, "sep (arcsec)": 6.938},
+    {"ID": "169822636", "Tmag": 17.086, "fluxratio": 0.01056327860128502, "sep (arcsec)": 10.784},
+    {"ID": "169822655", "Tmag": 12.3923, "fluxratio": 0.36537585545284657, "sep (arcsec)": 11.69}]
+R2_G = [16.236654, 19.771944, 17.895601, 12.806441]
+R2_SEPS = [r["sep (arcsec)"] for r in R2_STARS]
+CROWDSAP_6146676, DEPTH_6146676 = 0.85650748, 0.0022139651
+
+
+def test_tool_overlap_is_the_box_fraction_at_rung_5s_width_in_kepler_pixels():
+    from skysift.lc.pixels import PIX_ARCSEC
+    from tools import triceratops_check as tc
+    assert tc.KEPLER_PIX_ARCSEC == PIX_ARCSEC == 3.98
+    assert tc.overlap(11.69, SIGMA_5) == pytest.approx(0.005864323, rel=1e-5)        # 2.94 Kepler pixels
+    assert tc.overlap(6.938, SIGMA_5) == pytest.approx(0.3375419, rel=1e-5)
+    assert tc.overlap(10.784, SIGMA_5) == pytest.approx(0.01699803, rel=1e-5)
+    assert tc.overlap(0.0, SIGMA_5) == pytest.approx(1.0) and tc.overlap(None, SIGMA_5) == 1.0
+    assert tc.offset_box_factor(7.0) == pytest.approx(0.38705, abs=1e-4)             # the round-2 rule, unchanged
+    for bad in (None, 0.0, -0.5, math.nan):
+        with pytest.raises(ValueError, match="overlap needs rung 5's PSF width"):
+            tc.overlap(11.69, bad)
+
+
+def test_tool_shares_are_overlap_times_kepler_flux_under_the_budget_cap():
+    """Spec 12.1 on KIC 6146676's three nearest TIC stars: w = overlap x 10^(-0.4 (G - G_t)). Their sum 0.15483 is
+    below the budget 0.16753, so the shares stand: the G 12.8 star at 11.69 arcsec keeps 0.1381 of the 0.1618 the
+    round-2 rule gives it on these four rows (0.1615 on the full list)."""
+    from tools import triceratops_check as tc
+    out = tc.leakage_shares(R2_STARS, CROWDSAP_6146676, R2_G, DEPTH_6146676, R2_SEPS, SIGMA_5)
+    assert out["source"] == tc.OVERLAP and out["sigma_pix"] == SIGMA_5
+    assert out["budget"] == pytest.approx(0.1675321271, rel=1e-9) and out["capped"] is False and out["scale"] == 1.0
+    assert out["weight_sum"] == pytest.approx(0.1548311, rel=1e-5)
+    t, a, b, c = out["rows"]
+    assert [r["share"] for r in (a, b, c)] == pytest.approx([0.01300803, 0.003688244, 0.1381348], rel=1e-5)
+    assert [r["share_before"] for r in (a, b, c)] == pytest.approx([0.002491678, 0.003249592, 0.1617909], rel=1e-5)
+    assert c["overlap"] == pytest.approx(0.005864323, rel=1e-5) and c["kepler_flux"] == pytest.approx(23.5551,
+                                                                                                      rel=1e-5)
+    assert t["share"] is None and t["share_before"] is None and t["overlap"] is None
+    assert t["fluxratio"] == pytest.approx(0.8659275, rel=1e-6) and c["fluxratio"] == pytest.approx(0.1196147, rel=1e-5)
+    assert c["tdepth"] == pytest.approx(0.01602757, rel=1e-5) and t["tdepth"] == DEPTH_6146676
+    assert sum(r["fluxratio"] for r in out["rows"]) == pytest.approx(1.0)
+    assert all(r["source"] == tc.OVERLAP for r in out["rows"]) and c["band"] == "Gaia G"
+
+
+def test_tool_shares_above_the_budget_are_scaled_down_to_it():
+    from tools import triceratops_check as tc
+    out = tc.leakage_shares(R2_STARS, 0.95, R2_G, DEPTH_6146676, R2_SEPS, SIGMA_5)
+    assert out["capped"] is True and out["scale"] == pytest.approx(0.3399291, rel=1e-6)
+    t, a, b, c = out["rows"]
+    assert a["share"] + b["share"] + c["share"] == pytest.approx(0.05 / 0.95)
+    assert c["share"] == pytest.approx(0.04695603, rel=1e-5) and b["tdepth"] == 0.0      # 1.77 needed: no eclipse
+    assert t["fluxratio"] == pytest.approx(0.95)
+
+
+def test_tool_without_rung_5s_width_or_a_budget_the_package_box_stands():
+    from tools import triceratops_check as tc
+    for crowdsap, sigma in ((CROWDSAP_6146676, None), (None, SIGMA_5), (CROWDSAP_6146676, math.nan)):
+        box = tc.leakage_shares(R2_STARS, crowdsap, R2_G, DEPTH_6146676, R2_SEPS, sigma)
+        assert box["source"] == tc.BOX and box["weight_sum"] is None and box["capped"] is None
+        assert [r["fluxratio"] for r in box["rows"]] == [r["fluxratio"] for r in R2_STARS]
+
+
+LIVE_SEASONS = [                    # KIC 6146676's rung 5 seasons in the live dossier, the fields spec 12 reads
+    {"season": 0, "voting": True, "psf_sigma_pix": 0.58222301, "nearer": "target", "separation_sigma": 27.845078,
+     "dist_target_pix": 0.19970259, "centroid_sigma_axis_pix": 0.057549507,
+     "pos_target": [0.4881452, 4.1079262], "pos_neighbour": [3.2587867, 3.2589792]},
+    {"season": 1, "voting": True, "psf_sigma_pix": 0.55311152, "nearer": "target", "separation_sigma": 19.814692,
+     "dist_target_pix": 0.18730524, "centroid_sigma_axis_pix": 0.068707453,
+     "pos_target": [0.92328348, 3.0889016], "pos_neighbour": [3.6952899, 2.2423046]},
+    {"season": 2, "voting": True, "psf_sigma_pix": 0.54572735, "nearer": "target", "separation_sigma": 17.424733,
+     "dist_target_pix": 0.11745102, "centroid_sigma_axis_pix": 0.078553466,
+     "pos_target": [0.90604171, 2.9713739], "pos_neighbour": [3.6771262, 2.1225931]},
+    {"season": 3, "voting": True, "psf_sigma_pix": 0.59730051, "nearer": "target", "separation_sigma": 12.657602,
+     "dist_target_pix": 0.18658094, "centroid_sigma_axis_pix": 0.10056612,
+     "pos_target": [0.73929463, 3.0401927], "pos_neighbour": [3.5106545, 2.1932004]}]
+LIVE_NEIGHBOURS = [                 # its fpp.inputs.neighbours (Gaia DR3 id, separation, G)
+    {"source_id": "2073896294004902144", "sep_arcsec": 7.1422442, "gmag": 19.771944},
+    {"source_id": "2073896289692192128", "sep_arcsec": 10.941229, "gmag": 17.895601},
+    {"source_id": "2073896190925687296", "sep_arcsec": 11.452381, "gmag": 12.806441},
+    {"source_id": "2073896190926955520", "sep_arcsec": 12.965638, "gmag": 19.735788},
+    {"source_id": "2073896190921609600", "sep_arcsec": 13.513456, "gmag": 19.379517},
+    {"source_id": "2073896289692177024", "sep_arcsec": 18.624956, "gmag": 18.883438}]
+
+
+def _live(seasons=LIVE_SEASONS, neighbours=LIVE_NEIGHBOURS) -> dict:
+    return {"tests": [{"rung": "rung5_pixels", "status": "pass", "metrics": {"seasons": seasons}}],
+            "fpp": {"inputs": {"neighbours": neighbours}}}
+
+
+LIVE_PSF = cc.rung5_psf_sigma(_live()) if hasattr(cc, "rung5_psf_sigma") else None
+
+
+def test_rung5_psf_sigma_is_the_mean_over_voting_seasons():
+    out = cc.rung5_psf_sigma(_live())
+    assert out["sigma_pix"] == pytest.approx(SIGMA_5) and out["seasons"] == [0, 1, 2, 3] and out["reason"] is None
+    assert out["per_season"]["3"] == 0.59730051 and out["source"] == cc.PSF_SIGMA_SOURCE
+    some = [{**LIVE_SEASONS[0], "voting": False}, *LIVE_SEASONS[1:3], {**LIVE_SEASONS[3], "psf_sigma_pix": None}]
+    assert cc.rung5_psf_sigma(_live(some))["sigma_pix"] == pytest.approx((0.55311152 + 0.54572735) / 2)
+    assert cc.rung5_psf_sigma(_live(some))["seasons"] == [1, 2]
+    none = cc.rung5_psf_sigma(_live([{**s, "voting": False} for s in LIVE_SEASONS]))
+    assert none["sigma_pix"] is None and none["reason"] == "rung 5 has no voting season with a fitted PSF width"
+    assert cc.rung5_psf_sigma({"tests": []})["reason"] == "rung 5 has not run"
+
+
+def test_the_export_carries_schema_3_and_rung_5s_psf_width(env, tmp_path):
+    cc.export_inputs(env.store, env.blob, env.settings, STAGE2_TARGET, tmp_path / "cc", fetch=env.xfetch)
+    inputs = json.loads((tmp_path / "cc" / "inputs.json").read_text(encoding="utf-8"))
+    assert inputs["schema"] == cc.EXPORT_SCHEMA == 3
+    assert inputs["rung5_psf_sigma"] == cc.rung5_psf_sigma(_stored(env))
+
+
+def _current_export(path: Path, **inputs_changes) -> None:
+    """``_old_export`` with everything an export of round 3 carries; ``inputs_changes`` replace keys of inputs.json."""
+    _old_export(path)
+    inputs = json.loads((path / "inputs.json").read_text(encoding="utf-8"))
+    inputs.update({"schema": 3, "rung5_psf_sigma": LIVE_PSF,
+                   "target": {**inputs["target"], "crowdsap": 0.8565, "psffrac": 0.8},
+                   "neighbours": [{**n, "params_source": {}, "mass_radius": None} for n in inputs["neighbours"]],
+                   "lightcurve": {**inputs["lightcurve"], "clipped": 0}, **inputs_changes})
+    (path / "inputs.json").write_text(json.dumps(inputs), encoding="utf-8")
+
+
+def test_tool_refuses_an_export_without_rung_5s_psf_width(tmp_path, monkeypatch, capsys):
+    from tools import triceratops_check as tc
+    monkeypatch.chdir(tmp_path)
+    none = cc.rung5_psf_sigma(_live([{**s, "voting": False} for s in LIVE_SEASONS]))
+    _current_export(tmp_path, rung5_psf_sigma=none)
+    monkeypatch.setattr(tc, "tr", object())                 # as if TRICERATOPS were installed
+    args = ["--inputs", str(tmp_path), "--out", str(tmp_path / "r.json")]
+    assert tc.main(args) == 2 and tc.main([*args, "--allow-old-export"]) == 2
+    err = capsys.readouterr().err
+    assert ("rung 5 has no fitted PSF width for this star (rung 5 has no voting season with a fitted PSF width), so "
+            "the Kepler-pixel overlap cannot be computed; no run is started") in err
+    assert not (tmp_path / "r.json").exists()
+
+
+def test_the_import_refuses_a_result_before_schema_3():
+    good = fake_result("a" * 64)
+    assert good["schema"] == cc.RESULT_SCHEMA == 3 and cc.RESULT_KEYS[0] == "schema"
+    cc.validate_result(good)
+    with pytest.raises(cc.BadResult, match=r"the result is schema 2 \(no schema key\), not 3: it was made before "
+                                           r"round 3"):
+        cc.validate_result({k: v for k, v in good.items() if k != "schema"})
+    with pytest.raises(cc.BadResult, match="the result is schema 2, not 3"):
+        cc.validate_result({**good, "schema": 2})
+    assert not cc.complete({k: v for k, v in good.items() if k != "schema"})       # a stored round-2 block
+
+
+def test_tool_result_and_checkpoint_carry_the_schema_and_the_width():
+    from tools import triceratops_check as tc
+    shares = tc.leakage_shares(R2_STARS, CROWDSAP_6146676, R2_G, DEPTH_6146676, R2_SEPS, SIGMA_5)
+    key = tc.checkpoint_key("a" * 64, seed=1, draws=2000, check_draws=2000, parallel_check=True, flux_err=0.001,
+                            shares=shares, quarters=[1], allow_old_export=False, version="1.1.0")
+    assert key["flux_shares"] == {"source": tc.OVERLAP, "budget": shares["budget"], "crowdsap": CROWDSAP_6146676,
+                                  "sigma_pix": SIGMA_5}
+    rows = tc.star_rows(R2_STARS, [], {}, shares, R2_G, {})
+    assert rows[3]["overlap"] == pytest.approx(0.005864323, rel=1e-5) and rows[3]["share_before"] == pytest.approx(
+        0.1617909, rel=1e-5) and rows[3]["share"] == pytest.approx(0.1381348, rel=1e-5)
+    assert tc.assemble_result([tc.run_record(1, 0.1, 0.01, False, [])], rows, {}, {"fingerprint": "a" * 64},
+                              "1.1.0")["schema"] == tc.RESULT_SCHEMA == 3
+```
+
+`LIVE_PSF` is a module constant so that `_current_export` and Task 15 can share it; while `rung5_psf_sigma` does not exist it is None and the tests that read it fail on their own assertions.
+
+- [ ] **Step 2: Write the failing note test** in the same file. The rows are KIC 6146676's round-2 `stars` rows (the target and the eight nearest stars; the eighth, at 22.45 arcsec, lies beyond `NOTE_WITHIN_ARCSEC` and is left out).
+
+```python
+R2_ROWS = [                         # results-r2/kic-006146676.json "stars": id, sep, G, Kepler flux, share, Gaia id
+    ("169822650", 0.0, 16.236654, 1.0, None, None),
+    ("1879962333", 6.938, 19.771944, 0.03853754101954881, 0.0024876585183042496, "2073896294004902144"),
+    ("169822636", 10.784, 17.895601, 0.21698074699419992, 0.003244349526576897, "2073896289692192128"),
+    ("169822655", 11.69, 12.806441, 23.555113433751, 0.16152983418298314, "2073896190925687296"),
+    ("508690015", 13.151, 19.735788, 0.0398424833663588, 0.00013322001395335415, "2073896190926955520"),
+    ("169822646", 13.584, 19.379517, 0.055316513563358254, 0.0001354611838130699, "2073896190921609600"),
+    ("169822657", 18.369, 18.883438, 0.08735472482743722, 1.5945761920931935e-06, "2073896289692177024"),
+    ("1879962327", 20.886, 20.5462, 0.018887809767256545, 5.1585379086076936e-09, None),
+    ("1879962326", 22.446, 20.3416, 0.02280455489544754, 2.579127821808112e-09, None)]
+R2_RESULT = {"stars": [{"id": i, "sep_arcsec": s, "gmag": g, "kepler_flux": f, "share": sh, "gaia_source_id": gid}
+                       for i, s, g, f, sh, gid in R2_ROWS],
+             "settings": {"flux_shares": {"source": "contamination budget", "budget": 0.1675321270982946,
+                                          "crowdsap": 0.85650748}},
+             "nfpp": 0.02232841831933376, "nfpp_p16": 0.016386351289008505, "nfpp_p84": 0.03243009921894156,
+             "n_runs": 20}
+
+
+def test_the_leakage_note_lists_each_neighbour_before_and_after(tmp_path):
+    from tools import leakage_note as ln
+    rows = ln.note_rows(R2_RESULT, SIGMA_5)
+    assert [r["sep_arcsec"] for r in rows] == [6.938, 10.784, 11.69, 13.151, 13.584, 18.369, 20.886]
+    assert [r["share_before"] for r in rows] == [r[4] for r in R2_ROWS[1:8]]
+    assert [r["share"] for r in rows] == pytest.approx([0.01300803, 0.003688244, 0.1381348, 3.087380e-05,
+                                                        2.184640e-05, 1.98896e-09, 4.48961e-13], rel=1e-4)
+    assert rows[2]["sep_pix"] == pytest.approx(2.937186, rel=1e-6) and rows[2]["gaia_source_id"] == (
+        "2073896190925687296")
+    sigma = cc.rung5_psf_sigma(_live())
+    text = ln.render(R2_RESULT, sigma, rows)
+    assert "| 169822655 | 2073896190925687296 | 11.69 | 2.94 | 12.81 | 23.56 | 0.005864 | 0.1615 | 0.1381 |" in text
+    assert "NFPP before: 0.022 (16th to 84th percentile 0.016 to 0.032) over 20 runs" in text
+    assert "NFPP after: not yet measured (the round-3 run)" in text
+    assert ("The largest share after the rule is 0.138 (TIC 169822655, 11.69 arcsec, 2.94 Kepler pixels): its "
+            "overlap 0.0059 times its Kepler-band flux of 23.6 times the target's.") in text
+    after = {**R2_RESULT, "nfpp": 0.0191, "nfpp_p16": 0.014, "nfpp_p84": 0.027}
+    assert "NFPP after: 0.019 (16th to 84th percentile 0.014 to 0.027) over 20 runs" in ln.render(
+        R2_RESULT, sigma, rows, after)
+    assert "\u2014" not in text
+```
+
+- [ ] **Step 3: Run them to see them fail.**
+  - Command: `PYTHONUTF8=1 PYTHONPATH=src C:\Research\skysift\.venv\Scripts\python.exe -m pytest tests/unit/test_crosscheck.py -q -p no:cacheprovider`.
+  - Expected: `AttributeError: module 'tools.triceratops_check' has no attribute 'KEPLER_PIX_ARCSEC'` (and `'overlap'`, `'OVERLAP'`); `TypeError: leakage_shares() missing 2 required positional arguments` or an unexpected one in the round-2 tests until they are edited; `AttributeError: module 'skysift.crosscheck' has no attribute 'rung5_psf_sigma'`; `KeyError: 'schema'` in the import test; `ModuleNotFoundError: No module named 'tools.leakage_note'`.
+
+- [ ] **Step 4: The overlap and the shares** in `tools/triceratops_check.py`.
+  - Add the constants of the interface block after line 122. `offset_box_factor` keeps its docstring and becomes `_box_fraction(abs(sep) / PIXEL_ARCSEC, PSF_SIGMA_PIX)`, so its numbers do not move.
+  - `overlap(sep_arcsec, sigma_pix)` as specified. The ValueError text is "overlap needs rung 5's PSF width, a finite number above 0, not {sigma_pix!r}".
+  - `budget_shares` holds lines 317 to 345 of today's `leakage_shares` (the Kepler-band re-weighting and B g_i / sum g_j), returning `(g, shares)`.
+  - `leakage_shares(stars, crowdsap, gmags, tdepth, seps_arcsec, sigma_pix, box_factors=None)`: the BOX branch is today's lines 347 to 351 with the new keys set to None; the OVERLAP branch follows the interface comment line by line. The target's row has `overlap`, `weight` and `share` None. Each neighbour row's `kepler_flux` is `10 ** (-0.4 * (G_i - G_t))` when both G are known, else None.
+  - `leakage_caveat(shares, crowdsap)` for OVERLAP reads: "CROWDSAP {C:.4f} of the target's KBonus file bounds the light its neighbours can leak into its PSF light curve at (1 - CROWDSAP) / CROWDSAP = {B:.4f} of the target's own. Each neighbour's share is the fraction of a Gaussian of rung 5's fitted width ({sigma:.3f} Kepler pixels, the mean over its voting seasons) at its separation that falls inside the target's 3 x 3 box, over that of a star at the centre, times its Kepler-band flux relative to the target's (Gaia G as the proxy); the shares sum to {S_w:.4f}, {'above the budget, so they are scaled down to it' if capped else 'within the budget, so they stand'}." The BOX caveat stays as it is.
+  - `CAVEATS` gains `PRF_CAVEAT` after the first item, and the docstring's "Flux shares" paragraph is rewritten to the rule above.
+  - `star_rows` copies `overlap`, `weight` and `share_before` from the share rows. `assemble_result` puts `"schema": RESULT_SCHEMA` first.
+  - `checkpoint_key` keeps `{k: shares.get(k) for k in ("source", "budget", "crowdsap", "sigma_pix")}`.
+  - `export_problems` appends the two schema problems of the interface block.
+  - `main`: after the `problems` check (line 809), read `psf = inputs.get("rung5_psf_sigma")`. When it is a dict whose `sigma_pix` is not a finite number above 0, print the refusal of the interface block (with `psf.get("reason")`) and return 2. At line 888, pass `seps_arcsec`: the TIC row's `"sep (arcsec)"`, or for a star in `added` the stored separation of its Gaia neighbour (`by_source[sid]["sep_arcsec"]`), since the package places an added star on the target's pixel. Pass `sigma_pix=_finite((psf or {}).get("sigma_pix"))`.
+  - Settings `flux_shares` gains `"sigma_pix"`, `"weight_sum"`, `"capped"` and `"scale"`.
+
+- [ ] **Step 5: The export and the import** in `src/skysift/crosscheck.py`.
+  - `rung5_psf_sigma(data)` reads `ds._metrics(data.get("tests") or [], "rung5_pixels")`. Without that row (empty metrics) the reason is "rung 5 has not run". It takes the seasons of `ds._pixel_seasons(metrics)` where `ds.season_votes(s)` holds and `ds._num(s, "psf_sigma_pix")` is above 0, in stored order. The mean is `float(np.mean(widths))`.
+  - `export_inputs` writes `"schema": EXPORT_SCHEMA` first and `"rung5_psf_sigma": rung5_psf_sigma(data)` after `"leak"`.
+  - `RESULT_KEYS = ("schema", *the round-2 keys)`. `validate_result` checks `result.get("schema")` before the missing-key check, with the two messages of the interface block.
+  - The module docstring says that the result format is schema 3 and why.
+
+- [ ] **Step 6: The note script**, `tools/leakage_note.py`, with a module docstring that says what it writes and from what. `main` reads `--result` and `--dossier` (JSON), takes `sigma = crosscheck.rung5_psf_sigma(dossier)`, and stops with exit 2 when `sigma["sigma_pix"]` is None. It writes `render(...)` to `--out` and prints the path. `render` writes, in this order:
+  - A title, "Leakage shares of KIC 6146676 before and after spec 12.1 (23 October 2026)".
+  - One paragraph naming the source files, the budget ("(1 - CROWDSAP) / CROWDSAP = 0.16753"), `sigma_pix` with its seasons and per-season widths, and the rule in one sentence.
+  - The table: `| TIC | Gaia DR3 | sep (arcsec) | sep (Kepler px) | G | Kepler flux / target | overlap | share before | share after |`. Separations are printed to 2 decimals, pixels to 2, G to 2, the flux to 2, the overlap to 4 significant figures, and the shares to 4 significant figures ("0" below 1e-12). A row without a Gaia id prints "not matched".
+  - "NFPP before: <nfpp> (16th to 84th percentile <p16> to <p84>) over <n> runs" (`crosscheck.probability_text`), and "NFPP after: not yet measured (the round-3 run)" or, with `after`, the same form from it.
+  - When the largest share after the rule exceeds 0.01: "The largest share after the rule is <share:.3g> (TIC <id>, <sep:.2f> arcsec, <sep_pix:.2f> Kepler pixels): its overlap <overlap:.2g> times its Kepler-band flux of <flux:.3g> times the target's. Spec 12.1 expected a star beyond two Kepler pixels to take effectively nothing; this one keeps most of its round-2 share, so the NFPP it drives is for the controller to read before the live runs."
+  - `PRF_CAVEAT` as the last paragraph.
+
+- [ ] **Step 7: Write the note.** From the worktree, `PYTHONUTF8=1 PYTHONPATH="src;." C:\Research\skysift\.venv\Scripts\python.exe tools/leakage_note.py --result .superpowers/sdd/2026-10-22-skysift-referee-pack/live/results-r2/kic-006146676.json --dossier C:\Research\skysift\.superpowers\sample-run\dossiers\kic-006146676\dossier_data.json --out docs/superpowers/notes/2026-10-23-leakage-shares.md`. The dossier is only read. Check the note against Step 2's numbers: the 11.69 arcsec row reads 0.1615 before and 0.1381 after, and the seven rows are at 6.94, 10.78, 11.69, 13.15, 13.58, 18.37 and 20.89 arcsec.
+
+- [ ] **Step 8: Report the finding.** The task's report to the controller quotes the note's "largest share" paragraph and the table's 11.69 arcsec row. The live runs of spec 12.4 wait for the controller's reading. The code of Tasks 15 and 16 does not, since it does not depend on the shares' values.
+
+- [ ] **Step 9: Run the tests** (all pass).
+  - `PYTHONUTF8=1 PYTHONPATH=src C:\Research\skysift\.venv\Scripts\python.exe -m pytest tests/unit/test_crosscheck.py -q -p no:cacheprovider`
+  - `PYTHONUTF8=1 PYTHONPATH=src C:\Research\skysift\.venv\Scripts\python.exe -m ruff check src tests tools`
+
+- [ ] **Step 10: Commit.**
+
+```
+git add tools/triceratops_check.py tools/leakage_note.py src/skysift/crosscheck.py tests/unit/test_crosscheck.py docs/superpowers/notes/2026-10-23-leakage-shares.md
+git commit -m "fix(crosscheck): leakage shares from the Kepler-pixel overlap at rung 5's PSF width, the budget a cap, export and result schema 3
+
+The G 12.8 star at 11.69 arcsec goes from 0.1615 to 0.1381 of KIC 6146676's 0.1675 budget (the note says why).
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+```
+
+---
+
+### Task 15: The third variant, pixel-excluded neighbours removed, and the four numbers (spec 12.2; dossier version 6, pack version 5)
+
+**Files:**
+- Modify: `src/skysift/crosscheck.py`.
+  - Lines 1 to 15: the module docstring (the third variant).
+  - Lines 32 to 46: `EXCLUDE_SIGMA`, `STAMP_MATCH_ARCSEC`, `EXCLUDE_RULE`, `VARIANT_KEYS`; `RESULT_KEYS` gains `"variant_excluded"`.
+  - Lines 254 to 265: `_pixel_exclusion` keeps the radius; its docstring drops "The tool does not read it yet".
+  - New `stamp_neighbour`, `season_margin` and `pixel_excluded` after `rung5_psf_sigma`.
+  - Lines 404 to 417: `inputs.json` gains `"pixel_excluded"`.
+  - Lines 455 to 524: `_validate_run` unchanged; new `_validate_variant`, called from `validate_result`.
+  - Lines 549 to 555: `with_current` adds `"class_excluded"`.
+  - Lines 623 to 649: `dominant_scenario` takes a block of either set; new `removed_phrase`, `excluded_text`, `dominant_excluded_sentence`.
+  - Lines 671 to 741: `headline` and `comparison_sentence` print the four numbers.
+- Modify: `tools/triceratops_check.py`.
+  - Lines 1 to 86: the docstring gains a "Third variant" paragraph.
+  - Lines 124 to 145: the last caveat of `CAVEATS` is revised.
+  - Lines 397 to 417: `export_problems` gains "the export has no pixel_excluded key".
+  - New `excluded_stars` and `variant_block`, after `summarise` (line 505).
+  - Lines 574 to 594: `assemble_result(..., *, variant)`.
+  - Lines 660 to 734: `checkpoint_key` gains `excluded_tic_ids`; `new_state` gains `runs_excluded`; `checkpoint_runs` and `resume_state` read the second set.
+  - Lines 955 to 1002 of `main`: the second run set.
+- Modify: `src/skysift/dossier.py`.
+  - Lines 90 to 92: `DOSSIER_VERSION = "6"`.
+  - Lines 2023 to 2056: `page_texts` gains `"excluded"`.
+- Modify: `src/skysift/pack.py`.
+  - Line 122: `PACK_VERSION = "5"`.
+  - Lines 412 to 416: `BOTH_TOOLS` goes; `both_tools` (lines 738 to 744) returns `cc.dominant_excluded_sentence(data, tex=tex, short=True)`.
+  - Lines 2056 to 2058: the `data/cross_check.json` file note names the second run set.
+- Modify: `src/skysift/templates/pack/note.tex.j2` (line 51, `n.both_tools`) and `README.md.j2` (lines 97 to 104).
+- Modify: `src/skysift/ui/templates/dossier.html` (lines 236 to 256) and `src/skysift/ui/static/dossier.js` (lines 525 to 545).
+- Test: `tests/unit/test_crosscheck.py`, `tests/unit/test_dossier.py`, `tests/unit/test_pack.py`, `tests/unit/test_zenodo.py` and `tests/unit/test_ui_dossiers.py`.
+  - In `test_crosscheck.py`: `fake_result` (lines 80 to 92) gains `"variant_excluded": variant or fake_variant()`; the result test at lines 632 to 660 passes `variant=tc.variant_block(runs, [], True)`; and `_current_export` gains `"pixel_excluded": cc.pixel_excluded(_live())`.
+  - In `test_ui_dossiers.py`, line 771 holds `test_dossier_page_shows_the_cross_check_block`.
+  - The dossier-version pins in `test_dossier.py` read the constant.
+  - The golden, regenerated in Step 11.
+
+**Interfaces:**
+- Consumes:
+  - Task 14: `rung5_psf_sigma`, `RESULT_SCHEMA`, `EXPORT_SCHEMA`, `LIVE_SEASONS`, `LIVE_NEIGHBOURS`, `_live`, `_current_export`.
+  - Rung 5's stored season fields. For every voting season: `season`, `voting`, `nearer`, `separation_sigma` (the bisector distance of the difference centroid over the inflated axis error, signed by `nearer`), `dist_target_pix` (the centroid's distance from the target's position), `centroid_sigma_axis_pix`, `pos_target` and `pos_neighbour`.
+  - `fpp.inputs.neighbours` (`source_id`, `sep_arcsec`, `gmag`); `centroid_offset.exclusion_radius_arcsec`.
+  - `dossier.season_votes`, `dossier._pixel_seasons`, `dossier._num`, `dossier._pair`, `priors.PIXEL_ARCSEC` (3.98), `dossier.UNRESOLVED_COMPANION_ARCSEC` (2.2).
+  - TRICERATOPS 1.1.0's `target.remove_star(drop_stars)`, which drops the rows of `.stars` whose `ID` is in the list and leaves the target's `fluxratio`; `calc_probs` reads `.stars` by position (`.values`), so nothing else needs resetting.
+- Produces:
+```python
+# src/skysift/crosscheck.py
+EXCLUDE_SIGMA = 3.0                 # spec 12.2: nearer the target than the neighbour by more than this, every season
+STAMP_MATCH_ARCSEC = 1.0            # rung 5's own neighbour: the Gaia neighbour nearest the stamp separation, within this
+EXCLUDE_RULE = ("a neighbour is excluded when, in every voting season of rung 5, the difference-image centroid lies "
+                "nearer the target than the neighbour by more than 3 sigma: for the neighbour rung 5 fitted, its own "
+                "vote (separation_sigma, nearer the target); for every other Gaia neighbour the lower bound (D / 2 - "
+                "dist_target_pix) / centroid_sigma_axis_pix on the same bisector statistic, D its separation in "
+                "Kepler pixels, which holds whatever its direction")
+VARIANT_KEYS = ("n_runs", "n_degenerate", *SUMMARY_KEYS, "runs", "scenarios", "removed", "same_as_all", "seeds",
+                "median_run_seed")
+RESULT_KEYS = (*the Task 14 keys, "variant_excluded")
+def stamp_neighbour(neighbours: list[dict], seasons: list[dict]) -> str | None
+    # the source_id of the Gaia neighbour rung 5 fitted: the median over the voting seasons of
+    # |pos_neighbour - pos_target| x PIXEL_ARCSEC is the stamp separation; the neighbour whose sep_arcsec is nearest
+    # it, within STAMP_MATCH_ARCSEC, ties to the brighter G; None without positions or a match
+def season_margin(season: dict, sep_arcsec: float, stamp: bool) -> tuple[float | None, str, str | None]
+    # (margin in sigma, basis, why None). stamp: separation_sigma, positive when nearer is "target", negative when
+    # "neighbour", basis "rung 5 vote"; None with "season <n> has no rung 5 vote against this neighbour" when the
+    # value or nearer is missing. Otherwise basis "geometric bound": (sep_arcsec / PIXEL_ARCSEC / 2 -
+    # dist_target_pix) / centroid_sigma_axis_pix; None with "season <n> has no centroid distance or error" when
+    # either is missing or the error is not above 0
+def pixel_excluded(data: dict) -> dict
+    # {"rule": EXCLUDE_RULE, "sigma": EXCLUDE_SIGMA, "pixel_arcsec": PIXEL_ARCSEC, "seasons": [voting season
+    #  numbers], "stamp_source_id", "neighbours": [{"source_id", "sep_arcsec", "gmag", "excluded", "margins":
+    #  [{"season", "margin_sigma", "basis"}], "min_margin_sigma", "reason"}], "excluded_ids": [source ids in the
+    #  stored order], "reason": None | "rung 5 has not run" | "rung 5 has no voting season"}.
+    # A neighbour is excluded when there is a voting season and every margin is a number above EXCLUDE_SIGMA; its
+    # reason is then None, else the first season's why ("season 3 margin 1.42 sigma, not above 3" for a number), or
+    # "no separation stored"
+# inputs.json gains "pixel_excluded": pixel_excluded(data)
+def removed_phrase(variant: dict) -> str
+    # "the one neighbour the difference images exclude" (1), "the <n> neighbours the difference images exclude" (n)
+def excluded_text(block: dict, ranges: bool) -> str
+    # the variant's four numbers in prose, used by headline and comparison_sentence (forms below)
+def dominant_excluded_sentence(data: dict, tex: bool = False, short: bool = False) -> str | None
+    # the scenario with the largest probability in the variant's median-run table, other than TP, PTP and DTP
+    # (dominant_scenario of the variant block). For STP, the long form is "With those neighbours removed the
+    # false-positive weight sits mainly on STP, a planet transiting an unresolved bound companion inside the
+    # <r:.2f> arcsec exclusion radius, which no high-resolution imaging constrains, so the signal stays a
+    # candidate." and the short form "The remaining weight is mainly STP, a planet on an unresolved bound companion
+    # inside the <r:.2f> arcsec exclusion radius, which no imaging constrains, so the signal stays a candidate."
+    # r is centroid_offset.exclusion_radius_arcsec; without it, "within 2.2 arcsec" (UNRESOLVED_COMPANION_ARCSEC)
+    # replaces "inside the r arcsec exclusion radius". Another scenario: "... sits mainly on <id>, <SCENARIO_WORDS>
+    # ..., so the signal stays a candidate." None without a current, complete cross-check or without such a scenario
+# with_current(): "class_excluded": classify(variant fpp, variant nfpp) for a complete block
+
+# tools/triceratops_check.py
+VARIANT_KEYS = (...)                # skysift.crosscheck.VARIANT_KEYS
+def excluded_stars(pixel_excluded: dict | None, matched: list[dict], added: dict) -> tuple[list[dict], list[str]]
+    # ([{"tic_id", "source_id", "sep_arcsec", "min_margin_sigma"}] in the export's order: the TIC id of each
+    #  excluded Gaia neighbour from match_neighbours, or its own id when the tool added it), [one note per excluded
+    #  neighbour in neither: "Gaia DR3 <id> is excluded by the difference images but is not in the run's star list,
+    #  so there is nothing to remove."]); ([], []) without the block or an excluded id
+def variant_block(runs: list[dict], removed: list[dict], same_as_all: bool) -> dict
+    # keyed VARIANT_KEYS: summarise(runs), the runs (RUN_KEYS), the scenario table of the non-degenerate run nearest
+    # its median FPP, the removed stars, same_as_all, the seeds and that run's seed
+def assemble_result(runs, stars, settings, inputs, version, *, variant: dict) -> dict      # + "variant_excluded"
+def checkpoint_key(..., excluded_tic_ids: list[str] | None = None) -> dict   # + "excluded_tic_ids": sorted ids
+# new_state(): + "runs_excluded": []; checkpoint_runs(): the larger of the two sets' lengths; resume_state(): the
+# second set's seeds must also run on from the first seed, and a non-empty second set needs a first set at least as
+# long ("the checkpoint's second set runs ahead of its first")
+
+# src/skysift/dossier.py
+DOSSIER_VERSION = "6"   # 6: round 3 (spec 12): the extinction block, the four cross-check numbers, the sharing rows
+# page_texts(): + "excluded": cc.dominant_excluded_sentence(data)
+# src/skysift/pack.py
+PACK_VERSION = "5"      # 5: round 3 (spec 12): the pixel-excluded variant and the dust-map extinction
+```
+
+The texts' forms (`block` a current, complete cross-check, `v = block["variant_excluded"]`, numbers in `probability_text`):
+- `headline` (every text but the note's abstract): "TRICERATOPS <ver> gives a false-positive probability of <fpp> (<fpp_no_stp> without a planet on an unresolved bound companion), and <v.fpp> (<v.fpp_no_stp> without it) with <removed_phrase> removed, in none of its validation classes, which do not apply at 30-minute cadence (Giacalone et al. 2021)". With `same_as_all`, the middle reads "and the same with no neighbour removed, since the difference images exclude none".
+- `headline(short=True)` (the abstract): "TRICERATOPS <ver> gives a false-positive probability of <fpp> (<fpp_no_stp> without a planet on an unresolved bound companion; <v.fpp> and <v.fpp_no_stp> with <removed_phrase> removed; no validation class applies at 30-minute cadence; Giacalone et al. 2021)".
+- `comparison_sentence(after_headline=True)` (the README, the ExoFOP note and the archive email): the round-2 sentence, then "With <removed_phrase> removed (<per neighbour: Gaia DR3 <id> at <sep:.2f> arcsec, smallest margin <m:.3g> sigma>, joined by "; "), <v.n_runs> seeded runs give <v.fpp> (16th to 84th percentile <range>), <v.fpp_no_stp> (<range>) without STP and a nearby false-positive probability of <v.nfpp> (<range>)." and then `dominant_excluded_sentence(data)`.
+- `comparison_sentence(short=True)` (the note): the round-2 short sentence, then "With <removed_phrase> removed it gives <v.fpp>, and <v.fpp_no_stp> without STP." The ranges stay in the README, as Task 13 ruled for the note's word limit.
+- The long `comparison_sentence` (the dossier page's `cross_check` text) adds the after-headline variant sentence with its ranges.
+- The note's `both_tools` slot prints `dominant_excluded_sentence(data, tex=True, short=True)` in place of `BOTH_TOOLS`.
+
+- [ ] **Step 1: Write the failing exclusion and tool tests** in `tests/unit/test_crosscheck.py`. The margins are those of KIC 6146676's live seasons (Task 14's `LIVE_SEASONS`). The 7.14 arcsec star's are (7.1422442 / 3.98 / 2 - `dist_target_pix`) / `centroid_sigma_axis_pix` per season.
+
+```python
+def test_pixel_excluded_takes_rung_5s_vote_for_its_neighbour_and_the_bound_for_the_others():
+    out = cc.pixel_excluded(_live())
+    assert out["seasons"] == [0, 1, 2, 3] and out["reason"] is None and out["sigma"] == 3.0
+    assert out["stamp_source_id"] == "2073896190925687296"          # 11.45 arcsec against the stamp's 11.53
+    rows = {n["source_id"]: n for n in out["neighbours"]}
+    stamp = rows["2073896190925687296"]
+    assert [m["basis"] for m in stamp["margins"]] == ["rung 5 vote"] * 4
+    assert [m["margin_sigma"] for m in stamp["margins"]] == pytest.approx([27.845078, 19.814692, 17.424733,
+                                                                           12.657602])
+    near = rows["2073896294004902144"]                                # 7.14 arcsec: D / 2 = 0.8973 px
+    assert [m["basis"] for m in near["margins"]] == ["geometric bound"] * 4
+    assert [m["margin_sigma"] for m in near["margins"]] == pytest.approx([12.12, 10.33, 9.93, 7.07], abs=0.01)
+    assert near["min_margin_sigma"] == pytest.approx(7.07, abs=0.01) and near["reason"] is None
+    # 10.94 arcsec lies within 1 arcsec of the stamp separation too, but 11.45 is nearer: the bound for it
+    other = rows["2073896289692192128"]["margins"][0]
+    assert other["basis"] == "geometric bound" and other["margin_sigma"] == pytest.approx(20.41, abs=0.01)
+    assert out["excluded_ids"] == [n["source_id"] for n in LIVE_NEIGHBOURS]
+    assert all(n["excluded"] for n in rows.values()) and out["rule"] == cc.EXCLUDE_RULE
+
+
+def test_a_season_without_a_vote_keeps_every_neighbour_and_no_voting_season_excludes_nothing():
+    holed = [*LIVE_SEASONS[:3], {**LIVE_SEASONS[3], "dist_target_pix": None, "separation_sigma": None}]
+    out = cc.pixel_excluded(_live(holed))
+    assert out["excluded_ids"] == []
+    rows = {n["source_id"]: n for n in out["neighbours"]}
+    assert rows["2073896294004902144"]["reason"] == "season 3 has no centroid distance or error"
+    assert rows["2073896190925687296"]["reason"] == "season 3 has no rung 5 vote against this neighbour"
+    assert rows["2073896294004902144"]["excluded"] is False
+    low = [*LIVE_SEASONS[:3], {**LIVE_SEASONS[3], "centroid_sigma_axis_pix": 0.5}]  # (0.8973 - 0.1866) / 0.5 = 1.42
+    out = cc.pixel_excluded(_live(low))
+    assert "2073896294004902144" not in out["excluded_ids"] and "2073896190925687296" in out["excluded_ids"]
+    assert next(n for n in out["neighbours"] if n["source_id"] == "2073896294004902144")["reason"] == (
+        "season 3 margin 1.42 sigma, not above 3")
+    none = cc.pixel_excluded(_live([{**s, "voting": False} for s in LIVE_SEASONS]))
+    assert none["excluded_ids"] == [] and none["reason"] == "rung 5 has no voting season"
+    assert cc.pixel_excluded({"tests": [], "fpp": {"inputs": {"neighbours": LIVE_NEIGHBOURS}}})["reason"] == (
+        "rung 5 has not run")
+
+
+def test_the_export_lists_the_pixel_excluded_neighbours(env, tmp_path):
+    cc.export_inputs(env.store, env.blob, env.settings, STAGE2_TARGET, tmp_path / "cc", fetch=env.xfetch)
+    inputs = json.loads((tmp_path / "cc" / "inputs.json").read_text(encoding="utf-8"))
+    assert inputs["pixel_excluded"] == cc.pixel_excluded(_stored(env))
+
+
+def test_tool_maps_the_excluded_neighbours_to_the_stars_it_removes():
+    from tools import triceratops_check as tc
+    px = {"excluded_ids": ["g1", "g2", "g3"],
+          "neighbours": [{"source_id": "g1", "sep_arcsec": 7.14, "min_margin_sigma": 7.07},
+                         {"source_id": "g2", "sep_arcsec": 11.45, "min_margin_sigma": 12.66},
+                         {"source_id": "g3", "sep_arcsec": 18.6, "min_margin_sigma": 21.4}]}
+    removed, notes = tc.excluded_stars(px, [{"source_id": "g2", "tic_id": "169822655", "dsep_arcsec": 0.24}],
+                                       {"g1": 19.3})
+    assert removed == [{"tic_id": "g1", "source_id": "g1", "sep_arcsec": 7.14, "min_margin_sigma": 7.07},
+                       {"tic_id": "169822655", "source_id": "g2", "sep_arcsec": 11.45, "min_margin_sigma": 12.66}]
+    assert notes == ["Gaia DR3 g3 is excluded by the difference images but is not in the run's star list, so there "
+                     "is nothing to remove."]
+    assert tc.excluded_stars(None, [], {}) == ([], []) and tc.excluded_stars({"excluded_ids": []}, [], {}) == ([], [])
+    assert tc.VARIANT_KEYS == cc.VARIANT_KEYS
+
+
+def test_tool_result_carries_the_pixel_excluded_variant_and_passes_the_import():
+    from tools import triceratops_check as tc
+    table = [{"ID": "t", "scenario": "TP", "prob": 0.92}, {"ID": "t", "scenario": "STP", "prob": 0.05}]
+    runs = [tc.run_record(1 + k, 0.08, 0.02, False, table) for k in range(20)]
+    ex = [tc.run_record(1 + k, 0.055, 0.0, False, [{"ID": "t", "scenario": "TP", "prob": 0.945},
+                                                    {"ID": "t", "scenario": "STP", "prob": 0.05}]) for k in range(20)]
+    removed = [{"tic_id": "169822655", "source_id": "g2", "sep_arcsec": 11.45, "min_margin_sigma": 12.66}]
+    settings = {"N": 1_000_000, "field_stars": {"file": "p.csv", "n_rows": 10, "sha256": "c" * 64}}
+    result = tc.assemble_result(runs, [], settings, {"fingerprint": "a" * 64}, "1.1.0",
+                                variant=tc.variant_block(ex, removed, False))
+    assert result["schema"] == 3 and tuple(result) == cc.RESULT_KEYS
+    v = result["variant_excluded"]
+    assert tuple(v) == cc.VARIANT_KEYS and v["removed"] == removed and v["seeds"] == list(range(1, 21))
+    assert v["fpp"] == pytest.approx(0.055) and v["nfpp"] == 0.0 and v["same_as_all"] is False
+    cc.validate_result(result)
+    same = tc.assemble_result(runs, [], settings, {"fingerprint": "a" * 64}, "1.1.0",
+                              variant=tc.variant_block(runs, [], True))
+    assert same["variant_excluded"]["fpp"] == same["fpp"] and same["variant_excluded"]["removed"] == []
+    cc.validate_result(same)
+
+
+def test_tool_checkpoint_resumes_the_second_set(tmp_path):
+    from tools import triceratops_check as tc
+    key = tc.checkpoint_key("a" * 64, seed=1, draws=2000, check_draws=2000, parallel_check=True, flux_err=0.001,
+                            shares={"source": tc.OVERLAP}, quarters=[1], allow_old_export=False, version="1.1.0",
+                            excluded_tic_ids=["1879962333", "169822655"])
+    assert key["excluded_tic_ids"] == ["169822655", "1879962333"]                         # sorted
+    state = tc.new_state()
+    assert state["runs_excluded"] == []
+    state["runs"] = [tc.run_record(1 + k, 0.1, 1e-4, False, []) for k in range(3)]
+    state["runs_excluded"] = [tc.run_record(1 + k, 0.05, 0.0, False, []) for k in range(2)]
+    part = tmp_path / "r.partial.json"
+    tc.write_partial(part, key, state)
+    back = tc.resume_state(part, key)
+    assert back["runs_excluded"] == state["runs_excluded"] and tc.checkpoint_runs(part) == 3
+    with pytest.raises(ValueError, match=r"\(excluded_tic_ids differ\)"):
+        tc.resume_state(part, {**key, "excluded_tic_ids": []})
+    tc.write_partial(part, key, {**state, "runs": state["runs"][:1]})
+    with pytest.raises(ValueError, match="the checkpoint's second set runs ahead of its first"):
+        tc.resume_state(part, key)
+```
+
+- [ ] **Step 2: Write the failing import and text tests** in `tests/unit/test_crosscheck.py`. `fake_variant` and the new `fake_result` go beside `fake_runs` (lines 72 to 92); every other test that builds a result keeps working through the default.
+
+```python
+REMOVED = [{"tic_id": "169822655", "source_id": "2073896190925687296", "sep_arcsec": 11.452381,
+            "min_margin_sigma": 12.657602}]
+
+
+def fake_variant(fpp: float = 0.004, nfpp: float = 0.0, n: int = cc.N_RUNS, p_stp: float = 0.003,
+                 removed: list | None = None, scenarios: list | None = None) -> dict:
+    """The pixel-excluded run set as the tool writes it: ``n`` identical runs, seeds 1 to n."""
+    runs = fake_runs(fpp, nfpp, n, p_stp)
+    return {"n_runs": n, "n_degenerate": 0, **cc.summarise(runs), "runs": runs,
+            "scenarios": scenarios or [{"ID": "169822650", "scenario": "TP", "prob": 1 - fpp},
+                                       {"ID": "169822650", "scenario": "STP", "prob": p_stp}],
+            "removed": REMOVED if removed is None else removed, "same_as_all": False,
+            "seeds": [r["seed"] for r in runs], "median_run_seed": 1}
+
+# fake_result(sha, fpp=0.012, nfpp=1e-4, n=cc.N_RUNS, p_stp=0.0, scenarios=None, variant=None) returns the dict of
+# Task 14 with "variant_excluded": variant if variant is not None else fake_variant(n=n), keyed cc.RESULT_KEYS
+
+
+def test_the_import_requires_the_pixel_excluded_variant():
+    good = fake_result("a" * 64)
+    cc.validate_result(good)
+    with pytest.raises(cc.BadResult, match="the result file lacks variant_excluded"):
+        cc.validate_result({k: v for k, v in good.items() if k != "variant_excluded"})
+    v = good["variant_excluded"]
+    with pytest.raises(cc.BadResult, match="variant_excluded's seeds are not the first set's"):
+        cc.validate_result({**good, "variant_excluded": {**v, "seeds": list(range(2, 22))}})
+    with pytest.raises(cc.BadResult, match="variant_excluded says same_as_all but its runs differ from the first "
+                                           "set's"):
+        cc.validate_result({**good, "variant_excluded": {**v, "same_as_all": True}})
+    with pytest.raises(cc.BadResult, match=r"variant_excluded\.fpp 0\.5 is not the non-degenerate runs' value"):
+        cc.validate_result({**good, "variant_excluded": {**v, "fpp": 0.5}})
+    with pytest.raises(cc.BadResult, match="variant_excluded.removed must list"):
+        cc.validate_result({**good, "variant_excluded": {**v, "removed": [{"tic_id": "1"}]}})
+    stored = cc.with_current({**good, "current": True}, DATA)
+    assert stored["class_excluded"] == cc.classify(v["fpp"], v["nfpp"])
+
+
+def _four(fpp_ex: float = 0.055, nfpp_ex: float = 0.0, removed=None, same: bool = False) -> dict:
+    sha = cc.inputs_fingerprint(DATA)
+    variant = fake_variant(fpp=fpp_ex, nfpp=nfpp_ex, p_stp=0.05, removed=removed)
+    if same:
+        variant = {**fake_variant(fpp=0.08, nfpp=0.02, p_stp=0.05, removed=[]), "same_as_all": True}
+    block = {**fake_result(sha, fpp=0.08, nfpp=0.02, p_stp=0.05, variant=variant), "current": True}
+    return {**DATA, "fpp": {"value": 0.0035}, "cross_check": block,
+            "centroid_offset": {"exclusion_radius_arcsec": 0.83480394}}
+
+
+def test_every_text_carries_the_four_numbers():
+    data = _four()
+    assert cc.headline(data) == (
+        "TRICERATOPS 1.1.0 gives a false-positive probability of 0.080 (0.032 without a planet on an unresolved bound "
+        "companion), and 0.055 (0.0053 without it) with the one neighbour the difference images exclude removed, in "
+        "none of its validation classes, which do not apply at 30-minute cadence (Giacalone et al. 2021)")
+    assert cc.headline(data, short=True).endswith(
+        "(0.032 without a planet on an unresolved bound companion; 0.055 and 0.0053 with the one neighbour the "
+        "difference images exclude removed; no validation class applies at 30-minute cadence; Giacalone et al. 2021)")
+    after = cc.comparison_sentence(data, after_headline=True)
+    assert ("With the one neighbour the difference images exclude removed (Gaia DR3 2073896190925687296 at 11.45 "
+            "arcsec, smallest margin 12.7 sigma), 20 seeded runs give 0.055 (16th to 84th percentile 0.055 to "
+            "0.055), 0.0053 (0.0053 to 0.0053) without STP and a nearby false-positive probability of 0 (0 to "
+            "0).") in after
+    assert after.endswith(
+        "With those neighbours removed the false-positive weight sits mainly on STP, a planet transiting an "
+        "unresolved bound companion inside the 0.83 arcsec exclusion radius, which no high-resolution imaging "
+        "constrains, so the signal stays a candidate.")
+    assert "With the one neighbour the difference images exclude removed it gives 0.055, and 0.0053 without STP." \
+        in cc.comparison_sentence(data, short=True)
+    assert cc.dominant_excluded_sentence(data, short=True) == (
+        "The remaining weight is mainly STP, a planet on an unresolved bound companion inside the 0.83 arcsec "
+        "exclusion radius, which no imaging constrains, so the signal stays a candidate.")
+    six = _four(removed=REMOVED * 6)
+    assert "with the 6 neighbours the difference images exclude removed" in cc.headline(six)
+    assert "and the same with no neighbour removed, since the difference images exclude none" in cc.headline(
+        _four(same=True))
+    assert cc.dominant_excluded_sentence({**data, "cross_check": {**data["cross_check"], "current": False}}) is None
+    no_radius = {**data, "centroid_offset": None}
+    assert "within 2.2 arcsec, which no high-resolution imaging" in cc.dominant_excluded_sentence(no_radius)
+    assert "\u2014" not in after
+```
+
+- [ ] **Step 3: Write the failing pack, Zenodo, dossier and page tests.**
+  - In `tests/unit/test_pack.py` (helpers `_store_cross_check`, `_stored_with_cross_check`, `_build`, `_texts`, `render_note`), with a cross-check stored by `_store_cross_check(env)`:
+    - The note carries `str(cross_check.comparison_sentence(data, tex=True, short=True))` and `str(cross_check.dominant_excluded_sentence(data, tex=True, short=True))`. It no longer carries "a run without them is a follow-up".
+    - The README carries `cross_check.comparison_sentence(data, after_headline=True)` whole.
+    - `exofop/note.txt` and `archive_email.txt` each carry "with the one neighbour the difference images exclude removed".
+    - The `PACK_VERSION` assertion reads "5" through the constant.
+  - In `tests/unit/test_zenodo.py`: `probability_sentences(data)[1]` of a dossier with a current cross-check (the existing fixture) contains "with the one neighbour the difference images exclude removed".
+  - In `tests/unit/test_dossier.py`: the version test reads `d["dossier_version"] == "6" == DOSSIER_VERSION`, and `page_texts(data)["excluded"]` equals `cc.dominant_excluded_sentence(data)`.
+  - In `tests/unit/test_ui_dossiers.py`, `test_dossier_page_shows_the_cross_check_block` (line 771) also checks the served page and the standalone page. Each shows "with the one neighbour the difference images exclude removed" and the variant's FPP spread `0.004 (16th to 84th percentile 0.004 to 0.004)`, in the page's `g3` form.
+  - `_live_shape` (test_pack.py lines 2104 to 2147) builds its block with `fake_result(..., variant=fake_variant(fpp=0.004))` for "validated" and `fake_variant(fpp=0.31, nfpp=0.0, p_stp=0.3, removed=REMOVED * 6)` for "dominant". It sets `data["centroid_offset"]["exclusion_radius_arcsec"]` from the golden, so both long forms of the variant reach the count. `_check_live_shape` asserts the short variant sentence and the dominant-excluded sentence are in the note.
+
+- [ ] **Step 4: Run them to see them fail.**
+  - Command: `PYTHONUTF8=1 PYTHONPATH=src C:\Research\skysift\.venv\Scripts\python.exe -m pytest tests/unit/test_crosscheck.py tests/unit/test_dossier.py tests/unit/test_pack.py tests/unit/test_zenodo.py tests/unit/test_ui_dossiers.py -q -p no:cacheprovider`.
+  - Expected: `AttributeError: module 'skysift.crosscheck' has no attribute 'pixel_excluded'` (and `VARIANT_KEYS`, `dominant_excluded_sentence`); `TypeError: assemble_result() got an unexpected keyword argument 'variant'`; the version pins fail on "5"; the text assertions fail on the missing variant clause.
+
+- [ ] **Step 5: The exclusion** in `src/skysift/crosscheck.py`.
+  - `stamp_neighbour`, `season_margin` and `pixel_excluded` as specified. Voting seasons are `ds.season_votes(s)` over `ds._pixel_seasons(metrics)`. The stamp separation is the median of `float(np.hypot(*(pn - pt))) * PIXEL_ARCSEC` over the voting seasons where `ds._pair` gives both positions. Margins are rounded nowhere, and the JSON keeps 8 significant figures as everywhere.
+  - A season's "why" for a margin at or below 3 reads `f"season {n} margin {m:.2f} sigma, not above {EXCLUDE_SIGMA:g}"`.
+  - `export_inputs` writes `"pixel_excluded": pixel_excluded(data)` after `"pixel_exclusion"`.
+  - The module docstring gains one paragraph: the third variant, the rule, and why it does not make the cross-check circular. The first set stands beside it unchanged, and the variant is the run Giacalone et al. 2021 allow once a centroid analysis rules a star out.
+
+- [ ] **Step 6: The second run set** in `tools/triceratops_check.py`.
+  - `excluded_stars` and `variant_block` as specified. `variant_block` takes its scenario table and median seed as `assemble_result` takes them today; factor that code into `_median_run(runs) -> int`, the index of the non-degenerate run nearest the median FPP, and use it in both.
+  - `export_problems` appends "the export has no pixel_excluded key" when the key is absent.
+  - In `main`, after the `matched` and `added` steps, call `removed, ex_notes = excluded_stars(inputs.get("pixel_excluded"), matched, added)` and add `ex_notes` to `notes`. Pass `excluded_tic_ids=[r["tic_id"] for r in removed]` to `checkpoint_key`.
+  - After the first set's loop (line 968), when `removed` is empty, `variant = variant_block(runs, [], True)` and nothing more runs.
+  - Otherwise:
+    - `t.remove_star([r["tic_id"] for r in removed])`, then the same loop for `k in range(len(state["runs_excluded"]), a.runs)` with seed `a.seed + k`, the same `probs` and the same parallel fallback, appending to `state["runs_excluded"]` and writing the checkpoint after each run.
+    - Print `f"pixel-excluded run {k + 1}/{a.runs} (seed {seed}): FPP ..., NFPP ..."`.
+    - `variant = variant_block(state["runs_excluded"], removed, False)`.
+  - `notes` gains "The pixel-excluded variant removes <n> neighbour(s) (TIC <ids>) with remove_star before calc_probs and runs the same seeds; Giacalone et al. 2021 allow removing a star a centroid analysis rules out, and the margins are in the export's pixel_excluded block." or, with none removed, "The difference images exclude no neighbour, so the pixel-excluded variant is the first set."
+  - The last item of `CAVEATS` becomes "The first run set removes no star. The pixel-excluded variant removes the neighbours rung 5's difference images exclude by more than 3 sigma in every voting season (spec 12.2), so it rests on SkySift's own centroid test and is quoted beside the first set, never in its place."
+  - The docstring's "Third variant" paragraph says the same, with the resume rule: `--resume` covers both sets, and the second starts only once the first holds `--runs` runs.
+  - `checkpoint_runs` returns `max(len(runs), len(runs_excluded))`. `resume_state` checks `runs_excluded` as it checks `runs`, and refuses a second set longer than the first.
+
+- [ ] **Step 7: The import** in `src/skysift/crosscheck.py`.
+  - `RESULT_KEYS = (*Task 14's, "variant_excluded")`.
+  - `_validate_variant(result)` raises `BadResult` in this order:
+    1. "variant_excluded must be an object holding <VARIANT_KEYS>".
+    2. `n_runs` other than the first set's: "variant_excluded.n_runs <n> is not the first set's <m>".
+    3. Each run through `_validate_run` with the prefix "variant_excluded run <i>".
+    4. "variant_excluded's seeds are not the first set's" when `seeds` or the runs' seeds differ from the first set's.
+    5. Its `n_degenerate`, every run degenerate, and each `SUMMARY_KEYS` value against `summarise(v["runs"])`: "variant_excluded.<key> <value> is not the non-degenerate runs' value <expected>".
+    6. `removed` not a list of objects each with a string `tic_id` and `source_id`: "variant_excluded.removed must list {tic_id, source_id} objects".
+    7. `same_as_all` not a bool, or True with an empty `removed` whose runs differ from the first set's: "variant_excluded says same_as_all but its runs differ from the first set's".
+  - `with_current` adds `"class_excluded"`. `complete` is unchanged, so a round-2 block reads as stored by an earlier version.
+
+- [ ] **Step 8: The texts.**
+  - `removed_phrase`, `excluded_text`, `dominant_excluded_sentence`, and the new `headline` and `comparison_sentence` forms, exactly as the forms list above. The removed list prints in the export's order.
+  - `pack.both_tools` returns `cc.dominant_excluded_sentence(data, tex=tex, short=True)` when `cross_check_sentence(data)` is not None and the pixel rung voted, else None; `numbers()` passes `tex`. `BOTH_TOOLS` and its comment go.
+  - `README.md.j2` lines 98 to 104 already print `n.cross_check_after`, which now carries the variant. The README's file note for `data/cross_check.json` (pack.py line 2056) becomes "the TRICERATOPS cross-check: every run's false-positive probability with all neighbours and with the neighbours the difference images exclude removed, ...", the rest as it is.
+  - `zenodo.probability_sentences` reads `headline` and needs no change. Check it in the test.
+  - `dossier.page_texts` gains `"excluded"`.
+  - `dossier.html` (after line 244) and `dossier.js` (after line 534) print the variant on the page when `cc.variant_excluded` exists: "With <removed_phrase> removed, over <n> runs: median false-positive probability <spread>, <spread> without STP, and nearby false-positive probability <spread>." In the page, `removed_phrase` is written out as "the one neighbour the difference images exclude" or "the N neighbours the difference images exclude" from `variant_excluded.removed.length`. That sentence is followed by `texts.excluded` (`PT.excluded`), and each removed neighbour goes in a small list with its Gaia id, separation and smallest margin.
+  - `DOSSIER_VERSION = "6"` with the comment of the interface block, and `PACK_VERSION = "5"`.
+
+- [ ] **Step 9: The word budget.** Run `PYTHONUTF8=1 PYTHONPATH=src C:\Research\skysift\.venv\Scripts\python.exe -m pytest tests/unit/test_pack.py -k live_shape -vv -p no:cacheprovider` and note the four counts. Cuts, if any count passes 1,480, wait for Task 16 Step 13, which measures after the reddening clause too; this task records the counts only.
+
+- [ ] **Step 10: Run the tests** (all pass).
+  - `PYTHONUTF8=1 PYTHONPATH=src C:\Research\skysift\.venv\Scripts\python.exe -m pytest tests/unit/test_crosscheck.py tests/unit/test_dossier.py tests/unit/test_pack.py tests/unit/test_zenodo.py tests/unit/test_ui_dossiers.py -q -p no:cacheprovider`
+  - `PYTHONUTF8=1 PYTHONPATH=src C:\Research\skysift\.venv\Scripts\python.exe -m ruff check src tests tools`
+
+- [ ] **Step 11: Regenerate the golden** with Task 10's helper, from the engine root: `PYTHONUTF8=1 PYTHONPATH=".worktrees/referee-pack/src;.worktrees/referee-pack" .venv/Scripts/python.exe .worktrees/referee-pack/tests/golden/regenerate.py --engine-root C:/Research/skysift --data-dir .superpowers/sample-run --target kic-006146676 --out .worktrees/referee-pack/tests/golden/kic-006146676-generated.json`.
+  - The helper copies the live store read-only and never writes to it.
+  - The golden's `cross_check` is the stored round-2 block. It is now not `complete`, and the golden test (`-m golden`) must say so rather than fail on it. Run `PYTHONUTF8=1 PYTHONPATH=src C:\Research\skysift\.venv\Scripts\python.exe -m pytest tests/unit/test_dossier.py -m golden -q -p no:cacheprovider`.
+  - This step regenerates before Task 16 exists, so the golden has no extinction block yet. Task 16 regenerates it again.
+
+- [ ] **Step 12: Commit.**
+
+```
+git add tools/triceratops_check.py src/skysift/crosscheck.py src/skysift/dossier.py src/skysift/pack.py src/skysift/templates/pack/note.tex.j2 src/skysift/templates/pack/README.md.j2 src/skysift/ui/templates/dossier.html src/skysift/ui/static/dossier.js tests/golden/kic-006146676-generated.json tests/unit/test_crosscheck.py tests/unit/test_dossier.py tests/unit/test_pack.py tests/unit/test_zenodo.py tests/unit/test_ui_dossiers.py
+git commit -m "feat(crosscheck): the pixel-excluded variant, a second seeded run set with remove_star, four numbers in every text (dossier version 6, pack version 5)
+
+Live-shape words: <four counts>.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+```
+
+---
+
+### Task 16: Extinction from Bayestar19, stored per target, through the Gaia DR3 law and the draws (spec 12.3)
+
+**Files:**
+- Create: `tools/extinction.py`, run under `.venv-triceratops` (`-I`). Its pure helpers need numpy and astropy only; `h5py` is imported inside `main`.
+- Create: `docs/candidates/<target>/extinction.json`, one per live target, written by the tool in Step 8: `kic-005689121`, `kic-006146676`, `kic-006699887`, `kic-009243078` and `kic-010352243`. The 3480 copy is the second period of `kic-006699887` and shares its file.
+- Modify: `src/skysift/stars.py`.
+  - After line 50: the extinction constants and the Gaia (E)DR3 coefficients.
+  - Lines 128 to 147: `StarParams` gains `extinction` and `unreddened` (defaults None, at the end).
+  - New `ExtinctionError`, `NoExtinction`, `gaia_k`, `gaia_extinction`, `load_extinction`, `_split_normal`, before `derive`.
+  - Lines 420 to 541: `derive(..., extinction=None)`.
+- Modify: `src/skysift/dossier.py`.
+  - Line 1648: `EXTINCTION_DIR` beside `CANDIDATES_DIR`.
+  - Lines 309 to 323: `fingerprint(..., extinction_ebv=None)`.
+  - Lines 1113 to 1137: `_lookup(..., extinction)` refuses.
+  - Lines 1377 to 1381: `no_spectrum_title`.
+  - Lines 1764 to 1773: `_rederive` passes the extinction.
+  - Lines 1817 to 1903: `generate` reads the file first.
+- Modify: `src/skysift/cli.py` (line 289: `ds.NoExtinction` and `ds.ExtinctionError` join the exit-2 errors; `dossier.py` re-exports both from `stars`).
+- Modify: `src/skysift/pack.py`.
+  - Lines 320 to 343: `references` gains `green2019`.
+  - Line 346: `BIBLIOGRAPHY` gains `green2019`.
+  - Lines 922 to 939: `README_REFERENCES` gains Cardelli et al. 1989, Fitzpatrick et al. 2019 and Riello et al. 2021.
+  - Lines 1444 to 1468: `reddening_text` keyed on the adopted extinction.
+  - Lines 1202 to 1208: `star_texts`.
+  - Lines 1702 to 1808: `numbers` gains `reddening_plain` and `reddening_rows`.
+  - Lines 1883 to 1913: `archive_paragraph`.
+- Modify: `src/skysift/pack_rows.py` (lines 347 to 380: `EXTINCTION_ROWS`, `provenance_rows`, and a new `reddening_rows`).
+- Modify: `src/skysift/zenodo.py` (lines 235 to 262: `metadata_from`'s paragraphs).
+- Modify: the templates.
+  - `note.tex.j2` line 41: the star sentence's reddening clause.
+  - `README.md.j2` lines 53 to 55: the three-column table under the star paragraph.
+  - `exofop_note.txt.j2` lines 19 to 21: the reddening line after the planet line.
+- Modify: `src/skysift/ui/templates/dossier.html` (lines 398 to 404, the star block's reddening) and `src/skysift/ui/static/dossier.js` (line 629, `PT.star`).
+- Test: `tests/unit/test_extinction.py` (new), `tests/unit/test_stars.py`, `tests/unit/test_dossier.py` (`_make_env`, lines 139 to 170, writes the fixture file for every seeded target), `tests/unit/test_pack.py`, `tests/unit/test_zenodo.py`, `tests/unit/test_ui_dossiers.py`, `tests/unit/test_cli.py`, `tests/unit/test_crosscheck.py` (its `env` uses `_make_env`, so nothing to change there), and the golden (regenerated in Step 12).
+
+**Interfaces:**
+- Consumes:
+  - The stored dossier's `target.ra`, `target.dec`, `star.distance_pc.median` (1000 over the Lindegren-corrected parallax, spec 12.3) and `star.route`.
+  - `stars.derive`'s draws: `colour`, `dm_s`, `ks_s`, `teff_s`, `radius_s`, `mass_s`; `_value`, `_interp`, `mamajek_labels`, `COLOUR_SIGMA`, `A_KS_MAX`.
+  - `dossier.CANDIDATES_DIR`, `dossier._lookup`, `dossier._rederive`, `dossier.fingerprint`.
+  - `pack.value_text`, `pack.star_characterized`, `pack._joined`, `pack_rows._split_source`.
+  - The map file `bayestar2019.h5`: dataset `/pixel_info` (structured: `nside`, `healpix_index`, `DM_reliable_min`, `DM_reliable_max`, and `converged` when present) with attribute `DM_bin_edges`, and dataset `/samples` of shape (pixels, samples, distance bins). This is the layout `dustmaps.bayestar.BayestarQuery.__init__` reads.
+- Produces:
+```python
+# tools/extinction.py
+MAP_VERSION = "bayestar2019"
+MAP_DOI = "10.7910/DVN/2EJ9TX"
+MAP_URL = "https://dataverse.harvard.edu/api/access/datafile/3424724"
+MAP_BYTES = 727_902_836
+MAP_MD5 = "ab815d2fd3068d1b81a1bd61fb18a722"
+BAYESTAR19_TO_EBV = 0.884           # E(B-V) = 0.884 x the Bayestar19 value (the Bayestar19 documentation's relation)
+PERCENTILES = (16.0, 50.0, 84.0)
+LIVE_TARGETS = ("kic-005689121", "kic-006146676", "kic-006699887", "kic-009243078", "kic-010352243")
+EXTINCTION_FILE = "extinction.json"
+STORE_HINT = ("store it by hand: tools/extinction.py --target {target} --store --ebv <E(B-V)> --ebv-p16 <16th> "
+              "--ebv-p84 <84th> --distance-pc {distance} --source \"<where the value comes from>\"")
+def galactic(ra_deg: float, dec_deg: float) -> tuple[float, float]       # astropy ICRS to Galactic (l, b), degrees
+def ang2pix_nest(nside: int, theta: float, phi: float) -> int
+    # HEALPix nested index (Gorski et al. 2005), theta = radians(90 - b), phi = radians(l), as dustmaps.lb2pix:
+    # z = cos theta, tt = (phi mod 2 pi) x 2 / pi. Equatorial (|z| <= 2/3): t1 = nside (0.5 + tt), t2 = 0.75 nside z,
+    # jp = int(t1 - t2), jm = int(t1 + t2), ifp = jp // nside, ifm = jm // nside, face = ifp | 4 when ifp == ifm,
+    # ifp when ifp < ifm, else ifm + 8; ix = jm & (nside - 1), iy = nside - (jp & (nside - 1)) - 1. Polar:
+    # ntt = min(int(tt), 3), tp = tt - ntt, tmp = nside sqrt(3 (1 - |z|)), jp = min(int(tp tmp), nside - 1),
+    # jm = min(int((1 - tp) tmp), nside - 1); north: face ntt, ix = nside - jm - 1, iy = nside - jp - 1; south:
+    # face ntt + 8, ix = jp, iy = jm. Index = face nside^2 + the bits of ix in the even and of iy in the odd places
+def pixel_row(nside: np.ndarray, healpix_index: np.ndarray, l_deg: float, b_deg: float) -> int | None
+    # the row of pixel_info whose (nside, healpix_index) holds the sightline, searching each nside level in
+    # ascending order as dustmaps' _find_data_idx; None outside the map
+def reddening_at(samples: np.ndarray, dm_edges: np.ndarray, distance_pc: float) -> np.ndarray
+    # one value per sample, as BayestarQuery.query with a distance: dm = 5 log10(d_pc) - 5; below the first edge
+    # 10^(0.2 (dm - dm_edges[0])) x samples[:, 0]; beyond the last samples[:, -1]; between edges k-1 and k linear in
+    # dm: (1 - a) samples[:, k-1] + a samples[:, k], a = (dm - dm_edges[k-1]) / (dm_edges[k] - dm_edges[k-1])
+def extinction_block(values: np.ndarray, *, distance_pc: float, l_deg: float, b_deg: float, nside: int,
+                     reliable: bool, converged: bool | None, queried_utc: str) -> dict
+    # E(B-V) = BAYESTAR19_TO_EBV x values; the 16th, 50th and 84th percentiles over the finite samples, rounded to
+    # 4 decimals. Raises ValueError("the map gives no finite reddening on this sightline") when none is finite.
+    # {"ebv", "ebv_p16", "ebv_p84", "source": "Bayestar19 (Green et al. 2019) at the Gaia distance, E(B-V) = 0.884 x
+    #  the map's reddening, the 16th, 50th and 84th percentiles over its samples", "map": "bayestar2019
+    #  (doi:10.7910/DVN/2EJ9TX, md5 ab815d2fd3068d1b81a1bd61fb18a722)", "queried_utc", "distance_pc", "l_deg",
+    #  "b_deg", "nside", "reliable_distance": reliable, "converged", "n_samples"}
+def store_path(root: Path, target_id: str) -> Path                       # root / target_id / EXTINCTION_FILE
+def main(argv: list[str] | None = None) -> int
+    # (--target T | --all) --data-dir D [--root R (default <repo>/docs/candidates)] (--map M | --store --ebv E
+    #  --ebv-p16 L --ebv-p84 H --distance-pc P --source S) [--force]
+    # exit 0: written, or "stored; nothing to do" when the file exists and --force is not given (the run never
+    # queries again while the stored value is present), or "the star has no Gaia distance; nothing to store";
+    # exit 2: the map is missing or not MAP_BYTES long, h5py is not importable, the file lacks a required name,
+    # the sightline is outside the map, or no finite sample. Each prints STORE_HINT with the target and distance.
+
+# src/skysift/stars.py
+R_V = 3.1
+GAIA_COLOUR_RANGE = (-0.06, 2.5)      # the fit's validity in (BP-RP)_0; outside it the colour is held at the edge
+GAIA_A0_RANGE = (0.01, 20.0)          # the fit's validity in A_0 (documented, not enforced: below 0.01 is no dust)
+GAIA_LAW = ("Gaia (E)DR3 extinction law, main-sequence fit (log g 4.5) in (BP-RP)_0 and A_0 on the Fitzpatrick "
+            "et al. 2019 law (Riello et al. 2021 passbands): www.cosmos.esa.int/web/gaia/edr3-extinction-law, "
+            "Fitz19_EDR3_MainSequence.csv")
+# k = a1 + a2 X + a3 X^2 + a4 X^3 + a5 A0 + a6 A0^2 + a7 A0^3 + a8 A0 X + a9 A0 X^2 + a10 X A0^2, X = (BP-RP)_0
+GAIA_K_G = (0.995969721536602, -0.159726460302015, 0.0122380738156057, 0.00090726555099859, -0.0377160263914123,
+            0.00151347495244888, -2.52364537395142e-05, 0.0114522658102451, -0.000936914989014318,
+            -0.000260296774134201)
+GAIA_K_BP = (1.15363197483424, -0.0814012991657388, -0.036013023976704, 0.0192143585568966, -0.022397548243016,
+             0.000840562680547171, -1.31018008013549e-05, 0.00660124080271006, -0.000882247501989453,
+             -0.000111215755291684)
+GAIA_K_RP = (0.66320787941067, -0.0179847164933981, 0.000493769449961458, -0.00267994405695751,
+             -0.00651422146709376, 3.30179903473159e-05, 1.57894227641527e-06, -7.9800898337247e-05,
+             0.000255679812110045, 1.10476584967393e-05)
+GAIA_COLOUR_ITERATIONS = 10
+A_KS_OVER_A0 = 0.117                  # Cardelli, Clayton and Mathis 1989 at R_V 3.1 and the 2MASS Ks 2.159 um
+EXTINCTION_SEED = 20261023            # the E(B-V) draws, a generator of their own, so the other draws do not move
+EXTINCTION_FILE = "extinction.json"
+EXTINCTION_FIELDS = ("ebv", "ebv_p16", "ebv_p84", "source", "map", "queried_utc", "distance_pc")
+class ExtinctionError(ValueError): ...        # a stored file that is not a valid block, naming what is wrong
+class NoExtinction(LookupError): ...          # a characterised star without a stored file
+def gaia_k(coeffs, x, a0)                      # the polynomial above; scalars or numpy arrays
+def gaia_extinction(ebv, bp_rp_observed: float) -> dict
+    # A_0 = R_V E(B-V); X_0 starts at the observed colour and, GAIA_COLOUR_ITERATIONS times, X_0 = observed -
+    # A_0 (k_BP - k_RP) at X_0 held in GAIA_COLOUR_RANGE; then {"ebv", "a0", "bp_rp0", "colour_held" (X_0 outside
+    # the range), "k_g", "k_bp", "k_rp", "ebprp": A_0 (k_BP - k_RP), "a_g": A_0 k_G, "a_ks": A_KS_OVER_A0 A_0}, every
+    # k at the held X_0. ebv may be a numpy array (the draws): then each value is an array, colour_held a bool array
+def load_extinction(target_id: str, root: Path) -> dict | None
+    # root / target_id / EXTINCTION_FILE as a dict, or None without the file; ExtinctionError naming the first
+    # problem: not a JSON object, a field of EXTINCTION_FIELDS missing, a number not finite, not
+    # 0 <= ebv_p16 <= ebv <= ebv_p84, or an empty source
+def _split_normal(rng, median: float, low: float, high: float, n: int) -> np.ndarray
+    # median + z (median - low) for z < 0 and z (high - median) for z >= 0, z standard normal, held at 0 and above
+def derive(gaia, period, fit_k, depth, rng, extinction: dict | None = None) -> tuple[StarParams, PlanetParams]
+    # extinction None: unchanged. With a block, before any draw the unreddened pair is derive(gaia, ..., deepcopy(rng),
+    # None), so it carries exactly the version-5 numbers. Then the same draws in the same order, but:
+    #  - e = gaia_extinction(_split_normal(default_rng(EXTINCTION_SEED), ebv, ebv_p16, ebv_p84, N_DRAWS), bp_rp);
+    #  - colour = rng.normal(bp_rp, COLOUR_SIGMA, N_DRAWS) - e["ebprp"] (the 0.10 width stays);
+    #  - mks = ks_s - dm_s - e["a_ks"] in place of the uniform 0 to A_KS_MAX draw;
+    #  - abs_g = G - dm0 - median(a_g); the dwarf sequence, the table check and the spectral type at
+    #    median(bp_rp0);
+    #  - the source strings: Teff "Mamajek dwarf table at the dereddened BP-RP <x0:.3f> +- 0.10 (<ref>), E(BP-RP)
+    #    <e:.3f> from Bayestar19"; Ks "2MASS Ks <ks:.3f>, A_Ks <a:.3f> from Bayestar19, Gaia parallax"; and the
+    #    reddening_note "Teff and spectral type use the BP-RP <bp_rp:.2f> dereddened by the Bayestar19 E(BP-RP) of
+    #    <e:.3f> (E(B-V) <ebv:.3f> at <d:.0f> pc); if E(BP-RP) were 0.2 the dwarf-table radius would be <alt:.3f>
+    #    Rsun.".
+    # StarParams.extinction = {**the stored block, "r_v": R_V, "law": GAIA_LAW, "a_ks_over_a0": A_KS_OVER_A0,
+    #   "bp_rp0": median, "colour_held": any held, "a0", "ebprp", "a_g", "a_ks": _value(draws, 3, ...).as_dict()}
+    # StarParams.unreddened = {"route", "bp_rp0": bp_rp, "teff", "radius", "mass": the unreddened Value dicts,
+    #   "rp_rearth", "insolation_earth": the unreddened planet's Value dicts (None where absent)}
+
+# src/skysift/dossier.py
+EXTINCTION_DIR = CANDIDATES_DIR       # docs/candidates/<target>/extinction.json; tests point it at their own folder
+NoExtinction, ExtinctionError = stars.NoExtinction, stars.ExtinctionError
+NO_EXTINCTION = ("no stored extinction for {target}: run tools/extinction.py --target {target} --data-dir <data "
+                 "dir> --map <bayestar2019.h5> under .venv-triceratops, or store it by hand with --store")
+def fingerprint(latest_tests, final_status, decision, calibration_rows=0, sweep_size=None,
+                extinction_ebv: float | None = None) -> str        # + "extinction_ebv" in the hashed JSON
+# _lookup(target, signal, tests, *, fetch, store, extinction): raises NoExtinction(NO_EXTINCTION) when the Gaia row
+#   has a parallax, its error and a BP-RP (derive would characterise the star) and extinction is None
+# no_spectrum_title(): NO_SPECTRUM alone when star.extinction holds a block; else as before
+
+# src/skysift/pack.py, pack_rows.py
+REDDENING_CLAUSE = ("the reddening E(B-V) = {ebv} ({p16} to {p84}) comes from the Bayestar19 dust map at the Gaia "
+                    "distance{green}, a sightline average, in place of the unreddened colour assumed before{gsp}")
+#   {gsp} = " and of GSP-Phot's E(BP-RP) of {value:.2f}, which is biased for cool dwarfs{andrae}" when stored
+def reddening_text(data, tex=False) -> str | None          # the note's clause, capitalised; None without the block
+def reddening_plain(data) -> str | None
+    # "Reddening: E(B-V) <ebv> (16th to 84th percentile <p16> to <p84>) from Bayestar19 (Green et al. 2019) at <d>
+    #  pc, a sightline average[, outside the map's reliable distance range on this sightline], gives E(BP-RP)
+    #  <ebprp>, A_G <a_g> and A_Ks <a_ks>; unreddened, the earlier assumption, Teff <t_u> K, radius <r_u> Rsun and
+    #  planet radius <rp_u> Earth radii against the adopted <t> K, <r> Rsun and <rp>[; GSP-Phot E(BP-RP) <g>,
+    #  biased for cool dwarfs (Andrae et al. 2023)]."
+def reddening_rows(data) -> list[dict]
+    # the README's table: {"quantity", "adopted", "unreddened", "gsp_phot"} for E(B-V), E(BP-RP), A_G, A_Ks,
+    # (BP-RP)_0, Teff (K), radius (Rsun), mass (Msun), insolation (Earth) and planet radius (Earth radii);
+    # "0 (assumed)" for the unreddened extinctions, the GSP-Phot column E(BP-RP) and Teff (teff_gspphot) only,
+    # "not given" elsewhere
+EXTINCTION_ROWS = (("E(B-V) (Bayestar19)", "ebv"), ("E(BP-RP) adopted", "ebprp"), ("A_G adopted", "a_g"),
+                   ("A_Ks adopted", "a_ks"))   # provenance_rows: method from the block's source, reference "Green
+                                               # et al. 2019; Gaia (E)DR3 extinction law; Cardelli et al. 1989"
+```
+
+Every number in the texts follows the precision rule: errors to two significant figures, the value to the error's last digit. Reddening values without an error print to three decimals.
+
+- [ ] **Step 1: Write the failing law and draw tests** in `tests/unit/test_stars.py`. The expected values come from the coefficients above, checked on 23 October 2026.
+
+```python
+EXT = {"ebv": 0.05, "ebv_p16": 0.03, "ebv_p84": 0.07, "source": "a test block", "map": "bayestar2019",
+       "queried_utc": "2026-10-23T20:00:00+00:00", "distance_pc": 303.0}
+
+
+def test_the_gaia_dr3_law_turns_e_b_v_into_e_bp_rp_a_g_and_a_ks():
+    out = stars.gaia_extinction(0.05, 2.0971918)                 # KIC 6146676's BP-RP
+    assert out["a0"] == pytest.approx(0.155) and out["colour_held"] is False
+    assert out["bp_rp0"] == pytest.approx(2.0361684, abs=1e-6)
+    assert out["ebprp"] == pytest.approx(0.0610234, abs=1e-6) and out["a_g"] == pytest.approx(0.1125808, abs=1e-6)
+    assert out["a_ks"] == pytest.approx(0.018135, abs=1e-9)
+    zero = stars.gaia_extinction(0.0, 2.0971918)
+    assert (zero["ebprp"], zero["a_g"], zero["a_ks"], zero["bp_rp0"]) == (0.0, 0.0, 0.0, 2.0971918)
+    held = stars.gaia_extinction(0.05, 2.7)                      # (BP-RP)_0 2.63 is above the fit's 2.5
+    assert held["colour_held"] is True and held["ebprp"] == pytest.approx(0.0689518, abs=1e-6)
+    hot = stars.gaia_extinction(0.30, 0.8)
+    assert hot["ebprp"] == pytest.approx(0.4187245, abs=1e-6) and hot["a_g"] == pytest.approx(0.8434732, abs=1e-6)
+    many = stars.gaia_extinction(np.array([0.0, 0.05]), 2.0971918)
+    assert many["ebprp"] == pytest.approx([0.0, 0.0610234], abs=1e-6)
+
+
+def test_a_ks_over_a0_is_ccm_at_the_2mass_ks_wavelength():
+    x = 1 / 2.159                                                # um^-1; CCM 1989 infrared: a = 0.574 x^1.61
+    assert stars.A_KS_OVER_A0 == round(0.574 * x ** 1.61 - 0.527 * x ** 1.61 / 3.1, 3) == 0.117
+
+
+def test_derive_with_a_stored_extinction_dereddens_and_keeps_the_unreddened_values():
+    gaia = gaia_row_6146676()
+    plain, plain_planet = derive(gaia, 40.29109, 0.048, 2165e-6, np.random.default_rng(1))
+    star, planet = derive(gaia, 40.29109, 0.048, 2165e-6, np.random.default_rng(1), extinction=EXT)
+    assert star.unreddened["teff"] == plain.teff.as_dict() and star.unreddened["radius"] == plain.radius.as_dict()
+    assert star.unreddened["rp_rearth"] == plain_planet.rp_rearth.as_dict() and star.unreddened["bp_rp0"] == (
+        gaia.bp_rp)
+    assert star.teff.median > plain.teff.median                  # a bluer intrinsic colour is a hotter star
+    e = star.extinction
+    assert e["ebv"] == 0.05 and e["ebprp"]["median"] == pytest.approx(0.061, abs=0.003)
+    assert e["a_ks"]["median"] == pytest.approx(0.018, abs=0.002) and e["bp_rp0"] == pytest.approx(2.036, abs=0.002)
+    assert e["law"] == stars.GAIA_LAW and e["r_v"] == 3.1
+    assert "Bayestar19" in star.radius.source and "A_Ks 0 to 0.07" not in star.radius.source
+    assert derive(gaia, 40.29109, 0.048, 2165e-6, np.random.default_rng(1), extinction=EXT) == (star, planet)
+    assert plain.extinction is None and plain.unreddened is None
+
+
+def test_load_extinction_reads_validates_and_refuses(tmp_path):
+    import json
+    folder = tmp_path / "kic-006146676"
+    folder.mkdir()
+    assert stars.load_extinction("kic-006146676", tmp_path) is None
+    (folder / "extinction.json").write_text(json.dumps(EXT), encoding="utf-8")
+    assert stars.load_extinction("kic-006146676", tmp_path) == EXT
+    for bad, words in (({**EXT, "ebv": None}, "ebv is not a finite number"),
+                       ({**EXT, "ebv_p16": 0.06}, "not 0 <= ebv_p16 <= ebv <= ebv_p84"),
+                       ({**EXT, "source": " "}, "source is empty"),
+                       ({k: v for k, v in EXT.items() if k != "map"}, "map is missing")):
+        (folder / "extinction.json").write_text(json.dumps(bad), encoding="utf-8")
+        with pytest.raises(stars.ExtinctionError, match=words):
+            stars.load_extinction("kic-006146676", tmp_path)
+```
+
+- [ ] **Step 2: Write the failing tool tests** in `tests/unit/test_extinction.py` (new). The tool's helpers run under the engine's interpreter; no test reads a map file.
+
+```python
+"""tools/extinction.py's pure helpers (spec 12.3): the HEALPix index, the pixel search, the distance interpolation
+that dustmaps' BayestarQuery applies, the stored block, and main's refusals; no test reads the map."""
+import json
+import math
+
+import numpy as np
+import pytest
+
+from tools import extinction as ex
+
+
+def test_ang2pix_nest_finds_the_twelve_base_pixels_and_nests():
+    centres = ([(math.acos(2 / 3), math.pi / 4 + k * math.pi / 2) for k in range(4)]
+               + [(math.pi / 2, k * math.pi / 2) for k in range(4)]
+               + [(math.acos(-2 / 3), math.pi / 4 + k * math.pi / 2) for k in range(4)])
+    assert [ex.ang2pix_nest(1, t, p) for t, p in centres] == list(range(12))
+    rng = np.random.default_rng(3)
+    for _ in range(2000):
+        theta, phi = math.acos(rng.uniform(-1, 1)), rng.uniform(0, 2 * math.pi)
+        for nside in (2, 64, 1024):                              # a pixel's parent is its index over 4
+            assert ex.ang2pix_nest(nside, theta, phi) // 4 == ex.ang2pix_nest(nside // 2, theta, phi)
+
+
+def test_kic_6146676_lies_at_l_76_b_7_and_its_pixels():
+    l, b = ex.galactic(297.86871, 41.455567)
+    assert (l, b) == pytest.approx((76.0444, 7.4198), abs=1e-3)
+    theta, phi = math.radians(90 - b), math.radians(l)
+    assert [ex.ang2pix_nest(n, theta, phi) for n in (64, 128, 256, 512, 1024)] == [23376, 93504, 374017, 1496068,
+                                                                                   5984274]
+
+
+def test_pixel_row_searches_each_nside_level():
+    l, b = 76.0444, 7.4198
+    nside = np.array([64, 64, 128, 128])
+    index = np.array([23375, 23377, 93503, 93504])
+    assert ex.pixel_row(nside, index, l, b) == 3
+    assert ex.pixel_row(nside[:3], index[:3], l, b) is None
+
+
+def test_the_reddening_at_a_distance_follows_dustmaps():
+    edges = np.array([4.0, 5.0, 6.0, 7.0])                       # distance moduli
+    samples = np.array([[0.1, 0.2, 0.3, 0.4], [0.2, 0.3, 0.5, 0.6]])
+    assert ex.reddening_at(samples, edges, 10 ** (5.5 / 5 + 1)) == pytest.approx([0.25, 0.4])   # linear in dm
+    assert ex.reddening_at(samples, edges, 10 ** (3.0 / 5 + 1)) == pytest.approx([0.1 * 10 ** -0.2,
+                                                                                  0.2 * 10 ** -0.2])
+    assert ex.reddening_at(samples, edges, 1e6) == pytest.approx([0.4, 0.6])      # beyond the map: the last bin
+    block = ex.extinction_block(np.array([0.05, 0.06, 0.07, np.nan]), distance_pc=303.0, l_deg=76.04, b_deg=7.42,
+                                nside=1024, reliable=False, converged=True, queried_utc="2026-10-23T20:00:00+00:00")
+    assert block["ebv"] == pytest.approx(round(0.884 * 0.06, 4)) and block["n_samples"] == 3
+    assert block["reliable_distance"] is False and block["map"].startswith("bayestar2019 (doi:10.7910/DVN/2EJ9TX")
+    assert set(block) >= {"ebv", "ebv_p16", "ebv_p84", "source", "map", "queried_utc", "distance_pc"}
+
+
+def test_a_nan_sightline_stops_the_tool_with_the_store_instruction(tmp_path, capsys):
+    with pytest.raises(ValueError, match="the map gives no finite reddening on this sightline"):
+        ex.extinction_block(np.array([np.nan, np.nan]), distance_pc=303.0, l_deg=0.0, b_deg=0.0, nside=64,
+                            reliable=True, converged=None, queried_utc="t")
+    data = tmp_path / "data" / "dossiers" / "kic-006146676"
+    data.mkdir(parents=True)
+    (data / "dossier_data.json").write_text(json.dumps({"target": {"ra": 297.86871, "dec": 41.455567},
+                                                        "star": {"route": "mann",
+                                                                 "distance_pc": {"median": 303.0}}}),
+                                            encoding="utf-8")
+    args = ["--target", "kic-006146676", "--data-dir", str(tmp_path / "data"), "--root", str(tmp_path / "c")]
+    assert ex.main([*args, "--map", str(tmp_path / "no-such.h5")]) == 2
+    err = capsys.readouterr().err
+    assert "no-such.h5 is not there" in err and "--store --ebv" in err and "--distance-pc 303" in err
+
+
+def test_store_by_hand_writes_the_block_and_a_second_run_does_nothing(tmp_path, capsys):
+    args = ["--target", "kic-006146676", "--data-dir", str(tmp_path), "--root", str(tmp_path / "c")]
+    assert ex.main([*args, "--store", "--ebv", "0.05", "--ebv-p16", "0.03", "--ebv-p84", "0.07",
+                    "--distance-pc", "303", "--source", "read off the Bayestar19 web page"]) == 0
+    block = json.loads(ex.store_path(tmp_path / "c", "kic-006146676").read_text(encoding="utf-8"))
+    assert (block["ebv"], block["map"], block["source"]) == (0.05, "by hand", "read off the Bayestar19 web page")
+    assert ex.main([*args, "--map", str(tmp_path / "no-such.h5")]) == 0
+    assert "stored; nothing to do" in capsys.readouterr().err
+```
+
+- [ ] **Step 3: Write the failing dossier, pack and page tests.**
+  - `tests/unit/test_dossier.py`, `_make_env` (lines 139 to 170): after the `CANDIDATES_DIR` lines, set `dossier_module.EXTINCTION_DIR = Path(settings.data_dir) / "extinction"` with `monkeypatch.setattr`. Then write `EXTINCTION_FIXTURE` (the `EXT` block of Step 1 with `"source": "test fixture"`) to `<that>/<target_id>/extinction.json` for every `target_id` of `select(TargetRow.target_id)` on the seeded store.
+
+```python
+def test_generate_refuses_a_characterised_star_without_a_stored_extinction(env):
+    (dossier_module.EXTINCTION_DIR / STAGE2_TARGET / "extinction.json").unlink()
+    with pytest.raises(dossier_module.NoExtinction, match=r"no stored extinction for kic-006146676: run "
+                                                          r"tools/extinction.py --target kic-006146676"):
+        generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch, force=True)
+
+
+def test_a_star_gaia_cannot_characterise_needs_no_extinction(env_no_gaia):
+    (dossier_module.EXTINCTION_DIR / STAGE2_TARGET / "extinction.json").unlink()
+    d = _data(generate(env_no_gaia.store, env_no_gaia.blob, env_no_gaia.settings, STAGE2_TARGET,
+                       fetch=env_no_gaia.fetch, force=True))
+    assert d["star"]["route"] == "none" and d["star"]["extinction"] is None
+
+
+def test_version_6_stores_the_adopted_and_unreddened_star_and_the_extinction_moves_the_fingerprint(env):
+    rep = generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch, force=True)
+    star = _data(rep)["star"]
+    assert star["extinction"]["ebv"] == 0.05 and star["extinction"]["source"] == "test fixture"
+    assert set(star["unreddened"]) >= {"teff", "radius", "mass", "rp_rearth", "insolation_earth", "bp_rp0"}
+    assert dossier_module.no_spectrum_title(star) == dossier_module.NO_SPECTRUM
+    path = dossier_module.EXTINCTION_DIR / STAGE2_TARGET / "extinction.json"
+    path.write_text(json.dumps({**json.loads(path.read_text(encoding="utf-8")), "ebv": 0.06, "ebv_p84": 0.08}),
+                    encoding="utf-8")
+    again = generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch)
+    assert again.generated is True and _data(again)["star"]["extinction"]["ebv"] == 0.06
+```
+
+  - `tests/unit/test_cli.py`: `skysift dossier` on the `_make_env` store with the fixture file removed exits 2 and prints "no stored extinction for kic-006146676".
+  - `tests/unit/test_pack.py`, on `env_with_dossier`:
+    - `render_note` carries `str(pack_module.reddening_text(data, True))`, which contains `\citep{green2019}` and the fixture's "E(B-V) = 0.050 (0.030 to 0.070)".
+    - The note does not carry "unreddened" figures (the note's one clause only).
+    - The README carries the header row `| Quantity | Adopted (Bayestar19) | Unreddened (the earlier assumption) | GSP-Phot (biased for cool dwarfs) |` and a Teff row whose unreddened cell is the dossier's `star.unreddened.teff` in `value_text`.
+    - `exofop/note.txt` and `archive_email.txt` carry `pack_module.reddening_plain(data)`.
+    - `data/stellar_provenance.csv` has the four `EXTINCTION_ROWS`.
+    - The README's references name "Cardelli, J. A., Clayton, G. C., and Mathis, J. S. 1989, ApJ, 345, 245", "Fitzpatrick, E. L., Massa, D., Gordon, K. D., Bohlin, R., and Clayton, G. C. 2019, ApJ, 886, 108" and "Riello, M., De Angeli, F., Evans, D. W., et al. 2021, A&A, 649, A3".
+  - `tests/unit/test_zenodo.py`: the metadata description carries `pack.reddening_plain(data)` as its own paragraph after the ephemeris.
+  - `tests/unit/test_ui_dossiers.py`: the served and standalone pages print `pack.star_texts(data)`, which now leads with `reddening_plain`.
+
+- [ ] **Step 4: Run them to see them fail.**
+  - Command: `PYTHONUTF8=1 PYTHONPATH=src C:\Research\skysift\.venv\Scripts\python.exe -m pytest tests/unit/test_stars.py tests/unit/test_extinction.py tests/unit/test_dossier.py tests/unit/test_pack.py tests/unit/test_zenodo.py tests/unit/test_ui_dossiers.py tests/unit/test_cli.py -q -p no:cacheprovider`.
+  - Expected: `AttributeError: module 'skysift.stars' has no attribute 'gaia_extinction'` (and `A_KS_OVER_A0`, `load_extinction`); `ModuleNotFoundError: No module named 'tools.extinction'`; `TypeError: derive() got an unexpected keyword argument 'extinction'`; `AttributeError: module 'skysift.dossier' has no attribute 'EXTINCTION_DIR'` in every fixture that writes the file.
+
+- [ ] **Step 5: The law and the draws** in `src/skysift/stars.py`.
+  - Implement the constants and functions of the interface block. `gaia_k` evaluates the ten-term polynomial with numpy so that scalars and arrays both work; `gaia_extinction` clips X_0 with `np.clip` and returns Python floats for a scalar `ebv`.
+  - `derive(..., extinction=None)` follows the interface comment. Take the unreddened pair with `copy.deepcopy(rng)` before the first draw. The extinction draws come from `np.random.default_rng(EXTINCTION_SEED)`, so the seeded draws of the colour, the parallax, Ks and the Mann scatter are those of version 5.
+  - Without Ks (the Mamajek route), only the colour and the spectral type move; the radius and mass come from the dereddened colour through `_interp` as the table route does now.
+  - `_unknown` passes `extinction=None, unreddened=None`. The module docstring gains one paragraph on the adopted extinction and its precedent: Green et al. 2019; Andrae et al. 2023 for why GSP-Phot is not adopted.
+
+- [ ] **Step 6: The tool**, `tools/extinction.py`, with a module docstring giving the run commands (Step 8), why it reads the file directly (the preamble's two findings), the map's DOI, size and MD5, and the dustmaps rules it copies.
+  - `main` checks, in this order:
+    1. The arguments.
+    2. The stored file: "stored; nothing to do" and exit 0 unless `--force`.
+    3. The dossier JSON at `<data-dir>/dossiers/<target>/dossier_data.json`. Without a distance: "the star has no Gaia distance; nothing to store", exit 0.
+    4. `--store` writes the block by hand with `"map": "by hand"`, `queried_utc` now, and exit 0.
+    5. The map: missing ("<path> is not there"), or a size other than `MAP_BYTES` ("<path> is <n> bytes, not 727,902,836: download it again (MD5 ab815d2fd3068d1b81a1bd61fb18a722)"), exit 2 with `STORE_HINT`.
+    6. `import h5py` (exit 2: "h5py is not importable; run this tool with .venv-triceratops/Scripts/python.exe -I").
+    7. The required names in the file (exit 2 naming the first missing).
+  - The query itself: `pixel_row`; `samples = f["/samples"][row]`; `reddening_at(samples, DM_bin_edges, distance_pc)`.
+  - The flags: `reliable` is `DM_reliable_min[row] <= dm <= DM_reliable_max[row]`, both finite; `converged` is `bool(pixel_info["converged"][row])` when the field exists, else None.
+  - Then `extinction_block`, written through a temporary file and `os.replace` to `store_path(root, target)`. Print one line with the target, l, b, the distance and the three E(B-V) values.
+  - `--all` runs `LIVE_TARGETS` in turn and returns the largest exit code.
+
+- [ ] **Step 7: Download the map, with Vikram's yes first.** Ask him in chat for permission to download `bayestar2019.h5` from Harvard Dataverse (doi:10.7910/DVN/2EJ9TX, `https://dataverse.harvard.edu/api/access/datafile/3424724`, 727,902,836 bytes) into `C:\Research\skysift\.superpowers\maps\` (git-ignored). Then:
+  - `curl -L --fail -o C:\Research\skysift\.superpowers\maps\bayestar2019.h5 https://dataverse.harvard.edu/api/access/datafile/3424724`, in the background at BelowNormal priority.
+  - `certutil -hashfile C:\Research\skysift\.superpowers\maps\bayestar2019.h5 MD5`, which must print ab815d2fd3068d1b81a1bd61fb18a722.
+  - Without the yes, or if the download fails, store each value by hand with `--store` from a source Vikram names, and say so in the task report.
+
+- [ ] **Step 8: Store the five live values.** From the worktree, `C:\Research\skysift\.venv-triceratops\Scripts\python.exe -I tools/extinction.py --all --data-dir C:\Research\skysift\.superpowers\sample-run --root docs/candidates --map C:\Research\skysift\.superpowers\maps\bayestar2019.h5`.
+  - The tool reads only the dossier JSON files, never the database.
+  - The distances it reads are 290.7, 303.0, 840.6, 1860.1 and 1149.7 pc, in the order of `LIVE_TARGETS`.
+  - Then run the same command with `--data-dir .superpowers/sdd/2026-10-22-skysift-referee-pack/live/data-3480`. It must print "stored; nothing to do" for `kic-006699887`.
+  - Record the five E(B-V) values, their percentiles and `reliable_distance` in the task report. A star with `reliable_distance` false is named.
+
+- [ ] **Step 9: The dossier.**
+  - `EXTINCTION_DIR`, the re-exported errors and `NO_EXTINCTION`.
+  - `generate` reads `extinction = stars.load_extinction(target_id, EXTINCTION_DIR)` before the fingerprint, so a malformed file stops the run before any work, and passes `extinction_ebv=(extinction or {}).get("ebv")` to `fingerprint`.
+  - `_lookup(..., extinction)` refuses as specified, right after `stars.query_gaia`, and passes `extinction` to `stars.derive`; `_rederive` passes it too.
+  - `no_spectrum_title` keys on `star.extinction`.
+  - `cli.py` line 289 catches `(ds.LightCurveReleased, ds.PriorClaimsError, ds.NoExtinction, ds.ExtinctionError)`.
+  - The `DOSSIER_VERSION` comment of Task 15 already names the extinction block; the version stays "6".
+
+- [ ] **Step 10: The texts.**
+  - `reddening_text` follows `REDDENING_CLAUSE`, with `\citep{green2019}` and `\citep{andrae2023}` in the TeX form and "(Green et al. 2019)" and "(Andrae et al. 2023)" in the plain one. Without the block it falls back to today's GSP-Phot sentence, for a dossier below version 6.
+  - `references` sets `green2019` to `star_ok and isinstance(star.get("extinction"), dict)`.
+  - `BIBLIOGRAPHY` gains `("green2019", r"{Green} et~al.(2019)", r"Green, G.~M., Schlafly, E., Zucker, C., Speagle, J.~S., and Finkbeiner, D. 2019, ApJ, 887, 93")` in the existing tuple shape.
+  - `reddening_plain` and `reddening_rows` are as specified. `numbers` exposes `reddening_plain` and `reddening_rows`, and `star_texts` leads with `reddening_plain`.
+  - `README.md.j2` prints the table under the star paragraph, with one caveat line under it: "Adopted: a dust-map sightline average with its 16th to 84th percentile range. Unreddened: the assumption of round 2, E(BP-RP) at or below 0.1. GSP-Phot: Gaia's own fit, biased for cool dwarfs (Andrae et al. 2023)."
+  - `exofop_note.txt.j2` prints `n.reddening_plain` after the planet line, and `archive_paragraph` prints it after the ephemeris sentence.
+  - `zenodo.metadata_from` adds `pack.reddening_plain(data)` as a paragraph after the ephemeris. Import it inside the function, as `page_texts` does.
+  - `provenance_rows` appends the `EXTINCTION_ROWS` when the block exists. The four rows' values are the block's medians, with `minus` and `plus` from the draws (E(B-V) from the stored percentiles).
+  - The page's star block (`dossier.html` lines 402 to 404 and `dossier.js` line 629) prints `texts.star` in place of `star.reddening_note` when the block exists.
+
+- [ ] **Step 11: Run the tests** (all pass).
+  - `PYTHONUTF8=1 PYTHONPATH=src C:\Research\skysift\.venv\Scripts\python.exe -m pytest tests/unit/test_stars.py tests/unit/test_extinction.py tests/unit/test_dossier.py tests/unit/test_pack.py tests/unit/test_zenodo.py tests/unit/test_ui_dossiers.py tests/unit/test_cli.py tests/unit/test_crosscheck.py -q -p no:cacheprovider`
+  - `PYTHONUTF8=1 PYTHONPATH=src C:\Research\skysift\.venv\Scripts\python.exe -m ruff check src tests tools`
+
+- [ ] **Step 12: Regenerate the golden** with the Step 11 command of Task 15. It reads `docs/candidates/kic-006146676/extinction.json` from the worktree, which Step 8 wrote.
+  - Run the golden test (`-m golden`). The hand-built comparisons (planet radius, a, Teq within the study's errors) are expected to hold, since the radius barely depends on reddening on the Mann route. If one fails, the task report gives the old and new value; the test's tolerance is not widened.
+  - Then run the unit suite once, detached and hidden, at BelowNormal: `PYTHONUTF8=1 PYTHONPATH=src C:\Research\skysift\.venv\Scripts\python.exe -m pytest tests -q -p no:cacheprovider -m "not slow and not golden"`.
+
+- [ ] **Step 13: The word budget.** Run the live-shape limit test (`-k live_shape -vv`). If any of the four counts passes 1,480, cut in this order, re-measuring after each cut, and stop at the first that fits:
+  1. The note's reddening clause drops "a sightline average, " and the GSP-Phot half, which stay in the README's table.
+  2. The note's short variant sentence becomes a parenthesis inside the cross-check sentence: "(<v.fpp> and <v.fpp_no_stp> without STP with <removed_phrase> removed)".
+  3. The dominant-excluded sentence drops "which no imaging constrains, ".
+  4. If it still passes 1,480, stop and report the counts. No number of spec 12 leaves the note.
+  Record the counts in the commit message.
+
+- [ ] **Step 14: Commit.**
+
+```
+git add tools/extinction.py src/skysift/stars.py src/skysift/dossier.py src/skysift/cli.py src/skysift/pack.py src/skysift/pack_rows.py src/skysift/zenodo.py src/skysift/templates/pack/note.tex.j2 src/skysift/templates/pack/README.md.j2 src/skysift/templates/pack/exofop_note.txt.j2 src/skysift/ui/templates/dossier.html src/skysift/ui/static/dossier.js docs/candidates/kic-005689121/extinction.json docs/candidates/kic-006146676/extinction.json docs/candidates/kic-006699887/extinction.json docs/candidates/kic-009243078/extinction.json docs/candidates/kic-010352243/extinction.json tests/golden/kic-006146676-generated.json tests/unit/test_extinction.py tests/unit/test_stars.py tests/unit/test_dossier.py tests/unit/test_pack.py tests/unit/test_zenodo.py tests/unit/test_ui_dossiers.py tests/unit/test_cli.py
+git commit -m "feat(stars): Bayestar19 extinction stored per target, through the Gaia DR3 law and the draws, with the adopted, unreddened and GSP-Phot values in every text
+
+Live-shape words: <four counts>.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+```
+
+The live run of spec 12.4 follows these three tasks, once the controller has read Task 14's note:
+1. Store the extinction (Task 16 Step 8, done).
+2. Regenerate the five live dossiers and the second period of KIC 6699887 at version 6.
+3. Export the four cross-checks at schema 3.
+4. Run the tool on each: two run sets per signal, so eight TRICERATOPS processes, four at a time, each with `--resume`, in the background at BelowNormal.
+5. Import the four results.
+6. Run `tools/leakage_note.py --after` on the KIC 6146676 result, so the note gains the NFPP after.
+7. Regenerate the dossiers, rebuild both packs and run the full gate on the tip. The parent merges on the report.
