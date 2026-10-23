@@ -2307,8 +2307,10 @@ def test_the_red_noise_parity_and_trend_sentences():
     assert pack_module.parity_sentence(data) == (
         "The odd and even depths are 2,031 ± 178 and 2,031 ± 138 ppm per event (0.0 sigma apart) and 2,050 ± 120 and "
         "2,010 ± 115 ppm on the stacked folds (0.2 sigma apart).")
-    assert pack_module.trend_sentence(data) == (
-        "The per-event depths drift by -61 ± 25 ppm per year (2.4 sigma, errors scaled by the scatter).")
+    assert pack_module.trend_sentence(data) == (                 # Task 12 review M-2: the sign is in the verb
+        "The per-event depth shallows by 61 ± 25 ppm per year (2.4 sigma, errors scaled by the scatter).")
+    deeper = {**data, "depth_trend": {**data["depth_trend"], "slope_ppm_per_year": 228.0}}
+    assert pack_module.trend_sentence(deeper).startswith("The per-event depth deepens by 228 ± 25 ppm per year")
     assert pack_module.trend_sentence({**data, "depth_trend": {**data["depth_trend"], "printed": False}}) is None
 
 
@@ -2332,7 +2334,10 @@ def test_the_note_names_the_photometry_the_aperture_ratio_and_the_predicted_leak
     flat = " ".join(render_note(data).split())
     assert "KBonus PSF photometry, decontaminated to first order, with no crowding correction applied" in flat
     assert pack_module.aperture_sentence(data) == (
-        "The SAP depth is 0.635 ± 0.064 of the PSF depth against a CROWDSAP of 0.75, 1.8 sigma short of it.")
+        "The SAP depth is 0.635 ± 0.064 of the PSF depth against a CROWDSAP (this star's light fraction in the "
+        "aperture) of 0.75, 1.8 sigma short of it.")
+    assert flat.count("CROWDSAP") == 1                       # Task 12 review M-5: defined once, in the ratio sentence
+    assert "a PSF flux fraction inside the aperture (PSFFRAC)" in flat
     assert pack_module.leak_sentence(data) == (
         "KIC 5689116's optimal aperture dims by 130 ± 42 ppm, where this star's light alone (3.0 percent of that "
         "aperture under the PSF model of the pixel check) predicts 61 ppm.")
@@ -2400,3 +2405,34 @@ def _validated_block(data: dict) -> dict:
     from tests.unit.test_crosscheck import fake_result
     block = fake_result(cross_check.inputs_fingerprint(data), fpp=0.012, nfpp=1e-4)
     return cross_check.with_current({**block, "current": True}, data)
+
+
+# ---------------------------------------------------------------------------------------------------- Task 12 fix round
+
+def test_generate_stores_the_rung3_line_with_the_notes_aperture_ratio(env_with_dossier):
+    """I-1: the stored ``why`` row of rung 3 (the dossier page prints it) carries the note's aperture clause."""
+    data = _stored(env_with_dossier)
+    assert data["aperture"] is not None
+    line = next(w for w in data["why"] if w["rung"] == "rung3_stability")
+    note = pack_module.aperture_sentence(data)
+    assert note[0].lower() + note[1:-1] in line["sentence"]
+
+
+def test_the_readme_gives_the_leak_method_as_a_floor():
+    """M-1: the README's method for the predicted leak says the Gaussian has no PRF wings, so it is a floor."""
+    data = {"predicted_leak": {"predicted_ppm": 4.0, "share": 0.0017, "measured_ppm": -9.0, "measured_err_ppm": 12.0,
+                               "kic": 6146666, "reason": None, "model": dossier_module.LEAK_MODEL}}
+    text = pack_module.leak_method_text(data)
+    assert text.startswith("Predicted leak: " + dossier_module.LEAK_MODEL)
+    assert text.endswith("the Gaussian has no PRF wings, so the prediction is a floor.")
+    assert pack_module.leak_method_text({"predicted_leak": {**data["predicted_leak"], "predicted_ppm": None}}) is None
+
+
+def test_the_readme_names_the_hand_built_file_only_when_the_pack_holds_it(env_prior):
+    """M-6: without the study at pack time the README points at the study's own path, not a file the pack lacks."""
+    (dossier_module.CANDIDATES_DIR / STAGE2_TARGET / "localisation" / "results.json").unlink()
+    rep = _build(env_prior)
+    readme = _texts(rep)["README.md"]
+    assert not (rep.out_dir / pack_module.HAND_BUILT_FILE).exists()
+    assert pack_module.HAND_BUILT_FILE not in readme
+    assert f"(docs/candidates/{STAGE2_TARGET}/localisation/results.json)" in readme

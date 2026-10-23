@@ -468,7 +468,7 @@ def seed_dossier(store: Store, data_dir, target_id: str = STAGE2_TARGET) -> dict
         "plots": _seed_plots(period, t0),
         "tests": [{"rung": x["rung"], "status": x["status"], "reason": x["reason"], "metrics": x["metrics"],
                    "created": x["created"].isoformat()} for x in tests],
-        "why": [dataclasses.asdict(w) for w in explain.why(tests)],
+        "why": [dataclasses.asdict(w) for w in explain.why(tests, aperture=errors["aperture"])],
         "rechecks": store.rechecks(sid), "children": store.children(sid), "fap": fap, "fpp": fpp,
         "pixels": _seed_pixels(),
         "centroid_offset": ds.centroid_offset(next((x["metrics"] for x in tests if x["rung"] == "rung5_pixels"), {})),

@@ -213,6 +213,27 @@ def ephemeris_sentence(data: dict) -> str:
     return ", ".join(p for p in parts if p)
 
 
+CROWDSAP_WORDS = "a CROWDSAP (this star's light fraction in the aperture)"
+
+
+def aperture_clause(block: dict | None, tex: bool = False) -> str | None:
+    """Rung 3's aperture ratio on the fold against CROWDSAP (the dossier's ``aperture`` block, spec 11.5), the one
+    wording of the note and the dossier page (Task 12 review I-1): "the SAP depth is R ± e of the PSF depth against a
+    CROWDSAP (this star's light fraction in the aperture) of C, Z sigma short of it" ("above it" when the ratio is
+    the larger), CROWDSAP defined here once (review M-5); None without the block's ratio and error."""
+    if not isinstance(block, dict):
+        return None
+    ratio, err, crowd, short = (_num(block.get(k)) for k in ("ratio", "ratio_err", "crowdsap", "shortfall_sigma"))
+    if ratio is None or err is None:
+        return None
+    parts = ["the SAP depth is ", pm_text(ratio, err, err, tex=tex), " of the PSF depth"]
+    if crowd is not None:
+        parts.append(f" against {CROWDSAP_WORDS} of {crowd:.2f}")
+        if short is not None:
+            parts.append(f", {abs(short):.1f} sigma {'short of' if short < 0 else 'above'} it")
+    return _joined(tex, *parts)
+
+
 # what the public texts may say about a prior claim; dossier.py imports these names from here, their one source
 PRIOR_CLAIM_NUMBERS = ("period_days", "period_err_days", "t0_bjd", "t0_err_days", "depth_ppm", "depth_err_ppm", "fpp")
 PRIOR_CLAIM_PUBLIC = ("doi", "date", "author", "title", "relationship", "development_note", *PRIOR_CLAIM_NUMBERS,

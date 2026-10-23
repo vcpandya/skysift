@@ -14,6 +14,7 @@ from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime
 
 from skysift.config import Thresholds
+from skysift.pack_text import aperture_clause, pm_text
 from skysift.store.db import ENGINE_STATUSES, REVIEWER_DECIDED_REASON
 
 LADDER_ORDER = ["rung1_detection", "rung1_events", "rung2_shape", "rung3_stability", "rung4_novelty", "rung5_pixels"]
@@ -266,23 +267,32 @@ def _shape(m: dict) -> tuple[str, str]:
     return sentence[:1].upper() + sentence[1:], numbers
 
 
-def _stability(m: dict) -> tuple[str, str]:
+def _stability(m: dict, aperture: dict | None = None) -> tuple[str, str]:
+    """Rung 3 in words. With the dossier's ``aperture`` block (the ratio on the fold) the aperture clause is the
+    note's (``pack_text.aperture_clause``: the ratio with its error against CROWDSAP and the shortfall in sigma, spec
+    11.5 and Task 12 review I-1); without it, rung 3's own ratio and its distance from equal depths, named so."""
     depths, errs = m.get("season_depths") or {}, m.get("season_errs") or {}
     p, chi2, dof = _num(m, "p_value"), _num(m, "chi2"), _num(m, "dof")
     ratio = _num(m, "sap_psf_ratio") if _num(m, "aperture_ratio") is None else _num(m, "aperture_ratio")
     az = _num(m, "aperture_z")
     parts = [f"Depth agrees across {len(depths)} quarter groups (p = {p:.2g})" if depths and p is not None
              else "Depths per quarter group were not recorded"]
-    if ratio is not None:           # spec 11.5: the ratio itself, not a claim that the apertures agree
-        parts.append(f"the SAP depth is {ratio:.2f} of the PSF depth" + (f", {abs(az):.1f} sigma apart"
-                                                                         if az is not None else ""))
+    clause = aperture_clause(aperture)
+    if clause is not None:
+        parts.append(clause)
+    elif ratio is not None:           # spec 11.5: the ratio itself, not a claim that the apertures agree
+        parts.append(f"the SAP depth is {ratio:.2f} of the PSF depth" + (
+            f", {abs(az):.1f} sigma {'below' if az < 0 else 'above'} equal depths" if az is not None else ""))
     # rung 3 groups the quarters by quarter mod 4, which is not the archive SEASON rung 5 labels its seasons by, so
     # its groups are "quarter group N" wherever rung 5's are "archive season N"
     seasons = [f"quarter group {s}: {_ppm(_num(depths, s))}" + (f" ± {_ppm(_num(errs, s))}" if s in errs else "")
                + " ppm" for s in sorted(depths, key=str)]
     fit = chi2 is not None and dof is not None and p is not None and f"χ² {chi2:.1f} on {dof:.0f} dof, p = {p:.2g}"
-    aperture = ratio is not None and f"aperture ratio {ratio:.2f}" + (f", {az:.1f} σ" if az is not None else "")
-    return _join(parts, " and "), _join([*seasons, fit, aperture], "; ")
+    on_fold = clause is not None and "aperture ratio on the fold " + pm_text(aperture["ratio"], aperture["ratio_err"],
+                                                                             aperture["ratio_err"])
+    ratio_text = ratio is not None and f"aperture ratio {ratio:.2f}" + (f", {az:.1f} σ from equal depths"
+                                                                        if az is not None else "")
+    return _join(parts, " and "), _join([*seasons, fit, on_fold or ratio_text], "; ")
 
 
 CATALOGUES = ("cumulative", "q1_q17_dr25_tce", "toi", "kepler_eb", "gaia_nss_two_body_orbit",
@@ -408,10 +418,11 @@ def _passed_in_words(reason: str) -> str | None:
 _ARCHIVE_SEASON = re.compile(r"\bseason (?=\d)")
 
 
-def _row(rung: str, row: dict) -> Why:
+def _row(rung: str, row: dict, aperture: dict | None = None) -> Why:
     status, reason, m = row.get("status") or "", row.get("reason") or "", row.get("metrics") or {}
     m = m if isinstance(m, dict) else {}         # a row whose metrics are not a mapping reads as one with none
-    passed, numbers = BUILDERS.get(rung, lambda _m: ("Passed", ""))(m)
+    passed, numbers = (_stability(m, aperture) if rung == "rung3_stability" else
+                       BUILDERS.get(rung, lambda _m: ("Passed", ""))(m))
     missing = nxt = None
     if status == "fail":
         sentence = _failed_in_words(reason)
@@ -436,9 +447,10 @@ def _latest(tests: list[dict]) -> dict[str, dict]:
     return latest
 
 
-def why(tests: list[dict]) -> list[Why]:
+def why(tests: list[dict], aperture: dict | None = None) -> list[Why]:
     """One line per rung in ladder order (then any rung the ladder does not know), from the latest row of each. A rung
-    without a row is skipped: after a failed check because the ladder stopped, otherwise because it was not run."""
+    without a row is skipped: after a failed check because the ladder stopped, otherwise because it was not run.
+    ``aperture`` is the dossier's aperture block, which rung 3's line then quotes as the note does (``_stability``)."""
     latest = _latest(tests)
     out, failed = [], False
     for rung in [*LADDER_ORDER, *(r for r in latest if r not in LADDER_ORDER)]:
@@ -448,7 +460,7 @@ def why(tests: list[dict]) -> list[Why]:
                         "Pixels not yet examined" if rung == "rung5_pixels" else "Not run under this ladder")
             out.append(Why(rung, RUNG_NAMES.get(rung, rung), "skipped", sentence, "", None, None, None))
             continue
-        out.append(_row(rung, row))
+        out.append(_row(rung, row, aperture))
         failed = failed or out[-1].status == "fail"
     return out
 

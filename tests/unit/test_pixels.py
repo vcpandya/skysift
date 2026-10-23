@@ -697,3 +697,12 @@ def test_aperture_share_is_the_targets_psf_light_in_the_mask():
     n = gauss_psf(shape, pn[0] + 0.1, pn[1] - 0.05, sig)[mask].sum()
     assert aperture_share(mask, pt, pn, sig, shift, 1.0e6, 5.0e6) == pytest.approx(1.0e6 * t / (1.0e6 * t + 5.0e6 * n))
     assert aperture_share(np.zeros(shape, bool), pt, pn, sig, shift, 1.0e6, 5.0e6) is None
+
+
+def test_aperture_share_is_never_negative():
+    """Task 12 review M-7: a negative fitted flux of this star gives a share of 0, a negative neighbour flux none."""
+    shape, pt, pn, sig, shift = (9, 9), (4.0, 4.0), (6.8, 4.6), 0.9, (0.1, -0.05)
+    mask = np.zeros(shape, bool)
+    mask[3:6, 6:9] = True
+    assert aperture_share(mask, pt, pn, sig, shift, -2.0e4, 5.0e6) == 0.0
+    assert aperture_share(mask, pt, pn, sig, shift, 1.0e6, -5.0e6) is None

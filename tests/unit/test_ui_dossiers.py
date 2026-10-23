@@ -1011,3 +1011,28 @@ def test_the_shape_table_says_its_value_is_the_resample_median_and_names_the_a_o
     export = client.get(f"/dossiers/{STAGE2_TARGET}/export.html").text
     assert words in export and "(density-prior fit)" in export
     assert "the fit to the whole light curve" not in html + export
+
+
+def test_the_checks_section_gives_the_notes_aperture_ratio(seeded_dossier):
+    """Task 12 review I-1 (spec 11.5): rung 3's line on the page prints the ratio with its error against CROWDSAP and
+    the shortfall in sigma, the numbers of the note's aperture sentence, not rung 3's distance from equal depths."""
+    import dataclasses
+    from pathlib import Path
+
+    from skysift import pack
+    from skysift.ui import explain
+    client, app, _ids, data = seeded_dossier
+    block = {"psf_depth_ppm": 2213.9651, "psf_err_ppm": 114.37157, "sap_depth_ppm": 1540.8282,
+             "sap_err_ppm": 129.2231, "ratio": 0.69595868, "ratio_err": 0.068551662, "crowdsap": 0.85650748,
+             "shortfall_sigma": -2.3420118, "ephemeris": "linear fit of 31 transit times"}
+    tests = app.state.store.latest_tests(data["signal"]["id"])
+    why = [dataclasses.asdict(w) for w in explain.why(tests, aperture=block)]      # as generate stores it
+    stored = {**data, "aperture": block, "why": why}
+    Path(app.state.store.dossier(STAGE2_TARGET)["data_path"]).write_text(json.dumps(stored), encoding="utf-8")
+    checks = html_module.unescape(client.get(f"/dossiers/{STAGE2_TARGET}").text.split('id="checks"')[1]
+                                  .split('id="pixels"')[0])
+    note = pack.aperture_sentence(stored)
+    clause = note[0].lower() + note[1:-1]
+    assert clause == ("the SAP depth is 0.696 ± 0.069 of the PSF depth against a CROWDSAP (this star's light fraction "
+                      "in the aperture) of 0.86, 2.3 sigma short of it")
+    assert clause in checks and "sigma apart" not in checks

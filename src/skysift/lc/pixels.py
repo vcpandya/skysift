@@ -590,15 +590,18 @@ def psf_fluxes(image, valid, pos_target, pos_neighbour, psf_sigma_pix: float,
 def aperture_share(mask, pos_target, pos_neighbour, psf_sigma_pix: float, shift_pix, flux_target: float,
                    flux_neighbour: float) -> float | None:
     """The target's share of the two stars' light inside ``mask`` under the two-PSF model:
-    F_t sum(P_t[mask]) / (F_t sum(P_t[mask]) + F_n sum(P_n[mask])), other stars and the background left out. None for
-    an empty mask, a non-finite input or a total that is not positive."""
+    F_t sum(P_t[mask]) / (F_t sum(P_t[mask]) + F_n sum(P_n[mask])), other stars and the background left out. A
+    target flux that is not positive gives 0, never a negative share (Task 12 review M-7). None for an empty mask, a
+    non-finite input, a negative neighbour flux or a total that is not positive."""
     m = np.asarray(mask, bool)
     if not m.any() or not (math.isfinite(float(flux_target)) and math.isfinite(float(flux_neighbour))
                            and math.isfinite(float(psf_sigma_pix)) and float(psf_sigma_pix) > 0
                            and _finite2(pos_target) and _finite2(pos_neighbour) and _finite2(shift_pix)):
         return None
+    if float(flux_neighbour) < 0:
+        return None
     pt, pn = _two_psfs(m.shape, pos_target, pos_neighbour, psf_sigma_pix, shift_pix)
-    t, n = float(flux_target) * float(pt[m].sum()), float(flux_neighbour) * float(pn[m].sum())
+    t, n = max(float(flux_target), 0.0) * float(pt[m].sum()), float(flux_neighbour) * float(pn[m].sum())
     return t / (t + n) if t + n > 0 else None
 
 

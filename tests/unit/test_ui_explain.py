@@ -513,9 +513,16 @@ def test_the_one_season_headline_names_the_vote_not_the_frame():
 
 
 def test_the_stability_line_gives_the_aperture_ratio_not_agreement():
-    rows = explain.why([{"rung": "rung3_stability", "status": "pass", "reason": None, "created": None,
-                         "metrics": {"season_depths": {"0": 2295.0, "1": 1962.0, "2": 1864.0, "3": 1912.0},
-                                     "season_errs": {}, "p_value": 0.32, "chi2": 3.5, "dof": 3,
-                                     "aperture_ratio": 0.63, "aperture_z": -4.7}}])
-    line = next(w for w in rows if w.rung == "rung3_stability")      # why() gives one line per rung, ladder order
-    assert "the SAP depth is 0.63 of the PSF depth" in line.sentence and "apertures agree" not in line.sentence
+    row = {"rung": "rung3_stability", "status": "pass", "reason": None, "created": None,
+           "metrics": {"season_depths": {"0": 2295.0, "1": 1962.0, "2": 1864.0, "3": 1912.0},
+                       "season_errs": {}, "p_value": 0.32, "chi2": 3.5, "dof": 3,
+                       "aperture_ratio": 0.63, "aperture_z": -4.7}}
+    line = next(w for w in explain.why([row]) if w.rung == "rung3_stability")    # one line per rung, ladder order
+    assert "the SAP depth is 0.63 of the PSF depth, 4.7 sigma below equal depths" in line.sentence
+    assert "apertures agree" not in line.sentence
+    # Task 12 review I-1 (spec 11.5): with the dossier's aperture block, the note's ratio, error, CROWDSAP and shortfall
+    block = {"ratio": 0.69595868, "ratio_err": 0.068551662, "crowdsap": 0.85650748, "shortfall_sigma": -2.3420118}
+    line = next(w for w in explain.why([row], aperture=block) if w.rung == "rung3_stability")
+    assert ("the SAP depth is 0.696 ± 0.069 of the PSF depth against a CROWDSAP (this star's light fraction in the "
+            "aperture) of 0.86, 2.3 sigma short of it") in line.sentence
+    assert "4.7" not in line.sentence and "0.696 ± 0.069" in line.numbers

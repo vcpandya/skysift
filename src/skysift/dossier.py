@@ -952,10 +952,14 @@ def predicted_leak(tpfs: list, target: dict, rung5_metrics: dict, depth_ppm: flo
     file's WCS (the target's catalogue position; the neighbour's from the target meta's ``tpf_org_ra``/``tpf_org_dec``
     when present, else the file's RA_OBJ/DEC_OBJ, as rung 5 places them), the PSF width and common shift of rung 5's
     season with the file's archive SEASON (``_season_psf``), the two fluxes (``psf_fluxes``) and the target's share
-    of the light in the mask (``aperture_share``). ``share`` is the mean over the files and ``predicted_ppm`` the
-    depth times it. {"predicted_ppm", "share", "quarters": [{"quarter", "season", "share"}], "measured_ppm",
-    "measured_err_ppm", "kic", "model", "reason"}: without a kept file the reason is "no kept pixel file of KIC
-    <kic>", without a stored width "rung 5 stored no PSF width", and the prediction is None."""
+    of the light in the mask (``aperture_share``). Only the quarters rung 5's seasons used (their ``quarters``
+    lists; every kept file for a row stored before them) are read, so Q0 and the unusable quarters are left out
+    (Task 12 review M-4). ``share`` is the mean over those files and ``predicted_ppm`` the depth times it. A file
+    whose fitted flux of this star is not positive gives a share of 0 with that reason (M-7). {"predicted_ppm",
+    "share", "quarters": [{"quarter", "season", "share", "reason"}], "measured_ppm", "measured_err_ppm", "kic",
+    "model", "reason"}: without a kept file the reason is "no kept pixel file of KIC <kic>", without a stored width
+    "rung 5 stored no PSF width", without a used file "no pixel file of KIC <kic> that the pixel check used", and
+    without a depth "no depth on the fold" (M-3), and the prediction is None."""
     m = rung5_metrics or {}
     leak = m.get("leak_depth_ppm")
     measured = _num({"x": leak[0]}, "x") if isinstance(leak, list) and leak else None
@@ -971,6 +975,12 @@ def predicted_leak(tpfs: list, target: dict, rung5_metrics: dict, depth_ppm: flo
         return {**block, "reason": f"no kept pixel file of KIC {kic}"}
     if _season_psf(seasons, None) is None:
         return {**block, "reason": "rung 5 stored no PSF width"}
+    listed = [s.get("quarters") for s in seasons if isinstance(s.get("quarters"), list)]
+    if listed:
+        used = {int(q) for qs in listed for q in qs}
+        tpfs = [tpf for tpf in tpfs if int(tpf.quarter) in used]
+        if not tpfs:
+            return {**block, "reason": f"no pixel file of KIC {kic} that the pixel check used"}
     n_ra, n_dec = meta.get("tpf_org_ra"), meta.get("tpf_org_dec")
     quarters = []
     for tpf in tpfs:
@@ -987,13 +997,15 @@ def predicted_leak(tpfs: list, target: dict, rung5_metrics: dict, depth_ppm: flo
         fluxes = psf_fluxes(image, np.isfinite(image), pt, pn, width, shift)
         share = aperture_share(mask, pt, pn, width, shift, *fluxes) if fluxes is not None else None
         if share is not None:
-            quarters.append({"quarter": int(tpf.quarter), "season": tpf.season, "share": share})
+            why = "the fitted flux of this star is not positive" if fluxes[0] <= 0 else None
+            quarters.append({"quarter": int(tpf.quarter), "season": tpf.season, "share": share, "reason": why})
     if not quarters:
         return {**block, "reason": f"no kept pixel file of KIC {kic} gave the two stars' fluxes"}
     share = float(np.mean([q["share"] for q in quarters]))
     depth = _num({"x": depth_ppm}, "x")
-    return {**block, "quarters": quarters, "share": share,
-            "predicted_ppm": depth * share if depth is not None else None}
+    if depth is None:
+        return {**block, "quarters": quarters, "share": share, "reason": "no depth on the fold"}
+    return {**block, "quarters": quarters, "share": share, "predicted_ppm": depth * share}
 
 
 def _grid(a: np.ndarray, valid: np.ndarray, nd: int) -> list[list]:
@@ -1915,7 +1927,7 @@ def _assemble(store, signal, target, tests, decisions, plots, pixels, star, plan
         "ephemeris": ephemeris,
         **{key: blocks.get(key) for key in ("timing", "shape", "parity", "secondary", "stability", "aperture",
                                             "depth_trend")},
-        "plots": plots, "tests": test_rows, "why": [dataclasses.asdict(w) for w in explain.why(tests)],
+        "plots": plots, "tests": test_rows, "why": [dataclasses.asdict(w) for w in explain.why(tests, aperture=blocks.get("aperture"))],
         "rechecks": store.rechecks(signal["id"]), "children": store.children(signal["id"]),
         "fap": {**dataclasses.asdict(fap), "one_in": fap.one_in(), "words": fap.words(), "sde": float(signal["sde"]),
                 "signal_search_version": signal["detector_version"], "calibration_version": version,

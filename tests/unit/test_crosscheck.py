@@ -1077,3 +1077,26 @@ def test_the_predicted_leak_is_the_targets_share_of_the_neighbours_aperture_time
     assert [q["quarter"] for q in block["quarters"]] == [1, 2, 3, 4, 5] and block["reason"] is None
     assert ds.predicted_leak([], target, rung5, 2200.0)["reason"] == f"no kept pixel file of KIC {NEIGHBOUR_KIC}"
     assert ds.predicted_leak(tpfs, target, {**rung5, "leak_depth_ppm": None}, 2200.0) is None
+
+
+def test_the_predicted_leak_uses_the_usable_files_and_says_why_it_has_no_prediction(monkeypatch):
+    """Task 12 review M-3, M-4 and M-7: only the quarters rung 5's seasons used, a missing depth named, and a fitted
+    flux of this star that is not positive giving a share of 0 with its reason."""
+    tpfs = [parse_tpf(bytes(b), tpf_name(NEIGHBOUR_KIC, b.quarter)) for b in tpf_quarters()]
+    width = math.hypot(0.9, 1.0 / math.sqrt(12.0))
+    seasons = [{"season": s, "psf_sigma_pix": width, "shift_pix": [0.0, 0.0], "quarters": q}
+               for s, q in ((0, [2]), (1, [3]), (2, [4]), (3, []))]            # quarters 1 and 5 unusable
+    rung5 = {"leak_depth_ppm": [14.0, 31.0], "neighbour_kic": NEIGHBOUR_KIC, "seasons": seasons}
+    target = {"ra": TARGET_RADEC[0], "dec": TARGET_RADEC[1], "meta": {}}
+    block = ds.predicted_leak(tpfs, target, rung5, 2200.0)
+    assert [q["quarter"] for q in block["quarters"]] == [2, 3, 4] and block["reason"] is None
+    no_depth = ds.predicted_leak(tpfs, target, rung5, None)
+    assert no_depth["predicted_ppm"] is None and no_depth["reason"] == "no depth on the fold"
+    none_used = ds.predicted_leak(tpfs, target, {**rung5, "seasons": [{**s, "quarters": [9]} for s in seasons]},
+                                  2200.0)
+    assert none_used["predicted_ppm"] is None and none_used["reason"] == (
+        f"no pixel file of KIC {NEIGHBOUR_KIC} that the pixel check used")
+    monkeypatch.setattr(ds, "psf_fluxes", lambda *a, **k: (-3.0e3, 5.0e6))
+    negative = ds.predicted_leak(tpfs, target, rung5, 2200.0)
+    assert negative["share"] == 0.0 and negative["predicted_ppm"] == 0.0
+    assert {q["reason"] for q in negative["quarters"]} == {"the fitted flux of this star is not positive"}

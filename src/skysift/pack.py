@@ -87,6 +87,7 @@ from skysift.pack_rows import (
     timing_rows,
 )
 from skysift.pack_text import (
+    CROWDSAP_WORDS,
     RELATIONSHIP_VERBS,
     RELATIONSHIP_WORDS,
     Raw,
@@ -94,6 +95,7 @@ from skysift.pack_text import (
     _f,
     _joined,
     _num,
+    aperture_clause,
     date_words,
     ephemeris_sentence,
     pm_digits,
@@ -897,15 +899,17 @@ def secondary_sentence(data: dict, tex: bool = False) -> str | None:
 
 def trend_sentence(data: dict, tex: bool = False) -> str | None:
     """The per-event depths' trend against time (the ``depth_trend`` block, spec 11.5), only when it is printed (above
-    ``ephemeris.DEPTH_TREND_SIGMA`` with errors scaled by the scatter): "The per-event depths drift by S ± e ppm per
-    year (Z sigma, errors scaled by the scatter)."; None otherwise."""
+    ``ephemeris.DEPTH_TREND_SIGMA`` with errors scaled by the scatter): "The per-event depth deepens by S ± e ppm per
+    year (Z sigma, errors scaled by the scatter)." ("shallows" for a negative slope; a positive slope is a dip that
+    grows deeper with time, Task 12 review M-2); None otherwise."""
     trend = data.get("depth_trend")
     if not isinstance(trend, dict) or trend.get("printed") is not True:
         return None
     slope, err, sigma = (_num(trend.get(k)) for k in ("slope_ppm_per_year", "err_ppm_per_year", "sigma"))
     if None in (slope, err, sigma):
         return None
-    return _joined(tex, "The per-event depths drift by ", pm_text(slope, err, err, nd=0, comma=True, tex=tex),
+    verb = "deepens" if slope >= 0 else "shallows"
+    return _joined(tex, f"The per-event depth {verb} by ", pm_text(abs(slope), err, err, nd=0, comma=True, tex=tex),
                    f" ppm per year ({sigma:.1f} sigma, errors scaled by the scatter).")
 
 
@@ -1125,21 +1129,14 @@ def _hz_where(planet: dict) -> str | None:
 
 
 def aperture_sentence(data: dict, tex: bool = False) -> str | None:
-    """Rung 3's aperture ratio on the fold against CROWDSAP (the ``aperture`` block, spec 11.5): "The SAP depth is R ±
-    e of the PSF depth against a CROWDSAP of C, Z sigma short of it." ("above it" when the ratio is the larger); None
-    without the block's ratio and error."""
-    block = data.get("aperture")
-    if not isinstance(block, dict):
+    """Rung 3's aperture ratio on the fold against CROWDSAP as a sentence (``pack_text.aperture_clause``, which the
+    dossier page's rung 3 line prints too): "The SAP depth is R ± e of the PSF depth against a CROWDSAP (this star's
+    light fraction in the aperture) of C, Z sigma short of it."; None without the block's ratio and error."""
+    clause = aperture_clause(data.get("aperture"), tex)
+    if clause is None:
         return None
-    ratio, err, crowd, short = (_num(block.get(k)) for k in ("ratio", "ratio_err", "crowdsap", "shortfall_sigma"))
-    if ratio is None or err is None:
-        return None
-    parts = ["The SAP depth is ", pm_text(ratio, err, err, tex=tex), " of the PSF depth"]
-    if crowd is not None:
-        parts.append(f" against a CROWDSAP of {crowd:.2f}")
-        if short is not None:
-            parts.append(f", {abs(short):.1f} sigma {'short of' if short < 0 else 'above'} it")
-    return _joined(tex, *parts, ".")
+    sentence = f"{clause[:1].upper()}{clause[1:]}."            # the clause is already escaped with ``tex``
+    return Raw(sentence) if tex else sentence
 
 
 def leak_sentence(data: dict, tex: bool = False) -> str | None:
@@ -1167,9 +1164,24 @@ def leak_sentence(data: dict, tex: bool = False) -> str | None:
                    f"model of the pixel check) predicts {pred:,.{digits}f} ppm.")
 
 
+LEAK_FLOOR = "the Gaussian has no PRF wings, so the prediction is a floor"
+
+
+def leak_method_text(data: dict) -> str | None:
+    """The README's method of the predicted leak (Task 12 review M-1): "Predicted leak: <dossier.LEAK_MODEL>, the mean
+    over the pixel files the pixel check used; the Gaussian has no PRF wings, so the prediction is a floor."; None
+    without a prediction."""
+    block = data.get("predicted_leak")
+    if not isinstance(block, dict) or _num(block.get("predicted_ppm")) is None:
+        return None
+    return (f"Predicted leak: {block.get('model') or ds.LEAK_MODEL}, the mean over the pixel files the pixel check "
+            f"used; {LEAK_FLOOR}.")
+
+
 def dilution_sentence(data: dict, tex: bool = False) -> str | None:
     """The note's dilution sentences (spec 11.5): for a KBonus target the photometry (``dossier.PSF_PHOTOMETRY``), so
-    never None for one; the aperture ratio against CROWDSAP (``aperture_sentence``); CROWDSAP and PSFFRAC; and the
+    never None for one; the aperture ratio against CROWDSAP (``aperture_sentence``); CROWDSAP (when the ratio
+    sentence has not given it) and PSFFRAC; and the
     neighbour's dip beside the dip this star predicts there (``leak_sentence``), or without a prediction the measured
     dip with its error alone. None without any of them."""
     rows = {r["key"]: r for r in dilution_rows(data)}
@@ -1181,7 +1193,10 @@ def dilution_sentence(data: dict, tex: bool = False) -> str | None:
     ratio = aperture_sentence(data, tex)
     if ratio:
         sentences.append([ratio])
-    named = [f"{words[k]} of {rows[k]['text']}" for k in ("crowdsap", "psffrac") if k in rows]
+    # CROWDSAP is printed once (Task 12 review M-5): in the ratio sentence when that carries it
+    told = ratio is not None and CROWDSAP_WORDS in ratio
+    named = [f"{words[k]} of {rows[k]['text']}" for k in ("crowdsap", "psffrac") if k in rows
+             and not (k == "crowdsap" and told)]
     parts = [f"The KBonus light curve gives this star {' and '.join(named)}"] if named else []
     predicted = leak_sentence(data, tex)
     leak = rows.get("leak")
@@ -1284,7 +1299,8 @@ def numbers(data: dict, tex: bool = False, after_bjd: float | None = None) -> di
         "window": f"{lo:g} to {hi:g} days" if lo is not None and hi is not None else None,
         "vetting": _vetting_sentences(data, tex), "pixel_text": pixel_sentence(data, tex),
         "offset_text": offset_sentence(data),
-        "hand_built_text": hand_built_sentence(data, source=HAND_BUILT_FILE),
+        # the study's own path here; the README names the pack's copy when the pack holds it (render_readme)
+        "hand_built_text": hand_built_sentence(data), "leak_method": leak_method_text(data),
         "beb_radius_text": BEB_RADIUS if _num(((data.get("fpp") or {}).get("inputs") or {}).get(
             "exclusion_radius_arcsec")) is not None else None,
         "pixel_plain": pixel_sentence(data),
@@ -1741,8 +1757,11 @@ def render_readme(data: dict, report_fields: dict) -> str:
     stale_reason, zip_name, pixels_figure, note_words, creators_source, after_bjd for step 5's transits,
     other_signals); missing ones take defaults."""
     f = _fields(data, report_fields)
+    n = numbers(data, after_bjd=f["after_bjd"])
+    if HAND_BUILT_FILE in f["files"]:       # Task 12 review M-6: the pack's copy, named only when the pack holds it
+        n["hand_built_text"] = hand_built_sentence(data, source=HAND_BUILT_FILE)
     return _env(tex=False).get_template("README.md.j2").render(
-        n=numbers(data, after_bjd=f["after_bjd"]), f=f, titles=dict(STEPS), sandbox_note=SANDBOX_DOI_NOTE,
+        n=n, f=f, titles=dict(STEPS), sandbox_note=SANDBOX_DOI_NOTE,
         crowdsap_definition=CROWDSAP_DEFINITION, psffrac_definition=PSFFRAC_DEFINITION,
         archive_paragraph=archive_paragraph(data, f["doi_shown"], f["tic"]))
 

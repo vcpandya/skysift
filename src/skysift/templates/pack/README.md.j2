@@ -63,6 +63,10 @@ CROWDSAP and PSFFRAC are KBonus header keywords. CROWDSAP is {{ crowdsap_definit
 
 Pixel offset:{% if n.offset_text %} {{ n.offset_text }}{% endif %}{% if n.hand_built_text %} {{ n.hand_built_text }}{% endif %}
 {% endif %}
+{% if n.leak_method %}
+
+{{ n.leak_method }}
+{% endif %}
 
 {{ n.fap_text }}
 
