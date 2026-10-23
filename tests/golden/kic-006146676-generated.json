@@ -1,6 +1,6 @@
 {
  "dossier_version": "5",
- "generated": "2026-10-23T08:44:06.179655+00:00",
+ "generated": "2026-10-23T10:29:42.089450+00:00",
  "target": {
   "target_id": "kic-006146676",
   "source": "kbonus_bkg",
@@ -4407,6 +4407,7 @@
   "sweep_detector_version": "5+6cfe4cf4",
   "sweep_query": "distinct target_id of runs with status done, the signal's detector and detector version, a job key not starting 'recheck:', on targets of the signal's source",
   "null_stars": 999,
+  "null_stars_in_sweep": 10,
   "null_searches": 1998,
   "expected_by_chance": 9.4787394
  },
@@ -4976,6 +4977,6 @@
    "rung4_novelty": "4",
    "rung5_pixels": "4"
   },
-  "git_commit": "4038aa4"
+  "git_commit": "e6cb82e"
  }
 }
