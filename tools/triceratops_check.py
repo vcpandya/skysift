@@ -33,20 +33,26 @@ separation but no position; the result's caveats name it. A TIC row without a Te
 it from photometry) and an added star take the Gaia DR3 or dwarf-table values the export carries, set with
 ``update_star`` one parameter at a time; ``params_source`` records per star which source won (``param_updates``).
 
-Flux shares (ruling n of 22 October 2026). ``calc_depths`` runs on the 3 x 3 box around the target, which gives the
-package's Gaussian-box fractions; the tool then overwrites ``fluxratio`` and ``tdepth`` (``leakage_shares``).
-CROWDSAP C of the target's KBonus file is the target's fraction of the aperture light, so the neighbours' light in
-its PSF light curve over the target's own is bounded by the contamination budget B = (1 - C) / C (ruling n as amended
-after the Task 9 review), shared among them in proportion to the box fractions re-weighted into the Kepler band with
-Gaia G as the proxy (ruling r). Then fluxratio_target = 1 / (1 + B) = C, fluxratio_i = share_i / (1 + B) =
-(1 - C) g_i / sum g_j, and the depth star i would need is the on-target depth over share_i (0 above 1, as the package
-does). A neighbour the TIC lacks sits at the target's pixel, so its box fraction is weighted by the Gaussian box
-fraction at its stored separation along a pixel row (``offset_box_factor``). No star is removed and no scenario
-dropped.
+Flux shares (spec 12.1 of the referee pack, 23 October 2026, which replaces ruling n's quota). ``calc_depths`` runs on
+the 3 x 3 box around the target, which gives the package's Gaussian-box fractions; the tool then overwrites
+``fluxratio`` and ``tdepth`` (``leakage_shares``). CROWDSAP C of the target's KBonus file is the target's fraction of
+the aperture light, so the neighbours' light in its PSF light curve over the target's own is at most B = (1 - C) / C,
+a cap and not a quota. Each neighbour's weight is its Kepler-pixel overlap (``overlap``: the fraction of a Gaussian of
+rung 5's fitted PSF width, the export's ``rung5_psf_sigma``, centred at the star's separation that falls inside the
+target's 3 x 3 box, over the same fraction for a star at the centre) times its Kepler-band flux relative to the
+target's, with Gaia G as the proxy (ruling r). The weights are the shares, as fractions of the target's PSF flux, when
+their sum is within B, and they are scaled down to B when it is not. Then fluxratio_target = 1 / (1 + S) and
+fluxratio_i = share_i / (1 + S), S the shares' sum, and the depth star i would need is the on-target depth over
+share_i (0 above 1, as the package does). The package places a neighbour the TIC lacks on the target's pixel, so its
+overlap is taken at its stored separation, as every star's is. The round-2 rule (B shared by the package's box
+fractions in the Kepler band, an added star weighted by ``offset_box_factor``; ``budget_shares``) is kept beside each
+share as ``share_before``. No star is removed and no scenario dropped.
 
-The export must carry what the revision added (the target's CROWDSAP in (0, 1] and PSFFRAC key, each neighbour's
-parameter sources, the clip count; ``export_problems``): the tool refuses an older export with exit 2 unless
-``--allow-old-export`` is given, and then the package's box shares stand and the result records the flag.
+The export must carry what the revisions added (the target's CROWDSAP in (0, 1] and PSFFRAC key, each neighbour's
+parameter sources, the clip count, schema 3 and rung 5's PSF width; ``export_problems``): the tool refuses an older
+export with exit 2 unless ``--allow-old-export`` is given, and then the package's box shares stand and the result
+records the flag. An export whose ``rung5_psf_sigma`` holds no width is refused with exit 2 whatever the flags, since
+the overlap cannot be computed without it.
 
 Runs (ruling s). ``calc_probs(exptime=0.0204, N=1_000_000, parallel=True, dilution_corrected=True)`` runs ``--runs``
 times (20 by default, the import's minimum) with seeds ``--seed`` to ``--seed + runs - 1``. The package's parallel
@@ -118,9 +124,18 @@ NOISE_SIGMAS = 3.0                  # an NFPP gap within this many seed-to-seed 
 METRICS = ("fpp", "fpp_no_stp", "nfpp", "p_stp", "p_ptp")          # skysift.crosscheck.METRICS
 RUN_KEYS = ("seed", "fpp", "fpp_no_stp", "nfpp", "p_stp", "p_ptp", "best_scenario", "degenerate")
 PARAMS = (("Teff", "teff"), ("rad", "radius"), ("mass", "mass"))  # the package's column, the export's key
-PIXEL_ARCSEC = 4.0                  # the package's Kepler pixel
-PSF_SIGMA_PIX = 0.75                # the package's Gaussian PSF (calc_depths)
+PIXEL_ARCSEC = 4.0                  # the package's Kepler pixel (the round-2 rule, share_before)
+PSF_SIGMA_PIX = 0.75                # the package's Gaussian PSF (calc_depths; the round-2 rule, share_before)
+EXPORT_SCHEMA = 3                   # skysift.crosscheck.EXPORT_SCHEMA
+RESULT_SCHEMA = 3                   # skysift.crosscheck.RESULT_SCHEMA
+KEPLER_PIX_ARCSEC = 3.98            # skysift.lc.pixels.PIX_ARCSEC (the engine is not importable here; a test pins it)
 BUDGET, BOX = "contamination budget", "package Gaussian box"
+OVERLAP = "Kepler-pixel overlap, capped by the contamination budget"
+PRF_CAVEAT = ("The shares use a Gaussian of rung 5's fitted width over the target's 3 x 3 box, which has no PRF "
+              "wings, so each is a floor on the light that neighbour leaks into the KBonus PSF light curve (Bryson "
+              "et al. 2013 on PRF-fit decontamination; Martinez-Palomera et al. 2023 on the KBonus photometry).")
+PSF_BOUND = ("an upper bound for the KBonus PSF photometry, since the PRF fit removes a resolved neighbour's light to "
+             "first order")
 CAVEATS = (
     ("The light is shared in the Kepler band with Gaia G as the proxy: the package's own shares use TIC TESS "
      "magnitudes (Tmag), which understate a G-type neighbour's share beside a red target in the Kepler band. The "
@@ -128,6 +143,7 @@ CAVEATS = (
      "direction each way: a bound companion of a cool dwarf is cooler still, so the TESS band overstates its light "
      "and the dilution it causes, while background field stars are mostly bluer than the target, so the TESS band "
      "understates theirs. The limb darkening comes from the package's Kepler table."),
+    PRF_CAVEAT,
     ("No high-resolution imaging exists, so the package lets an unresolved bound companion sit anywhere within "
      "2.2 arcsec of the target; a planet transiting such a companion (STP) counts towards the full FPP and is the "
      "open false-positive channel. SkySift's model has no such scenario, so the FPP without STP, (FPP - P_STP) / "
@@ -277,6 +293,15 @@ def read_lightcurve(path: Path) -> dict[str, np.ndarray]:
 
 # ---------------------------------------------------------------------------------------------------- flux shares
 
+def _box_fraction(d_pix: float, s_pix: float) -> float:
+    """The fraction of a Gaussian of width ``s_pix`` centred ``d_pix`` pixels from the centre of a 3 x 3 box, along a
+    pixel row, that falls inside the box, over the same fraction for a star at the centre: [Phi((1.5 - d) / s) -
+    Phi((-1.5 - d) / s)] / [Phi(1.5 / s) - Phi(-1.5 / s)], Phi the standard normal CDF."""
+    def phi(x: float) -> float:
+        return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
+    return (phi((1.5 - d_pix) / s_pix) - phi((-1.5 - d_pix) / s_pix)) / (phi(1.5 / s_pix) - phi(-1.5 / s_pix))
+
+
 def offset_box_factor(sep_arcsec) -> float:
     """The package's Gaussian-box fraction of a star ``sep_arcsec`` from the target along a pixel row, over that of a
     star on the target, both with the target at the centre of the 3 x 3 box: [Phi((1.5 - d) / s) - Phi((-1.5 - d) /
@@ -286,80 +311,134 @@ def offset_box_factor(sep_arcsec) -> float:
     sep = _finite(sep_arcsec)
     if sep is None:
         return 1.0
-    d, s = abs(sep) / PIXEL_ARCSEC, PSF_SIGMA_PIX
-
-    def phi(x: float) -> float:
-        return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
-    return (phi((1.5 - d) / s) - phi((-1.5 - d) / s)) / (phi(1.5 / s) - phi(-1.5 / s))
+    return _box_fraction(abs(sep) / PIXEL_ARCSEC, PSF_SIGMA_PIX)
 
 
-def leakage_shares(stars, crowdsap, gmags, tdepth: float, box_factors=None) -> dict:
-    """The flux shares that replace the package's (ruling n). ``stars``: TRICERATOPS's rows after ``calc_depths``,
-    the target first, each with "ID", "Tmag" and "fluxratio" (the package's Gaussian-box fraction of the box light,
-    shared by Tmag); ``gmags``: Gaia G per row (None where unknown); ``tdepth``: the on-target depth (fraction).
+def overlap(sep_arcsec, sigma_pix) -> float:
+    """Spec 12.1: the fraction of a Gaussian of rung 5's fitted PSF width ``sigma_pix`` (Kepler pixels) centred at the
+    star's separation that falls inside the target's 3 x 3 box, over the same fraction for a star at the centre
+    (``_box_fraction`` with the separation in Kepler pixels of ``KEPLER_PIX_ARCSEC``); 1.0 for a separation that is
+    None or not finite. Raises ValueError without a finite width above 0."""
+    s = _finite(sigma_pix)
+    if s is None or s <= 0:
+        raise ValueError(f"overlap needs rung 5's PSF width, a finite number above 0, not {sigma_pix!r}")
+    sep = _finite(sep_arcsec)
+    if sep is None:
+        return 1.0
+    return _box_fraction(abs(sep) / KEPLER_PIX_ARCSEC, s)
 
-    ``box_factors`` (one per row, 1 where None): a multiplier on each box fraction, ``offset_box_factor`` for a star
-    the tool added at the target's pixel.
 
-    Each box fraction is re-weighted into the Kepler band with G as the proxy (ruling r), by 10^(-0.4 ((G_i - T_i) -
-    (G_t - T_t))), a star without G keeping the target's offset, and the re-weighted fractions g_i normalised.
-    CROWDSAP C is the target's fraction of the aperture light, so with a C in (0, 1] the neighbours' light over the
-    target's is at most B = (1 - C) / C (ruling n as amended), shared as share_i = L_i F_i / F_t = B g_i / sum_j g_j
-    over the neighbours; then fluxratio_target = 1 / (1 + B) = C, fluxratio_i = share_i / (1 + B) = (1 - C) g_i /
-    sum_j g_j, the target keeps ``tdepth`` and star i needs tdepth / share_i, set to 0 above 1 or without a share, as
-    the package does. Without one the package's box stands: its fluxratio, the share fluxratio_i / fluxratio_target it
-    implies and its depths.
+def budget_shares(stars, crowdsap, gmags, box_factors=None) -> tuple[list[float], list[float | None]]:
+    """The round-2 rule (ruling n as amended after the Task 9 review, with ruling r), kept for ``share_before``:
+    (g, shares). ``stars`` and ``gmags`` as ``leakage_shares``; ``box_factors`` (one per row, 1 where None) a
+    multiplier on each box fraction, ``offset_box_factor`` for a star the tool added at the target's pixel.
 
-    Returns {"source": "contamination budget" | "package Gaussian box", "budget": B = (1 - C) / C or None,
-    "contaminating_fraction": 1 - C or None (the neighbours' fraction of the aperture light), "crowdsap", "rows":
-    [{"id", "g_package", "box_factor", "band", "kepler_flux" (F_i / F_t from G, None without it), "g", "share" (None
-    for the target), "fluxratio", "tdepth", "source"}]}."""
+    Each of the package's box fractions is re-weighted into the Kepler band with G as the proxy, by 10^(-0.4 ((G_i -
+    T_i) - (G_t - T_t))), a star without G keeping the target's offset, and the re-weighted fractions g_i normalised.
+    With CROWDSAP C in (0, 1] the budget B = (1 - C) / C is shared as share_i = B g_i / sum_{j>0} g_j over the
+    neighbours; the target's share is None, and every share is None without such a C."""
     factors = [1.0 if f is None else float(f) for f in (box_factors or [None] * len(stars))]
     pkg = [_finite(s.get("fluxratio")) or 0.0 for s in stars]
     tmag = [_finite(s.get("Tmag")) for s in stars]
     g = [_finite(x) for x in gmags]
     gt, tt = g[0], tmag[0]
-    rows, weights = [], []
-    for i, s in enumerate(stars):
+    weights = []
+    for i in range(len(stars)):
         has_g = None not in (gt, tt, g[i], tmag[i])
         weights.append(pkg[i] * factors[i] * (10 ** (-0.4 * ((g[i] - tmag[i]) - (gt - tt))) if has_g else 1.0))
-        rows.append({"id": str(s.get("ID")), "g_package": pkg[i], "box_factor": factors[i],
-                     "band": "Gaia G" if has_g else "Tmag",
-                     "kepler_flux": 10 ** (-0.4 * (g[i] - gt)) if None not in (g[i], gt) else None})
     total = sum(weights)
-    for r, w in zip(rows, weights, strict=True):
-        r["g"] = w / total if total > 0 else 0.0
+    norm = [w / total if total > 0 else 0.0 for w in weights]
     c = _finite(crowdsap)
-    if c is not None and 0.0 < c <= 1.0:
+    if c is None or not 0.0 < c <= 1.0:
+        return norm, [None] * len(stars)
+    budget, others = (1.0 - c) / c, sum(norm[1:])
+    return norm, [None] + [budget * x / others if others > 0 else 0.0 for x in norm[1:]]
+
+
+def leakage_shares(stars, crowdsap, gmags, tdepth: float, seps_arcsec, sigma_pix: float | None,
+                   box_factors=None) -> dict:
+    """The flux shares that replace the package's (spec 12.1). ``stars``: TRICERATOPS's rows after ``calc_depths``,
+    the target first, each with "ID", "Tmag" and "fluxratio" (the package's Gaussian-box fraction of the box light,
+    shared by Tmag); ``gmags``: Gaia G per row (None where unknown); ``tdepth``: the on-target depth (fraction);
+    ``seps_arcsec``: one separation from the target per row (the TIC row's "sep (arcsec)", the stored separation for a
+    star the tool added); ``sigma_pix``: rung 5's fitted PSF width in Kepler pixels; ``box_factors``: as
+    ``budget_shares``, which gives each row's round-2 share (``share_before``) and Kepler-band box fraction ("g").
+
+    With CROWDSAP C in (0, 1] and a finite ``sigma_pix`` above 0: B = (1 - C) / C; for every row i > 0 the weight is
+    w_i = overlap(sep_i, sigma_pix) f_i, f_i = 10^(-0.4 (G_i - G_t)) (band "Gaia G") or, without both G, 10^(-0.4
+    (T_i - T_t)) (band "Tmag"), or 0 (band None) without either. The budget is a cap: with S_w = sum w_i, scale =
+    min(1, B / S_w) (1 when S_w is 0) and share_i = w_i scale, the light of star i in the target's PSF light curve
+    over the target's own. With S = sum share_i, fluxratio_target = 1 / (1 + S) and fluxratio_i = share_i / (1 + S);
+    the target keeps ``tdepth`` and star i needs tdepth / share_i, set to 0 above 1 or without a share, as the package
+    does. Without such a C or such a width the package's box stands: its fluxratio, the share fluxratio_i /
+    fluxratio_target it implies and its depths.
+
+    Returns {"source": OVERLAP | BOX, "budget": B | None, "contaminating_fraction": 1 - C | None (the neighbours'
+    fraction of the aperture light), "crowdsap", "sigma_pix", "weight_sum": S_w | None, "capped": S_w > B | None,
+    "scale": scale | None, "rows": [{"id", "g_package", "box_factor", "band", "kepler_flux" (f_i from G, None without
+    it), "g", "overlap" (None for the target), "weight" (None for the target), "share_before", "share" (None for the
+    target), "fluxratio", "tdepth", "source"}]}."""
+    factors = [1.0 if f is None else float(f) for f in (box_factors or [None] * len(stars))]
+    g, before = budget_shares(stars, crowdsap, gmags, factors)
+    pkg = [_finite(s.get("fluxratio")) or 0.0 for s in stars]
+    tmag = [_finite(s.get("Tmag")) for s in stars]
+    gm = [_finite(x) for x in gmags]
+    gt, tt = gm[0], tmag[0]
+    rows = []
+    for i, s in enumerate(stars):
+        rows.append({"id": str(s.get("ID")), "g_package": pkg[i], "box_factor": factors[i],
+                     "band": "Gaia G" if None not in (gt, tt, gm[i], tmag[i]) else "Tmag",
+                     "kepler_flux": 10 ** (-0.4 * (gm[i] - gt)) if None not in (gm[i], gt) else None, "g": g[i],
+                     "overlap": None, "weight": None, "share_before": before[i]})
+    c, sigma = _finite(crowdsap), _finite(sigma_pix)
+    if c is not None and 0.0 < c <= 1.0 and sigma is not None and sigma > 0:
         budget = (1.0 - c) / c
-        others = sum(r["g"] for r in rows[1:])
+        for i, r in enumerate(rows):
+            if None not in (gm[i], gt):
+                f, band = 10 ** (-0.4 * (gm[i] - gt)), "Gaia G"
+            elif None not in (tmag[i], tt):
+                f, band = 10 ** (-0.4 * (tmag[i] - tt)), "Tmag"
+            else:
+                f, band = 0.0, None
+            r["band"] = band
+            if i:
+                r["overlap"] = overlap(seps_arcsec[i], sigma)
+                r["weight"] = r["overlap"] * f
+        weight_sum = sum(r["weight"] for r in rows[1:])
+        scale = min(1.0, budget / weight_sum) if weight_sum > 0 else 1.0
+        for r in rows[1:]:
+            r["share"] = r["weight"] * scale
+        total = sum(r["share"] for r in rows[1:])
         for i, r in enumerate(rows):
             if i == 0:
-                r.update(share=None, fluxratio=c, tdepth=float(tdepth))
+                r.update(share=None, fluxratio=1.0 / (1.0 + total), tdepth=float(tdepth), source=OVERLAP)
                 continue
-            share = budget * r["g"] / others if others > 0 else 0.0
-            need = tdepth / share if share > 0 else 0.0
-            r.update(share=share, fluxratio=(1.0 - c) * r["g"] / others if others > 0 else 0.0,
-                     tdepth=need if need <= 1 else 0.0)
-            r["source"] = BUDGET
-        rows[0]["source"] = BUDGET
-        return {"source": BUDGET, "budget": budget, "contaminating_fraction": 1.0 - c, "crowdsap": c, "rows": rows}
+            need = tdepth / r["share"] if r["share"] > 0 else 0.0
+            r.update(fluxratio=r["share"] / (1.0 + total), tdepth=need if need <= 1 else 0.0, source=OVERLAP)
+        return {"source": OVERLAP, "budget": budget, "contaminating_fraction": 1.0 - c, "crowdsap": c,
+                "sigma_pix": sigma, "weight_sum": weight_sum, "capped": weight_sum > budget, "scale": scale,
+                "rows": rows}
     for i, r in enumerate(rows):
         need = tdepth * pkg[0] / pkg[i] if pkg[i] > 0 else 0.0
         r.update(share=None if i == 0 else (pkg[i] / pkg[0] if pkg[0] > 0 else None), fluxratio=pkg[i],
                  tdepth=need if need <= 1 else 0.0, source=BOX)
-    return {"source": BOX, "budget": None, "contaminating_fraction": None, "crowdsap": c, "rows": rows}
+    return {"source": BOX, "budget": None, "contaminating_fraction": None, "crowdsap": c, "sigma_pix": sigma,
+            "weight_sum": None, "capped": None, "scale": None, "rows": rows}
 
 
 def leakage_caveat(shares: dict, crowdsap) -> str:
     """The caveat on the flux shares the run used (``leakage_shares``)."""
-    if shares["source"] == BUDGET:
-        return (f"CROWDSAP {float(crowdsap):.4f} of the target's KBonus file is the target's fraction of the aperture "
-                "light, so the light the neighbours leak into its KBonus PSF light curve is at most (1 - CROWDSAP) / "
-                f"CROWDSAP = {shares['budget']:.4f} of the target's own (the target's flux ratio is CROWDSAP), shared "
-                "among them by the package's Gaussian-box fractions in the Kepler band (Gaia G as the proxy). The "
-                "PSF fit removes that light to first order, so each share, and the nearby false-positive probability "
-                "with it, is an upper bound.")
+    if shares["source"] == OVERLAP:
+        fate = ("above the budget, so they are scaled down to it" if shares["capped"]
+                else "within the budget, so they stand")
+        return (f"CROWDSAP {float(crowdsap):.4f} of the target's KBonus file bounds the light its neighbours can leak "
+                f"into its PSF light curve at (1 - CROWDSAP) / CROWDSAP = {shares['budget']:.4f} of the target's own. "
+                "Each neighbour's share is the fraction of a Gaussian of rung 5's fitted width "
+                f"({shares['sigma_pix']:.3f} Kepler pixels, the mean over its voting seasons) at its separation that "
+                "falls inside the target's 3 x 3 box, over that of a star at the centre, times its Kepler-band flux "
+                "relative to the target's (Gaia G as the proxy); the shares sum to "
+                f"{shares['weight_sum']:.4f}, {fate}. Each share, and the nearby false-positive probability with "
+                f"it, is {PSF_BOUND}.")
     return ("The export carries no CROWDSAP, so the package's Gaussian-box shares of the 3 x 3 box light are kept; "
             "they describe aperture photometry, not the KBonus PSF fit, and overstate the neighbours' share.")
 
@@ -395,9 +474,10 @@ def clip_caveat(lightcurve: dict) -> str | None:
 
 
 def export_problems(inputs: dict) -> list[str]:
-    """What an export lacks of the cross-check revision of 22 October 2026: the target's CROWDSAP (in (0, 1]) and its
-    PSFFRAC key, each neighbour's ``params_source`` and ``mass_radius`` (an export before 9b2a0e4 set masses by the
-    older evolved rule) and the light curve's clip count. [] for a current export."""
+    """What an export lacks of the cross-check revisions of 22 and 23 October 2026: the target's CROWDSAP (in (0, 1])
+    and its PSFFRAC key, each neighbour's ``params_source`` and ``mass_radius`` (an export before 9b2a0e4 set masses by
+    the older evolved rule), the light curve's clip count, schema ``EXPORT_SCHEMA`` and the ``rung5_psf_sigma`` key
+    (spec 12.1). [] for a current export."""
     out = []
     tgt = inputs.get("target") or {}
     c = _finite(tgt.get("crowdsap"))
@@ -414,6 +494,11 @@ def export_problems(inputs: dict) -> list[str]:
             out.append(f"neighbour{'s' if len(lacking) != 1 else ''} {', '.join(lacking)} carry no {words}")
     if not isinstance((inputs.get("lightcurve") or {}).get("clipped"), int):
         out.append("the light curve has no clip count")
+    schema = inputs.get("schema")
+    if not (isinstance(schema, int) and not isinstance(schema, bool) and schema == EXPORT_SCHEMA):
+        out.append(f"the export is schema {schema!r}, not {EXPORT_SCHEMA}")
+    if "rung5_psf_sigma" not in inputs:
+        out.append("the export has no rung5_psf_sigma key")
     return out
 
 
@@ -551,8 +636,10 @@ def star_rows(stars: list[dict], matched: list[dict], added: dict[str, float], s
     """The stars the run used, from TRICERATOPS's ``stars`` rows after the shares were written: id, Tmag, G,
     separation, the flux ratio and required depth used, the package's box fraction, the Kepler-band fraction, the
     Kepler-band flux relative to the target, the box factor (1 for a TIC star at its own position, the Gaussian factor
-    at its separation for an added one), the share and its source, the Teff, radius and mass with their sources,
-    the Gaia id and whether the Tmag is an estimate."""
+    at its separation for an added one), the Kepler-pixel overlap and the weight of spec 12.1, the round-2 share
+    (``share_before``), the share and its source, what the share bounds (``share_bound``, None for the target and for
+    the package's box), the Teff, radius and mass with their sources, the Gaia id and whether the Tmag is an
+    estimate."""
     gaia_of = {m["tic_id"]: m["source_id"] for m in matched}
 
     def num(x):
@@ -563,8 +650,10 @@ def star_rows(stars: list[dict], matched: list[dict], added: dict[str, float], s
         out.append({"id": sid, "tmag": num(s.get("Tmag")), "gmag": num(g), "sep_arcsec": num(s.get("sep (arcsec)")),
                     "flux_ratio": num(s.get("fluxratio")), "tdepth": num(s.get("tdepth")),
                     "g_package": sh["g_package"], "g_kepler": sh["g"], "kepler_flux": sh["kepler_flux"],
-                    "band": sh["band"], "box_factor": sh["box_factor"], "share": sh["share"],
+                    "band": sh["band"], "box_factor": sh["box_factor"], "overlap": sh["overlap"],
+                    "weight": sh["weight"], "share_before": sh["share_before"], "share": sh["share"],
                     "share_source": sh["source"],
+                    "share_bound": PSF_BOUND if sh["source"] == OVERLAP and sh["share"] is not None else None,
                     "teff": num(s.get("Teff")), "rad": num(s.get("rad")), "mass": num(s.get("mass")),
                     "params_source": params_source.get(sid),
                     "gaia_source_id": sid if sid in added else gaia_of.get(sid), "tmag_estimated": sid in added})
@@ -572,8 +661,8 @@ def star_rows(stars: list[dict], matched: list[dict], added: dict[str, float], s
 
 
 def assemble_result(runs: list[dict], stars: list[dict], settings: dict, inputs: dict, version: str) -> dict:
-    """The result file, keyed as ``skysift.crosscheck.RESULT_KEYS``: the run count, the degenerate count, the
-    medians and 16th and 84th percentiles over the runs that are not degenerate (``summarise``), every run
+    """The result file, keyed as ``skysift.crosscheck.RESULT_KEYS``: the schema, the run count, the degenerate count,
+    the medians and 16th and 84th percentiles over the runs that are not degenerate (``summarise``), every run
     (``RUN_KEYS``), the scenario table of the non-degenerate run nearest the median FPP, the stars, the inputs'
     fingerprint, the caveats (``CAVEATS``, the settings' notes and the degenerate count) and the settings with the
     seeds."""
@@ -586,7 +675,8 @@ def assemble_result(runs: list[dict], stars: list[dict], settings: dict, inputs:
     if degenerate:
         caveats.append(f"{degenerate} of {len(runs)} runs had degenerate scenario evidences (FPP_degenerate) and are "
                        "left out of the medians.")
-    return {"tool": TOOL, "tool_version": version, "run_utc": datetime.now(UTC).isoformat(timespec="seconds"),
+    return {"schema": RESULT_SCHEMA, "tool": TOOL, "tool_version": version,
+            "run_utc": datetime.now(UTC).isoformat(timespec="seconds"),
             "n_runs": len(runs), "n_degenerate": degenerate, **summary,
             "runs": [{k: r[k] for k in RUN_KEYS} for r in runs], "scenarios": runs[nearest]["scenarios"],
             "stars": stars, "inputs_sha256": inputs["fingerprint"], "caveats": caveats,
@@ -662,13 +752,14 @@ def checkpoint_key(fingerprint: str, *, seed: int, draws: int, check_draws: int,
                    field_stars: dict | None = None, stars_sha256: str | None = None,
                    lightcurve_sha256: str | None = None, inputs_json_sha256: str | None = None) -> dict:
     """What a resumed run must share with the runs already made: the inputs' fingerprint, the first seed, the draws
-    per run, the check's draws, the exposure time, the flux error, the flux shares, the quarters, whether an older
+    per run, the check's draws, the exposure time, the flux error, the flux shares (their source, budget, CROWDSAP and
+    rung 5's PSF width), the quarters, whether an older
     export was allowed, the package version, and the hashes of what a resume rebuilds: the field-star population
     (``field_star_summary``), the final ``stars`` table (``stars_digest``), ``lightcurve.csv`` and ``inputs.json``."""
     return {"inputs_sha256": fingerprint, "first_seed": int(seed), "N": int(draws),
             "check_draws": int(check_draws) if parallel_check else None, "parallel_check": bool(parallel_check),
             "exptime_days": EXPTIME_DAYS, "flux_err_rel_robust": float(flux_err),
-            "flux_shares": {k: shares.get(k) for k in ("source", "budget", "crowdsap")},
+            "flux_shares": {k: shares.get(k) for k in ("source", "budget", "crowdsap", "sigma_pix")},
             "quarters": [int(q) for q in quarters], "allow_old_export": bool(allow_old_export),
             "tool_version": str(version), "field_stars_n": (field_stars or {}).get("n_rows"),
             "field_stars_sha256": (field_stars or {}).get("sha256"), "stars_sha256": stars_sha256,
@@ -760,7 +851,8 @@ def main(argv=None) -> int:
     ap.add_argument("--resume", action="store_true",
                     help="continue from the checkpoint <out stem>.partial.json made with the same inputs and settings")
     ap.add_argument("--allow-old-export", action="store_true",
-                    help="run an export that lacks what the revision of 22 October 2026 added (the result says so)")
+                    help="run an export that lacks what the revisions of 22 and 23 October 2026 added (the result says "
+                         "so; an export without rung 5's PSF width is refused all the same)")
     a = ap.parse_args(argv)
     if a.draws < 1 or a.check_draws < 1:
         print("--draws and --check-draws must be positive", file=sys.stderr)
@@ -803,9 +895,16 @@ def main(argv=None) -> int:
         return 2
     problems = export_problems(inputs)
     if problems and not a.allow_old_export:
-        print(f"the export in {inputs_dir} lacks what the cross-check revision of 22 October 2026 added "
+        print(f"the export in {inputs_dir} lacks what the cross-check revisions of 22 and 23 October 2026 added "
               f"({'; '.join(problems)}); re-export it with skysift crosscheck --export, or pass --allow-old-export "
               "to run it on the package's own values (the result then says so)", file=sys.stderr)
+        return 2
+    psf = inputs.get("rung5_psf_sigma")          # spec 12.1: no flag overrides a missing width
+    sigma_pix = _finite(psf.get("sigma_pix")) if isinstance(psf, dict) else None
+    if "rung5_psf_sigma" in inputs and (sigma_pix is None or sigma_pix <= 0):
+        why = psf.get("reason") if isinstance(psf, dict) else "the export's rung5_psf_sigma is not an object"
+        print(f"rung 5 has no fitted PSF width for this star ({why or 'no reason stored'}), so the Kepler-pixel "
+              "overlap cannot be computed; no run is started", file=sys.stderr)
         return 2
     if a.runs < MIN_RUNS:
         print(f"{a.runs} runs: skysift crosscheck --import refuses a result of fewer than {MIN_RUNS} (ruling s), so "
@@ -838,8 +937,8 @@ def main(argv=None) -> int:
     matched, missing = match_neighbours(t.stars.iloc[1:].to_dict("records"), neighbours)
     added, factors, notes = {}, {}, []
     if problems:
-        notes.append(f"The export lacks what the revision of 22 October 2026 added ({'; '.join(problems)}); it was "
-                     "run with --allow-old-export, so the package's own values stand where it lacks them.")
+        notes.append(f"The export lacks what the revisions of 22 and 23 October 2026 added ({'; '.join(problems)}); "
+                     "it was run with --allow-old-export, so the package's own values stand where it lacks them.")
     for n in usable_neighbours(neighbours)[1]:
         notes.append(f"Gaia DR3 {n.get('source_id')} is stored without a separation or G, so it was left out of the "
                      "match with the TIC list.")
@@ -849,9 +948,10 @@ def main(argv=None) -> int:
         t.add_star(ID=sid, Tmag=added[sid], bound=False)
         notes.append(f"Gaia DR3 {sid} ({n['sep_arcsec']:.1f} arcsec, G {n['gmag']:.2f}) is not in the TIC list; it "
                      f"was added with an estimated Tmag of {added[sid]:.2f} at the target's pixel position, since the "
-                     "dossier stores no position for it, and its share of the contamination budget is weighted by "
-                     f"the package's Gaussian box fraction at its stored separation along a pixel row (x "
-                     f"{factors[sid]:.3f} of a star on the target).")
+                     "dossier stores no position for it, so its Kepler-pixel overlap is taken at its stored "
+                     "separation, as every star's is (the round-2 share beside it used the package's Gaussian box "
+                     f"fraction at that separation along a pixel row, x {factors[sid]:.3f} of a star on the "
+                     "target).")
     if inputs.get("neighbour_params_note"):
         notes.append(f"{inputs['neighbour_params_note']}.")
     # the stellar parameters a TIC row lacks, and those of an added star, from the export (ruling q)
@@ -877,15 +977,18 @@ def main(argv=None) -> int:
     t.pix_coords = [pixel_coords(q, ra, dec) for q in images]
     depth = float(eph["depth_ppm"]) / 1e6
     t.calc_depths(tdepth=depth, all_ap_pixels=[aperture_3x3(pc[0]) for pc in t.pix_coords], dilution_corrected=True)
-    # the flux shares: the KBonus contamination budget in the Kepler band (rulings n and r)
+    # the flux shares: the Kepler-pixel overlap at rung 5's PSF width in the Kepler band, capped by the KBonus
+    # contamination budget (spec 12.1, ruling r)
     rows = t.stars.to_dict("records")
-    gmags = []
+    gmags, seps = [], []
     for i, row in enumerate(rows):
         sid = str(row["ID"])
         gaia = sid if sid in added else gaia_of.get(sid)
         g = tgt.get("gmag") if i == 0 else (by_source.get(gaia) or {}).get("gmag") if gaia else None
         gmags.append(_finite(g) if _finite(g) is not None else _finite(row.get("GAIAmag")))
-    shares = leakage_shares(rows, tgt.get("crowdsap"), gmags, depth,
+        # the package places an added star on the target's pixel, so its stored separation stands for it
+        seps.append(by_source[sid].get("sep_arcsec") if sid in added else row.get("sep (arcsec)"))
+    shares = leakage_shares(rows, tgt.get("crowdsap"), gmags, depth, seps, sigma_pix,
                             box_factors=[factors.get(str(r["ID"])) for r in rows])
     t.stars["fluxratio"] = [r["fluxratio"] for r in shares["rows"]]
     t.stars["tdepth"] = [r["tdepth"] for r in shares["rows"]]
@@ -980,7 +1083,9 @@ def main(argv=None) -> int:
                 "field_stars": field_stars, "resume_note": resume_note,
                 "quarters": [q["quarter"] for q in images], "matched_neighbours": matched, "notes": notes,
                 "flux_err_rel_robust": flux_err, "flux_err_rel_pipeline": pipeline_err, "flux_err_source": which,
-                "flux_shares": {k: shares[k] for k in ("source", "budget", "contaminating_fraction", "crowdsap")},
+                "flux_shares": {k: shares[k] for k in ("source", "budget", "contaminating_fraction", "crowdsap",
+                                                       "sigma_pix", "weight_sum", "capped", "scale")},
+                "rung5_psf_sigma": psf,
                 "allow_old_export": a.allow_old_export, "export_problems": problems,
                 "resumed_at_runs": state["resumes"],
                 "psffrac": _finite(tgt.get("psffrac")), "leak": inputs.get("leak"),

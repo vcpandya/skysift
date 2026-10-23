@@ -12,7 +12,13 @@ flux within three durations of each transit, the points beyond 5 MAD of a box mo
 stored dossier. A regenerated dossier keeps the block and recomputes ``current`` and the ``class`` of its medians
 (``with_current``). ``verdict`` is what the live Zenodo gate reads: no block, a block made for other inputs or one
 stored by an earlier version of the tool blocks it; the numbers never do, since Giacalone et al.'s classes are labels
-(ruling t). ``comparison_sentence`` prints the medians with their 16th to 84th percentiles for the pack."""
+(ruling t). ``comparison_sentence`` prints the medians with their 16th to 84th percentiles for the pack.
+
+The export and the result are schema 3 (spec 12.4). Round 3 (spec 12.1) replaced the tool's flux shares, which split
+the contamination budget by brightness and the package's own box fractions without the Kepler pixel's geometry, with
+the Kepler-pixel overlap at rung 5's fitted PSF width (``rung5_psf_sigma``, exported with the inputs), the budget a
+cap. A result made before that carries no ``schema`` key, reads as schema 2 and is refused, and a stored block of
+that format is not ``complete``."""
 from __future__ import annotations
 
 import csv
@@ -41,8 +47,11 @@ CLASSES = ("validated", "likely planet", "likely nearby false positive", "candid
 DOMINANT_ABOVE = 0.5            # a median full FPP at or above this is explained by its dominant scenario
 METRICS = ("fpp", "fpp_no_stp", "nfpp", "p_stp", "p_ptp")
 SUMMARY_KEYS = tuple(f"{m}{s}" for m in METRICS for s in ("", "_p16", "_p84"))
-RESULT_KEYS = ("tool", "tool_version", "run_utc", "n_runs", "n_degenerate", *SUMMARY_KEYS, "runs", "scenarios",
-               "stars", "inputs_sha256", "caveats", "settings")
+EXPORT_SCHEMA = 3               # inputs.json (spec 12.4): rung 5's PSF width for the Kepler-pixel overlap
+RESULT_SCHEMA = 3               # result.json (spec 12.4): the shares of spec 12.1; a result without the key is 2
+PSF_SIGMA_SOURCE = "rung 5's two-source fit (psf_sigma_pix), mean over the voting seasons with a width"
+RESULT_KEYS = ("schema", "tool", "tool_version", "run_utc", "n_runs", "n_degenerate", *SUMMARY_KEYS, "runs",
+               "scenarios", "stars", "inputs_sha256", "caveats", "settings")
 RUN_KEYS = ("seed", "fpp", "fpp_no_stp", "nfpp", "p_stp", "p_ptp", "best_scenario", "degenerate")
 CITATION = "(Giacalone et al. 2021)"
 # spec 11.2: the paper's classes do not apply at Kepler's 30-minute cadence, so the texts name none
@@ -277,6 +286,30 @@ def _leak(data: dict) -> dict | None:
     return {"depth_ppm": _finite(leak[0]), "err_ppm": _finite(leak[1]) if len(leak) > 1 else None, "kic": kic}
 
 
+def rung5_psf_sigma(data: dict) -> dict:
+    """Rung 5's fitted PSF width in Kepler pixels, the width of the tool's Kepler-pixel overlap (spec 12.1): the mean
+    of ``psf_sigma_pix`` (the two-source fit's Gaussian width) over the seasons that vote (``dossier.season_votes``)
+    with a finite width above 0, in stored order; a season without a width is left out, never read as zero. Returns
+    {"sigma_pix": the mean | None, "seasons": their season numbers, "per_season": {str(season): width}, "source":
+    ``PSF_SIGMA_SOURCE``, "reason": None | "rung 5 has not run" | "rung 5 has no voting season with a fitted PSF
+    width"}."""
+    from skysift import dossier as ds
+    out = {"sigma_pix": None, "seasons": [], "per_season": {}, "source": PSF_SIGMA_SOURCE, "reason": None}
+    metrics = ds._metrics(data.get("tests") or [], "rung5_pixels")
+    if not metrics:
+        return {**out, "reason": "rung 5 has not run"}
+    widths = []
+    for s in ds._pixel_seasons(metrics):
+        width = ds._num(s, "psf_sigma_pix")
+        if ds.season_votes(s) and width is not None and width > 0:
+            widths.append(width)
+            out["seasons"].append(s.get("season"))
+            out["per_season"][str(s.get("season"))] = width
+    if not widths:
+        return {**out, "reason": "rung 5 has no voting season with a fitted PSF width"}
+    return {**out, "sigma_pix": float(np.mean(widths))}
+
+
 def _copy_pixel_files(store, blob, kic: int | None,
                       tpf_dir: Path) -> tuple[list[int], list[str], list[str], list[dict]]:
     """Copy each kept pixel file of ``kic`` to ``tpf_dir/q<quarter>.fits.gz`` (``.fits`` when it is not gzipped).
@@ -401,12 +434,14 @@ def export_inputs(store, blob, settings, target_id: str, out_dir: Path, *, fetch
                            "teff": p["teff"], "radius": p["radius"], "mass": p["mass"], "mass_radius": p["mass_radius"],
                            "params_source": p["source"]})
     kepmag = next((meta.get(k) for k in ("kepmag", "kp") if _finite(meta.get(k)) is not None), None)
-    inputs = {"target": {**{k: t.get(k) for k in ("target_id", "gaia_id", "kic", "ra", "dec", "gmag")},
+    inputs = {"schema": EXPORT_SCHEMA,
+              "target": {**{k: t.get(k) for k in ("target_id", "gaia_id", "kic", "ra", "dec", "gmag")},
                          "crowdsap": _finite(meta.get("crowdsap")), "psffrac": _finite(meta.get("psffrac")),
                          "kepmag": _finite(kepmag)},
               "signal_id": sid, "dossier_generated": data.get("generated"), "ephemeris": data.get("ephemeris"),
               "star": data.get("star"), "neighbours": neighbours, "neighbour_params_note": params_note,
-              "leak": _leak(data), "pixel_exclusion": _pixel_exclusion(data, ds), "neighbour_kic": kic,
+              "leak": _leak(data), "rung5_psf_sigma": rung5_psf_sigma(data),
+              "pixel_exclusion": _pixel_exclusion(data, ds), "neighbour_kic": kic,
               "quarters": quarters, "tpf_files": files,
               "tpf_kept": [q for q in quarters if q not in fetched], "tpf_fetched": fetched, "tpf_missing": missing,
               "lightcurve": {"file": "lightcurve.csv", "window_durations": int(WINDOW_DURATIONS), "n": len(rows),
@@ -469,7 +504,9 @@ def _validate_run(i: int, r) -> None:
 
 
 def validate_result(result) -> None:
-    """Raise BadResult naming the first thing wrong with a result: a missing key, another tool, fewer than
+    """Raise BadResult naming the first thing wrong with a result: a schema other than ``RESULT_SCHEMA`` (a result
+    without the key is schema 2, made before round 3 without the Kepler-pixel shares), a missing key, another tool,
+    fewer than
     ``N_RUNS`` runs or a run list of another length, a run without its probabilities (each between 0 and 1) or with
     an FPP without STP that is not (FPP - P_STP) / (1 - P_STP), a degenerate count that is not the runs', every run
     degenerate, a median or percentile that is not the non-degenerate runs' (``summarise``), an inputs hash that is
@@ -478,6 +515,12 @@ def validate_result(result) -> None:
     (``settings.allow_old_export`` true)."""
     if not isinstance(result, dict):
         raise BadResult("the result file does not hold a JSON object")
+    tail = ("it was made before round 3 (spec 12) without the Kepler-pixel shares; run the tool again")
+    if "schema" not in result:
+        raise BadResult(f"the result is schema 2 (no schema key), not {RESULT_SCHEMA}: {tail}")
+    schema = result["schema"]
+    if not (isinstance(schema, int) and not isinstance(schema, bool) and schema == RESULT_SCHEMA):
+        raise BadResult(f"the result is schema {schema!r}, not {RESULT_SCHEMA}: {tail}")
     lacking = [k for k in RESULT_KEYS if k not in result]
     if lacking:
         raise BadResult(f"the result file lacks {', '.join(lacking)}")
@@ -526,7 +569,7 @@ def validate_result(result) -> None:
 
 def complete(block: dict | None) -> bool:
     """Whether a stored block carries every key of the present result format (one stored before the revision of
-    22 October 2026 has a median and a list of runs' FPPs only)."""
+    22 October 2026 has a median and a list of runs' FPPs only, and one of round 2 has no ``schema``)."""
     return isinstance(block, dict) and all(k in block for k in RESULT_KEYS)
 
 

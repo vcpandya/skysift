@@ -81,7 +81,7 @@ def fake_result(sha: str, fpp: float = 0.012, nfpp: float = 1e-4, n: int = cc.N_
                 scenarios: list | None = None) -> dict:
     """A result file as the tool writes it: ``n`` runs whose medians are ``fpp`` and ``nfpp``."""
     runs = fake_runs(fpp, nfpp, n, p_stp)
-    return {"tool": cc.TOOL, "tool_version": "1.1.0", "run_utc": "2026-10-22T12:00:00+00:00", "n_runs": n,
+    return {"schema": 3, "tool": cc.TOOL, "tool_version": "1.1.0", "run_utc": "2026-10-22T12:00:00+00:00", "n_runs": n,
             "n_degenerate": 0, **cc.summarise(runs), "runs": runs,
             "scenarios": scenarios or [{"ID": "169822650", "scenario": "TP", "prob": 1 - fpp}],
             "stars": [{"id": "169822650", "tmag": 15.19, "sep_arcsec": 0.0, "flux_ratio": 0.98, "tdepth": 0.0022}],
@@ -556,57 +556,243 @@ def test_tool_helpers_match_neighbours_and_estimate_tmag(tmp_path):
         tc.quarter_images([bare])
 
 
+SIGMA_5 = 0.5695905975              # KIC 6146676: rung 5's psf_sigma_pix, mean over its four voting seasons
+R2_STARS = [                        # results-r2/kic-006146676.json: the target and the three nearest TIC stars
+    {"ID": "169822650", "Tmag": 15.1926, "fluxratio": 0.6157398795699183, "sep (arcsec)": 0.0},
+    {"ID": "1879962333", "Tmag": 19.0349, "fluxratio": 0.007575984235464079, "sep (arcsec)": 6.938},
+    {"ID": "169822636", "Tmag": 17.086, "fluxratio": 0.01056327860128502, "sep (arcsec)": 10.784},
+    {"ID": "169822655", "Tmag": 12.3923, "fluxratio": 0.36537585545284657, "sep (arcsec)": 11.69}]
+R2_G = [16.236654, 19.771944, 17.895601, 12.806441]
+R2_SEPS = [r["sep (arcsec)"] for r in R2_STARS]
+CROWDSAP_6146676, DEPTH_6146676 = 0.85650748, 0.0022139651
+
+
 def test_tool_leakage_shares_two_stars_by_hand():
-    """KIC 6146676 and KIC 6146666 (ruling n as amended after the Task 9 review): CROWDSAP 0.8565 is the target's
-    fraction of the aperture light, so the neighbours' light over the target's is B = 0.1435 / 0.8565 = 0.1675, all
-    of it the one neighbour's; the target's flux ratio is CROWDSAP itself, the neighbour's 1 - CROWDSAP, and the depth
-    the neighbour would need is the on-target depth over B."""
+    """KIC 6146676 and KIC 6146666 (ruling n as amended after the Task 9 review), the round-2 rule kept as
+    ``budget_shares``: CROWDSAP 0.8565 is the target's fraction of the aperture light, so the neighbours' light over
+    the target's is B = 0.1435 / 0.8565 = 0.1675, all of it the one neighbour's. Under spec 12.1 a neighbour stored
+    without a separation has overlap 1, so its weight (its Kepler-band flux, 23.6) is capped at B and the round-2
+    numbers stand: the target's flux ratio is CROWDSAP itself, the neighbour's 1 - CROWDSAP, and the depth the
+    neighbour would need is the on-target depth over B."""
     from tools import triceratops_check as tc
     stars = [{"ID": "169822650", "Tmag": 15.19, "fluxratio": 0.616},
              {"ID": "169822655", "Tmag": 12.39, "fluxratio": 0.384}]
-    out = tc.leakage_shares(stars, 0.8565, [16.24, 12.81], 0.0021653)
-    assert out["source"] == "contamination budget" and out["budget"] == pytest.approx(0.167542, abs=1e-6)
+    g, before = tc.budget_shares(stars, 0.8565, [16.24, 12.81])
+    assert before[0] is None and before[1] == pytest.approx(0.167542, abs=1e-6)
+    # the package's box fractions re-weighted into the Kepler band: G - T is 1.05 for the target, 0.42 for the
+    # neighbour, so the neighbour's fraction grows by 10^(0.4 x 0.63)
+    w = 0.384 * 10 ** (0.4 * 0.63)
+    assert g[1] == pytest.approx(w / (w + 0.616)) and g[0] == pytest.approx(0.616 / (w + 0.616))
+    out = tc.leakage_shares(stars, 0.8565, [16.24, 12.81], 0.0021653, [0.0, None], SIGMA_5)
+    assert out["source"] == tc.OVERLAP and out["budget"] == pytest.approx(0.167542, abs=1e-6)
     assert out["contaminating_fraction"] == pytest.approx(0.1435) and out["crowdsap"] == 0.8565
+    assert out["capped"] is True and out["weight_sum"] == pytest.approx(10 ** (0.4 * (16.24 - 12.81)))
     t, n = out["rows"]
+    assert n["overlap"] == 1.0 and t["overlap"] is None and t["weight"] is None
     assert t["fluxratio"] == pytest.approx(0.8565) and n["fluxratio"] == pytest.approx(0.1435)
     assert t["fluxratio"] + n["fluxratio"] == pytest.approx(1.0)
     assert n["fluxratio"] / t["fluxratio"] == pytest.approx(out["budget"])        # L F / F_t, the ratio to the target
     assert t["tdepth"] == pytest.approx(0.0021653) and n["tdepth"] == pytest.approx(0.012924, abs=1e-6)
     assert n["share"] == pytest.approx(0.167542, abs=1e-6) and t["share"] is None
+    assert n["share_before"] == before[1] and n["g"] == g[1] and t["share_before"] is None
     assert n["kepler_flux"] == pytest.approx(10 ** (0.4 * (16.24 - 12.81))) and t["kepler_flux"] == 1.0
     assert n["g_package"] == 0.384 and n["band"] == "Gaia G"
-    # the package's box fractions re-weighted into the Kepler band: G - T is 1.05 for the target, 0.42 for the
-    # neighbour, so the neighbour's fraction grows by 10^(0.4 x 0.63)
-    w = 0.384 * 10 ** (0.4 * 0.63)
-    assert n["g"] == pytest.approx(w / (w + 0.616)) and t["g"] == pytest.approx(0.616 / (w + 0.616))
-    assert all(r["source"] == "contamination budget" for r in out["rows"])
+    assert all(r["source"] == tc.OVERLAP for r in out["rows"])
 
 
 def test_tool_leakage_shares_split_the_budget_in_the_kepler_band_and_fall_back_to_the_box():
     from tools import triceratops_check as tc
     stars = [{"ID": "t", "Tmag": 15.0, "fluxratio": 0.6}, {"ID": "a", "Tmag": 13.0, "fluxratio": 0.3},
              {"ID": "b", "Tmag": 16.0, "fluxratio": 0.1}, {"ID": "c", "Tmag": 18.0, "fluxratio": 0.0}]
-    out = tc.leakage_shares(stars, 0.75, [16.0, 13.5, None, 18.5], 0.002)
-    _target, a, b, c = out["rows"]
-    # "b" has no G, so it keeps the target's G - T offset; "c" sits outside the box and gets nothing
-    assert b["band"] == "Tmag" and b["kepler_flux"] is None and c["share"] == 0.0 and c["tdepth"] == 0.0
-    ga, gb = 0.3 * 10 ** (-0.4 * (0.5 - 1.0)), 0.1
+    gmags = [16.0, 13.5, None, 18.5]
     budget = 0.25 / 0.75                                     # (1 - C) / C
-    assert out["budget"] == pytest.approx(budget) and out["rows"][0]["fluxratio"] == 0.75
-    assert a["share"] == pytest.approx(budget * ga / (ga + gb)) and b["share"] == pytest.approx(budget * gb / (ga + gb))
+    # the round-2 rule (share_before): "b" has no G, so it keeps the target's G - T offset; "c" sits outside the
+    # package's box and gets nothing
+    g, before = tc.budget_shares(stars, 0.75, gmags)
+    ga, gb = 0.3 * 10 ** (-0.4 * (0.5 - 1.0)), 0.1
+    assert before[1] == pytest.approx(budget * ga / (ga + gb)) and before[2] == pytest.approx(budget * gb / (ga + gb))
+    assert before[3] == 0.0 and before[1] + before[2] == pytest.approx(budget) and before[0] is None
+    assert g[1] / g[2] == pytest.approx(ga / gb)
+    # spec 12.1 at 0, 1, 2 and 10 Kepler pixels: "b" is weighted by its Tmag, "c" is far outside the box
+    seps = [0.0, tc.KEPLER_PIX_ARCSEC, 2 * tc.KEPLER_PIX_ARCSEC, 10 * tc.KEPLER_PIX_ARCSEC]
+    out = tc.leakage_shares(stars, 0.75, gmags, 0.002, seps, SIGMA_5)
+    _target, a, b, c = out["rows"]
+    assert [r["share_before"] for r in (a, b, c)] == before[1:]
+    assert b["band"] == "Tmag" and b["kepler_flux"] is None and c["share"] == 0.0 and c["tdepth"] == 0.0
+    wa = tc.overlap(seps[1], SIGMA_5) * 10 ** (-0.4 * (13.5 - 16.0))
+    wb = tc.overlap(seps[2], SIGMA_5) * 10 ** (-0.4 * (16.0 - 15.0))
+    assert a["weight"] == pytest.approx(wa) and b["weight"] == pytest.approx(wb) and out["capped"] is True
+    assert out["budget"] == pytest.approx(budget) and out["scale"] == pytest.approx(budget / (wa + wb))
+    assert a["share"] == pytest.approx(budget * wa / (wa + wb)) and b["share"] == pytest.approx(budget * wb / (wa + wb))
     assert a["share"] + b["share"] == pytest.approx(budget)
-    assert a["fluxratio"] == pytest.approx(0.25 * ga / (ga + gb))
+    assert out["rows"][0]["fluxratio"] == pytest.approx(0.75) and a["fluxratio"] == pytest.approx(a["share"] * 0.75)
     assert sum(r["fluxratio"] for r in out["rows"]) == pytest.approx(1.0)
     assert a["tdepth"] == pytest.approx(0.002 / a["share"]) and b["tdepth"] == pytest.approx(0.002 / b["share"])
-    deep = tc.leakage_shares(stars, 0.9999, [16.0, 13.5, None, 18.5], 0.002)
+    deep = tc.leakage_shares(stars, 0.9999, gmags, 0.002, seps, SIGMA_5)
     assert deep["rows"][2]["tdepth"] == 0.0 and deep["rows"][1]["tdepth"] == 0.0       # above 1: no such eclipse
     for crowdsap in (None, 1.2, 0.0, math.nan):              # no budget: the package's Gaussian box stands
-        box = tc.leakage_shares(stars, crowdsap, [16.0, 13.5, None, 18.5], 0.002)
+        box = tc.leakage_shares(stars, crowdsap, gmags, 0.002, seps, SIGMA_5)
         assert box["source"] == "package Gaussian box" and box["budget"] is None
         assert [r["fluxratio"] for r in box["rows"]] == [0.6, 0.3, 0.1, 0.0]
         assert box["rows"][1]["tdepth"] == pytest.approx(0.002 * 0.6 / 0.3) and box["rows"][3]["tdepth"] == 0.0
-    clean = tc.leakage_shares(stars, 1.0, [16.0, 13.5, None, 18.5], 0.002)
+    clean = tc.leakage_shares(stars, 1.0, gmags, 0.002, seps, SIGMA_5)
     assert clean["budget"] == 0.0 and all(r["tdepth"] == 0.0 for r in clean["rows"][1:])
+    bare = tc.leakage_shares([*stars, {"ID": "d", "fluxratio": 0.0}], 0.75, [*gmags, None], 0.002, [*seps, 4.0],
+                             SIGMA_5)                       # a star with neither magnitude takes nothing
+    assert bare["rows"][4]["band"] is None and bare["rows"][4]["weight"] == 0.0 and bare["rows"][4]["share"] == 0.0
+
+
+def test_tool_overlap_is_the_box_fraction_at_rung_5s_width_in_kepler_pixels():
+    from skysift.lc.pixels import PIX_ARCSEC
+    from tools import triceratops_check as tc
+    assert tc.KEPLER_PIX_ARCSEC == PIX_ARCSEC == 3.98
+    assert tc.overlap(11.69, SIGMA_5) == pytest.approx(0.005864323, rel=1e-5)        # 2.94 Kepler pixels
+    assert tc.overlap(6.938, SIGMA_5) == pytest.approx(0.3375419, rel=1e-5)
+    assert tc.overlap(10.784, SIGMA_5) == pytest.approx(0.01699803, rel=1e-5)
+    assert tc.overlap(0.0, SIGMA_5) == pytest.approx(1.0) and tc.overlap(None, SIGMA_5) == 1.0
+    assert tc.offset_box_factor(7.0) == pytest.approx(0.38705, abs=1e-4)             # the round-2 rule, unchanged
+    for bad in (None, 0.0, -0.5, math.nan):
+        with pytest.raises(ValueError, match="overlap needs rung 5's PSF width"):
+            tc.overlap(11.69, bad)
+
+
+def test_tool_shares_are_overlap_times_kepler_flux_under_the_budget_cap():
+    """Spec 12.1 on KIC 6146676's three nearest TIC stars: w = overlap x 10^(-0.4 (G - G_t)). Their sum 0.15483 is
+    below the budget 0.16753, so the shares stand: the G 12.8 star at 11.69 arcsec keeps 0.1381 of the 0.1618 the
+    round-2 rule gives it on these four rows (0.1615 on the full list)."""
+    from tools import triceratops_check as tc
+    out = tc.leakage_shares(R2_STARS, CROWDSAP_6146676, R2_G, DEPTH_6146676, R2_SEPS, SIGMA_5)
+    assert out["source"] == tc.OVERLAP and out["sigma_pix"] == SIGMA_5
+    assert out["budget"] == pytest.approx(0.1675321271, rel=1e-9) and out["capped"] is False and out["scale"] == 1.0
+    assert out["weight_sum"] == pytest.approx(0.1548311, rel=1e-5)
+    t, a, b, c = out["rows"]
+    assert [r["share"] for r in (a, b, c)] == pytest.approx([0.01300803, 0.003688244, 0.1381348], rel=1e-5)
+    assert [r["share_before"] for r in (a, b, c)] == pytest.approx([0.002491678, 0.003249592, 0.1617909], rel=1e-5)
+    assert c["overlap"] == pytest.approx(0.005864323, rel=1e-5) and c["kepler_flux"] == pytest.approx(23.5551,
+                                                                                                      rel=1e-5)
+    assert t["share"] is None and t["share_before"] is None and t["overlap"] is None
+    assert t["fluxratio"] == pytest.approx(0.8659275, rel=1e-6) and c["fluxratio"] == pytest.approx(0.1196147, rel=1e-5)
+    assert c["tdepth"] == pytest.approx(0.01602757, rel=1e-5) and t["tdepth"] == DEPTH_6146676
+    assert sum(r["fluxratio"] for r in out["rows"]) == pytest.approx(1.0)
+    assert all(r["source"] == tc.OVERLAP for r in out["rows"]) and c["band"] == "Gaia G"
+
+
+def test_tool_shares_above_the_budget_are_scaled_down_to_it():
+    from tools import triceratops_check as tc
+    out = tc.leakage_shares(R2_STARS, 0.95, R2_G, DEPTH_6146676, R2_SEPS, SIGMA_5)
+    assert out["capped"] is True and out["scale"] == pytest.approx(0.3399291, rel=1e-6)
+    t, a, b, c = out["rows"]
+    assert a["share"] + b["share"] + c["share"] == pytest.approx(0.05 / 0.95)
+    assert c["share"] == pytest.approx(0.04695603, rel=1e-5) and b["tdepth"] == 0.0      # 1.77 needed: no eclipse
+    assert t["fluxratio"] == pytest.approx(0.95)
+
+
+def test_tool_without_rung_5s_width_or_a_budget_the_package_box_stands():
+    from tools import triceratops_check as tc
+    for crowdsap, sigma in ((CROWDSAP_6146676, None), (None, SIGMA_5), (CROWDSAP_6146676, math.nan)):
+        box = tc.leakage_shares(R2_STARS, crowdsap, R2_G, DEPTH_6146676, R2_SEPS, sigma)
+        assert box["source"] == tc.BOX and box["weight_sum"] is None and box["capped"] is None
+        assert [r["fluxratio"] for r in box["rows"]] == [r["fluxratio"] for r in R2_STARS]
+
+
+LIVE_SEASONS = [                    # KIC 6146676's rung 5 seasons in the live dossier, the fields spec 12 reads
+    {"season": 0, "voting": True, "psf_sigma_pix": 0.58222301, "nearer": "target", "separation_sigma": 27.845078,
+     "dist_target_pix": 0.19970259, "centroid_sigma_axis_pix": 0.057549507,
+     "pos_target": [0.4881452, 4.1079262], "pos_neighbour": [3.2587867, 3.2589792]},
+    {"season": 1, "voting": True, "psf_sigma_pix": 0.55311152, "nearer": "target", "separation_sigma": 19.814692,
+     "dist_target_pix": 0.18730524, "centroid_sigma_axis_pix": 0.068707453,
+     "pos_target": [0.92328348, 3.0889016], "pos_neighbour": [3.6952899, 2.2423046]},
+    {"season": 2, "voting": True, "psf_sigma_pix": 0.54572735, "nearer": "target", "separation_sigma": 17.424733,
+     "dist_target_pix": 0.11745102, "centroid_sigma_axis_pix": 0.078553466,
+     "pos_target": [0.90604171, 2.9713739], "pos_neighbour": [3.6771262, 2.1225931]},
+    {"season": 3, "voting": True, "psf_sigma_pix": 0.59730051, "nearer": "target", "separation_sigma": 12.657602,
+     "dist_target_pix": 0.18658094, "centroid_sigma_axis_pix": 0.10056612,
+     "pos_target": [0.73929463, 3.0401927], "pos_neighbour": [3.5106545, 2.1932004]}]
+LIVE_NEIGHBOURS = [                 # its fpp.inputs.neighbours (Gaia DR3 id, separation, G)
+    {"source_id": "2073896294004902144", "sep_arcsec": 7.1422442, "gmag": 19.771944},
+    {"source_id": "2073896289692192128", "sep_arcsec": 10.941229, "gmag": 17.895601},
+    {"source_id": "2073896190925687296", "sep_arcsec": 11.452381, "gmag": 12.806441},
+    {"source_id": "2073896190926955520", "sep_arcsec": 12.965638, "gmag": 19.735788},
+    {"source_id": "2073896190921609600", "sep_arcsec": 13.513456, "gmag": 19.379517},
+    {"source_id": "2073896289692177024", "sep_arcsec": 18.624956, "gmag": 18.883438}]
+
+
+def _live(seasons=LIVE_SEASONS, neighbours=LIVE_NEIGHBOURS) -> dict:
+    return {"tests": [{"rung": "rung5_pixels", "status": "pass", "metrics": {"seasons": seasons}}],
+            "fpp": {"inputs": {"neighbours": neighbours}}}
+
+
+LIVE_PSF = cc.rung5_psf_sigma(_live()) if hasattr(cc, "rung5_psf_sigma") else None
+
+
+def test_rung5_psf_sigma_is_the_mean_over_voting_seasons():
+    out = cc.rung5_psf_sigma(_live())
+    assert out["sigma_pix"] == pytest.approx(SIGMA_5) and out["seasons"] == [0, 1, 2, 3] and out["reason"] is None
+    assert out["per_season"]["3"] == 0.59730051 and out["source"] == cc.PSF_SIGMA_SOURCE
+    some = [{**LIVE_SEASONS[0], "voting": False}, *LIVE_SEASONS[1:3], {**LIVE_SEASONS[3], "psf_sigma_pix": None}]
+    assert cc.rung5_psf_sigma(_live(some))["sigma_pix"] == pytest.approx((0.55311152 + 0.54572735) / 2)
+    assert cc.rung5_psf_sigma(_live(some))["seasons"] == [1, 2]
+    none = cc.rung5_psf_sigma(_live([{**s, "voting": False} for s in LIVE_SEASONS]))
+    assert none["sigma_pix"] is None and none["reason"] == "rung 5 has no voting season with a fitted PSF width"
+    assert cc.rung5_psf_sigma({"tests": []})["reason"] == "rung 5 has not run"
+
+
+def test_the_export_carries_schema_3_and_rung_5s_psf_width(env, tmp_path):
+    cc.export_inputs(env.store, env.blob, env.settings, STAGE2_TARGET, tmp_path / "cc", fetch=env.xfetch)
+    inputs = json.loads((tmp_path / "cc" / "inputs.json").read_text(encoding="utf-8"))
+    assert inputs["schema"] == cc.EXPORT_SCHEMA == 3
+    assert inputs["rung5_psf_sigma"] == cc.rung5_psf_sigma(_stored(env))
+
+
+def _current_export(path: Path, **inputs_changes) -> None:
+    """``_old_export`` with everything an export of round 3 carries; ``inputs_changes`` replace keys of inputs.json."""
+    _old_export(path)
+    inputs = json.loads((path / "inputs.json").read_text(encoding="utf-8"))
+    inputs.update({"schema": 3, "rung5_psf_sigma": LIVE_PSF,
+                   "target": {**inputs["target"], "crowdsap": 0.8565, "psffrac": 0.8},
+                   "neighbours": [{**n, "params_source": {}, "mass_radius": None} for n in inputs["neighbours"]],
+                   "lightcurve": {**inputs["lightcurve"], "clipped": 0}, **inputs_changes})
+    (path / "inputs.json").write_text(json.dumps(inputs), encoding="utf-8")
+
+
+def test_tool_refuses_an_export_without_rung_5s_psf_width(tmp_path, monkeypatch, capsys):
+    from tools import triceratops_check as tc
+    monkeypatch.chdir(tmp_path)
+    none = cc.rung5_psf_sigma(_live([{**s, "voting": False} for s in LIVE_SEASONS]))
+    _current_export(tmp_path, rung5_psf_sigma=none)
+    monkeypatch.setattr(tc, "tr", object())                 # as if TRICERATOPS were installed
+    args = ["--inputs", str(tmp_path), "--out", str(tmp_path / "r.json")]
+    assert tc.main(args) == 2 and tc.main([*args, "--allow-old-export"]) == 2
+    err = capsys.readouterr().err
+    assert ("rung 5 has no fitted PSF width for this star (rung 5 has no voting season with a fitted PSF width), so "
+            "the Kepler-pixel overlap cannot be computed; no run is started") in err
+    assert not (tmp_path / "r.json").exists()
+
+
+def test_the_import_refuses_a_result_before_schema_3():
+    good = fake_result("a" * 64)
+    assert good["schema"] == cc.RESULT_SCHEMA == 3 and cc.RESULT_KEYS[0] == "schema"
+    cc.validate_result(good)
+    with pytest.raises(cc.BadResult, match=r"the result is schema 2 \(no schema key\), not 3: it was made before "
+                                           r"round 3"):
+        cc.validate_result({k: v for k, v in good.items() if k != "schema"})
+    with pytest.raises(cc.BadResult, match="the result is schema 2, not 3"):
+        cc.validate_result({**good, "schema": 2})
+    assert not cc.complete({k: v for k, v in good.items() if k != "schema"})       # a stored round-2 block
+
+
+def test_tool_result_and_checkpoint_carry_the_schema_and_the_width():
+    from tools import triceratops_check as tc
+    shares = tc.leakage_shares(R2_STARS, CROWDSAP_6146676, R2_G, DEPTH_6146676, R2_SEPS, SIGMA_5)
+    key = tc.checkpoint_key("a" * 64, seed=1, draws=2000, check_draws=2000, parallel_check=True, flux_err=0.001,
+                            shares=shares, quarters=[1], allow_old_export=False, version="1.1.0")
+    assert key["flux_shares"] == {"source": tc.OVERLAP, "budget": shares["budget"], "crowdsap": CROWDSAP_6146676,
+                                  "sigma_pix": SIGMA_5}
+    rows = tc.star_rows(R2_STARS, [], {}, shares, R2_G, {})
+    assert rows[3]["overlap"] == pytest.approx(0.005864323, rel=1e-5) and rows[3]["share_before"] == pytest.approx(
+        0.1617909, rel=1e-5) and rows[3]["share"] == pytest.approx(0.1381348, rel=1e-5)
+    assert tc.assemble_result([tc.run_record(1, 0.1, 0.01, False, [])], rows, {}, {"fingerprint": "a" * 64},
+                              "1.1.0")["schema"] == tc.RESULT_SCHEMA == 3
 
 
 def test_tool_param_updates_fill_only_what_the_tic_lacks():
@@ -678,9 +864,16 @@ def test_tool_parallel_check_and_caveats():
     assert "are not equal to 3 decimals" in far["comparison"] and "beyond that noise" in far["comparison"]
     one = tc.parallel_check_record(1, 10, {"fpp": 0.05, "nfpp": 1e-4}, {"fpp": 0.05, "nfpp": 1e-4}, [1e-4])
     assert one["nfpp_noise_sd"] is None and "cannot be set against" in one["comparison"]
-    text = tc.leakage_caveat({"source": "contamination budget", "budget": 0.1675}, 0.8565)
-    assert "(1 - CROWDSAP) / CROWDSAP = 0.1675" in text and "upper bound" in text and "Gaia G" in text
-    assert "the target's fraction of the aperture light" in text and "flux ratio is CROWDSAP" in text
+    shares = tc.leakage_shares(R2_STARS, CROWDSAP_6146676, R2_G, DEPTH_6146676, R2_SEPS, SIGMA_5)
+    text = tc.leakage_caveat(shares, CROWDSAP_6146676)
+    assert text.startswith("CROWDSAP 0.8565 of the target's KBonus file bounds the light its neighbours can leak into "
+                           "its PSF light curve at (1 - CROWDSAP) / CROWDSAP = 0.1675 of the target's own.")
+    assert "rung 5's fitted width (0.570 Kepler pixels, the mean over its voting seasons)" in text and "Gaia G" in text
+    assert "the shares sum to 0.1548, within the budget, so they stand." in text
+    assert "upper bound for the KBonus PSF photometry" in text and "—" not in text
+    capped = tc.leakage_shares(R2_STARS, 0.95, R2_G, DEPTH_6146676, R2_SEPS, SIGMA_5)
+    assert "above the budget, so they are scaled down to it" in tc.leakage_caveat(capped, 0.95)
+    assert tc.PRF_CAVEAT in tc.CAVEATS and tc.CAVEATS.index(tc.PRF_CAVEAT) == 1
     # M2: the TESS-band dilution has a direction each way
     assert "overstates its light" in tc.CAVEATS[0] and "understates theirs" in tc.CAVEATS[0]
     assert "aperture photometry" in tc.leakage_caveat({"source": "package Gaussian box", "budget": None}, None)
@@ -787,7 +980,8 @@ def test_an_export_without_pixel_files_is_refused(settings, monkeypatch, tmp_pat
 
 def test_tool_an_added_star_takes_its_share_at_its_stored_separation():
     """M7: a neighbour the TIC lacks is placed on the target's pixel, so its box fraction is a star's at 0 arcsec;
-    weighted by the Gaussian box fraction at its stored separation, one at 7 arcsec takes less of the budget."""
+    weighted by the Gaussian box fraction at its stored separation, one at 7 arcsec takes less of the budget under the
+    round-2 rule (share_before). Spec 12.1 weighs it by its overlap at that stored separation, as every star."""
     from tools import triceratops_check as tc
     # d = 7 / 4 pixels, sigma 0.75: [Phi(-0.333) - Phi(-4.333)] / [Phi(2) - Phi(-2)] = 0.36944 / 0.95450
     assert tc.offset_box_factor(7.0) == pytest.approx(0.38705, abs=1e-4)
@@ -795,13 +989,18 @@ def test_tool_an_added_star_takes_its_share_at_its_stored_separation():
     stars = [{"ID": "t", "Tmag": 15.0, "fluxratio": 0.5}, {"ID": "tic", "Tmag": 14.0, "fluxratio": 0.2},
              {"ID": "added", "Tmag": 17.0, "fluxratio": 0.3}]
     budget = 0.2 / 0.8
-    at_zero = tc.leakage_shares(stars, 0.8, [None] * 3, 0.002, box_factors=[None, None, tc.offset_box_factor(0.0)])
-    at_seven = tc.leakage_shares(stars, 0.8, [None] * 3, 0.002, box_factors=[None, None, tc.offset_box_factor(7.0)])
-    assert at_zero["rows"][2]["share"] == pytest.approx(budget * 0.3 / 0.5)
+    at_zero = tc.leakage_shares(stars, 0.8, [None] * 3, 0.002, [0.0, 4.0, 0.0], SIGMA_5,
+                                box_factors=[None, None, tc.offset_box_factor(0.0)])
+    at_seven = tc.leakage_shares(stars, 0.8, [None] * 3, 0.002, [0.0, 4.0, 7.0], SIGMA_5,
+                                 box_factors=[None, None, tc.offset_box_factor(7.0)])
+    assert at_zero["rows"][2]["share_before"] == pytest.approx(budget * 0.3 / 0.5)
     f = tc.offset_box_factor(7.0)
-    assert at_seven["rows"][2]["share"] == pytest.approx(budget * 0.3 * f / (0.2 + 0.3 * f))
-    assert at_seven["rows"][2]["share"] < at_zero["rows"][2]["share"] and at_seven["rows"][2]["box_factor"] == f
-    assert at_seven["rows"][1]["share"] + at_seven["rows"][2]["share"] == pytest.approx(budget)
+    assert at_seven["rows"][2]["share_before"] == pytest.approx(budget * 0.3 * f / (0.2 + 0.3 * f))
+    assert at_seven["rows"][2]["share_before"] < at_zero["rows"][2]["share_before"]
+    assert at_seven["rows"][2]["box_factor"] == f
+    assert at_seven["rows"][1]["share_before"] + at_seven["rows"][2]["share_before"] == pytest.approx(budget)
+    assert at_seven["rows"][2]["overlap"] == tc.overlap(7.0, SIGMA_5) and at_zero["rows"][2]["overlap"] == 1.0
+    assert at_seven["rows"][2]["weight"] == pytest.approx(tc.overlap(7.0, SIGMA_5) * 10 ** (-0.4 * 2.0))
 
 
 def _old_export(path: Path) -> None:
@@ -833,6 +1032,7 @@ def test_tool_refuses_an_export_from_before_the_revision(tmp_path, monkeypatch, 
     err = capsys.readouterr().err
     for words in ("no crowdsap key", "no psffrac key", "neighbour 1 carry no parameter sources",
                   "neighbour 1 carry no mass_radius (the radius each mass belongs to)", "no clip count",
+                  "the export is schema None, not 3", "the export has no rung5_psf_sigma key",
                   "re-export it with skysift crosscheck --export", "--allow-old-export"):
         assert words in err
     assert not (tmp_path / "r.json").exists()
@@ -845,7 +1045,7 @@ def test_tool_refuses_an_export_from_before_the_revision(tmp_path, monkeypatch, 
     monkeypatch.setattr(tc, "tr", SimpleNamespace(target=target))
     with pytest.raises(Reached):                             # past the refusal, at the package's constructor
         tc.main([*args, "--allow-old-export"])
-    assert tc.export_problems({"target": {"crowdsap": 1.2, "psffrac": None},
+    assert tc.export_problems({"schema": 3, "rung5_psf_sigma": LIVE_PSF, "target": {"crowdsap": 1.2, "psffrac": None},
                                "neighbours": [{"params_source": {}, "mass_radius": None}],
                                "lightcurve": {"clipped": 0}}) == ["the target's CROWDSAP 1.2 is not in (0, 1]"]
     assert tc.main([*args, "--draws", "0"]) == 2
@@ -994,9 +1194,13 @@ def test_tool_check_record_is_clamped_and_star_rows_carry_the_box_factor():
     stars = [{"ID": "t", "Tmag": 15.0, "fluxratio": 0.6}, {"ID": "tic", "Tmag": 14.0, "fluxratio": 0.2},
              {"ID": "added", "Tmag": 17.0, "fluxratio": 0.2}]
     f = tc.offset_box_factor(7.0)
-    shares = tc.leakage_shares(stars, 0.8, [None] * 3, 0.002, box_factors=[None, None, f])
+    shares = tc.leakage_shares(stars, 0.8, [None] * 3, 0.002, [0.0, 4.0, 7.0], SIGMA_5, box_factors=[None, None, f])
     rows = tc.star_rows(stars, [], {"added": 17.0}, shares, [None] * 3, {})
     assert [r["box_factor"] for r in rows] == [1.0, 1.0, f]
+    assert [r["overlap"] for r in rows] == [None, tc.overlap(4.0, SIGMA_5), tc.overlap(7.0, SIGMA_5)]
+    assert [r["weight"] for r in rows] == [r["weight"] for r in shares["rows"]] and rows[0]["weight"] is None
+    assert [r["share_before"] for r in rows] == [r["share_before"] for r in shares["rows"]]
+    assert rows[0]["share_bound"] is None and "upper bound for the KBonus PSF photometry" in rows[1]["share_bound"]
 
 
 def test_the_import_requires_a_field_star_population():
@@ -1100,3 +1304,43 @@ def test_the_predicted_leak_uses_the_usable_files_and_says_why_it_has_no_predict
     negative = ds.predicted_leak(tpfs, target, rung5, 2200.0)
     assert negative["share"] == 0.0 and negative["predicted_ppm"] == 0.0
     assert {q["reason"] for q in negative["quarters"]} == {"the fitted flux of this star is not positive"}
+
+
+R2_ROWS = [                         # results-r2/kic-006146676.json "stars": id, sep, G, Kepler flux, share, Gaia id
+    ("169822650", 0.0, 16.236654, 1.0, None, None),
+    ("1879962333", 6.938, 19.771944, 0.03853754101954881, 0.0024876585183042496, "2073896294004902144"),
+    ("169822636", 10.784, 17.895601, 0.21698074699419992, 0.003244349526576897, "2073896289692192128"),
+    ("169822655", 11.69, 12.806441, 23.555113433751, 0.16152983418298314, "2073896190925687296"),
+    ("508690015", 13.151, 19.735788, 0.0398424833663588, 0.00013322001395335415, "2073896190926955520"),
+    ("169822646", 13.584, 19.379517, 0.055316513563358254, 0.0001354611838130699, "2073896190921609600"),
+    ("169822657", 18.369, 18.883438, 0.08735472482743722, 1.5945761920931935e-06, "2073896289692177024"),
+    ("1879962327", 20.886, 20.5462, 0.018887809767256545, 5.1585379086076936e-09, None),
+    ("1879962326", 22.446, 20.3416, 0.02280455489544754, 2.579127821808112e-09, None)]
+R2_RESULT = {"stars": [{"id": i, "sep_arcsec": s, "gmag": g, "kepler_flux": f, "share": sh, "gaia_source_id": gid}
+                       for i, s, g, f, sh, gid in R2_ROWS],
+             "settings": {"flux_shares": {"source": "contamination budget", "budget": 0.1675321270982946,
+                                          "crowdsap": 0.85650748}},
+             "nfpp": 0.02232841831933376, "nfpp_p16": 0.016386351289008505, "nfpp_p84": 0.03243009921894156,
+             "n_runs": 20}
+
+
+def test_the_leakage_note_lists_each_neighbour_before_and_after(tmp_path):
+    from tools import leakage_note as ln
+    rows = ln.note_rows(R2_RESULT, SIGMA_5)
+    assert [r["sep_arcsec"] for r in rows] == [6.938, 10.784, 11.69, 13.151, 13.584, 18.369, 20.886]
+    assert [r["share_before"] for r in rows] == [r[4] for r in R2_ROWS[1:8]]
+    assert [r["share"] for r in rows] == pytest.approx([0.01300803, 0.003688244, 0.1381348, 3.087380e-05,
+                                                        2.184640e-05, 1.98896e-09, 4.48961e-13], rel=1e-4)
+    assert rows[2]["sep_pix"] == pytest.approx(2.937186, rel=1e-6) and rows[2]["gaia_source_id"] == (
+        "2073896190925687296")
+    sigma = cc.rung5_psf_sigma(_live())
+    text = ln.render(R2_RESULT, sigma, rows)
+    assert "| 169822655 | 2073896190925687296 | 11.69 | 2.94 | 12.81 | 23.56 | 0.005864 | 0.1615 | 0.1381 |" in text
+    assert "NFPP before: 0.022 (16th to 84th percentile 0.016 to 0.032) over 20 runs" in text
+    assert "NFPP after: not yet measured (the round-3 run)" in text
+    assert ("The largest share after the rule is 0.138 (TIC 169822655, 11.69 arcsec, 2.94 Kepler pixels): its "
+            "overlap 0.0059 times its Kepler-band flux of 23.6 times the target's.") in text
+    after = {**R2_RESULT, "nfpp": 0.0191, "nfpp_p16": 0.014, "nfpp_p84": 0.027}
+    assert "NFPP after: 0.019 (16th to 84th percentile 0.014 to 0.027) over 20 runs" in ln.render(
+        R2_RESULT, sigma, rows, after)
+    assert "\u2014" not in text
