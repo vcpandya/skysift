@@ -1,6 +1,6 @@
 {
- "dossier_version": "5",
- "generated": "2026-10-23T10:29:42.089450+00:00",
+ "dossier_version": "6",
+ "generated": "2026-10-23T20:49:41.847513+00:00",
  "target": {
   "target_id": "kic-006146676",
   "source": "kbonus_bkg",
@@ -2202,7 +2202,34 @@
   "ruwe": 0.9448721,
   "non_single_star": 0,
   "ebpminrp_gspphot": 0.27,
-  "gaia_errors": []
+  "gaia_errors": [],
+  "crowdsap": {
+   "value": 0.85650748,
+   "column": "crowdsap",
+   "catalogue": "KBonus-bkg v1.0 source catalogue (Martinez-Palomera et al. 2023)",
+   "per_quarter": {
+    "0": 0.92698378,
+    "1": 0.98115658,
+    "2": 0.91086597,
+    "3": 0.87429272,
+    "4": 1.0,
+    "5": 0.97981188,
+    "6": 0.92367141,
+    "7": 0.87735956,
+    "8": 0.89346767,
+    "9": 0.98164403,
+    "10": 0.92509337,
+    "11": 0.8696565,
+    "12": 0.85693011,
+    "13": 0.98140446,
+    "14": 0.9266618,
+    "15": 0.92173434,
+    "16": 0.91127767,
+    "17": 0.85650748
+   },
+   "per_quarter_min": 0.85650748,
+   "per_quarter_max": 1.0
+  }
  },
  "planet": {
   "rp_rearth": {
@@ -2837,302 +2864,302 @@
  "cross_check": {
   "tool": "triceratops",
   "tool_version": "1.1.0",
-  "run_utc": "2026-10-23T07:26:59+00:00",
+  "run_utc": "2026-10-23T11:44:59+00:00",
   "n_runs": 20,
   "n_degenerate": 0,
-  "fpp": 0.07593693207749758,
-  "fpp_p16": 0.06362938813764686,
-  "fpp_p84": 0.09129280929913582,
-  "fpp_no_stp": 0.024310818383597048,
-  "fpp_no_stp_p16": 0.01761428663410171,
-  "fpp_no_stp_p84": 0.034305400635534666,
-  "nfpp": 0.02233233128485755,
-  "nfpp_p16": 0.016400805236955564,
-  "nfpp_p84": 0.03251729188818405,
-  "p_stp": 0.05275092495,
-  "p_stp_p16": 0.044570686164,
-  "p_stp_p84": 0.070043629532,
-  "p_ptp": 0.16211217714999998,
-  "p_ptp_p16": 0.14382271344,
-  "p_ptp_p84": 0.19114626168399998,
+  "fpp": 0.07590502938888649,
+  "fpp_p16": 0.06360591898328988,
+  "fpp_p84": 0.09117483740730592,
+  "fpp_no_stp": 0.024296926971503263,
+  "fpp_no_stp_p16": 0.017604838823020042,
+  "fpp_no_stp_p84": 0.034256327797901,
+  "nfpp": 0.02232841831933376,
+  "nfpp_p16": 0.016386351289008505,
+  "nfpp_p84": 0.03243009921894156,
+  "p_stp": 0.0527330101,
+  "p_stp_p16": 0.044566368659999994,
+  "p_stp_p84": 0.06995750093999999,
+  "p_ptp": 0.1621574004,
+  "p_ptp_p16": 0.143875438588,
+  "p_ptp_p84": 0.191177046056,
   "runs": [
    {
     "seed": 1,
-    "fpp": 0.0506315136644131,
-    "fpp_no_stp": 0.022633478005709685,
-    "nfpp": 0.02082393867152856,
-    "p_stp": 0.0286464034,
-    "p_ptp": 0.1912896512,
+    "fpp": 0.05060378748603589,
+    "fpp_no_stp": 0.022590915798519146,
+    "nfpp": 0.020784143422940618,
+    "p_stp": 0.0286603349,
+    "p_ptp": 0.1913235572,
     "best_scenario": {
      "id": "169822650",
      "scenario": "TP",
-     "prob": 0.7297086899
+     "prob": 0.7297045559
     },
     "degenerate": false
    },
    {
     "seed": 2,
-    "fpp": 0.07114191073364451,
-    "fpp_no_stp": 0.018145000202210586,
-    "nfpp": 0.016387304361115837,
-    "p_stp": 0.0539763107,
-    "p_ptp": 0.1567905682,
+    "fpp": 0.07102847863404693,
+    "fpp_no_stp": 0.01813091041816432,
+    "nfpp": 0.01637263043667864,
+    "p_stp": 0.0538743594,
+    "p_ptp": 0.1568507842,
     "best_scenario": {
      "id": "169822650",
      "scenario": "TP",
-     "prob": 0.7458954876
+     "prob": 0.7459650082
     },
     "degenerate": false
    },
    {
     "seed": 3,
-    "fpp": 0.060836804017213586,
-    "fpp_no_stp": 0.012355447065593585,
-    "nfpp": 0.011585125351979792,
-    "p_stp": 0.0490878594,
-    "p_ptp": 0.1276917406,
+    "fpp": 0.060829562683577976,
+    "fpp_no_stp": 0.01238033332230566,
+    "nfpp": 0.01160722993090333,
+    "p_stp": 0.049056566,
+    "p_ptp": 0.1277784476,
     "best_scenario": {
      "id": "169822650",
      "scenario": "TP",
-     "prob": 0.7927878376
+     "prob": 0.7926910344
     },
     "degenerate": false
    },
    {
     "seed": 4,
-    "fpp": 0.08995586628440966,
-    "fpp_no_stp": 0.04045352849743304,
-    "nfpp": 0.03818812701722834,
-    "p_stp": 0.0515893073,
-    "p_ptp": 0.1437960292,
+    "fpp": 0.08983430961352579,
+    "fpp_no_stp": 0.04038800927855764,
+    "nfpp": 0.03812680479217265,
+    "p_stp": 0.051527389,
+    "p_ptp": 0.1438484003,
     "best_scenario": {
      "id": "169822650",
      "scenario": "TP",
-     "prob": 0.7428678194
+     "prob": 0.7429391085
     },
     "degenerate": false
    },
    {
     "seed": 5,
-    "fpp": 0.07945355605332349,
-    "fpp_no_stp": 0.02458604446735345,
-    "nfpp": 0.02232636406346649,
-    "p_stp": 0.0562504886,
-    "p_ptp": 0.1301339531,
+    "fpp": 0.0794418635750852,
+    "fpp_no_stp": 0.024599632524505394,
+    "nfpp": 0.022336699554015814,
+    "p_stp": 0.0562253541,
+    "p_ptp": 0.1301553599,
     "best_scenario": {
      "id": "169822650",
      "scenario": "TP",
-     "prob": 0.7661841284
+     "prob": 0.7661762373
     },
     "degenerate": false
    },
    {
     "seed": 6,
-    "fpp": 0.09134851525808274,
-    "fpp_no_stp": 0.02269627243694256,
-    "nfpp": 0.021082178625604058,
-    "p_stp": 0.0702465783,
-    "p_ptp": 0.1711621223,
+    "fpp": 0.09123069273204676,
+    "fpp_no_stp": 0.022662358365269232,
+    "nfpp": 0.021052242126628172,
+    "p_stp": 0.0701582866,
+    "p_ptp": 0.1711790535,
     "best_scenario": {
      "id": "169822650",
      "scenario": "TP",
-     "prob": 0.7125296573
+     "prob": 0.712641271
     },
     "degenerate": false
    },
    {
     "seed": 7,
-    "fpp": 0.0636317344378412,
-    "fpp_no_stp": 0.017592173568763837,
-    "nfpp": 0.01672482625710901,
-    "p_stp": 0.0468640005,
-    "p_ptp": 0.1799373444,
+    "fpp": 0.06360217688055492,
+    "fpp_no_stp": 0.017582919173222362,
+    "nfpp": 0.0167156517449253,
+    "p_stp": 0.0468428925,
+    "p_ptp": 0.1799194564,
     "best_scenario": {
      "id": "169822650",
      "scenario": "TP",
-     "prob": 0.7335058767
+     "prob": 0.7335550292
     },
     "degenerate": false
    },
    {
     "seed": 8,
-    "fpp": 0.08856833751495519,
-    "fpp_no_stp": 0.02502652885369943,
-    "nfpp": 0.02278315166420434,
-    "p_stp": 0.0651728591,
-    "p_ptp": 0.1444631352,
+    "fpp": 0.08851182646074185,
+    "fpp_no_stp": 0.025001762280827216,
+    "nfpp": 0.022758895602436033,
+    "p_stp": 0.0651386451,
+    "p_ptp": 0.1445243575,
     "best_scenario": {
      "id": "169822650",
      "scenario": "TP",
-     "prob": 0.7473372154
+     "prob": 0.7473388549
     },
     "degenerate": false
    },
    {
     "seed": 9,
-    "fpp": 0.08634630763273765,
-    "fpp_no_stp": 0.03458365526210923,
-    "nfpp": 0.032674005364162484,
-    "p_stp": 0.0536169215,
-    "p_ptp": 0.2217660002,
+    "fpp": 0.08624985053004208,
+    "fpp_no_stp": 0.034490074154935164,
+    "nfpp": 0.032585059847946095,
+    "p_stp": 0.053608746,
+    "p_ptp": 0.2216897929,
     "best_scenario": {
      "id": "169822650",
      "scenario": "TP",
-     "prob": 0.6715905502
+     "prob": 0.6717485208
     },
     "degenerate": false
    },
    {
     "seed": 10,
-    "fpp": 0.10658930996511562,
-    "fpp_no_stp": 0.029246092793314367,
-    "nfpp": 0.02442286035001162,
-    "p_stp": 0.0796733514,
-    "p_ptp": 0.2343899158,
+    "fpp": 0.10643126705388473,
+    "fpp_no_stp": 0.02920295262948673,
+    "nfpp": 0.024391966945003538,
+    "p_stp": 0.0795514517,
+    "p_ptp": 0.2344258019,
     "best_scenario": {
      "id": "169822650",
      "scenario": "TP",
-     "prob": 0.6361653463
+     "prob": 0.6362747521
     },
     "degenerate": false
    },
    {
     "seed": 11,
-    "fpp": 0.0899371600804898,
-    "fpp_no_stp": 0.041950136236747614,
-    "nfpp": 0.0395312766832669,
-    "p_stp": 0.050088232,
-    "p_ptp": 0.1877049133,
+    "fpp": 0.08976171279127532,
+    "fpp_no_stp": 0.04183264901908169,
+    "nfpp": 0.03941962354053187,
+    "p_stp": 0.0500215998,
+    "p_ptp": 0.1876607786,
     "best_scenario": {
      "id": "169822650",
      "scenario": "TP",
-     "prob": 0.6962502819
+     "prob": 0.6964536132
     },
     "degenerate": false
    },
    {
     "seed": 12,
-    "fpp": 0.11577467229546956,
-    "fpp_no_stp": 0.024035592299840647,
-    "nfpp": 0.021655281910214354,
-    "p_stp": 0.0939983869,
-    "p_ptp": 0.1635582769,
+    "fpp": 0.11554173695223169,
+    "fpp_no_stp": 0.02399422141850113,
+    "nfpp": 0.02162141050557202,
+    "p_stp": 0.0937981286,
+    "p_ptp": 0.1636396475,
     "best_scenario": {
      "id": "169822650",
      "scenario": "TP",
-     "prob": 0.6990012767
+     "prob": 0.6991542762
     },
     "degenerate": false
    },
    {
     "seed": 13,
-    "fpp": 0.0681084354434639,
-    "fpp_no_stp": 0.03444795542487663,
-    "nfpp": 0.032996152176357284,
-    "p_stp": 0.0348613834,
-    "p_ptp": 0.1653529936,
+    "fpp": 0.06804806766939753,
+    "fpp_no_stp": 0.0343981038224071,
+    "nfpp": 0.03294651535245313,
+    "p_stp": 0.0348486928,
+    "p_ptp": 0.165415975,
     "best_scenario": {
      "id": "169822650",
      "scenario": "TP",
-     "prob": 0.7427686659
+     "prob": 0.7427586731
     },
     "degenerate": false
    },
    {
     "seed": 14,
-    "fpp": 0.06721471125422995,
-    "fpp_no_stp": 0.023797998986198186,
-    "nfpp": 0.022338298506248615,
-    "p_stp": 0.0444751314,
-    "p_ptp": 0.1606660774,
+    "fpp": 0.06719491528840504,
+    "fpp_no_stp": 0.02378097786664474,
+    "nfpp": 0.022320137084651706,
+    "p_stp": 0.0444715135,
+    "p_ptp": 0.1606751533,
     "best_scenario": {
      "id": "169822650",
      "scenario": "TP",
-     "prob": 0.7529243036
+     "prob": 0.7529206403
     },
     "degenerate": false
    },
    {
     "seed": 15,
-    "fpp": 0.06362929037513876,
-    "fpp_no_stp": 0.015231297637010116,
-    "nfpp": 0.014023666385393967,
-    "p_stp": 0.0491465586,
-    "p_ptp": 0.1920260421,
+    "fpp": 0.06369572944892876,
+    "fpp_no_stp": 0.015271366346140642,
+    "nfpp": 0.01405998915900328,
+    "p_stp": 0.0491753377,
+    "p_ptp": 0.1919171702,
     "best_scenario": {
      "id": "169822650",
      "scenario": "TP",
-     "prob": 0.7172389493
+     "prob": 0.7172923113
     },
     "degenerate": false
    },
    {
     "seed": 16,
-    "fpp": 0.07242030810167166,
-    "fpp_no_stp": 0.02165916386817583,
-    "nfpp": 0.020180483152170345,
-    "p_stp": 0.0518849284,
-    "p_ptp": 0.1226146165,
+    "fpp": 0.07236819520268778,
+    "fpp_no_stp": 0.02163273571010271,
+    "nfpp": 0.02015360687976211,
+    "p_stp": 0.0518572742,
+    "p_ptp": 0.1227044946,
     "best_scenario": {
      "id": "169822650",
      "scenario": "TP",
-     "prob": 0.7829077736
+     "prob": 0.7828593748
     },
     "degenerate": false
    },
    {
     "seed": 17,
-    "fpp": 0.1252042099011016,
-    "fpp_no_stp": 0.030884085691327605,
-    "nfpp": 0.027290114078197335,
-    "p_stp": 0.0973259471,
-    "p_ptp": 0.1547446976,
+    "fpp": 0.12496170575917609,
+    "fpp_no_stp": 0.03085370320975461,
+    "nfpp": 0.027266414338278373,
+    "p_stp": 0.0971040212,
+    "p_ptp": 0.1547015735,
     "best_scenario": {
      "id": "169822650",
      "scenario": "TP",
-     "prob": 0.6986763902
+     "prob": 0.6989590057
     },
     "degenerate": false
    },
    {
     "seed": 18,
-    "fpp": 0.05444418728699496,
-    "fpp_no_stp": 0.025308926400071347,
-    "nfpp": 0.02425831017095688,
-    "p_stp": 0.02989179,
-    "p_ptp": 0.1524958417,
+    "fpp": 0.054403905529891605,
+    "fpp_no_stp": 0.025241821311033297,
+    "nfpp": 0.0241907238244381,
+    "p_stp": 0.0299172501,
+    "p_ptp": 0.1524487042,
     "best_scenario": {
      "id": "169822650",
      "scenario": "TP",
-     "prob": 0.7699762213
+     "prob": 0.7700654335
     },
     "degenerate": false
    },
    {
     "seed": 19,
-    "fpp": 0.06565778996850735,
-    "fpp_no_stp": 0.009390220128671517,
-    "nfpp": 0.008706581119051236,
-    "p_stp": 0.0568009432,
-    "p_ptp": 0.1527713845,
+    "fpp": 0.06559759972888479,
+    "fpp_no_stp": 0.009411569151417136,
+    "nfpp": 0.008725984131184954,
+    "p_stp": 0.0567198534,
+    "p_ptp": 0.1527972194,
     "best_scenario": {
      "id": "169822650",
      "scenario": "TP",
-     "prob": 0.758838669
+     "prob": 0.7588662975
     },
     "degenerate": false
    },
    {
     "seed": 20,
-    "fpp": 0.08276909949202638,
-    "fpp_no_stp": 0.030439488481976525,
-    "nfpp": 0.028756168464701734,
-    "p_stp": 0.0539725065,
-    "p_ptp": 0.1865037504,
+    "fpp": 0.08266774844736846,
+    "fpp_no_stp": 0.030390670366321332,
+    "nfpp": 0.028711044122832888,
+    "p_stp": 0.0539156096,
+    "p_ptp": 0.1865521008,
     "best_scenario": {
      "id": "169822650",
      "scenario": "TP",
-     "prob": 0.7041518913
+     "prob": 0.7042101647
     },
     "degenerate": false
    }
@@ -3141,12 +3168,12 @@
    {
     "ID": 169822650,
     "scenario": "TP",
-    "prob": 0.7661841284
+    "prob": 0.7661762373
    },
    {
     "ID": 169822650,
     "scenario": "EB",
-    "prob": 2.076558959e-150
+    "prob": 8.722580227e-150
    },
    {
     "ID": 169822650,
@@ -3156,27 +3183,27 @@
    {
     "ID": 169822650,
     "scenario": "PTP",
-    "prob": 0.1301339531
+    "prob": 0.1301553599
    },
    {
     "ID": 169822650,
     "scenario": "PEB",
-    "prob": 1.319239288e-148
+    "prob": 5.417414214e-148
    },
    {
     "ID": 169822650,
     "scenario": "PEBx2P",
-    "prob": 2.698522177e-30
+    "prob": 3.508875255e-30
    },
    {
     "ID": 169822650,
     "scenario": "STP",
-    "prob": 0.0562504886
+    "prob": 0.0562253541
    },
    {
     "ID": 169822650,
     "scenario": "SEB",
-    "prob": 1.548903648e-66
+    "prob": 2.86422689e-66
    },
    {
     "ID": 169822650,
@@ -3186,27 +3213,27 @@
    {
     "ID": 169822650,
     "scenario": "DTP",
-    "prob": 0.0242283625
+    "prob": 0.0242265392
    },
    {
     "ID": 169822650,
     "scenario": "DEB",
-    "prob": 2.199235636e-138
+    "prob": 8.100249473e-138
    },
    {
     "ID": 169822650,
     "scenario": "DEBx2P",
-    "prob": 8.532635322e-31
+    "prob": 1.104776e-30
    },
    {
     "ID": 169822650,
     "scenario": "BTP",
-    "prob": 0.000816353
+    "prob": 0.0008190234
    },
    {
     "ID": 169822650,
     "scenario": "BEB",
-    "prob": 6.03503e-05
+    "prob": 6.07864e-05
    },
    {
     "ID": 169822650,
@@ -3216,42 +3243,42 @@
    {
     "ID": 1879962333,
     "scenario": "NTP",
-    "prob": 4.146292901e-176
+    "prob": 2.186963502e-175
    },
    {
     "ID": 1879962333,
     "scenario": "NEB",
-    "prob": 9.252300217e-67
+    "prob": 1.69516658e-66
    },
    {
     "ID": 1879962333,
     "scenario": "NEBx2P",
-    "prob": 1.21931026e-69
+    "prob": 2.300399006e-69
    },
    {
     "ID": 169822636,
     "scenario": "NTP",
-    "prob": 1.449564299e-226
+    "prob": 1.284729833e-225
    },
    {
     "ID": 169822636,
     "scenario": "NEB",
-    "prob": 1.440277057e-166
+    "prob": 7.148025405e-166
    },
    {
     "ID": 169822636,
     "scenario": "NEBx2P",
-    "prob": 5.860490745e-163
+    "prob": 2.773375915e-162
    },
    {
     "ID": 169822655,
     "scenario": "NTP",
-    "prob": 3.814697343e-36
+    "prob": 5.244333655e-36
    },
    {
     "ID": 169822655,
     "scenario": "NEB",
-    "prob": 0.022326364
+    "prob": 0.0223366995
    },
    {
     "ID": 169822655,
@@ -4161,7 +4188,7 @@
     "tmag_estimated": false
    }
   ],
-  "inputs_sha256": "3901773abbee09c7cf866e1725c3932d9b1612b898c9f6c96f3dd12856984c90",
+  "inputs_sha256": "3dd3c42cb681b7b6385d6db192b08a27c6bb19d187474b6dfc43e5185ebaf7a0",
   "caveats": [
    "The light is shared in the Kepler band with Gaia G as the proxy: the package's own shares use TIC TESS magnitudes (Tmag), which understate a G-type neighbour's share beside a red target in the Kepler band. The package's bound-companion and background-star dilution stay in the TESS band, a known approximation with a direction each way: a bound companion of a cool dwarf is cooler still, so the TESS band overstates its light and the dilution it causes, while background field stars are mostly bluer than the target, so the TESS band understates theirs. The limb darkening comes from the package's Kepler table.",
    "No high-resolution imaging exists, so the package lets an unresolved bound companion sit anywhere within 2.2 arcsec of the target; a planet transiting such a companion (STP) counts towards the full FPP and is the open false-positive channel. SkySift's model has no such scenario, so the FPP without STP, (FPP - P_STP) / (1 - P_STP), is quoted beside the full FPP.",
@@ -4176,8 +4203,8 @@
    "SkySift's leak test measures the dip in the neighbour's own aperture (-9 +- 12 ppm in KIC 6146666), the opposite direction to the leak into this star's light curve, so it is a consistency check and not a share.",
    "8 points further than 5 raw median absolute deviations (about 3.4 sigma) from a box model of the transit were clipped from the exported window (3 in transit, 5 out of transit).",
    "The target's KIC Kp is not stored, so the Gaia G proxy for the Kepler band is not checked against it.",
-   "The per-point error given to TRICERATOPS is 1.4826 times the median absolute deviation of the whitened flux out of transit (more than one duration from mid-transit), 0.000897 in relative flux, not the KBonus pipeline error (0.000717), which is smaller than the scatter of the flux it fits.",
-   "The serial loop against the parallel path: At 20,000 draws and seed 1, the FPPs (0.0138 serial, 0.01378 parallel) are equal to 3 decimals, and the NFPPs (0.000112 serial, 8.95e-05 parallel) differ by 0.5 standard deviations of the Monte Carlo noise (4.2e-05, the seed-to-seed scatter of the parallel NFPP over 4 seeds at 20,000 draws), so the gap is within that noise."
+   "The per-point error given to TRICERATOPS is 1.4826 times the median absolute deviation of the whitened flux out of transit (more than one duration from mid-transit), 0.000898 in relative flux, not the KBonus pipeline error (0.000717), which is smaller than the scatter of the flux it fits.",
+   "The serial loop against the parallel path: At 20,000 draws and seed 1, the FPPs (0.01388 serial, 0.01385 parallel) are equal to 3 decimals, and the NFPPs (0.000115 serial, 9.21e-05 parallel) differ by 0.5 standard deviations of the Monte Carlo noise (4.3e-05, the seed-to-seed scatter of the parallel NFPP over 4 seeds at 20,000 draws), so the gap is within that noise."
   ],
   "settings": {
    "N": 1000000,
@@ -4190,21 +4217,21 @@
    "parallel_check": {
     "seed": 1,
     "N": 20000,
-    "fpp_serial": 0.01380384713099092,
-    "fpp_parallel": 0.013781334597998685,
-    "nfpp_serial": 0.00011235232212169596,
-    "nfpp_parallel": 8.952707460733463e-05,
-    "fpp_difference": 2.251253299223599e-05,
-    "nfpp_difference": 2.2825247514361328e-05,
+    "fpp_serial": 0.013876904623795872,
+    "fpp_parallel": 0.013853851794717653,
+    "nfpp_serial": 0.00011549158788130587,
+    "nfpp_parallel": 9.211687427828683e-05,
+    "fpp_difference": 2.3052829078218373e-05,
+    "nfpp_difference": 2.337471360301904e-05,
     "nfpp_parallel_seeds": [
-     8.952707460733463e-05,
-     2.8540783710523305e-05,
-     6.513773558621771e-10,
-     4.996553980850566e-09
+     9.211687427828683e-05,
+     2.9505939802333777e-05,
+     7.036508253007598e-10,
+     5.364619731719942e-09
     ],
-    "nfpp_noise_sd": 4.220716853984769e-05,
-    "nfpp_difference_in_sd": 0.5407907780597048,
-    "comparison": "At 20,000 draws and seed 1, the FPPs (0.0138 serial, 0.01378 parallel) are equal to 3 decimals, and the NFPPs (0.000112 serial, 8.95e-05 parallel) differ by 0.5 standard deviations of the Monte Carlo noise (4.2e-05, the seed-to-seed scatter of the parallel NFPP over 4 seeds at 20,000 draws), so the gap is within that noise."
+    "nfpp_noise_sd": 4.342703760023151e-05,
+    "nfpp_difference_in_sd": 0.5382525471388457,
+    "comparison": "At 20,000 draws and seed 1, the FPPs (0.01388 serial, 0.01385 parallel) are equal to 3 decimals, and the NFPPs (0.000115 serial, 9.21e-05 parallel) differ by 0.5 standard deviations of the Monte Carlo noise (4.3e-05, the seed-to-seed scatter of the parallel NFPP over 4 seeds at 20,000 draws), so the gap is within that noise."
    },
    "mission": "Kepler",
    "limb_darkening": "the package's Kepler table",
@@ -4268,7 +4295,7 @@
      "dsep_arcsec": 0.2559560000000012
     }
    ],
-   "flux_err_rel_robust": 0.0008965282200000201,
+   "flux_err_rel_robust": 0.0008984259480000088,
    "flux_err_rel_pipeline": 0.00071744,
    "flux_err_source": "out of transit (more than one duration from mid-transit)",
    "flux_shares": {
@@ -4332,7 +4359,8 @@
    "median_run_seed": 5
   },
   "current": false,
-  "class": "candidate"
+  "class": null,
+  "class_excluded": null
  },
  "centroid_offset": {
   "self_referenced_arcsec": 1.8374136,
@@ -4977,6 +5005,6 @@
    "rung4_novelty": "4",
    "rung5_pixels": "4"
   },
-  "git_commit": "e6cb82e"
+  "git_commit": "48840e5"
  }
 }
