@@ -871,9 +871,17 @@ def test_tool_parallel_check_and_caveats():
     assert "rung 5's fitted width (0.570 Kepler pixels, the mean over its voting seasons)" in text and "Gaia G" in text
     assert "the shares sum to 0.1548, within the budget, so they stand." in text
     assert "upper bound for the KBonus PSF photometry" in text and "—" not in text
+    # the controller's ruling after Task 14 (spec 12.1 amended): a floor on the box light, which bounds the PSF leak
+    assert text.endswith("Each share is a floor on the light that neighbour puts in the target's 3 x 3 box, and that "
+                         "light, with the nearby false-positive probability it drives, is an upper bound for the "
+                         "KBonus PSF photometry, since the PRF fit removes a resolved neighbour's light to first "
+                         "order.")
     capped = tc.leakage_shares(R2_STARS, 0.95, R2_G, DEPTH_6146676, R2_SEPS, SIGMA_5)
     assert "above the budget, so they are scaled down to it" in tc.leakage_caveat(capped, 0.95)
     assert tc.PRF_CAVEAT in tc.CAVEATS and tc.CAVEATS.index(tc.PRF_CAVEAT) == 1
+    assert "so each is a floor on the light that neighbour puts in that box. That box light is in turn an upper " \
+           "bound on what leaks into the KBonus PSF light curve, since the PRF fit removes" in tc.PRF_CAVEAT
+    assert "leaks into the KBonus PSF light curve (Bryson" not in tc.PRF_CAVEAT
     # M2: the TESS-band dilution has a direction each way
     assert "overstates its light" in tc.CAVEATS[0] and "understates theirs" in tc.CAVEATS[0]
     assert "aperture photometry" in tc.leakage_caveat({"source": "package Gaussian box", "budget": None}, None)
@@ -1343,4 +1351,7 @@ def test_the_leakage_note_lists_each_neighbour_before_and_after(tmp_path):
     after = {**R2_RESULT, "nfpp": 0.0191, "nfpp_p16": 0.014, "nfpp_p84": 0.027}
     assert "NFPP after: 0.019 (16th to 84th percentile 0.014 to 0.027) over 20 runs" in ln.render(
         R2_RESULT, sigma, rows, after)
+    assert ("The shares after the rule are a floor on the light each neighbour puts in the target's 3 x 3 box, and "
+            "that box light, with the NFPP it drives, is an upper bound for the KBonus PSF photometry") in text
+    assert text.rstrip().endswith(ln.tc.PRF_CAVEAT) and "Both columns" not in text
     assert "\u2014" not in text

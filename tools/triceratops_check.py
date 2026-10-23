@@ -131,9 +131,13 @@ RESULT_SCHEMA = 3                   # skysift.crosscheck.RESULT_SCHEMA
 KEPLER_PIX_ARCSEC = 3.98            # skysift.lc.pixels.PIX_ARCSEC (the engine is not importable here; a test pins it)
 BUDGET, BOX = "contamination budget", "package Gaussian box"
 OVERLAP = "Kepler-pixel overlap, capped by the contamination budget"
+# the controller's ruling after Task 14 (spec 12.1 amended): the Gaussian is a floor on the box light, and the box
+# light an upper bound on the leak into the PSF light curve, said in that order
 PRF_CAVEAT = ("The shares use a Gaussian of rung 5's fitted width over the target's 3 x 3 box, which has no PRF "
-              "wings, so each is a floor on the light that neighbour leaks into the KBonus PSF light curve (Bryson "
-              "et al. 2013 on PRF-fit decontamination; Martinez-Palomera et al. 2023 on the KBonus photometry).")
+              "wings, so each is a floor on the light that neighbour puts in that box. That box light is in turn an "
+              "upper bound on what leaks into the KBonus PSF light curve, since the PRF fit removes a resolved "
+              "neighbour's light to first order (Bryson et al. 2013 on PRF-fit decontamination; Martinez-Palomera "
+              "et al. 2023 on the KBonus photometry).")
 PSF_BOUND = ("an upper bound for the KBonus PSF photometry, since the PRF fit removes a resolved neighbour's light to "
              "first order")
 CAVEATS = (
@@ -437,8 +441,9 @@ def leakage_caveat(shares: dict, crowdsap) -> str:
                 f"({shares['sigma_pix']:.3f} Kepler pixels, the mean over its voting seasons) at its separation that "
                 "falls inside the target's 3 x 3 box, over that of a star at the centre, times its Kepler-band flux "
                 "relative to the target's (Gaia G as the proxy); the shares sum to "
-                f"{shares['weight_sum']:.4f}, {fate}. Each share, and the nearby false-positive probability with "
-                f"it, is {PSF_BOUND}.")
+                f"{shares['weight_sum']:.4f}, {fate}. Each share is a floor on the light that neighbour puts in "
+                "the target's 3 x 3 box, and that light, with the nearby false-positive probability it drives, is "
+                f"{PSF_BOUND}.")
     return ("The export carries no CROWDSAP, so the package's Gaussian-box shares of the 3 x 3 box light are kept; "
             "they describe aperture photometry, not the KBonus PSF fit, and overstate the neighbours' share.")
 

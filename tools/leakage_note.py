@@ -133,8 +133,9 @@ def render(result: dict, sigma: dict, rows: list[dict], after: dict | None = Non
                    "most of its round-2 share, so the NFPP it drives is for the controller to read before the live "
                    "runs.")
         lines += ["", largest]
-    bound = (f"Both columns, and the NFPP each drove, are {tc.PSF_BOUND}; the third variant of spec 12.2, with the "
-             "neighbours rung 5's difference image excludes removed, is where those neighbours are taken out.")
+    bound = ("The shares after the rule are a floor on the light each neighbour puts in the target's 3 x 3 box, and "
+             f"that box light, with the NFPP it drives, is {tc.PSF_BOUND}. The third variant of spec 12.2, with the "
+             "neighbours rung 5's difference images exclude removed, is where those neighbours are taken out.")
     lines += ["", bound, "", tc.PRF_CAVEAT, ""]
     return "\n".join(lines)
 
