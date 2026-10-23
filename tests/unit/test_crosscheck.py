@@ -14,12 +14,22 @@ import pytest
 from astropy.io import fits
 
 from skysift import crosscheck as cc
+from skysift import dossier as ds
 from skysift.dossier import EXCLUSION_RULE, generate
-from skysift.lc.tpf import tpf_listing_url
+from skysift.lc.tpf import parse_tpf, tpf_listing_url
 from skysift.stars import mamajek_table
 from skysift.store.db import TargetRow
-from tests.unit.synthetic_tpf import CCD_ORIGIN, NEIGHBOUR_KIC, listing_html, tpf_fits, tpf_name, tpf_quarters
+from tests.unit.synthetic_tpf import (
+    CCD_ORIGIN,
+    NEIGHBOUR_KIC,
+    TARGET_RADEC,
+    listing_html,
+    tpf_fits,
+    tpf_name,
+    tpf_quarters,
+)
 from tests.unit.test_dossier import RESPONSES, _make_env, fake_fetch
+from tests.unit.test_pixels import _psf
 from tests.unit.ui_seed import STAGE2_TARGET
 
 DATA = {"ephemeris": {"period_days": 40.29, "t0_bkjd": 136.3, "depth_ppm": 2180.0, "duration_h": 4.16},
@@ -1045,3 +1055,25 @@ def test_tool_leaves_a_finished_result_alone(tmp_path, monkeypatch, capsys):
     assert tc.main(["--inputs", str(tmp_path / "missing"), "--out", str(out), "--resume"]) == 0
     assert "result exists; remove it to rerun" in capsys.readouterr().err
     assert out.read_text(encoding="utf-8") == "{}" and sorted(p.name for p in tmp_path.iterdir()) == ["r.json"]
+
+
+def test_the_predicted_leak_is_the_targets_share_of_the_neighbours_aperture_times_the_depth():
+    tpfs = [parse_tpf(bytes(b), tpf_name(NEIGHBOUR_KIC, b.quarter)) for b in tpf_quarters()]
+    # the scene's PSF is a pixel-integrated Gaussian of 0.9 px; rung 5's model samples one at the pixel centres, and
+    # its fit to this scene takes the width the pixel adds in quadrature, sqrt(0.9^2 + 1/12) px
+    width = math.hypot(0.9, 1.0 / math.sqrt(12.0))
+    rung5 = {"leak_depth_ppm": [14.0, 31.0], "neighbour_kic": NEIGHBOUR_KIC,
+             "seasons": [{"season": s, "psf_sigma_pix": width, "shift_pix": [0.0, 0.0]} for s in range(4)]}
+    target = {"ra": TARGET_RADEC[0], "dec": TARGET_RADEC[1], "meta": {}}
+    block = ds.predicted_leak(tpfs, target, rung5, 2200.0)
+    expected = []
+    for b, t in zip(tpf_quarters(), tpfs, strict=True):
+        mask = (t.aperture & 2) != 0
+        pt, pn = _psf(b.pos_target, t.cube.shape[1:])[mask].sum(), _psf(b.pos_neighbour, t.cube.shape[1:])[mask].sum()
+        expected.append(pt / (pt + 5.0 * pn))                   # the scene's neighbour is five times the target
+    assert block["share"] == pytest.approx(np.mean(expected), rel=0.05)
+    assert block["predicted_ppm"] == pytest.approx(2200.0 * block["share"])
+    assert (block["measured_ppm"], block["measured_err_ppm"], block["kic"]) == (14.0, 31.0, NEIGHBOUR_KIC)
+    assert [q["quarter"] for q in block["quarters"]] == [1, 2, 3, 4, 5] and block["reason"] is None
+    assert ds.predicted_leak([], target, rung5, 2200.0)["reason"] == f"no kept pixel file of KIC {NEIGHBOUR_KIC}"
+    assert ds.predicted_leak(tpfs, target, {**rung5, "leak_depth_ppm": None}, 2200.0) is None

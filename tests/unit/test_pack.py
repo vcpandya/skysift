@@ -600,22 +600,22 @@ def test_pixel_sentence_names_a_box_cut_by_the_stamp_edge(env_with_dossier):
         next(t for t in data["tests"] if t["rung"] == "rung5_pixels")["metrics"]["seasons"])
     text = pack_module.pixel_sentence(data)
     assert "In season 0 this star's 3 x 3 box is cut by the stamp edge" in text and "(0.10 px at most)" in text
-    assert text.index("pixels from the neighbour.") < text.index(cut) < text.index("Averaged over the seasons")
+    assert text.index("pixels from the neighbour.") < text.index(cut) < text.index("Against the Gaia position")
     assert EM_DASH not in text
 
 
 def test_pixel_sentence_names_the_floor_when_the_row_stores_it(env_with_dossier):
     """A rung 5 row of rule version 3: the centroid sentence says in one clause that its error carries the measured
-    systematic floor, and the Research Note keeps within its limits."""
+    pointing-jitter floor, and the Research Note keeps within its limits."""
     data = _with_a_silent_season(env_with_dossier.data)
     for season in next(t for t in data["tests"] if t["rung"] == "rung5_pixels")["metrics"]["seasons"]:
         season["floor_pix"] = 0.0164
     text = pack_module.pixel_sentence(data)
     assert ("The centroid sits a median 0.15 pixels from this star and 2.80 pixels from the neighbour, its error "
-            "carrying a measured systematic floor of 0.016 px.") in text
+            "carrying a pointing-jitter floor of 0.016 px.") in text
     assert EM_DASH not in text
     tex = render_note(data)
-    assert "systematic floor of 0.016 px" in tex and note_problems(note_words(tex), tex) == []
+    assert "pointing-jitter floor of 0.016 px" in tex and note_problems(note_words(tex), tex) == []
 
 
 def test_the_abstract_carries_only_a_short_clause_for_a_cut_box(env_with_dossier):
@@ -627,13 +627,16 @@ def test_the_abstract_carries_only_a_short_clause_for_a_cut_box(env_with_dossier
 
 
 def test_pixel_sentence_without_box_keys_is_unchanged(env_with_dossier):
-    """The text of the commit before the box keys existed (9b4f076), captured before the change."""
+    """The text of the commit before the box keys existed (9b4f076), captured before the change; since spec 11.5 the
+    Gaia-referenced offset carries the exclusion radius and the nearest Gaia source beyond it."""
     assert pack_module.pixel_sentence(env_with_dossier.data) == (
         "In difference images (out of transit minus in transit) the dip is nearer this star than its brightest "
         "neighbour in 3 of 3 seasons that voted. The centroid sits a median 0.13 pixels from this star and 2.75 "
-        "pixels from the neighbour. Averaged over the seasons that voted, the centroid sits 0.54 ± 0.14 arcsec from "
-        "the Gaia position projected through each stamp's WCS, a distance that carries the WCS zero point and the "
-        "registration. A two-source fit gives a median depth of 2,213 ppm on this star and -21 ppm on the "
+        "pixels from the neighbour. Against the Gaia position projected through each stamp's WCS, a reference that "
+        "carries the WCS zero point and the registration, the difference-image centroid sits 0.54 ± 0.14 arcsec "
+        "away, with an exclusion radius of 0.50 arcsec (max(3 sigma, 0.5 arcsec)) within which a background source "
+        "is not excluded; the nearest Gaia source beyond it is Gaia DR3 2101234567890120001 at 6.6 arcsec from the "
+        "centroid (G = 19.8). A two-source fit gives a median depth of 2,213 ppm on this star and -21 ppm on the "
         "neighbour. Season 3 did not vote (box incomplete: target).")
 
 
@@ -738,7 +741,7 @@ def test_build_pack_on_the_real_kic_6146676_dossier(env_with_dossier):
     assert "the dip is nearer this star than its brightest neighbour in 4 of 4 observing seasons." in note
     assert "seasons that voted" not in note and "did not vote" not in note        # season 3 votes now
     assert ("The centroid sits a median 0.19 pixels from this star and 2.82 pixels from the neighbour, its error "
-            "carrying a measured systematic floor of 0.017 px.") in note
+            "carrying a pointing-jitter floor of 0.017 px.") in note
     assert ("In seasons 0 and 3 this star's 3 x 3 box is cut by the stamp edge; the centroid there is measured on "
             "the pixels present and the shift the cut would give a point source (0.08 px at most) is added to its "
             "error.") in note
@@ -746,19 +749,27 @@ def test_build_pack_on_the_real_kic_6146676_dossier(env_with_dossier):
     # centroid, so the offset is judged by Bryson's rule and cited (the fallback form, against the fit's position,
     # is tested on a synthetic block in test_the_offset_sentence_names_its_reference); the ExoFOP note keeps the long
     # form, the Research Note the short one (fix round 4)
-    assert ("Against the star's own out-of-transit image the difference-image centroid is offset by 1.8 ± 1.0 arcsec "
-            "(1.8 sigma), not an offset by the rule of Bryson et al. (2013), which asks for more than 3 sigma and more "
-            "than 0.2 arcsec; the distance from the Gaia position (0.25 ± 0.28 arcsec) carries the WCS zero point and "
-            "the registration. Both errors are the larger of the seasons' combined error and their scatter.") in note
+    # spec 11.5: the Gaia-referenced offset, the exclusion radius and the nearest source beyond it lead; the direct
+    # centroid sits 1.30 px from the Gaia position, so the self-referenced test says its reference is pulled
+    assert ("Against the Gaia position projected through each stamp's WCS, a reference that carries the WCS zero "
+            "point and the registration, the difference-image centroid sits 0.25 ± 0.28 arcsec away, with an "
+            "exclusion radius of 0.83 arcsec (max(3 sigma, 0.5 arcsec)) within which a background source is not "
+            "excluded; the nearest Gaia source beyond it is Gaia DR3 2073896294004902144 at 6.9 arcsec from the "
+            "centroid (G = 19.8). Against the star's own out-of-transit image the difference-image centroid is offset "
+            "by 1.8 ± 1.0 arcsec (1.8 sigma), not an offset by the rule of Bryson et al. (2013), which asks for more "
+            "than 3 sigma and more than 0.2 arcsec; its reference is pulled by the neighbour, up to 1.30 px from the "
+            "Gaia position. Both errors are the larger of the seasons' combined error and their scatter.") in note
     assert "not stored for every season" not in note
     tex = (rep.out_dir / "note" / "note.tex").read_text(encoding="utf-8")
-    assert (r"Against the star's own out-of-transit image the difference-image centroid is offset by 1.8 $\pm$ 1.0 "
-            r"arcsec (1.8 sigma), not an offset by the rule of \citet{bryson2013} (over 3 sigma and 0.2 arcsec); "
-            r"against the Gaia position, which carries the WCS zero point and registration, by 0.25 $\pm$ 0.28 arcsec. "
+    assert (r"Against the Gaia position, which carries the WCS zero point and registration, the difference-image "
+            r"centroid sits 0.25 $\pm$ 0.28 arcsec away, with an exclusion radius of 0.83 arcsec (max(3 sigma, 0.5 "
+            r"arcsec)) within which a background source is not excluded; the nearest Gaia source beyond it is Gaia "
+            r"DR3 2073896294004902144 at 6.9 arcsec (G = 19.8). Against the star's own out-of-transit image the "
+            r"offset is 1.8 $\pm$ 1.0 arcsec (1.8 sigma), not an offset by the rule of \citet{bryson2013} (over 3 "
+            r"sigma and 0.2 arcsec); its reference is pulled by the neighbour, up to 1.30 px from the Gaia position. "
             "Each error is the larger of the seasons' combined error and scatter.") in " ".join(tex.split())
     assert r"]{bryson2013} Bryson" in tex
-    assert ("The centroid agrees with the hand-built localisation within 0.03 px over 4 seasons "
-            "(docs/candidates/kic-006146676/localisation/results.json).") in note
+    assert "hand-built" not in note                     # spec 11.5: the README keeps it, with the file
     assert note_problems(rep.note_words, tex) == [] and rep.zip_path.is_file()
     import xml.etree.ElementTree as ET
     ET.fromstring((rep.out_dir / "figures" / "periodogram.svg").read_text(encoding="utf-8"))  # no plots block
@@ -1372,7 +1383,8 @@ def test_note_has_software_facilities_and_the_model_clause_within_the_limits(env
     assert ("b is 0.31 and a/R* 74.0 fitted, 1.3 sigma from the host's density (no error; ingress shorter than the "
             "cadence: b and a/R* are degenerate with k)") in flat
     # fix round 4: the parity and secondary sentences keep every number and error in fewer words
-    assert (r"The odd and even depths are 2,212 $\pm$ 76 and 2,126 $\pm$ 83 ppm (0.8 sigma apart)." in tex)
+    assert (r"The odd and even depths are 2,212 $\pm$ 76 and 2,126 $\pm$ 83 ppm per event (0.8 sigma apart) and "
+            r"2,180 $\pm$ 69 and 2,195 $\pm$ 65 ppm on the stacked folds (0.2 sigma apart)." in " ".join(tex.split()))
     assert (r"The phase 0.5 depth is 15 $\pm$ 65 ppm (3-sigma upper limit 210 ppm), no constraint on the geometric "
             "albedo; the strongest dip elsewhere is 40 ppm at phase 0.62 (1.4 sigma).") in tex
     assert "14 $\\pm$ 31 ppm" in tex
@@ -1710,9 +1722,10 @@ def test_a_prior_claim_makes_every_text_a_vetting_and_never_a_blind_recovery(env
     assert "SkySift vetting of the transit candidate on " in texts["exofop/note.txt"]
     assert "first reported" in texts["archive_email.txt"]
     assert "re-detected it in its sweep of the KBonus Kepler Background light curves" in texts["archive_email.txt"]
-    # the pixel section says how far the dossier's centroid sits from the hand-built localisation
+    # the pixel section's comparison with the hand-built localisation is the README's alone (spec 11.5)
     for name in ("note/note.tex", "exofop/note.txt"):
-        assert "hand-built localisation" in texts[name] and "within 0.03 px" in texts[name], name
+        assert "hand-built localisation" not in texts[name], name
+    assert "hand-built localisation" in texts["README.md"] and "within 0.03 px" in texts["README.md"]
     planet = _parse_pipe((rep.out_dir / "exofop" / f"params_planet_{_today()}_001.txt").read_text(encoding="utf-8"),
                          PLANET_COLUMNS)
     assert planet["paper"] == f"https://doi.org/{PRIOR_DOI}" and PRIOR_DOI in planet["notes"]
@@ -1857,15 +1870,16 @@ def test_the_offset_sentence_names_its_reference():
     """Round 1, item 3b: only a direct-image reference is described as the star's own image and judged by Bryson's
     rule (and cited); the fit's fallback is named and not assessed. Both say the errors share one rule."""
     fit = pack_module.offset_sentence({"centroid_offset": OFFSET_FIT})
-    assert fit.startswith("Against the catalogue position plus the two-source fit's common shift (the star's "
-                          "direct-image centroid is not stored for every season)")
+    assert fit.startswith("Against the Gaia position") and (". Against the catalogue position plus the two-source "
+                                                             "fit's common shift (the star's direct-image centroid is "
+                                                             "not stored for every season)") in fit
     assert "not assessed from the star's own image" in fit and "Bryson" not in fit
     assert fit.endswith("Both errors are the larger of the seasons' combined error and their scatter.")
     assert pack_module.references({"centroid_offset": OFFSET_FIT})["bryson2013"] is False
     own = {**OFFSET_FIT, "reference": "the star's own direct-image centroid", "counts": False}
     direct = pack_module.offset_sentence({"centroid_offset": own})
-    assert direct.startswith("Against the star's own out-of-transit image the difference-image centroid is offset by "
-                             "0.39 ± 0.15 arcsec (2.6 sigma), not an offset by the rule of Bryson et al. (2013)")
+    assert ("Against the star's own out-of-transit image the difference-image centroid is offset by 0.39 ± 0.15 "
+            "arcsec (2.6 sigma), not an offset by the rule of Bryson et al. (2013)") in direct
     assert pack_module.references({"centroid_offset": own})["bryson2013"] is True
     assert r"\citet{bryson2013}" in str(pack_module.offset_sentence({"centroid_offset": own}, tex=True))
 
@@ -2012,7 +2026,7 @@ def _check_live_shape(cross: str, prior: bool) -> dict:
     assert flat.count("the Zenodo pack's README") == 1                            # M-3: said once
     # the version 4 sentences the round 3 test did not see (I-1)
     assert r"by the rule of \citet{bryson2013}" in flat and r"]{bryson2013} Bryson" in flat
-    assert "The centroid agrees with the hand-built localisation within 0.03 px over 4 seasons" in flat
+    assert "hand-built" not in flat                                               # spec 11.5: the README's
     # the digits move with each regeneration of the golden, so the sentences are built from it (Task 10)
     assert str(pack_module.parity_sentence(data, True)) in flat
     assert str(pack_module.secondary_sentence(data, True)) in flat
@@ -2063,18 +2077,20 @@ def test_the_short_offset_sentence_keeps_both_offsets_and_the_verdict():
     and is not judged by the rule. The long form stays the README's, the ExoFOP note's and the page's."""
     own = {**OFFSET_FIT, "reference": "the star's own direct-image centroid", "counts": False}
     short = pack_module.offset_sentence({"centroid_offset": own}, short=True)
-    assert short == ("Against the star's own out-of-transit image the difference-image centroid is offset by 0.39 ± "
-                     "0.15 arcsec (2.6 sigma), not an offset by the rule of Bryson et al. (2013) (over 3 sigma and "
-                     "0.2 arcsec); against the Gaia position, which carries the WCS zero point and registration, by "
-                     "0.25 ± 0.28 arcsec. Each error is the larger of the seasons' combined error and scatter.")
+    # spec 11.5: the Gaia offset and the exclusion radius (max(3 x 0.28, 0.5) arcsec) lead
+    gaia = ("Against the Gaia position, which carries the WCS zero point and registration, the difference-image "
+            "centroid sits 0.25 ± 0.28 arcsec away, with an exclusion radius of 0.84 arcsec (max(3 sigma, 0.5 arcsec)) "
+            "within which a background source is not excluded. ")
+    assert short == (gaia + "Against the star's own out-of-transit image the offset is 0.39 ± 0.15 arcsec (2.6 sigma), "
+                     "not an offset by the rule of Bryson et al. (2013) (over 3 sigma and 0.2 arcsec). Each error is "
+                     "the larger of the seasons' combined error and scatter.")
     counted = pack_module.offset_sentence({"centroid_offset": {**own, "counts": True}}, tex=True, short=True)
-    assert r"(2.6 sigma), an offset by the rule of \citet{bryson2013} (over 3 sigma and 0.2 arcsec);" in str(counted)
+    assert r"(2.6 sigma), an offset by the rule of \citet{bryson2013} (over 3 sigma and 0.2 arcsec)." in str(counted)
     fit = pack_module.offset_sentence({"centroid_offset": OFFSET_FIT}, short=True)
-    assert fit == ("Against the catalogue position plus the two-source fit's common shift (the star's direct-image "
-                   "centroid is not stored for every season) the difference-image centroid is offset by 0.39 ± 0.15 "
-                   "arcsec (2.6 sigma), not assessed from the star's own image; against the Gaia position, which "
-                   "carries the WCS zero point and registration, by 0.25 ± 0.28 arcsec. Each error is the larger of "
-                   "the seasons' combined error and scatter.")
+    assert fit == (gaia + "Against the catalogue position plus the two-source fit's common shift (the star's "
+                   "direct-image centroid is not stored for every season) the difference-image centroid is offset by "
+                   "0.39 ± 0.15 arcsec (2.6 sigma), not assessed from the star's own image. Each error is the larger "
+                   "of the seasons' combined error and scatter.")
     assert len(short.split()) < len(pack_module.offset_sentence({"centroid_offset": own}).split()) - 5
     assert pack_module.offset_sentence({"centroid_offset": own}).endswith(pack_module.SAME_ERROR_RULE)
 
@@ -2205,3 +2221,67 @@ def test_the_note_names_the_limb_darkening_and_the_exposure_integration(env_with
     readme = (_build(env).out_dir / "README.md").read_text(encoding="utf-8")
     k = _stored(env)["shape"]["k"]
     assert f"(full-data fit {k['point']:.4f})" in readme       # the point value beside the median
+
+
+def test_the_centroid_paragraph_leads_with_the_gaia_offset_and_the_exclusion_radius():
+    # the golden: the seed's rung 5 rows predate the direct-image centroid, so only it has both offsets and the pull
+    data = json.loads(GOLDEN.read_text(encoding="utf-8"))
+    co = data["centroid_offset"]
+    text = pack_module.offset_sentence(data)
+    gaia = text.index("Against the Gaia position")
+    assert gaia == 0 and text.index("Against the star's own out-of-transit image") > gaia
+    assert f"an exclusion radius of {co['exclusion_radius_arcsec']:.2f} arcsec (max(3 sigma, 0.5 arcsec))" in text
+    assert "within which a background source is not excluded" in text
+    if co["nearest_beyond"]:
+        assert f"Gaia DR3 {co['nearest_beyond']['source_id']}" in text
+    assert ("its reference is pulled by the neighbour" in text) is co["pulled"]
+    assert "pointing-jitter floor" in pack_module.pixel_sentence(data) and "systematic floor" not in (
+        pack_module.pixel_sentence(data))
+
+
+def test_the_red_noise_parity_and_trend_sentences():
+    data = {"tests": [{"rung": "rung2_shape", "status": "pass",
+                       "metrics": {"sigma_pos": 7.98, "sigma_ter": 3.10, "fit_ok": True}}],
+            "secondary": {"depth_ppm": 95.0, "err_ppm": 128.0, "limit_3sigma_ppm": 480.0, "strongest_ppm": 573.0,
+                          "strongest_phase": 0.726, "strongest_sigma": 3.98},
+            "parity": {"odd": {"depth_ppm": 2031.0, "err_ppm": 178.0, "n": 28},
+                       "even": {"depth_ppm": 2031.0, "err_ppm": 138.0, "n": 27}, "difference_sigma": 0.002,
+                       "stacked": {"odd": {"depth_ppm": 2050.0, "err_ppm": 120.0},
+                                   "even": {"depth_ppm": 2010.0, "err_ppm": 115.0}, "difference_sigma": 0.24}},
+            "depth_trend": {"slope_ppm_per_year": -61.0, "err_ppm_per_year": 25.0, "sigma": 2.44, "printed": True}}
+    assert pack_module.secondary_sentence(data).endswith(
+        "the strongest dip elsewhere is 573 ppm at phase 0.73 (4.0 sigma), against model-shift margins of 8.0 sigma "
+        "for the largest positive excursion and 3.1 sigma for the tertiary dip.")
+    # pm_text keeps every digit of an error of three digits (178, not 180); the brief's form rounded it
+    assert pack_module.parity_sentence(data) == (
+        "The odd and even depths are 2,031 ± 178 and 2,031 ± 138 ppm per event (0.0 sigma apart) and 2,050 ± 120 and "
+        "2,010 ± 115 ppm on the stacked folds (0.2 sigma apart).")
+    assert pack_module.trend_sentence(data) == (
+        "The per-event depths drift by -61 ± 25 ppm per year (2.4 sigma, errors scaled by the scatter).")
+    assert pack_module.trend_sentence({**data, "depth_trend": {**data["depth_trend"], "printed": False}}) is None
+
+
+def test_the_hand_built_comparison_leaves_the_note_for_the_readme_and_its_file(env_prior):
+    rep = _build(env_prior)
+    texts = _texts(rep)
+    assert "hand-built localisation" not in texts["note/note.tex"]
+    assert ("The centroid agrees with the hand-built localisation within 0.03 px over 3 seasons "
+            "(data/hand_built_localisation.json)") in texts["README.md"]            # the seed's three voting seasons
+    assert pack_module.BEB_RADIUS in texts["README.md"]                  # the FPP's confusion radius, spec 11.5
+    copied = rep.out_dir / "data" / "hand_built_localisation.json"
+    source = dossier_module.CANDIDATES_DIR / STAGE2_TARGET / "localisation" / "results.json"
+    assert copied.read_bytes() == source.read_bytes()
+
+
+def test_the_note_names_the_photometry_the_aperture_ratio_and_the_predicted_leak(env_with_dossier):
+    data = {**_stored(env_with_dossier),
+            "aperture": {"ratio": 0.63466, "ratio_err": 0.064244, "crowdsap": 0.74724716, "shortfall_sigma": -1.7525},
+            "predicted_leak": {"predicted_ppm": 61.2, "share": 0.0301, "measured_ppm": 130.4,
+                               "measured_err_ppm": 41.8, "kic": 5689116, "reason": None}}
+    flat = " ".join(render_note(data).split())
+    assert "KBonus PSF photometry, decontaminated to first order, with no crowding correction applied" in flat
+    assert pack_module.aperture_sentence(data) == (
+        "The SAP depth is 0.635 ± 0.064 of the PSF depth against a CROWDSAP of 0.75, 1.8 sigma short of it.")
+    assert pack_module.leak_sentence(data) == (
+        "KIC 5689116's optimal aperture dims by 130 ± 42 ppm, where this star's light alone (3.0 percent of that "
+        "aperture under the PSF model of the pixel check) predicts 61 ppm.")

@@ -834,7 +834,10 @@ def test_the_pixel_section_quotes_the_offset_against_the_rule(seeded_dossier):
     assert ("Against the catalogue position plus the two-source fit's common shift (the star's direct-image "
             "centroid is not stored for every season)") in pixels
     assert "offset by 0.39 ± 0.15 arcsec (2.6 sigma), not assessed from the star's own image" in pixels
-    assert "the distance from the Gaia position (0.25 ± 0.28 arcsec) carries the WCS zero point" in pixels
+    # spec 11.5: the Gaia offset leads, with the exclusion radius (max(3 sigma, 0.5 arcsec), 0.84 arcsec here)
+    assert pixels.index("Against the Gaia position projected through each stamp's WCS, a reference that carries the "
+                        "WCS zero point and the registration, the difference-image centroid sits 0.25 ± 0.28 arcsec "
+                        "away, with an exclusion radius of 0.84 arcsec") < pixels.index("Against the catalogue position")
     own = {**block, "reference": "the star's own direct-image centroid"}
     path.write_text(json.dumps({**data, "centroid_offset": own}), encoding="utf-8")
     pixels = client.get(f"/dossiers/{STAGE2_TARGET}").text.split('id="pixels"')[1].split('id="star"')[0]

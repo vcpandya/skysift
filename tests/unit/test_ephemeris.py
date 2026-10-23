@@ -10,12 +10,14 @@ from skysift.ephemeris import (
     BKJD_OFFSET,
     CADENCE_MIN,
     DEGENERACY_REASON,
+    DEPTH_TREND_SIGMA,
     GRAZING_REASON,
     LOW_SES_REASON,
     SES_MIN,
     ParityDepths,
     Template,
     bootstrap_shape,
+    depth_trend,
     drop_low_ses,
     fold_depth,
     ingress_minutes,
@@ -392,3 +394,14 @@ def test_a_quoted_free_fit_gives_every_block_and_the_prior_is_not_refitted(scene
     assert se.ok and calls and all(d is None for d in calls)
     assert (se.k["point"], se.t14_h["point"]) == (free.k, pytest.approx(free.t14_days * 24.0))
     assert se.model_depth_ppm["point"] == free.depth_ppm
+
+
+def test_a_depth_trend_is_measured_with_scaled_errors_and_printed_above_two_sigma():
+    epochs = np.arange(40)
+    years = epochs * 40.0 / 365.25
+    trend = depth_trend(epochs, 2000.0 + 200.0 * (years - years.mean()), np.full(40, 50.0), 40.0)
+    assert trend["slope_ppm_per_year"] == pytest.approx(200.0) and trend["printed"] is True
+    assert trend["sigma"] == pytest.approx(200.0 / trend["err_ppm_per_year"]) and trend["n"] == 40
+    flat = depth_trend(epochs, 2000.0 + np.random.default_rng(1).normal(0, 50.0, 40), np.full(40, 50.0), 40.0)
+    assert flat["printed"] is (flat["sigma"] > DEPTH_TREND_SIGMA) and flat["sigma"] < 3
+    assert depth_trend(epochs[:2], np.array([1.0, 2.0]), np.array([1.0, 1.0]), 40.0)["sigma"] is None

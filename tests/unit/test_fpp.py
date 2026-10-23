@@ -4,7 +4,7 @@ import math
 
 import pytest
 
-from skysift.fpp import Fpp, FppInputs, Neighbour, compute
+from skysift.fpp import FPP_MODEL_VERSION, Fpp, FppInputs, Neighbour, compute
 
 
 def base(**over) -> FppInputs:
@@ -184,3 +184,14 @@ def test_without_pixels_a_stray_centroid_separation_is_ignored():
     assert not f.pixels and f.neighbours[1]["s_arcsec"] == 10.8
     assert f.neighbours[1]["exclusion"] == pytest.approx(math.exp(-(10.8 - 7.96) ** 2 / (2 * 3.98 ** 2)))
     assert f.value == compute(no_pixels(base())).value
+
+
+def test_the_beb_confusion_radius_is_the_pixel_exclusion_radius():
+    near = (Neighbour("near", 1.5, 19.0, None, centroid_sep_arcsec=1.5),)       # bright enough, 1.5" from the centroid
+    old = compute(base(centroid_sigma_arcsec=0.25312484, neighbours=near))
+    new = compute(base(centroid_sigma_arcsec=0.25312484, neighbours=near, exclusion_radius_arcsec=0.75937))
+    beb_old, beb_new = (next(s for s in f.scenarios if s.name == "BEB") for f in (old, new))
+    assert beb_old.factors["r_c_arcsec"] == 2.0 and beb_old.factors["X_mean"] == 1.0     # nothing excluded inside 2"
+    assert beb_new.factors["r_c_arcsec"] == pytest.approx(0.75937)
+    assert beb_new.factors["X_mean"] == pytest.approx(math.exp(-((1.5 - 0.75937) / 0.25312484) ** 2 / 2))
+    assert FPP_MODEL_VERSION == "3"

@@ -591,18 +591,28 @@
     list(3, seasons.map((s) => [`Season ${s.season}:`,
       s.voting === true ? `voting, ${where(s)}` : s.voting === false ? `not voting, ${s.non_voting_reason || "no reason stored"}.` : `vote not recorded, ${where(s)}`,
       s.voting === true ? null : "is-muted"]));
-    // the pixel offset as skysift.pack.offset_sentence words it (Bryson et al. 2013; ruling e)
+    // the pixel offset as skysift.pack.offset_sentence words it (spec 11.5, after ruling e): the Gaia offset and the
+    // exclusion radius first, then the offset against the star's own image (Bryson et al. 2013)
     const OFF = D.centroid_offset;
     if (OFF && isNum(OFF.catalogue_referenced_arcsec)) {
       const pmA = (x, e) => (isNum(e) && e > 0 ? `${fmt(x, errDigits(e))} ± ${fmt(e, errDigits(e))}` : fmt(x, 2));
-      const gaia = `the distance from the Gaia position (${pmA(OFF.catalogue_referenced_arcsec, OFF.catalogue_referenced_err_arcsec)} arcsec) carries the WCS zero point and the registration.`;
+      const catErr = OFF.catalogue_referenced_err_arcsec;
+      const radius = isNum(OFF.exclusion_radius_arcsec) ? OFF.exclusion_radius_arcsec
+        : (isNum(catErr) ? Math.max(3 * catErr, 0.5) : null);
+      const nb = OFF.nearest_beyond;
+      let lead = `Against the Gaia position projected through each stamp's WCS, a reference that carries the WCS zero point and the registration, the difference-image centroid sits ${pmA(OFF.catalogue_referenced_arcsec, catErr)} arcsec away`;
+      if (radius !== null) {
+        lead += `, with an exclusion radius of ${fmt(radius, 2)} arcsec (max(3 sigma, 0.5 arcsec)) within which a background source is not excluded`;
+        if (nb && nb.source_id && isNum(nb.centroid_sep_arcsec)) lead += `; the nearest Gaia source beyond it is Gaia DR3 ${nb.source_id} at ${fmt(nb.centroid_sep_arcsec, 1)} arcsec from the centroid${isNum(nb.gmag) ? ` (G = ${fmt(nb.gmag, 1)})` : ""}`;
+      }
       const same = "Both errors are the larger of the seasons' combined error and their scatter.";
       const own = OFF.reference === "the star's own direct-image centroid";
       const off = `${pmA(OFF.self_referenced_arcsec, OFF.self_referenced_err_arcsec)} arcsec (${fmt(OFF.sigma, 1)} sigma)`;
+      const pull = OFF.pulled === true && isNum(OFF.direct_pull_pix) ? `; its reference is pulled by the neighbour, up to ${fmt(OFF.direct_pull_pix, 2)} px from the Gaia position` : "";
       para(3, isNum(OFF.self_referenced_arcsec) && isNum(OFF.sigma)
-        ? (own ? `Against the star's own out-of-transit image the difference-image centroid is offset by ${off}, ${OFF.counts ? "an offset" : "not an offset"} by the rule of Bryson et al. (2013), which asks for more than ${OFF.sigma_level} sigma and more than ${OFF.level_arcsec} arcsec; ${gaia} ${same}`
-          : `Against ${OFF.reference || "the fitted position of the star"} (the star's direct-image centroid is not stored for every season) the difference-image centroid is offset by ${off}, not assessed from the star's own image; ${gaia} ${same}`)
-        : `Averaged over the seasons that voted, the centroid sits ${pmA(OFF.catalogue_referenced_arcsec, OFF.catalogue_referenced_err_arcsec)} arcsec from the Gaia position projected through each stamp's WCS, a distance that carries the WCS zero point and the registration.`, "pixel-offset");
+        ? (own ? `${lead}. Against the star's own out-of-transit image the difference-image centroid is offset by ${off}, ${OFF.counts ? "an offset" : "not an offset"} by the rule of Bryson et al. (2013), which asks for more than ${OFF.sigma_level} sigma and more than ${OFF.level_arcsec} arcsec${pull}. ${same}`
+          : `${lead}. Against ${OFF.reference || "the fitted position of the star"} (the star's direct-image centroid is not stored for every season) the difference-image centroid is offset by ${off}, not assessed from the star's own image. ${same}`)
+        : `${lead}.`, "pixel-offset");
     }
     const close = (D.caveats || []).find((c) => c && c.key === "close_call");
     if (close) para(3, close.text, "dossier-caveat");

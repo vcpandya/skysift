@@ -33,7 +33,8 @@ GOLDEN_RUNGS = ("rung2_shape", "rung3_stability", "rung4_novelty", "rung5_pixels
 GOLDEN_KEYS = ("dossier_version", "generated", "target", "ephemeris", "fap", "fpp", "star", "planet", "look",
                "timing", "shape", "parity", "secondary", "cross_check", "centroid_offset",     # version-3 blocks
                "prior_claims", "hand_built_localisation", "stability",                # version 5: rung 3 on the fold
-               "calibration")                                       # round 2: the sweep size (spec 11.4)
+               "calibration",                                       # round 2: the sweep size (spec 11.4)
+               "aperture", "predicted_leak", "depth_trend")         # round 2: the pixels and red noise (11.5)
 
 
 @dataclass

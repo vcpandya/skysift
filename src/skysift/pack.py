@@ -553,27 +553,32 @@ def comparison_text(data: dict, tex: bool = False) -> str | None:
     return _joined(tex, sentence + ".")
 
 
-def hand_built_sentence(data: dict) -> str | None:
-    """The pixel section's one sentence on the hand-built study of the same pixels
-    (``dossier.hand_built_localisation``): the largest season-by-season difference in the centroid's distance from
-    this star, over how many seasons, and where the study is. It says "agrees" only when every season's difference
-    is below its combined error, else "differs ... by up to". One clause since Task 8 fix round 4 (the note's word
-    limit): "The centroid agrees with the hand-built localisation within X px over N seasons (<source>)."."""
+HAND_BUILT_FILE = "data/hand_built_localisation.json"    # the study's results file, copied into the pack
+
+
+def hand_built_sentence(data: dict, source: str | None = None) -> str | None:
+    """The README's one sentence on the hand-built study of the same pixels (``dossier.hand_built_localisation``;
+    since spec 11.5 it is not in the note): the largest season-by-season difference in the centroid's distance from
+    this star, over how many seasons, and where the study is (``source``, by default the block's own path; the
+    README names the pack's copy, ``HAND_BUILT_FILE``). It says "agrees" only when every season's difference is below
+    its combined error, else "differs ... by up to". "The centroid agrees with the hand-built localisation within X
+    px over N seasons (<source>)."."""
     block = data.get("hand_built_localisation")
     diff = _num(block.get("max_diff_pix")) if isinstance(block, dict) else None
     if diff is None:
         return None
+    src = source or block.get("source")
     n = block.get("n_seasons")
     seasons = f"{n} season{'s' if n != 1 else ''}" if isinstance(n, int) else "the seasons that voted"
     if block.get("agrees") is True:
         return (f"The centroid agrees with the hand-built localisation within {max(diff, 0.01):.2f} px over {seasons} "
-                f"({block.get('source')}).")
+                f"({src}).")
     err = _num(block.get("combined_err_pix"))
     if block.get("agrees") is False and err is not None and err > 0:
         return (f"The centroid differs from the hand-built localisation by up to {diff:.2f} px over {seasons}, more "
-                f"than the seasons' combined error ({block.get('source')}).")
+                f"than the seasons' combined error ({src}).")
     return (f"The centroid differs from the hand-built localisation by up to {diff:.2f} px over {seasons} (the error "
-            f"is not available; {block.get('source')}).")
+            f"is not available; {src}).")
 
 
 def _timed(data: dict) -> bool:
@@ -808,14 +813,15 @@ def _odd_even(data: dict, tex: bool) -> tuple[str, str] | None:
 
 
 def parity_sentence(data: dict, tex: bool = False) -> str | None:
-    """The odd and even depths with their errors and the difference in sigma (the parity block), with rung 2's own
-    comparison when the two differ by more than 0.5 sigma; rung 2's depths without errors for an older dossier.
-    "The odd and even depths are X ± e and Y ± e ppm (Z sigma apart)." since Task 8 fix round 4 (the word limit)."""
+    """The odd and even depths of the parity block, the per-event estimator with its errors and the difference in
+    sigma, then the stacked fold of each parity the same way when the block stores it (spec 11.5): "The odd and even
+    depths are X ± e and Y ± e ppm per event (Z sigma apart) and X' ± e and Y' ± e ppm on the stacked folds (Z' sigma
+    apart)."; rung 2's depths without errors for an older dossier."""
     sh = _metrics(data, "rung2_shape")
     pair = _odd_even(data, tex)
-    rung = _num(sh.get("parity_sigma"))
     if pair is None:
-        odd, even, par = _f(sh.get("odd_ppm"), 0, True), _f(sh.get("even_ppm"), 0, True), _f(rung, 1)
+        odd, even, par = (_f(sh.get("odd_ppm"), 0, True), _f(sh.get("even_ppm"), 0, True),
+                          _f(sh.get("parity_sigma"), 1))
         if not (odd and even):
             return None
         return f"The odd and even depths are {odd} and {even} ppm" + (f" ({par} sigma apart)." if par else ".")
@@ -823,12 +829,18 @@ def parity_sentence(data: dict, tex: bool = False) -> str | None:
     diff = _num(parity.get("difference_sigma"))
     odd = pm_text(parity["odd"]["depth_ppm"], parity["odd"]["err_ppm"], parity["odd"]["err_ppm"], nd=0, comma=True,
                   tex=tex)                                  # the unit once, after the even depth
-    parts = ["The odd and even depths are ", odd, " and ", pair[1]]
+    parts = ["The odd and even depths are ", odd, " and ", pair[1], " per event"]
     if diff is not None:
-        parts.append(f" ({diff:.1f} sigma apart")
-        if rung is not None and abs(rung - diff) > 0.5:
-            parts.append(f"; the vetting rung's own comparison gives {rung:.1f} sigma")
-        parts.append(")")
+        parts.append(f" ({diff:.1f} sigma apart)")
+    stacked = parity.get("stacked")
+    if isinstance(stacked, dict):
+        texts = [pm_text((stacked.get(k) or {}).get("depth_ppm"), (stacked.get(k) or {}).get("err_ppm"),
+                         (stacked.get(k) or {}).get("err_ppm"), nd=0, comma=True, tex=tex) for k in ("odd", "even")]
+        if None not in texts:
+            parts += [" and ", texts[0], " and ", texts[1], " ppm on the stacked folds"]
+            sd = _num(stacked.get("difference_sigma"))
+            if sd is not None:
+                parts.append(f" ({sd:.1f} sigma apart)")
     return _joined(tex, *parts, ".")
 
 
@@ -851,7 +863,10 @@ def secondary_sentence(data: dict, tex: bool = False) -> str | None:
     """The phase 0.5 depth with its error, its 3-sigma upper limit, the albedo clause and the strongest dip at any
     other phase (the secondary block); rung 2's depth against the scatter for an older dossier; None without
     either. "The phase 0.5 depth is X ± e ppm (3-sigma upper limit L ppm), <albedo>; the strongest dip elsewhere is
-    D ppm at phase F (S sigma)." since Task 8 fix round 4 (the word limit)."""
+    D ppm at phase F (S sigma)." since Task 8 fix round 4 (the word limit). Beside the strongest dip, rung 2's
+    model-shift margins (``sigma_pos``, the largest positive excursion, and ``sigma_ter``, the tertiary dip) show the
+    red noise (spec 11.5): ", against model-shift margins of P sigma for the largest positive excursion and T sigma
+    for the tertiary dip"."""
     sec = data.get("secondary")
     if not isinstance(sec, dict) or _num(sec.get("depth_ppm")) is None:
         sh = _metrics(data, "rung2_shape")
@@ -867,7 +882,26 @@ def secondary_sentence(data: dict, tex: bool = False) -> str | None:
                          _f(sec.get("strongest_sigma"), 1))
     if top and phase and sigma:
         parts.append(f"; the strongest dip elsewhere is {top} ppm at phase {phase} ({sigma} sigma)")
+        sh = _metrics(data, "rung2_shape")
+        pos, ter = _f(sh.get("sigma_pos"), 1), _f(sh.get("sigma_ter"), 1)
+        if pos and ter:
+            parts.append(f", against model-shift margins of {pos} sigma for the largest positive excursion and {ter} "
+                         "sigma for the tertiary dip")
     return _joined(tex, *parts, ".")
+
+
+def trend_sentence(data: dict, tex: bool = False) -> str | None:
+    """The per-event depths' trend against time (the ``depth_trend`` block, spec 11.5), only when it is printed (above
+    ``ephemeris.DEPTH_TREND_SIGMA`` with errors scaled by the scatter): "The per-event depths drift by S ± e ppm per
+    year (Z sigma, errors scaled by the scatter)."; None otherwise."""
+    trend = data.get("depth_trend")
+    if not isinstance(trend, dict) or trend.get("printed") is not True:
+        return None
+    slope, err, sigma = (_num(trend.get(k)) for k in ("slope_ppm_per_year", "err_ppm_per_year", "sigma"))
+    if None in (slope, err, sigma):
+        return None
+    return _joined(tex, "The per-event depths drift by ", pm_text(slope, err, err, nd=0, comma=True, tex=tex),
+                   f" ppm per year ({sigma:.1f} sigma, errors scaled by the scatter).")
 
 
 def _vetting_sentences(data: dict, tex: bool = False) -> list[str]:
@@ -891,6 +925,9 @@ def _vetting_sentences(data: dict, tex: bool = False) -> list[str]:
         if n_seasons and chi2 is not None and dof is not None:
             out.append(f"The depth agrees across {n_seasons} seasons (chi-squared {chi2} for {dof} degrees of freedom"
                        + (f", p = {p})." if p else ")."))
+    trend = trend_sentence(data, tex)
+    if trend:
+        out.append(trend)
     nv = _metrics(data, "rung4_novelty")
     if nv:
         names = {"cumulative": "the Kepler cumulative KOI table", "q1_q17_dr25_tce": "the Q1 to Q17 DR25 TCE list",
@@ -958,48 +995,73 @@ def self_referenced(block: dict | None) -> bool:
             and block.get("reference") == ds.SELF_REFERENCES["direct"])
 
 
+JITTER_FLOOR = "pointing-jitter floor"       # spec 11.5: the measured quarter-to-quarter term of the centroid error
 SAME_ERROR_RULE = "Both errors are the larger of the seasons' combined error and their scatter."
 SAME_ERROR_SHORT = "Each error is the larger of the seasons' combined error and scatter."
 
 
+def _exclusion_words(block: dict, short: bool) -> list[str]:
+    """The exclusion radius clause and the nearest Gaia source beyond it (spec 11.5), [] without a radius."""
+    radius = _num(block.get("exclusion_radius_arcsec"))
+    radius = ds.exclusion_radius(block) if radius is None else radius
+    if radius is None:
+        return []
+    out = [(f", with an exclusion radius of {radius:.2f} arcsec (max(3 sigma, 0.5 arcsec)) within which a background "
+           "source is not excluded")]
+    nb = block.get("nearest_beyond")
+    sep = _num(nb.get("centroid_sep_arcsec")) if isinstance(nb, dict) else None
+    if sep is not None and nb.get("source_id"):
+        g = _num(nb.get("gmag"))
+        out.append(f"; the nearest Gaia source beyond it is Gaia DR3 {nb['source_id']} at {sep:.1f} arcsec"
+                   + ("" if short else " from the centroid") + (f" (G = {g:.1f})" if g is not None else ""))
+    return out
+
+
 def offset_sentence(data: dict, tex: bool = False, short: bool = False) -> str | None:
-    """The pixel offset as Bryson et al. 2013 quote it (ruling e): the difference-image centroid against the star's own
-    out-of-transit image, with its error and sigma, judged by their rule (above 3 sigma and above 0.2 arcsec), and the
-    distance from the Gaia position with the one clause that it carries the WCS zero point and the registration. None
-    without the block; with ``tex`` a ``Raw`` citing ``bryson2013``. ``short`` is the note's form (Task 8 fix round
-    4, the word limit): the same two offsets, errors, sigma, reference, rule and verdict with fewer connectives
-    ("... not an offset by the rule of Bryson et al. (2013) (over 3 sigma and 0.2 arcsec); against the Gaia position,
-    which carries the WCS zero point and registration, by X arcsec. Each error is ..."); the README, the ExoFOP note
-    and the page keep the long one."""
+    """The pixel offset (spec 11.5, after ruling e), in this order: the difference-image centroid against the Gaia
+    position, with the one clause that it carries the WCS zero point and the registration, its error and the
+    exclusion radius max(3 sigma, 0.5 arcsec) inside which a background source is not excluded, and the nearest Gaia
+    source beyond it (``_exclusion_words``); then the offset against the star's own out-of-transit image, as Bryson et
+    al. 2013 quote it, with its error and sigma, judged by their rule (above 3 sigma and above 0.2 arcsec), and "its
+    reference is pulled by the neighbour" when the direct centroid sits more than ``dossier.PULL_PIX`` from the Gaia
+    position; then the error rule. None without the block; with ``tex`` a ``Raw`` citing ``bryson2013``. ``short`` is
+    the note's form (fewer connectives); the README, the ExoFOP note and the page keep the long one."""
     block = offset_block(data)
     if not block:
         return None
     cat, cat_err = block.get("catalogue_referenced_arcsec"), block.get("catalogue_referenced_err_arcsec")
     if short:
-        gaia = ["against the Gaia position, which carries the WCS zero point and registration, by ",
-                pm_text(cat, cat_err, cat_err, tex=tex), " arcsec."]
+        lead = [("Against the Gaia position, which carries the WCS zero point and registration, the difference-image "
+                "centroid sits "), pm_text(cat, cat_err, cat_err, tex=tex), " arcsec away"]
     else:
-        gaia = ["the distance from the Gaia position (", pm_text(cat, cat_err, cat_err, tex=tex),
-                " arcsec) carries the WCS zero point and the registration."]
+        lead = [("Against the Gaia position projected through each stamp's WCS, a reference that carries the WCS zero "
+                "point and the registration, the difference-image centroid sits "),
+                pm_text(cat, cat_err, cat_err, tex=tex), " arcsec away"]
+    lead += _exclusion_words(block, short)
     same = SAME_ERROR_SHORT if short else SAME_ERROR_RULE
     off, err, sigma = (_num(block.get(k)) for k in ("self_referenced_arcsec", "self_referenced_err_arcsec", "sigma"))
     if off is None or err is None or sigma is None:
-        return _joined(tex, "Averaged over the seasons that voted, the centroid sits ",
-                       pm_text(cat, cat_err, cat_err, tex=tex), " arcsec from the Gaia position projected through each "
-                       "stamp's WCS, a distance that carries the WCS zero point and the registration.")
+        return _joined(tex, *lead, ".")
     if not self_referenced(block):
-        return _joined(tex, f"Against {block.get('reference') or 'the fitted position of the star'} (the star's "
-                       "direct-image centroid is not stored for every season) the difference-image centroid is "
+        return _joined(tex, *lead, f". Against {block.get('reference') or 'the fitted position of the star'} (the "
+                       "star's direct-image centroid is not stored for every season) the difference-image centroid is "
                        "offset by ", pm_text(off, err, err, tex=tex), f" arcsec ({sigma:.1f} sigma), not assessed "
-                       "from the star's own image; ", *gaia, " ", same)
+                       "from the star's own image. ", same)
     cite = Raw(r"\citet{bryson2013}") if tex else "Bryson et al. (2013)"
     level, k = _num(block.get("level_arcsec")) or 0.2, _num(block.get("sigma_level")) or 3.0
     verdict = "an offset" if block.get("counts") else "not an offset"
-    rule = (f" (over {k:g} sigma and {level:g} arcsec); " if short
-            else f", which asks for more than {k:g} sigma and more than {level:g} arcsec; ")
-    return _joined(tex, "Against the star's own out-of-transit image the difference-image centroid is offset by ",
-                   pm_text(off, err, err, tex=tex), f" arcsec ({sigma:.1f} sigma), {verdict} by the rule of ", cite,
-                   rule, *gaia, " ", same)
+    if short:
+        own = [". Against the star's own out-of-transit image the offset is ", pm_text(off, err, err, tex=tex),
+               f" arcsec ({sigma:.1f} sigma), {verdict} by the rule of ", cite, (f" (over {k:g} sigma and {level:g} "
+               "arcsec)")]
+    else:
+        own = [". Against the star's own out-of-transit image the difference-image centroid is offset by ",
+               pm_text(off, err, err, tex=tex), f" arcsec ({sigma:.1f} sigma), {verdict} by the rule of ", cite,
+               f", which asks for more than {k:g} sigma and more than {level:g} arcsec"]
+    pull = _num(block.get("direct_pull_pix"))
+    if block.get("pulled") is True and pull is not None:
+        own.append(f"; its reference is pulled by the neighbour, up to {pull:.2f} px from the Gaia position")
+    return _joined(tex, *lead, *own, ". ", same)
 
 
 def pixel_sentence(data: dict, tex: bool = False) -> str:
@@ -1023,7 +1085,7 @@ def pixel_sentence(data: dict, tex: bool = False) -> str:
     dn = [d for s in seasons if (d := _num(s.get("dist_neighbour_pix"))) is not None]
     if dt and dn:
         floor = ds.floor_pix(seasons)
-        carried = "" if floor is None else f", its error carrying a measured systematic floor of {floor:.3f} px"
+        carried = "" if floor is None else f", its error carrying a {JITTER_FLOOR} of {floor:.3f} px"
         text += (f" The centroid sits a median {np.median(dt):.2f} pixels from this star and {np.median(dn):.2f} "
                  f"pixels from the neighbour{carried}.")
     cut = ds.partial_box_sentence(seasons)
@@ -1040,9 +1102,6 @@ def pixel_sentence(data: dict, tex: bool = False) -> str:
         n = float(np.median([p[1] for p in pairs]))
         text += (f" A two-source fit gives a median depth of {t:,.0f} ppm on this star and {n:,.0f} ppm on the "
                  "neighbour.")
-    hand = hand_built_sentence(data)
-    if hand:
-        text += f" {hand}"
     if silent:
         text += f" {_silent_sentence(silent)}"
     if row.get("status") == "fail":
@@ -1060,21 +1119,83 @@ def _hz_where(planet: dict) -> str | None:
     return "outside the habitable zone"
 
 
+def aperture_sentence(data: dict, tex: bool = False) -> str | None:
+    """Rung 3's aperture ratio on the fold against CROWDSAP (the ``aperture`` block, spec 11.5): "The SAP depth is R ±
+    e of the PSF depth against a CROWDSAP of C, Z sigma short of it." ("above it" when the ratio is the larger); None
+    without the block's ratio and error."""
+    block = data.get("aperture")
+    if not isinstance(block, dict):
+        return None
+    ratio, err, crowd, short = (_num(block.get(k)) for k in ("ratio", "ratio_err", "crowdsap", "shortfall_sigma"))
+    if ratio is None or err is None:
+        return None
+    parts = ["The SAP depth is ", pm_text(ratio, err, err, tex=tex), " of the PSF depth"]
+    if crowd is not None:
+        parts.append(f" against a CROWDSAP of {crowd:.2f}")
+        if short is not None:
+            parts.append(f", {abs(short):.1f} sigma {'short of' if short < 0 else 'above'} it")
+    return _joined(tex, *parts, ".")
+
+
+def leak_sentence(data: dict, tex: bool = False) -> str | None:
+    """Rung 5's measured dip in the neighbour's optimal aperture beside the dip this star's own light predicts there
+    (the ``predicted_leak`` block, spec 11.5): "KIC N's optimal aperture dims by D ± e ppm, where this star's light
+    alone (S percent of that aperture under the PSF model of the pixel check) predicts P ppm." ("shows no dip (D ± e
+    ppm)" for a negative measurement); None without a
+    prediction (no kept pixel file, no PSF width), when the texts keep the measured dip alone."""
+    block = data.get("predicted_leak")
+    if not isinstance(block, dict):
+        return None
+    pred, share, measured, err = (_num(block.get(k)) for k in ("predicted_ppm", "share", "measured_ppm",
+                                                                "measured_err_ppm"))
+    if None in (pred, share, measured):
+        return None
+    kic = block.get("kic")
+    whose = f"KIC {kic}'s" if kic else "The neighbour's"
+    digits = pm_digits(err) if err is not None and err > 0 else 0
+    pct = share * 100
+    pct_text = f"{pct:.1f}" if pct >= 0.1 else f"{pct:.2g}"
+    dip = pm_text(measured, err, err, nd=0, comma=True, tex=tex)
+    seen = [f"{whose} optimal aperture dims by ", dip, " ppm"] if measured >= 0 else [
+        f"{whose} optimal aperture shows no dip (", dip, " ppm)"]
+    return _joined(tex, *seen, f", where this star's light alone ({pct_text} percent of that aperture under the PSF "
+                   f"model of the pixel check) predicts {pred:,.{digits}f} ppm.")
+
+
 def dilution_sentence(data: dict, tex: bool = False) -> str | None:
-    """The note's dilution sentence: CROWDSAP and PSFFRAC and the leak depth with its error; None without any."""
+    """The note's dilution sentences (spec 11.5): for a KBonus target the photometry (``dossier.PSF_PHOTOMETRY``), so
+    never None for one; the aperture ratio against CROWDSAP (``aperture_sentence``); CROWDSAP and PSFFRAC; and the
+    neighbour's dip beside the dip this star predicts there (``leak_sentence``), or without a prediction the measured
+    dip with its error alone. None without any of them."""
     rows = {r["key"]: r for r in dilution_rows(data)}
     words = {"crowdsap": "a target light fraction in the aperture (CROWDSAP)",
              "psffrac": "a PSF flux fraction inside the aperture (PSFFRAC)"}
+    sentences: list[list] = []
+    if (data.get("target") or {}).get("source") in (None, "kbonus_bkg"):
+        sentences.append([f"The depth is {ds.PSF_PHOTOMETRY}."])
+    ratio = aperture_sentence(data, tex)
+    if ratio:
+        sentences.append([ratio])
     named = [f"{words[k]} of {rows[k]['text']}" for k in ("crowdsap", "psffrac") if k in rows]
     parts = [f"The KBonus light curve gives this star {' and '.join(named)}"] if named else []
+    predicted = leak_sentence(data, tex)
     leak = rows.get("leak")
-    if leak:
+    if leak and predicted is None:
         whose = f" (KIC {leak['kic']})" if leak["kic"] else ""
         parts += [", and in" if parts else "In",
                   f" the optimal-aperture flux of the neighbour{whose} the dip at this ephemeris is ",
                   pm_text(leak["value"], leak["minus"], leak["plus"], nd=0, comma=True, tex=tex),
                   " ppm"]
-    return _joined(tex, *parts, ".") if parts else None
+    if parts:
+        sentences.append([*parts, "."])
+    if predicted:
+        sentences.append([predicted])
+    if not sentences:
+        return None
+    flat: list = []
+    for i, sentence in enumerate(sentences):
+        flat += ([" "] if i else []) + sentence
+    return _joined(tex, *flat)
 
 
 def skysift_version() -> str:
@@ -1158,6 +1279,9 @@ def numbers(data: dict, tex: bool = False, after_bjd: float | None = None) -> di
         "window": f"{lo:g} to {hi:g} days" if lo is not None and hi is not None else None,
         "vetting": _vetting_sentences(data, tex), "pixel_text": pixel_sentence(data, tex),
         "offset_text": offset_sentence(data),
+        "hand_built_text": hand_built_sentence(data, source=HAND_BUILT_FILE),
+        "beb_radius_text": BEB_RADIUS if _num(((data.get("fpp") or {}).get("inputs") or {}).get(
+            "exclusion_radius_arcsec")) is not None else None,
         "pixel_plain": pixel_sentence(data),
         "odd_text": pair[0] if pair else None, "even_text": pair[1] if pair else None,
         "parity_sigma_text": _f((data.get("parity") or {}).get("difference_sigma"), 1) if pair else None,
@@ -1333,6 +1457,8 @@ EXOFOP_CONTENTS = (("lightcurve", "data/lightcurve.csv",
                    ("periodogram", "figures/periodogram.{ext}", "the periodogram"),
                    ("centroids", "figures/centroids.{ext}", "the per-season difference images and centroids"))
 
+BEB_RADIUS = ("The background-binary term uses the pixel exclusion radius, max(3 sigma, 0.5 arcsec), as its "
+              "confusion radius (spec 11.5; 2.0 arcsec before).")
 FILE_NOTES = {
     "README.md": "these instructions",
     "note/note.tex": "the Research Note draft (AASTeX v7)",
@@ -1352,6 +1478,8 @@ FILE_NOTES = {
     f"exofop/{EXOFOP_STELLAR_TEMPLATE}": "the stellar parameters in ExoFOP's bulk template (upload now)",
     "data/periodogram.json": "the periodogram envelope, its peaks and the alias and systematic periods",
     "data/rung_metrics.json": "every vetting rung's status, reason and metrics",
+    HAND_BUILT_FILE: "the hand-built localisation study of the same pixel files that the README compares with "
+                     "(season by season, its centroid's distance from the star)",
     "data/cross_check.json": "the TRICERATOPS cross-check: every run's false-positive probability with "
                              "and without STP, nearby false-positive probability, P(STP) and P(PTP), their medians "
                              "and 16th to 84th percentiles, the median run's scenario table, the stars with their "
@@ -2274,6 +2402,9 @@ def _write_pack(out_dir: Path, data: dict, raw: dict, row: dict, lc, fnorm, targ
                                                    "lines": plots.get("spectrum_lines"),
                                                    "columns": ["period_days", "sde"]}, indent=1))
     _write(d / "rung_metrics.json", jsonutil.dumps(data.get("tests") or [], indent=1))
+    study = Path(ds.CANDIDATES_DIR) / target_id / "localisation" / "results.json"
+    if study.is_file():             # the file the README's hand-built sentence compares with (spec 11.5)
+        shutil.copyfile(study, out_dir / HAND_BUILT_FILE)
     if data.get("cross_check"):
         _write(d / "cross_check.json", jsonutil.dumps(data["cross_check"], indent=1))
     # figures

@@ -558,6 +558,50 @@ def gauss_psf(shape: tuple[int, int], col: float, row: float, sig: float) -> np.
     return np.exp(-0.5 * ((cc - col) ** 2 + (rr - row) ** 2) / sig ** 2) / (2 * np.pi * sig ** 2)
 
 
+def _two_psfs(shape, pos_target, pos_neighbour, psf_sigma_pix: float, shift_pix) -> tuple[np.ndarray, np.ndarray]:
+    """The two stars' ``gauss_psf`` at their positions plus the common shift, as the two-source fit places them."""
+    dx, dy = (float(x) for x in shift_pix)
+    sig = float(psf_sigma_pix)
+    return (gauss_psf(shape, float(pos_target[0]) + dx, float(pos_target[1]) + dy, sig),
+            gauss_psf(shape, float(pos_neighbour[0]) + dx, float(pos_neighbour[1]) + dy, sig))
+
+
+def psf_fluxes(image, valid, pos_target, pos_neighbour, psf_sigma_pix: float,
+               shift_pix=(0.0, 0.0)) -> tuple[float, float] | None:
+    """The two stars' fluxes in ``image`` under the two-PSF model of ``two_source_fit`` at a fixed width and shift:
+    linear least squares of image = F_t P_t + F_n P_n + c on the valid finite pixels (spec 11.5, the predicted leak).
+    None when the width, a position or the shift is not finite, or the system is singular (fewer than three pixels,
+    or two PSFs the pixels cannot tell apart)."""
+    img = np.asarray(image, float)
+    if not (math.isfinite(float(psf_sigma_pix)) and float(psf_sigma_pix) > 0 and _finite2(pos_target)
+            and _finite2(pos_neighbour) and _finite2(shift_pix)):
+        return None
+    v = np.asarray(valid, bool) & np.isfinite(img)
+    if v.sum() < 3:
+        return None
+    pt, pn = _two_psfs(img.shape, pos_target, pos_neighbour, psf_sigma_pix, shift_pix)
+    a = np.vstack([pt[v], pn[v], np.ones(int(v.sum()))]).T
+    sol, _res, rank, _sv = np.linalg.lstsq(a, img[v], rcond=None)
+    if rank < 3:
+        return None
+    return float(sol[0]), float(sol[1])
+
+
+def aperture_share(mask, pos_target, pos_neighbour, psf_sigma_pix: float, shift_pix, flux_target: float,
+                   flux_neighbour: float) -> float | None:
+    """The target's share of the two stars' light inside ``mask`` under the two-PSF model:
+    F_t sum(P_t[mask]) / (F_t sum(P_t[mask]) + F_n sum(P_n[mask])), other stars and the background left out. None for
+    an empty mask, a non-finite input or a total that is not positive."""
+    m = np.asarray(mask, bool)
+    if not m.any() or not (math.isfinite(float(flux_target)) and math.isfinite(float(flux_neighbour))
+                           and math.isfinite(float(psf_sigma_pix)) and float(psf_sigma_pix) > 0
+                           and _finite2(pos_target) and _finite2(pos_neighbour) and _finite2(shift_pix)):
+        return None
+    pt, pn = _two_psfs(m.shape, pos_target, pos_neighbour, psf_sigma_pix, shift_pix)
+    t, n = float(flux_target) * float(pt[m].sum()), float(flux_neighbour) * float(pn[m].sum())
+    return t / (t + n) if t + n > 0 else None
+
+
 def _nan_fit() -> dict:
     return {"psf_sigma_pix": math.nan, "shift_pix": _NAN2, "direct_flux_target": math.nan,
             "direct_flux_target_err": math.nan, "direct_flux_neighbour": math.nan,

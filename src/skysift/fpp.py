@@ -36,9 +36,11 @@ from skysift.priors import (
 )
 
 SIGNED_OFF = True           # the review of spec 4.2 (21 October 2026); the tile says "provisional" while False
-FPP_MODEL_VERSION = "2"     # 1: spec 4.2 as first written; 2: the sign-off rulings of 21 October 2026 (the planet
-                            # window, the two-pixel no-pixel radius, the BEB prior per neighbour); part of the dossier
-                            # fingerprint, so a stored dossier of an older model is stale
+FPP_MODEL_VERSION = "3"     # 1: spec 4.2 as first written; 2: the sign-off rulings of 21 October 2026 (the planet
+                            # window, the two-pixel no-pixel radius, the BEB prior per neighbour); 3: spec 11.5, the BEB
+                            # confusion radius is the pixel exclusion radius max(3 sigma, 0.5 arcsec), and the dossier
+                            # passes the quoted shape fit and its own parity; part of the dossier fingerprint, so a
+                            # stored dossier of an older model is stale
 
 FALLBACK_RADIUS = 0.5       # Rsun, when the star has no radius
 FALLBACK_MASS = 0.5         # Msun, when the star has no mass
@@ -74,7 +76,7 @@ class FppInputs:
     radius: float | None                # Rsun; None -> 0.5
     mass: float | None                  # Msun; None -> 0.5
     rp_rearth: float | None             # None -> from sqrt(depth) * radius
-    fit_k: float | None                 # rung 2 fit; None when fit_ok is False
+    fit_k: float | None                 # the dossier's quoted shape fit (rung 2's before model 3); None without one
     fit_b: float | None
     fit_a_over_r: float | None
     secondary_ppm: float | None         # rung 2 secondary and control scatter
@@ -91,6 +93,9 @@ class FppInputs:
     sigma_c_stat_arcsec: float | None = None      # the error of the inverse-variance weighted mean of the seasons
     sigma_c_scatter_arcsec: float | None = None   # the seasons' sample scatter about that mean / sqrt(n seasons)
     sigma_c_source: str | None = None             # "statistical" | "scatter": the larger of the two
+    # spec 11.5 (model 3): the pixel exclusion radius about the Gaia-referenced difference centroid, the BEB term's
+    # confusion radius when set; last, so stored inputs without it still load (and keep the version 2 rule)
+    exclusion_radius_arcsec: float | None = None
 
     def __post_init__(self) -> None:
         """Neighbours given as dicts (a dossier's stored ``fpp.inputs``) become ``Neighbour`` again, so
@@ -219,9 +224,19 @@ def _exclusion(s: float, r_c: float, sigma_c: float | None) -> float:
     return math.exp(-k ** 2 / 2)
 
 
+def _confusion_radius(inputs: FppInputs) -> float:
+    """The BEB term's confusion radius: the pixel exclusion radius when the inputs carry it (spec 11.5, model 3),
+    else the version 2 rule, max(3 sigma, ``CONFUSION_FLOOR_ARCSEC``) with pixels and ``NO_PIXEL_CONFUSION_ARCSEC``
+    without."""
+    sigma_c, r_x = inputs.centroid_sigma_arcsec, inputs.exclusion_radius_arcsec
+    if sigma_c is not None and r_x is not None and math.isfinite(r_x) and r_x > 0:
+        return float(r_x)
+    return max(3 * sigma_c, CONFUSION_FLOOR_ARCSEC) if sigma_c is not None else NO_PIXEL_CONFUSION_ARCSEC
+
+
 def _background(inputs: FppInputs) -> tuple[ScenarioWeight, float, tuple[dict, ...]]:
     sigma_c = inputs.centroid_sigma_arcsec
-    r_c = max(3 * sigma_c, CONFUSION_FLOOR_ARCSEC) if sigma_c is not None else NO_PIXEL_CONFUSION_ARCSEC
+    r_c = _confusion_radius(inputs)
     rows, bright_x = [], []
     for n in inputs.neighbours:
         ratio = 10 ** (-0.4 * (n.gmag - inputs.gmag))

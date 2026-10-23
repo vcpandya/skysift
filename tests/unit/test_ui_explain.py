@@ -510,3 +510,12 @@ def test_the_one_season_headline_names_the_vote_not_the_frame():
     assert "(archive season 3: box cut: ambiguous (1.8 sigma))" in w.sentence
     assert "both stars on the frame" not in w.sentence
     assert w.next_step == explain.PERSON_DECIDES
+
+
+def test_the_stability_line_gives_the_aperture_ratio_not_agreement():
+    rows = explain.why([{"rung": "rung3_stability", "status": "pass", "reason": None, "created": None,
+                         "metrics": {"season_depths": {"0": 2295.0, "1": 1962.0, "2": 1864.0, "3": 1912.0},
+                                     "season_errs": {}, "p_value": 0.32, "chi2": 3.5, "dof": 3,
+                                     "aperture_ratio": 0.63, "aperture_z": -4.7}}])
+    line = next(w for w in rows if w.rung == "rung3_stability")      # why() gives one line per rung, ladder order
+    assert "the SAP depth is 0.63 of the PSF depth" in line.sentence and "apertures agree" not in line.sentence

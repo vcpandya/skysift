@@ -35,6 +35,7 @@ import math
 import os
 import re
 import subprocess
+import warnings
 import zipfile
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -54,6 +55,8 @@ from skysift.detectors.periodogram import PeriodogramSummary
 from skysift.fpp import FPP_MODEL_VERSION, Fpp, FppInputs, Neighbour, compute
 from skysift.lc.loader import TARGET_FIELDS, LightCurveLoader
 from skysift.lc.ops import apply_mask, event_depths, event_quality, fold_phase, season_of
+from skysift.lc.pixels import aperture_share, psf_fluxes
+from skysift.lc.tpf import OPTIMAL_APERTURE_BIT, parse_tpf, tpf_listing_url
 from skysift.lc.transit_model import compare_fits, exposure_flux, fit_shape, limb_darkening
 from skysift.models import LightCurve, Signal, Target
 from skysift.net import ServiceUnavailable
@@ -596,6 +599,24 @@ def _stability(lc: LightCurve, fnorm, signal: dict, fold: dict, *, fnorm_alt, th
             "metrics": jsonutil.sanitize(res.metrics)}
 
 
+def aperture_block(psf: dict, sap: dict, crowdsap: float | None, ephemeris: str | None) -> dict | None:
+    """Rung 3's aperture comparison on the fold (spec 11.5): the SAP depth (the secondary aperture, ``fnorm_alt``)
+    over the PSF depth (``fnorm``), each from ``eph.fold_depth`` on the same ephemeris, with the error of the ratio
+    (the two fractional errors in quadrature), against the KBonus CROWDSAP, the ratio expected if the aperture lost
+    only the light CROWDSAP gives to other stars; ``shortfall_sigma`` is (ratio - CROWDSAP) over the ratio's error
+    (None without CROWDSAP). None without both depths and errors, or with a depth that is not positive."""
+    pd, pe, sd, se = (_num(x or {}, k) for x, k in ((psf, "depth_ppm"), (psf, "err_ppm"), (sap, "depth_ppm"),
+                                                     (sap, "err_ppm")))
+    if None in (pd, pe, sd, se) or not (pd > 0 and sd > 0):
+        return None
+    ratio = sd / pd
+    err = ratio * math.hypot(se / sd, pe / pd)
+    crowd = _num({"x": crowdsap}, "x")
+    shortfall = (ratio - crowd) / err if crowd is not None and err > 0 else None
+    return {"psf_depth_ppm": pd, "psf_err_ppm": pe, "sap_depth_ppm": sd, "sap_err_ppm": se, "ratio": ratio,
+            "ratio_err": err, "crowdsap": crowd, "shortfall_sigma": shortfall, "ephemeris": ephemeris}
+
+
 def ephemeris_blocks(lc: LightCurve, fnorm, signal: dict, tests: list[dict], *, n_boot: int = N_BOOT_DEFAULT,
                      star: stars.StarParams | None = None, fnorm_alt=None, thresholds=None, target=None) -> dict:
     """The error blocks (referee pack spec 3 and, since version 5, 11.3), in this order: ``timing`` (``_timing``, the
@@ -605,8 +626,10 @@ def ephemeris_blocks(lc: LightCurve, fnorm, signal: dict, tests: list[dict], *, 
     shape fits, free and, when the star has a density (``shape_model``), with the density prior, compared by
     ``compare_fits``; ``shape``, the bootstrap over the transits the ephemeris used of the quoted fit (of the box
     without a rung 2 fit: ``_fit_point`` still decides whether a shape is fitted), with the two fits, the comparison,
-    the limb darkening and the exposure; ``stability``, rung 3 on the fold (``_stability``); and ``ephemeris_extra``,
-    the ephemeris keys they give (``_ephemeris_extra``)."""
+    the limb darkening and the exposure; ``stability``, rung 3 on the fold (``_stability``); ``aperture``, the SAP
+    depth over the PSF depth on the fold against CROWDSAP (``aperture_block``, None without ``fnorm_alt``);
+    ``depth_trend``, the per-event depths against time (``eph.depth_trend``); and ``ephemeris_extra``, the ephemeris
+    keys they give (``_ephemeris_extra``)."""
     dur = float(signal["duration"])
     time, fnorm = np.asarray(lc.time, float), np.asarray(fnorm, float)
     quarter = np.asarray(lc.quarter)
@@ -644,7 +667,14 @@ def ephemeris_blocks(lc: LightCurve, fnorm, signal: dict, tests: list[dict], *, 
     secondary = eph.secondary_limit(metrics, degenerate=shape.get("degenerate") is True)
     # the quoted fit gives all five values (spec 11.3 as amended in fix round 1), so the duration is its T14
     fitted_t14 = point["t14_h"] if point is not None else None
+    aperture = None
+    if fnorm_alt is not None:
+        crowdsap = (getattr(target, "meta", None) or {}).get("crowdsap")
+        aperture = aperture_block(depth, eph.fold_depth(time, np.asarray(fnorm_alt, float), quarter, period, t0, dur),
+                                  crowdsap, fold["source"])
+    trend = eph.depth_trend(events.epochs, events.depths, events.errors, period)
     return {"ephemeris_extra": _ephemeris_extra(signal, depth, timing, shape, fitted_t14, fold), "timing": timing,
+            "aperture": aperture, "depth_trend": trend,
             "shape": shape, "parity": parity, "secondary": None if secondary is None else secondary.as_dict(),
             "stability": _stability(lc, fnorm, signal, fold, fnorm_alt=fnorm_alt, thresholds=thresholds,
                                     target=target),
@@ -791,6 +821,8 @@ def _self_reference(s: dict) -> tuple[np.ndarray, str] | None:
     return (pt + shift, "fit") if pt is not None and shift is not None else None
 
 
+PULL_PIX = 0.3                  # spec 11.5: a direct centroid this far from the Gaia position is pulled
+PSF_PHOTOMETRY = "KBonus PSF photometry, decontaminated to first order, with no crowding correction applied"
 EXCLUSION_FLOOR_ARCSEC = 0.5
 EXCLUSION_RULE = "max(3 sigma, 0.5 arcsec) about the Gaia-referenced difference centroid (spec 11.5)"
 
@@ -814,7 +846,10 @@ def centroid_offset(rung5_metrics: dict) -> dict | None:
     ``reference`` (what the star's own position was) and ``n_seasons``. Both errors are the larger of the seasons'
     combined error and their scatter. The self-referenced keys are None when a voting season has no position.
     ``exclusion_radius_arcsec`` (``exclusion_radius``) and ``exclusion_rule`` say how far about the Gaia-referenced
-    centroid a background source is not excluded."""
+    centroid a background source is not excluded. ``direct_pull_pix`` is the largest distance over the voting seasons
+    of the star's direct-image centroid from its projected Gaia position (None without either) and ``pulled`` whether
+    it passes ``PULL_PIX``, where the neighbour pulls the self-referenced offset's reference (spec 11.5).
+    ``nearest_beyond`` (``nearest_beyond``) is filled in by ``generate`` once the FPP neighbours are known."""
     est = centroid_estimate(rung5_metrics)
     if est is None:
         return None
@@ -832,6 +867,10 @@ def centroid_offset(rung5_metrics: dict) -> dict | None:
              "catalogue_referenced_err_arcsec": est.sigma, "level_arcsec": OFFSET_LEVEL_ARCSEC,
              "sigma_level": OFFSET_SIGMA, "rule": OFFSET_RULE, "n_seasons": est.n_seasons}
     block.update(exclusion_radius_arcsec=exclusion_radius(block), exclusion_rule=EXCLUSION_RULE)
+    pulls = [float(np.hypot(*(d - pt))) for s in _voting_rows(rung5_metrics)
+             if (d := _pair(s, "direct_centroid_colrow")) is not None and (pt := _pair(s, "pos_target")) is not None]
+    pull = max(pulls) if pulls else None
+    block.update(direct_pull_pix=pull, pulled=None if pull is None else bool(pull > PULL_PIX), nearest_beyond=None)
     if rows:
         mean, stat, scatter = _vector_mean(rows)
         # the larger of the combined error and the scatter, the rule of the catalogue-referenced error
@@ -842,6 +881,115 @@ def centroid_offset(rung5_metrics: dict) -> dict | None:
         block.update(self_referenced_arcsec=off, self_referenced_err_arcsec=err, sigma=sigma, counts=counts,
                      reference=" and ".join(SELF_REFERENCES[k] for k in sorted(kinds)))
     return block
+
+
+def nearest_beyond(block: dict | None, neighbours) -> dict | None:
+    """The Gaia neighbour nearest the Gaia-referenced difference centroid beyond the block's exclusion radius, by its
+    ``centroid_sep_arcsec`` (``fpp_inputs``' neighbours): {"source_id", "sep_arcsec", "centroid_sep_arcsec",
+    "gmag"}; None without the radius or such a neighbour."""
+    radius = _num(block, "exclusion_radius_arcsec") if isinstance(block, dict) else None
+    rows = [n for n in neighbours or [] if radius is not None and n.centroid_sep_arcsec is not None
+            and math.isfinite(n.centroid_sep_arcsec) and n.centroid_sep_arcsec > radius]
+    if not rows:
+        return None
+    n = min(rows, key=lambda x: x.centroid_sep_arcsec)
+    return {"source_id": n.source_id, "sep_arcsec": n.sep_arcsec, "centroid_sep_arcsec": n.centroid_sep_arcsec,
+            "gmag": n.gmag}
+
+
+# ---------------------------------------------------------------------------------------------------- predicted leak
+
+LEAK_MODEL = ("the target's share of the two stars' light inside the neighbour's optimal aperture under rung 5's "
+              "two-Gaussian PSF model (its season's width and common shift), the two fluxes fitted to each pixel "
+              "file's median quality-0 image, times the target's depth")
+
+
+def _kept_tpfs(store, blob, kic: int | None) -> list:
+    """The kept pixel files of ``kic`` (``Store.kept_artifacts``), each read from the blob with ``parse_tpf``, one per
+    quarter in quarter order, as ``crosscheck._copy_pixel_files`` reads them; one that does not read back is skipped.
+    Nothing is fetched."""
+    if not kic:
+        return []
+    out: dict = {}
+    for url, path in sorted(store.kept_artifacts("tpf", tpf_listing_url(int(kic))).items()):
+        try:
+            tpf = parse_tpf(blob.get(path), url.rsplit("/", 1)[-1])
+        except Exception:               # gone from the blob, or not a readable pixel file
+            log.warning("kept pixel file %s unreadable; left out of the predicted leak", url, exc_info=True)
+            continue
+        out.setdefault(int(tpf.quarter), tpf)
+    return [out[q] for q in sorted(out)]
+
+
+def _season_psf(seasons: list[dict], season: int | None) -> tuple[float, tuple[float, float]] | None:
+    """(PSF width, common shift) of rung 5's season ``season`` (a missing shift reads as none), or the medians over
+    the seasons with a width when the file has no archive SEASON or rung 5 stored no width for it; None when no
+    season has a positive width."""
+    rows = []
+    for s in seasons:
+        w = _num(s, "psf_sigma_pix")
+        if w is not None and w > 0:
+            shift = _pair(s, "shift_pix")
+            rows.append((s.get("season"), w, np.zeros(2) if shift is None else shift))
+    if not rows:
+        return None
+    match = [r for r in rows if season is not None and r[0] == season]
+    if match:
+        _s, w, shift = match[0]
+    else:
+        w, shift = float(np.median([r[1] for r in rows])), np.median(np.array([r[2] for r in rows]), axis=0)
+    return float(w), (float(shift[0]), float(shift[1]))
+
+
+def predicted_leak(tpfs: list, target: dict, rung5_metrics: dict, depth_ppm: float | None) -> dict | None:
+    """The dip this star alone would put into the neighbour's optimal-aperture flux, printed beside rung 5's measured
+    leak (spec 11.5); None without a stored leak test. Per kept pixel file: the optimal-aperture mask ((APERTURE &
+    ``OPTIMAL_APERTURE_BIT``) != 0), the median image over the quality-0 cadences, the two stars' positions from the
+    file's WCS (the target's catalogue position; the neighbour's from the target meta's ``tpf_org_ra``/``tpf_org_dec``
+    when present, else the file's RA_OBJ/DEC_OBJ, as rung 5 places them), the PSF width and common shift of rung 5's
+    season with the file's archive SEASON (``_season_psf``), the two fluxes (``psf_fluxes``) and the target's share
+    of the light in the mask (``aperture_share``). ``share`` is the mean over the files and ``predicted_ppm`` the
+    depth times it. {"predicted_ppm", "share", "quarters": [{"quarter", "season", "share"}], "measured_ppm",
+    "measured_err_ppm", "kic", "model", "reason"}: without a kept file the reason is "no kept pixel file of KIC
+    <kic>", without a stored width "rung 5 stored no PSF width", and the prediction is None."""
+    m = rung5_metrics or {}
+    leak = m.get("leak_depth_ppm")
+    measured = _num({"x": leak[0]}, "x") if isinstance(leak, list) and leak else None
+    if measured is None:
+        return None
+    meta = (target or {}).get("meta") or {}
+    kic = meta.get("tpf_org") or m.get("neighbour_kic")
+    block = {"predicted_ppm": None, "share": None, "quarters": [], "measured_ppm": measured,
+             "measured_err_ppm": _num({"x": leak[1]}, "x") if len(leak) > 1 else None, "kic": kic,
+             "model": LEAK_MODEL, "reason": None}
+    seasons = _pixel_seasons(m)
+    if not tpfs:
+        return {**block, "reason": f"no kept pixel file of KIC {kic}"}
+    if _season_psf(seasons, None) is None:
+        return {**block, "reason": "rung 5 stored no PSF width"}
+    n_ra, n_dec = meta.get("tpf_org_ra"), meta.get("tpf_org_dec")
+    quarters = []
+    for tpf in tpfs:
+        mask = (np.asarray(tpf.aperture).astype(np.int64) & OPTIMAL_APERTURE_BIT) != 0
+        good = np.asarray(tpf.quality) == 0
+        if mask.shape != tpf.cube.shape[1:] or not mask.any() or not good.any():
+            continue
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)         # an all-NaN pixel stays NaN and is left out
+            image = np.nanmedian(tpf.cube[good], axis=0)
+        ra, dec = (n_ra, n_dec) if n_ra is not None and n_dec is not None else (tpf.ra_obj, tpf.dec_obj)
+        pt, pn = tpf.pixel_of(target.get("ra"), target.get("dec")), tpf.pixel_of(ra, dec)
+        width, shift = _season_psf(seasons, tpf.season)
+        fluxes = psf_fluxes(image, np.isfinite(image), pt, pn, width, shift)
+        share = aperture_share(mask, pt, pn, width, shift, *fluxes) if fluxes is not None else None
+        if share is not None:
+            quarters.append({"quarter": int(tpf.quarter), "season": tpf.season, "share": share})
+    if not quarters:
+        return {**block, "reason": f"no kept pixel file of KIC {kic} gave the two stars' fluxes"}
+    share = float(np.mean([q["share"] for q in quarters]))
+    depth = _num({"x": depth_ppm}, "x")
+    return {**block, "quarters": quarters, "share": share,
+            "predicted_ppm": depth * share if depth is not None else None}
 
 
 def _grid(a: np.ndarray, valid: np.ndarray, nd: int) -> list[list]:
@@ -974,19 +1122,50 @@ def _lookup(target: Target, signal: dict, tests: list[dict], *, fetch, store: St
     return star, planet, neighbours, gaia, errors
 
 
+def quoted_geometry(shape: dict | None) -> tuple[float, float, float] | None:
+    """(k, b, a/R*) of the quoted shape fit as the texts quote them: the resample medians when the bootstrap is ok,
+    else the fit's full-data values (``quoted_fit``); None without an ok quoted fit or with a value missing."""
+    shape = shape if isinstance(shape, dict) else {}
+    fit = quoted_fit(shape)
+    if fit is None:
+        return None
+    boot = shape.get("ok") is True
+    vals = []
+    for key in ("k", "b", "a_over_r"):
+        median = (shape.get(key) or {}).get("median") if boot else None
+        vals.append(_num({"x": fit.get(key) if median is None else median}, "x"))
+    return None if None in vals else (vals[0], vals[1], vals[2])
+
+
 def fpp_inputs(signal: dict, tests: list[dict], star: stars.StarParams, planet: stars.PlanetParams,
-               neighbours: list[Neighbour] | None, gmag: float | None, depth_ppm: float | None = None) -> FppInputs:
+               neighbours: list[Neighbour] | None, gmag: float | None, depth_ppm: float | None = None, *,
+               blocks: dict | None = None) -> FppInputs:
     """The FPP inputs from the signal, rung 2, the star and, when a rung 5 row has at least ``MIN_VOTING_SEASONS``
     voting seasons (the rung's own pass rule; one season decides nothing), the centroid (``centroid_estimate``): each Gaia neighbour's ``centroid_sep_arcsec`` is then its separation less the centroid's
     offset from the target (the nearest the centroid can sit to it, since the cone gives no position angle), floored
     at zero, and the centroid error with the two numbers it was chosen from goes into the inputs record. The
     neighbour list counts as known only when the cone answered (``neighbours`` is not None) and the target has a G;
     otherwise the FPP is not computed. ``depth_ppm`` (the dossier's depth on its fold, ``ephemeris_extra``) is the
-    depth when given and positive; rung 2's, else the search depth (``_depth_fraction``), otherwise."""
+    depth when given and positive; rung 2's, else the search depth (``_depth_fraction``), otherwise. With the
+    dossier's error ``blocks`` (FPP model 3, the Task 10 review's M-5) the geometry is the quoted shape fit's
+    (``quoted_geometry``; none when the quoted fit failed) and the odd and even depths are the parity block's per-event
+    ones, their error the two errors in quadrature; without the blocks they are rung 2's. With the centroid the BEB
+    term's confusion radius is the pixel exclusion radius (``exclusion_radius``, spec 11.5)."""
     shape = _metrics(tests, "rung2_shape")
     fit_ok = shape.get("fit_ok") is True
+    fit_k = _num(shape, "fit_k") if fit_ok else None
+    fit_b = _num(shape, "fit_b") if fit_ok else None
+    fit_a = _num(shape, "fit_a_over_r") if fit_ok else None
     odd, even, parity = _num(shape, "odd_ppm"), _num(shape, "even_ppm"), _num(shape, "parity_sigma")
     odd_even_err = abs(odd - even) / parity if odd is not None and even is not None and parity else None
+    blocks = blocks if isinstance(blocks, dict) else {}
+    if isinstance(blocks.get("shape"), dict):
+        fit_k, fit_b, fit_a = quoted_geometry(blocks["shape"]) or (None, None, None)
+    if isinstance(blocks.get("parity"), dict):
+        o, e = blocks["parity"].get("odd") or {}, blocks["parity"].get("even") or {}
+        po, pe, eo, ee = _num(o, "depth_ppm"), _num(e, "depth_ppm"), _num(o, "err_ppm"), _num(e, "err_ppm")
+        if None not in (po, pe, eo, ee):
+            odd, even, odd_even_err = po, pe, math.hypot(eo, ee)
     centroid = centroid_estimate(_metrics(tests, "rung5_pixels")) if _rung(tests, "rung5_pixels") else None
     if centroid is not None and centroid.n_seasons < MIN_VOTING_SEASONS:
         centroid = None             # one voting season decides nothing for rung 5 either: the no-pixel rule applies
@@ -1004,14 +1183,15 @@ def fpp_inputs(signal: dict, tests: list[dict], star: stars.StarParams, planet: 
         teff=star.teff.median if star.teff else None, radius=star.radius.median if star.radius else None,
         mass=star.mass.median if star.mass else None,
         rp_rearth=planet.rp_rearth.median if planet.rp_rearth else None,
-        fit_k=_num(shape, "fit_k") if fit_ok else None, fit_b=_num(shape, "fit_b") if fit_ok else None,
-        fit_a_over_r=_num(shape, "fit_a_over_r") if fit_ok else None,
+        fit_k=fit_k, fit_b=fit_b, fit_a_over_r=fit_a,
         secondary_ppm=_num(shape, "secondary_ppm"), secondary_err_ppm=_num(shape, "control_rms_ppm"),
         odd_ppm=odd, even_ppm=even, odd_even_err_ppm=odd_even_err, neighbours=tuple(neighbours),
         centroid_sigma_arcsec=centroid.sigma if centroid is not None else None, neighbours_known=known,
         sigma_c_stat_arcsec=centroid.sigma_stat if centroid is not None else None,
         sigma_c_scatter_arcsec=centroid.sigma_scatter if centroid is not None else None,
-        sigma_c_source=centroid.source if centroid is not None else None)
+        sigma_c_source=centroid.source if centroid is not None else None,
+        exclusion_radius_arcsec=(exclusion_radius({"catalogue_referenced_err_arcsec": centroid.sigma})
+                                 if centroid is not None else None))
 
 
 def fpp_from_inputs(inputs: dict) -> Fpp:
@@ -1043,10 +1223,11 @@ def floor_pix(seasons: list[dict]) -> float | None:
 
 
 def floor_clause(seasons: list[dict]) -> str:
-    """", with a measured systematic floor of F px per axis added in quadrature" for a row that stores the floor,
-    "" otherwise: the clause the Monte Carlo caveat carries."""
+    """", with a pointing-jitter floor of F px per axis added in quadrature" for a row that stores the floor (the
+    measured quarter-to-quarter term, named so since spec 11.5), "" otherwise: the clause the Monte Carlo caveat
+    carries."""
     f = floor_pix(seasons)
-    return "" if f is None else f", with a measured systematic floor of {f:.3f} px per axis added in quadrature"
+    return "" if f is None else f", with a pointing-jitter floor of {f:.3f} px per axis added in quadrature"
 
 
 def close_call_text(seasons: list[dict]) -> str:
@@ -1649,7 +1830,7 @@ def generate(store: Store, blob, settings, target_id: str, *, signal_id: int | N
                         shape=_model_line((blocks or {}).get("shape")))
     gmag = target.get("gmag") if target.get("gmag") is not None else (gaia.gmag if gaia is not None else None)
     inputs = fpp_inputs(signal, tests, star, planet, neighbours, gmag,
-                        depth_ppm=((blocks or {}).get("ephemeris_extra") or {}).get("depth_ppm"))
+                        depth_ppm=((blocks or {}).get("ephemeris_extra") or {}).get("depth_ppm"), blocks=blocks)
     fpp = compute(inputs)
     calibration = cal.default_path(settings.data_dir, target.get("source") or "kbonus_bkg")
     rows = cal.read_rows(calibration) if calibration.is_file() else []
@@ -1658,6 +1839,13 @@ def generate(store: Store, blob, settings, target_id: str, *, signal_id: int | N
     data = _assemble(store, signal, target, tests, decisions, plots, pixels, star, planet, gaia_errors, fap, fpp,
                      inputs, calibration, version, settings.data_dir, blocks)
     data["calibration"] = calibration_block(store, signal, source, rows, fap, target_id)
+    if isinstance(data.get("centroid_offset"), dict):
+        data["centroid_offset"]["nearest_beyond"] = nearest_beyond(data["centroid_offset"], inputs.neighbours)
+    rung5 = _metrics(tests, "rung5_pixels")
+    kic = (target.get("meta") or {}).get("tpf_org") or rung5.get("neighbour_kic")
+    # the kept pixel files only: nothing is fetched (spec 5.8)
+    data["predicted_leak"] = _section("predicted_leak", errors, lambda: predicted_leak(
+        _kept_tpfs(store, blob, kic), target, rung5, data["ephemeris"].get("depth_ppm")))
     data["prior_claims"] = claims
     data["hand_built_localisation"] = hand_built_localisation(target_id, _metrics(tests, "rung5_pixels"))
     data["section_errors"] = errors
@@ -1722,7 +1910,8 @@ def _assemble(store, signal, target, tests, decisions, plots, pixels, star, plan
                    "reviewer": verdict.reviewer},
         "summary": explain.summary_sentence(signal, target, tests),
         "ephemeris": ephemeris,
-        **{key: blocks.get(key) for key in ("timing", "shape", "parity", "secondary", "stability")},
+        **{key: blocks.get(key) for key in ("timing", "shape", "parity", "secondary", "stability", "aperture",
+                                            "depth_trend")},
         "plots": plots, "tests": test_rows, "why": [dataclasses.asdict(w) for w in explain.why(tests)],
         "rechecks": store.rechecks(signal["id"]), "children": store.children(signal["id"]),
         "fap": {**dataclasses.asdict(fap), "one_in": fap.one_in(), "words": fap.words(), "sde": float(signal["sde"]),

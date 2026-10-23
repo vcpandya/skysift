@@ -2,6 +2,7 @@ import json
 import math
 
 import numpy as np
+import pytest
 from scipy.special import erf
 
 from skysift.lc import pixels as pixels_module
@@ -21,12 +22,15 @@ from skysift.lc.pixels import (
     _axis_sigma,
     _on_neighbour,
     _on_target,
+    aperture_share,
     box_coverage,
     difference_images,
     edge_allowance,
+    gauss_psf,
     leak_depth,
     localise,
     localise_quarters,
+    psf_fluxes,
     quarter_season,
     season_images,
     snr_box_centroid,
@@ -675,3 +679,21 @@ def test_edge_allowance_moves_a_point_source_towards_the_interior():
     hole, _ = edge_allowance((4.0, 4.0), valid, 0.55, (7.0, 4.0))
     assert 0.0 < hole < 0.15
     assert all(math.isnan(x) for x in edge_allowance((math.nan, 0.1), valid, 0.55, (4.0, 3.0)))
+
+
+def test_psf_fluxes_recover_the_two_stars_of_a_noiseless_image():
+    shape, pt, pn, sig, shift = (9, 9), (4.0, 4.0), (6.8, 4.6), 0.9, (0.1, -0.05)
+    image = (1.0e6 * gauss_psf(shape, pt[0] + shift[0], pt[1] + shift[1], sig)
+             + 5.0e6 * gauss_psf(shape, pn[0] + shift[0], pn[1] + shift[1], sig) + 2.0e3)
+    ft, fn = psf_fluxes(image, np.ones(shape, bool), pt, pn, sig, shift)
+    assert (ft, fn) == pytest.approx((1.0e6, 5.0e6), rel=1e-6)
+
+
+def test_aperture_share_is_the_targets_psf_light_in_the_mask():
+    shape, pt, pn, sig, shift = (9, 9), (4.0, 4.0), (6.8, 4.6), 0.9, (0.1, -0.05)
+    mask = np.zeros(shape, bool)
+    mask[3:6, 6:9] = True                                     # the neighbour's 3 x 3 optimal aperture
+    t = gauss_psf(shape, pt[0] + 0.1, pt[1] - 0.05, sig)[mask].sum()
+    n = gauss_psf(shape, pn[0] + 0.1, pn[1] - 0.05, sig)[mask].sum()
+    assert aperture_share(mask, pt, pn, sig, shift, 1.0e6, 5.0e6) == pytest.approx(1.0e6 * t / (1.0e6 * t + 5.0e6 * n))
+    assert aperture_share(np.zeros(shape, bool), pt, pn, sig, shift, 1.0e6, 5.0e6) is None

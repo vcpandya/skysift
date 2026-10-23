@@ -350,8 +350,11 @@ def _seed_errors(period: float, t0: float) -> dict:
              "ephemeris_method": eph.EPHEMERIS_METHOD, "shape_method": eph.SHAPE_METHOD}
     stability = {"status": "pass", "reason": None, "ephemeris": "linear fit of 32 transit times",
                  "metrics": {"stacked": False, "chi2": 0.3, "dof": 3, "p_value": 0.9, "n_events": 32}}
+    # spec 11.5: no SAP fold (so no aperture block) and a depth trend below the printing threshold
+    trend = {"slope_ppm_per_year": -12.0, "err_ppm_per_year": 20.0, "sigma": 0.6, "chi2_red": 0.9, "n": 32,
+             "printed": False}
     return {"ephemeris_extra": extra, "timing": timing, "shape": shape, "parity": parity, "secondary": secondary,
-            "stability": stability}
+            "stability": stability, "aperture": None, "depth_trend": trend}
 
 
 def _seed_probabilities(period: float, sde: float) -> tuple[dict, dict]:
@@ -460,7 +463,8 @@ def seed_dossier(store: Store, data_dir, target_id: str = STAGE2_TARGET) -> dict
         "ephemeris": {"period_days": period, "t0_bkjd": t0, "t0_bjd": t0 + 2454833.0, "duration_h": dur * 24,
                       "depth_ppm": float(sig["depth_ppm"]), "sde": float(sig["sde"]), "snr": float(sig["snr"]),
                       "n_events": int(sig["n_events"]), **errors["ephemeris_extra"]},
-        **{key: errors[key] for key in ("timing", "shape", "parity", "secondary", "stability")},
+        **{key: errors[key] for key in ("timing", "shape", "parity", "secondary", "stability", "aperture",
+                                        "depth_trend")},
         "plots": _seed_plots(period, t0),
         "tests": [{"rung": x["rung"], "status": x["status"], "reason": x["reason"], "metrics": x["metrics"],
                    "created": x["created"].isoformat()} for x in tests],
@@ -468,7 +472,7 @@ def seed_dossier(store: Store, data_dir, target_id: str = STAGE2_TARGET) -> dict
         "rechecks": store.rechecks(sid), "children": store.children(sid), "fap": fap, "fpp": fpp,
         "pixels": _seed_pixels(),
         "centroid_offset": ds.centroid_offset(next((x["metrics"] for x in tests if x["rung"] == "rung5_pixels"), {})),
-        "prior_claims": [], "hand_built_localisation": None,
+        "prior_claims": [], "hand_built_localisation": None, "predicted_leak": None,     # no kept pixel files
         # spec 11.4: the sweep the false-alarm sentence counts (the seed's own searches, by SWEEP_QUERY)
         "calibration": {"sweep_size": 1579, "sweep_source": "kbonus_bkg", "sweep_detector": sig["detector"],
                         "sweep_detector_version": sig["detector_version"], "sweep_query": ds.SWEEP_QUERY,

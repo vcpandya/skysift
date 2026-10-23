@@ -605,6 +605,41 @@ def parity_depths(events, time=None, fnorm=None, period=None, t0=None, duration_
     return ParityDepths(odd, even, sigma, stacked)
 
 
+DEPTH_TREND_SIGMA = 2.0         # spec 11.5: a depth trend against time is printed above this significance
+DEPTH_TREND_MIN_EVENTS = 3
+
+
+def depth_trend(epochs, depths, errors, period: float) -> dict:
+    """A linear trend of the per-event depths against time (spec 11.5): the weighted least-squares slope of the depths
+    against years from the weighted mean epoch (epoch x period / 365.25), weights 1 / error squared, its error scaled
+    by sqrt(max(1, chi2_red)) so that scatter beyond the errors (red noise) widens it, and the slope over its error.
+    {"slope_ppm_per_year", "err_ppm_per_year", "sigma", "chi2_red", "n", "printed"}: ``printed`` when ``sigma``
+    exceeds ``DEPTH_TREND_SIGMA``; None values, and ``printed`` False, below ``DEPTH_TREND_MIN_EVENTS`` usable events
+    (a finite depth and a positive error) or without a spread in time."""
+    e = np.asarray(epochs, float)
+    d, s = np.asarray(depths, float), np.asarray(errors, float)
+    ok = np.isfinite(e) & np.isfinite(d) & np.isfinite(s) & (s > 0)
+    n = int(ok.sum())
+    out = {"slope_ppm_per_year": None, "err_ppm_per_year": None, "sigma": None, "chi2_red": None, "n": n,
+           "printed": False}
+    if n < DEPTH_TREND_MIN_EVENTS or not (math.isfinite(float(period)) and float(period) > 0):
+        return out
+    years = e[ok] * float(period) / 365.25
+    w = 1.0 / s[ok] ** 2
+    x = years - float(np.sum(w * years) / np.sum(w))
+    sxx = float(np.sum(w * x * x))
+    if not sxx > 0:
+        return out
+    y = d[ok]
+    mean = float(np.sum(w * y) / np.sum(w))
+    slope = float(np.sum(w * x * (y - mean)) / sxx)
+    chi2_red = float(np.sum(w * (y - mean - slope * x) ** 2)) / (n - 2) if n > 2 else 0.0
+    err = math.sqrt(max(1.0, chi2_red) / sxx)
+    sigma = abs(slope) / err
+    return {"slope_ppm_per_year": slope, "err_ppm_per_year": err, "sigma": sigma, "chi2_red": chi2_red, "n": n,
+            "printed": bool(sigma > DEPTH_TREND_SIGMA)}
+
+
 def point_degeneracy(point: dict | None, ingress: float | None) -> str | None:
     """Why the rung 2 point geometry leaves b and a/R* degenerate with k, None when it does not: a grazing solution
     (b at or above 1 - k, where the ingress is long but k and b trade against each other most), ``GRAZING_REASON``,

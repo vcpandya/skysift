@@ -599,11 +599,11 @@ def test_the_close_call_caveat_names_the_floor_when_the_row_stores_it(env):
                {"season": 1, "voting": True, "separation_sigma": 9.0, "floor_pix": 0.0164}]
     found = [c for c in caveats(_with_seasons(_data(rep), seasons)) if c.get("key") == "close_call"]
     assert found[0]["text"] == (
-        "The centroid error comes from 200 Monte Carlo draws, with a measured systematic floor of 0.016 px per axis "
+        "The centroid error comes from 200 Monte Carlo draws, with a pointing-jitter floor of 0.016 px per axis "
         "added in quadrature, so a season this close to the 3 sigma threshold can move by about 5 percent with the "
         "seed.")
     assert dossier_module.floor_clause(seasons) == (
-        ", with a measured systematic floor of 0.016 px per axis added in quadrature")
+        ", with a pointing-jitter floor of 0.016 px per axis added in quadrature")
     assert dossier_module.floor_clause([{"season": 0, "voting": True}]) == ""
     assert dossier_module.floor_clause([{"season": 0, "floor_pix": None}, "not a dict"]) == ""
 
@@ -1083,7 +1083,7 @@ def test_a_fit_that_does_not_dip_times_the_events_with_the_box(env):
     # the refused geometry is not bootstrapped either, so the duration is not called a fitted T14
     assert blocks["shape"]["k"] is None and blocks["ephemeris_extra"]["duration_source"] == "search box"
     assert blocks["timing"]["ok"] and set(blocks) == {"ephemeris_extra", "timing", "shape", "parity", "secondary",
-                                                      "stability", "fold"}
+                                                      "stability", "fold", "aperture", "depth_trend"}
 
 
 def test_a_version_2_dossier_renders_and_regenerates(env):
@@ -1496,3 +1496,63 @@ def test_shape_without_a_stellar_density_quotes_the_free_fit(settings, monkeypat
     assert d["star"]["density_gcc"] is None and d["shape"]["fits"]["prior"] is None
     cmp = d["shape"]["comparison"]
     assert (cmp["quoted"], cmp["reason"], cmp["a_over_r_label"]) == ("free", NO_DENSITY, "fitted")
+
+
+def test_the_aperture_block_compares_the_sap_depth_with_crowdsap():
+    block = dossier_module.aperture_block({"depth_ppm": 2031.0, "err_ppm": 113.0},
+                                          {"depth_ppm": 1289.0, "err_ppm": 109.0}, 0.74724716, "linear fit")
+    ratio = 1289.0 / 2031.0
+    err = ratio * math.hypot(109.0 / 1289.0, 113.0 / 2031.0)
+    assert (block["ratio"], block["ratio_err"]) == pytest.approx((ratio, err))
+    assert block["shortfall_sigma"] == pytest.approx((ratio - 0.74724716) / err)        # -1.75
+    assert dossier_module.aperture_block({"depth_ppm": 2031.0, "err_ppm": 113.0},
+                                         {"depth_ppm": None, "err_ppm": None}, 0.75, "search") is None
+
+
+def test_the_centroid_block_names_the_nearest_source_beyond_the_radius_and_the_pull(env):
+    d = json.loads(generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch,
+                            force=True).data_path.read_text(encoding="utf-8"))
+    co, inputs = d["centroid_offset"], d["fpp"]["inputs"]
+    beyond = [n for n in inputs["neighbours"] if n["centroid_sep_arcsec"] > co["exclusion_radius_arcsec"]]
+    nearest = min(beyond, key=lambda n: n["centroid_sep_arcsec"])
+    assert co["nearest_beyond"]["source_id"] == nearest["source_id"]
+    assert inputs["exclusion_radius_arcsec"] == co["exclusion_radius_arcsec"]
+    # the seed's rung 5 row predates the direct-image centroid, so no pull is measured; seasons that store one do
+    assert co["direct_pull_pix"] is None and co["pulled"] is None
+    for direct, pulled in (((4.4, 4.0), True), ((4.1, 4.0), False)):
+        block = dossier_module.centroid_offset({"seasons": [_offset_season(s, (4.2, 4.0), direct=direct)
+                                                            for s in range(3)]})
+        assert block["direct_pull_pix"] == pytest.approx(direct[0] - 4.0) and block["pulled"] is pulled
+        assert block["pulled"] is (block["direct_pull_pix"] > 0.3)
+
+
+def test_the_fpp_takes_the_quoted_fit_and_the_parity_block_with_the_exclusion_radius():
+    """FPP model 3 (Task 10 review M-5, spec 11.5): with the dossier's blocks the PL duration test and the V-shape
+    factor read the quoted shape fit's k, b and a/R* (the resample medians the texts print), the odd-even term reads
+    the parity block's per-event depths, and the BEB term's confusion radius is the pixel exclusion radius; without
+    the blocks rung 2's numbers stand."""
+    signal = {"period": 40.29, "depth_ppm": 2214.0, "duration": 0.154}
+    rung2 = {"fit_ok": True, "fit_k": 0.0478, "fit_b": 0.893, "fit_a_over_r": 43.6, "odd_ppm": 2222.0,
+             "even_ppm": 2153.0, "parity_sigma": 0.315, "secondary_ppm": 95.0, "control_rms_ppm": 128.0}
+    seasons = [_offset_season(s, (4.05, 4.0)) for s in range(3)]
+    tests = [{"rung": "rung2_shape", "status": "pass", "metrics": rung2},
+             {"rung": "rung5_pixels", "status": "pass", "metrics": {"seasons": seasons}}]
+    star, planet = SimpleNamespace(teff=None, radius=None, mass=None), SimpleNamespace(rp_rearth=None)
+    shape = {"ok": True, "k": {"median": 0.0462}, "b": {"median": 0.4616}, "a_over_r": {"median": 78.07},
+             "fits": {"free": {"ok": True, "k": 0.0466, "b": 0.2, "a_over_r": 80.0},
+                      "prior": {"ok": True, "k": 0.0455, "b": 0.4697, "a_over_r": 77.96}},
+             "comparison": {"quoted": "prior"}}
+    parity = {"odd": {"depth_ppm": 2276.0, "err_ppm": 177.0}, "even": {"depth_ppm": 2156.0, "err_ppm": 151.0}}
+    old = dossier_module.fpp_inputs(signal, tests, star, planet, [], 16.2)
+    assert (old.fit_k, old.fit_b, old.fit_a_over_r, old.odd_ppm) == (0.0478, 0.893, 43.6, 2222.0)
+    new = dossier_module.fpp_inputs(signal, tests, star, planet, [], 16.2, blocks={"shape": shape, "parity": parity})
+    assert (new.fit_k, new.fit_b, new.fit_a_over_r) == (0.0462, 0.4616, 78.07)
+    assert (new.odd_ppm, new.even_ppm) == (2276.0, 2156.0)
+    assert new.odd_even_err_ppm == pytest.approx(math.hypot(177, 151))
+    radius = dossier_module.exclusion_radius({"catalogue_referenced_err_arcsec": new.centroid_sigma_arcsec})
+    assert new.exclusion_radius_arcsec == radius
+    assert compute(new).confusion_radius_arcsec == radius
+    # a quoted fit that failed leaves the FPP without a geometry, as the texts are
+    failed = {**shape, "fits": {**shape["fits"], "prior": {"ok": False}}}
+    none = dossier_module.fpp_inputs(signal, tests, star, planet, [], 16.2, blocks={"shape": failed})
+    assert (none.fit_k, none.fit_b, none.fit_a_over_r) == (None, None, None)

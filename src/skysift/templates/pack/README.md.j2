@@ -59,14 +59,14 @@ Ephemeris and transit-parameter errors (the note's signal section points here): 
 
 CROWDSAP and PSFFRAC are KBonus header keywords. CROWDSAP is {{ crowdsap_definition }}; PSFFRAC is {{ psffrac_definition }}.
 {% endif %}
-{% if n.offset_text %}
+{% if n.offset_text or n.hand_built_text %}
 
-Pixel offset: {{ n.offset_text }}
+Pixel offset:{% if n.offset_text %} {{ n.offset_text }}{% endif %}{% if n.hand_built_text %} {{ n.hand_built_text }}{% endif %}
 {% endif %}
 
 {{ n.fap_text }}
 
-{{ n.fpp_text }}
+{{ n.fpp_text }}{% if n.beb_radius_text %} {{ n.beb_radius_text }}{% endif %}
 {% if n.cross_check_sentence %}
 
 {{ n.cross_check_sentence }}

@@ -273,8 +273,9 @@ def _stability(m: dict) -> tuple[str, str]:
     az = _num(m, "aperture_z")
     parts = [f"Depth agrees across {len(depths)} quarter groups (p = {p:.2g})" if depths and p is not None
              else "Depths per quarter group were not recorded"]
-    if ratio is not None:
-        parts.append(f"the two apertures agree (ratio {ratio:.2f})")
+    if ratio is not None:           # spec 11.5: the ratio itself, not a claim that the apertures agree
+        parts.append(f"the SAP depth is {ratio:.2f} of the PSF depth" + (f", {abs(az):.1f} sigma apart"
+                                                                         if az is not None else ""))
     # rung 3 groups the quarters by quarter mod 4, which is not the archive SEASON rung 5 labels its seasons by, so
     # its groups are "quarter group N" wherever rung 5's are "archive season N"
     seasons = [f"quarter group {s}: {_ppm(_num(depths, s))}" + (f" ± {_ppm(_num(errs, s))}" if s in errs else "")
