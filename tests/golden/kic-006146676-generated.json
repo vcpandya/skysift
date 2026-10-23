@@ -1,6 +1,6 @@
 {
  "dossier_version": "5",
- "generated": "2026-10-22T23:23:38.813542+00:00",
+ "generated": "2026-10-23T01:30:46.677761+00:00",
  "target": {
   "target_id": "kic-006146676",
   "source": "kbonus_bkg",
@@ -1928,7 +1928,7 @@
   "sentence_not_covered": "This is about noise. A real dip on a neighbouring star or an eclipsing binary passes this test."
  },
  "fpp": {
-  "value": 0.0031329886,
+  "value": 0.0034347878,
   "words": "under 1 percent",
   "label": "False positive",
   "signed_off": true,
@@ -1936,11 +1936,11 @@
   "neighbours_known": true,
   "value_without_beb": null,
   "spec_product": {
-   "eb_weight": 2.5557747e-07,
-   "value": 3.0944522e-05,
+   "eb_weight": 5.8212894e-07,
+   "value": 7.1752375e-05,
    "rule": "spec 4.2 as first written: one EB scenario at 2P weighted by S_sec x S_oe"
   },
-  "confusion_radius_arcsec": 2.0,
+  "confusion_radius_arcsec": 0.83480394,
   "neighbours": [
    {
     "source_id": "2073896294004902144",
@@ -1950,7 +1950,7 @@
     "s_arcsec": 6.8914006,
     "flux_fraction": 0.037107518,
     "bright_enough": true,
-    "exclusion": 8.0234268e-68
+    "exclusion": 1.3516127e-103
    },
    {
     "source_id": "2073896289692192128",
@@ -1960,7 +1960,7 @@
     "s_arcsec": 10.690385,
     "flux_fraction": 0.17829435,
     "bright_enough": true,
-    "exclusion": 1.6209617e-212
+    "exclusion": 4.0668291e-273
    },
    {
     "source_id": "2073896190925687296",
@@ -1970,7 +1970,7 @@
     "s_arcsec": 11.201537,
     "flux_fraction": 0.95927529,
     "bright_enough": true,
-    "exclusion": 3.6548152e-238
+    "exclusion": 4.1868088e-302
    },
    {
     "source_id": "2073896190926955520",
@@ -1980,7 +1980,7 @@
     "s_arcsec": 12.714795,
     "flux_fraction": 0.038315893,
     "bright_enough": true,
-    "exclusion": 1.1e-322
+    "exclusion": 0.0
    },
    {
     "source_id": "2073896190921609600",
@@ -2008,8 +2008,8 @@
     "name": "PL",
     "prior": 0.64486136,
     "geometric": 0.012838661,
-    "data": 0.99756055,
-    "weight": 0.0082589597,
+    "data": 0.9798637,
+    "weight": 0.0081124447,
     "factors": {
      "class": "M",
      "rp_rearth": 2.54,
@@ -2017,25 +2017,25 @@
      "a_au": 0.18292308,
      "R_star_over_a": 0.012838661,
      "T14_circ": 0.16466103,
-     "T14_fit": 0.16102968,
-     "sigma": 0.051956698,
-     "z": -0.069891801,
-     "D_shape": 0.99756055
+     "T14_fit": 0.15422301,
+     "sigma": 0.051749785,
+     "z": -0.20170173,
+     "D_shape": 0.9798637
     }
    },
    {
     "name": "BEB",
     "prior": 0.10907202,
     "geometric": 0.020218597,
-    "data": 1.3372378e-68,
-    "weight": 2.9489879e-71,
+    "data": 2.2526878e-104,
+    "weight": 4.9678142e-107,
     "factors": {
      "f_bin": 0.44,
      "g_2P": 0.041315157,
      "n_bright": 6,
      "a_2P_au": 0.46001907,
-     "X_mean": 1.3372378e-68,
-     "r_c_arcsec": 2.0,
+     "X_mean": 2.2526878e-104,
+     "r_c_arcsec": 0.83480394,
      "centroid_sigma_arcsec": 0.27826798
     }
    },
@@ -2049,7 +2049,7 @@
      "class": "M",
      "f_bin": 0.26,
      "pair_mass_msun": 0.7545,
-     "fit_b": 0.8932519,
+     "fit_b": 0.46161038,
      "S_v": 1.0,
      "g_P": 0.034216862,
      "a_P_au": 0.20939465,
@@ -2063,20 +2063,20 @@
     "name": "EB-2P",
     "prior": 0.010741941,
     "geometric": 0.010598081,
-    "data": 0.013777238,
-    "weight": 1.5684553e-06,
+    "data": 0.031380423,
+    "weight": 3.5724716e-06,
     "factors": {
      "class": "M",
      "f_bin": 0.26,
      "pair_mass_msun": 0.7545,
-     "fit_b": 0.8932519,
+     "fit_b": 0.46161038,
      "S_v": 1.0,
      "g_2P": 0.041315157,
      "a_2P_au": 0.33239329,
      "odd_even_predicted_ppm": 553.49128,
-     "odd_even_ppm": 69.282579,
-     "odd_even_err_ppm": 219.73811,
-     "S_oe": 0.013777238
+     "odd_even_ppm": 120.50733,
+     "odd_even_err_ppm": 232.67674,
+     "S_oe": 0.031380423
     }
    }
   ],
@@ -2088,14 +2088,14 @@
    "radius": 0.505,
    "mass": 0.503,
    "rp_rearth": 2.54,
-   "fit_k": 0.047758423,
-   "fit_b": 0.8932519,
-   "fit_a_over_r": 43.616611,
+   "fit_k": 0.046171082,
+   "fit_b": 0.46161038,
+   "fit_a_over_r": 78.073638,
    "secondary_ppm": 95.430951,
    "secondary_err_ppm": 128.22074,
-   "odd_ppm": 2222.4768,
-   "even_ppm": 2153.1942,
-   "odd_even_err_ppm": 219.73811,
+   "odd_ppm": 2276.335,
+   "even_ppm": 2155.8277,
+   "odd_even_err_ppm": 232.67674,
    "neighbours": [
     {
      "source_id": "2073896294004902144",
@@ -2144,7 +2144,8 @@
    "neighbours_known": true,
    "sigma_c_stat_arcsec": 0.15131011,
    "sigma_c_scatter_arcsec": 0.27826798,
-   "sigma_c_source": "scatter"
+   "sigma_c_source": "scatter",
+   "exclusion_radius_arcsec": 0.83480394
   },
   "sentence_not_covered": "This counts the common impostors with simple priors. It is not a vespa or a Kepler DR25 false-positive probability, and it has no radial-velocity or imaging input."
  },
@@ -4343,7 +4344,15 @@
   "rule": "Bryson et al. 2013: an offset counts when above 3 sigma and above 0.2 arcsec",
   "n_seasons": 4,
   "exclusion_radius_arcsec": 0.83480394,
-  "exclusion_rule": "max(3 sigma, 0.5 arcsec) about the Gaia-referenced difference centroid (spec 11.5)"
+  "exclusion_rule": "max(3 sigma, 0.5 arcsec) about the Gaia-referenced difference centroid (spec 11.5)",
+  "direct_pull_pix": 1.3046023,
+  "pulled": true,
+  "nearest_beyond": {
+   "source_id": "2073896294004902144",
+   "sep_arcsec": 7.1422442,
+   "centroid_sep_arcsec": 6.8914006,
+   "gmag": 19.771944
+  }
  },
  "prior_claims": [],
  "hand_built_localisation": {
@@ -4397,6 +4406,126 @@
   "null_stars": 999,
   "null_searches": 1998,
   "expected_by_chance": 9.4787394
+ },
+ "aperture": {
+  "psf_depth_ppm": 2213.9651,
+  "psf_err_ppm": 114.37157,
+  "sap_depth_ppm": 1540.8282,
+  "sap_err_ppm": 129.2231,
+  "ratio": 0.69595868,
+  "ratio_err": 0.068551662,
+  "crowdsap": 0.85650748,
+  "shortfall_sigma": -2.3420118,
+  "ephemeris": "linear fit of 31 transit times"
+ },
+ "predicted_leak": {
+  "predicted_ppm": 3.6710304,
+  "share": 0.0016581248,
+  "quarters": [
+   {
+    "quarter": 0,
+    "season": 3,
+    "share": 0.00036337377
+   },
+   {
+    "quarter": 1,
+    "season": 3,
+    "share": 0.00026886934
+   },
+   {
+    "quarter": 2,
+    "season": 0,
+    "share": 0.00030901147
+   },
+   {
+    "quarter": 3,
+    "season": 1,
+    "share": 0.0034265398
+   },
+   {
+    "quarter": 4,
+    "season": 2,
+    "share": 0.0038571694
+   },
+   {
+    "quarter": 5,
+    "season": 3,
+    "share": 0.00026317378
+   },
+   {
+    "quarter": 6,
+    "season": 0,
+    "share": 0.00036359848
+   },
+   {
+    "quarter": 7,
+    "season": 1,
+    "share": 0.0038616013
+   },
+   {
+    "quarter": 8,
+    "season": 2,
+    "share": 0.0038991438
+   },
+   {
+    "quarter": 9,
+    "season": 3,
+    "share": 0.0022131939
+   },
+   {
+    "quarter": 10,
+    "season": 0,
+    "share": 0.00036240675
+   },
+   {
+    "quarter": 11,
+    "season": 1,
+    "share": 0.0033710313
+   },
+   {
+    "quarter": 12,
+    "season": 2,
+    "share": 0.0035844662
+   },
+   {
+    "quarter": 13,
+    "season": 3,
+    "share": 0.00028861257
+   },
+   {
+    "quarter": 14,
+    "season": 0,
+    "share": 0.00036618209
+   },
+   {
+    "quarter": 15,
+    "season": 1,
+    "share": 0.002761099
+   },
+   {
+    "quarter": 16,
+    "season": 2,
+    "share": 3.1065514e-05
+   },
+   {
+    "quarter": 17,
+    "season": 3,
+    "share": 0.00025570775
+   }
+  ],
+  "measured_ppm": -9.48671,
+  "measured_err_ppm": 12.335534,
+  "kic": 6146666,
+  "model": "the target's share of the two stars' light inside the neighbour's optimal aperture under rung 5's two-Gaussian PSF model (its season's width and common shift), the two fluxes fitted to each pixel file's median quality-0 image, times the target's depth",
+  "reason": null
+ },
+ "depth_trend": {
+  "slope_ppm_per_year": 227.73542,
+  "err_ppm_per_year": 89.804872,
+  "sigma": 2.5358916,
+  "chi2_red": 2.2298739,
+  "n": 31,
+  "printed": true
  },
  "signal": {
   "id": 1032,
@@ -4844,6 +4973,6 @@
    "rung4_novelty": "4",
    "rung5_pixels": "4"
   },
-  "git_commit": "ae13ec2"
+  "git_commit": "b95202e"
  }
 }
