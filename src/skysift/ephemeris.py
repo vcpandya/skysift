@@ -445,9 +445,11 @@ def _best_box_duration(t, f, period, t0, durations) -> float | None:
 
 
 def bootstrap_shape(time, fnorm, period, t0, duration_days, point: dict | None, *, n_boot: int = N_BOOT,
-                    seed: int = BOOT_SEED, used_epochs=None, model: dict | None = None) -> ShapeErrors:
-    """Errors on the transit shape from ``n_boot`` resamples of the events, drawn with replacement among
-    ``used_epochs`` (every epoch with a point within three durations, or six without a fit, when None). With
+                    seed: int = BOOT_SEED, model: dict | None = None) -> ShapeErrors:
+    """Errors on the transit shape from ``n_boot`` resamples of the events, drawn with replacement among every epoch
+    with a point within three durations (six without a fit): every transit the full-data fit sees. The single-event
+    S/N cut applies to the timing alone; resampling only the timed transits would keep the ones noise made deeper
+    and bias the medians deep (round-2 final review, C-1). With
     ``point`` ({"k", "b", "a_over_r", "t14_h", "fit_depth_ppm"} of the quoted full-data fit) each resample is fitted
     with ``transit_model.fit_shape``; without it, the box duration that maximises the depth over its error on a grid
     from half to twice ``duration_days`` is kept per resample. The box depth always comes from ``event_depths`` over
@@ -476,8 +478,6 @@ def bootstrap_shape(time, fnorm, period, t0, duration_days, point: dict | None, 
     reach = WINDOW_DURATIONS * duration_days * (1.0 if point is not None else BOX_DURATION_FACTORS[1])
     near = np.abs(dt) <= reach
     pool = np.unique(epoch[near])
-    if used_epochs is not None:
-        pool = np.intersect1d(pool, np.asarray(list(used_epochs), dtype=np.int64))
     in_pool = np.isin(epoch, pool)
     ev = event_depths(t[in_pool], f[in_pool], np.zeros(int(in_pool.sum()), int), period, t0, duration_days)
     box_depth = ({"median": float(ev.mean), "minus": float(ev.err_scaled), "plus": float(ev.err_scaled)}

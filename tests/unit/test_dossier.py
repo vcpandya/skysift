@@ -1484,6 +1484,28 @@ def test_version_5_folds_on_the_linear_ephemeris_and_stores_both_fits(env):
             assert (t["reason"] == LOW_SES_REASON) == (t["ses"] < SES_MIN), t
 
 
+def test_the_shape_bootstrap_resamples_every_transit_the_full_data_fit_sees():
+    """Round-2 final review, C-1: the SES cut applies to the timing alone. On a fold where every other transit is too
+    shallow to pass the cut, the timed set is deeper than the whole; resampling only it put the bootstrap median of k
+    several spreads above the full-data fit. Resampling every transit in the window keeps the median within one
+    error of the full-data k."""
+    from skysift.lc.ops import detrend
+    p, t0, dur, k_deep, k_shallow, b, a_r = 5.4, 134.9, 3.2 / 24, 0.047, 0.015, 0.31, 12.9
+    lc = make_lightcurve(n_days=400, noise_ppm=600, seed=3)
+    lc = inject_model(inject_model(lc, 2 * p, t0, k_deep, b, a_r), 2 * p, t0 + p, k_shallow, b, a_r)
+    signal = {"id": 1, "period": p, "t0": t0, "duration": dur, "depth_ppm": 1300.0}
+    k_mid = 0.5 * (k_deep + k_shallow)
+    metrics = {"fit_ok": True, "fit_k": k_mid, "fit_b": b, "fit_a_over_r": a_r,
+               "fit_t14_h": _t14(p, k_mid, b, a_r) * 24.0, "fit_depth_ppm": 1300.0}
+    blocks = ephemeris_blocks(lc, detrend(lc), signal, [{"rung": "rung2_shape", "metrics": metrics}], n_boot=20)
+    timing, shape = blocks["timing"], blocks["shape"]
+    cut = [t for t in timing["times"] if t["reason"] == LOW_SES_REASON]
+    assert timing["ok"] and len(cut) >= 10                    # the shallow half is cut from the timing
+    k = shape["k"]
+    assert shape["ok"] and k["point"] is not None
+    assert abs(k["median"] - k["point"]) <= max(k["minus"], k["plus"]), k
+
+
 def test_without_enough_ses_the_fold_stays_on_the_search_ephemeris(env, monkeypatch):
     from skysift import ephemeris as eph_module
     monkeypatch.setattr(eph_module, "SES_MIN", 1e6)            # every transit falls below the threshold

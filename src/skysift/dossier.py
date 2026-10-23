@@ -628,7 +628,8 @@ def ephemeris_blocks(lc: LightCurve, fnorm, signal: dict, tests: list[dict], *, 
     the search otherwise); on that fold the depth (``eph.fold_depth``), ``parity`` (the per-event odd and even depths
     with the stacked fold of each beside them) and ``secondary`` (rung 2's phase 0.5 limit, None without it); the
     shape fits, free and, when the star has a density (``shape_model``), with the density prior, compared by
-    ``compare_fits``; ``shape``, the bootstrap over the transits the ephemeris used of the quoted fit (of the box
+    ``compare_fits``; ``shape``, the bootstrap of the quoted fit over every transit the full-data fits see, not only
+    the timed ones (the SES cut is the timing's alone; round-2 final review, C-1) (of the box
     without a rung 2 fit: ``_fit_point`` still decides whether a shape is fitted), with the two fits, the comparison,
     the limb darkening and the exposure; ``stability``, rung 3 on the fold (``_stability``); ``aperture``, the SAP
     depth over the PSF depth on the fold against CROWDSAP (``aperture_block``, None without ``fnorm_alt``);
@@ -641,7 +642,6 @@ def ephemeris_blocks(lc: LightCurve, fnorm, signal: dict, tests: list[dict], *, 
     timing = _timing(time, fnorm, signal, metrics)
     fold = _fold(signal, timing)
     period, t0 = fold["period"], fold["t0"]
-    used = [t["epoch"] for t in timing["times"] if t["used"]] if timing["ok"] else None
     depth = eph.fold_depth(time, fnorm, quarter, period, t0, dur)
     events = event_depths(time, fnorm, quarter, period, t0, dur)
     parity = eph.parity_depths(events, time, fnorm, period, t0, dur).as_dict()
@@ -664,8 +664,7 @@ def ephemeris_blocks(lc: LightCurve, fnorm, signal: dict, tests: list[dict], *, 
         else:
             log.warning("signal %s: the shape fit failed (%s); the shape keeps the box", signal.get("id"),
                         quoted.reason)
-    shape = eph.bootstrap_shape(time, fnorm, period, t0, dur, point, n_boot=n_boot, used_epochs=used,
-                                model=boot_model).as_dict()
+    shape = eph.bootstrap_shape(time, fnorm, period, t0, dur, point, n_boot=n_boot, model=boot_model).as_dict()
     shape.update(fits=fits, comparison=comparison, limb_darkening=model["limb_darkening"],
                  exposure_min=model["exposure_days"] * 1440.0)
     secondary = eph.secondary_limit(metrics, degenerate=shape.get("degenerate") is True)
