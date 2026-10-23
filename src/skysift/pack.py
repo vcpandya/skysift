@@ -83,6 +83,7 @@ from skysift.pack_rows import (
     next_transits,
     param_rows,
     provenance_rows,
+    shape_csv_rows,
     shape_rows,
     star_characterized,
     timing_rows,
@@ -786,7 +787,8 @@ def in_house_method_text(data: dict) -> str:
     return IN_HOUSE_METHOD.format(occurrence=" and ".join(OCCURRENCE_WORDS[k] for k in _occurrence_keys(data)))
 
 
-SHAPE_PRECEDENT = "Seager and Mallén-Ornelas 2003; Kipping 2010"
+SEAGER_CITE = "Seager and Mallén-Ornelas 2003"      # the density from the transit shape
+KIPPING_CITE = "Kipping 2010"                        # the model integrated over the exposure
 
 
 def b_set_by_prior(data: dict) -> bool:
@@ -800,9 +802,10 @@ def b_set_by_prior(data: dict) -> bool:
 def shape_fit_text(data: dict) -> str | None:
     """The README's evidence for the shape call (round-2 final review, I-4): the density-prior fit's b and a/R*, the
     free fit's b, a/R* and stellar density beside the host's, the chi-square difference against the rule of
-    ``CONSTRAINED_DELTA_CHI2``, and the reading, with its precedent (Seager and Mallén-Ornelas 2003 for the density
-    from the transit shape; Kipping 2010). The note keeps "unconstrained at this cadence" without them (the word
-    limit). None unless the prior fit is quoted because the data do not constrain b and a/R*."""
+    ``CONSTRAINED_DELTA_CHI2``, and the reading, with its precedents (Seager and Mallén-Ornelas 2003 for the density
+    from the transit shape) and the exposure integration named with Kipping 2010. The note keeps "unconstrained at
+    this cadence" without them (the word limit). None unless the prior fit is quoted because the data do not
+    constrain b and a/R*."""
     if not b_set_by_prior(data):
         return None
     shape = data["shape"]
@@ -814,13 +817,15 @@ def shape_fit_text(data: dict) -> str | None:
     fb, fa, frho = (_num(free.get(k)) for k in ("b", "a_over_r", "density_gcc"))
     if free.get("ok") is not True or None in (fb, fa, delta) or b_text is None:
         return None
+    exposure = _num(shape.get("exposure_min")) or KEPLER_EXPOSURE_MIN
     host = value_text((data.get("star") or {}).get("density_gcc"))
     rho = (f" (a stellar density of {frho:.1f} g/cm3 against the host's {host} g/cm3)"
            if frho is not None and host else "")
     return (f"Shape fit: {B_PRIOR_LABEL} b is {b_text} and a/R* {a_text} {A_LABEL_STELLAR}. The free fit "
             f"gives b of {fb:.2f} and a/R* of {fa:.1f}{rho}, with a chi-square lower by only {delta:.2f}, within the "
             f"rule of {CONSTRAINED_DELTA_CHI2:g}: the data do not constrain them; the quoted values follow the host's "
-            f"density ({SHAPE_PRECEDENT}).")
+            f"density ({SEAGER_CITE}). The model is integrated over the {exposure:.1f}-minute exposure, which matters "
+            f"at this cadence ({KIPPING_CITE}).")
 
 
 def fap_method_text(data: dict) -> str | None:
@@ -1269,7 +1274,7 @@ def _seasons_phrase(near: int, voting: list[dict], silent: list[dict]) -> str:
 
 def _silent_sentence(silent: list[dict]) -> str:
     """The seasons that did not vote, each with its stored reason as one clause (``reason_words``): "Season 3 did not
-    vote: box cut, ambiguous at 1.8 sigma." (no brackets inside brackets, round-2 final review, minor 10)."""
+    vote: box cut: ambiguous at 1.8 sigma." (no brackets inside brackets, round-2 final review, minor 10)."""
     def label(s: dict) -> str:
         return str(s.get("season")) if s.get("season") is not None else "?"
     if not silent:
@@ -2138,9 +2143,10 @@ def gate_problems(raw: dict) -> list[str]:
     and a rendered Research Note over the RNAAS limit of 1,500 words (``note_words``; the TESS statement itself never
     blocks), or over another RNAAS limit (``note_limit_problems``); and, after spec 11.1 and 11.2, a prior claim
     without a relationship, a prior claim whose period, epoch or depth sits more than ``PRIOR_MISMATCH_SIGMA`` from
-    ours (``PRIOR_MISMATCH``), a ``FORBIDDEN_WORDS`` match in the Research Note, the abstract, the archive email, the
-    ExoFOP notes field or the Zenodo title and description (the README and the upload note print the same sentence
-    functions), and an abstract or a Zenodo description without the TRICERATOPS probability ahead of the in-house
+    ours (``PRIOR_MISMATCH``) or, with no error on either side, a period over 1 percent or an epoch over 0.1 d from
+    ours (``PRIOR_MISMATCH_NO_ERROR``), a ``FORBIDDEN_WORDS`` match in the Research Note, the abstract, the archive
+    email, the ExoFOP notes field or the Zenodo title and description (the README and the upload note print the same
+    sentence functions), and an abstract or a Zenodo description without the TRICERATOPS probability ahead of the in-house
     one when a current cross-check is stored (a stale one is refused once, by ``crosscheck.verdict``). Empty when the
     dossier may go to zenodo.org."""
     out = []
@@ -2180,6 +2186,9 @@ def gate_problems(raw: dict) -> list[str]:
     cmp = prior_comparison(raw) or {}
     if any(isinstance(cmp.get(k), dict) and (cmp[k].get("sigma") or 0) > PRIOR_MISMATCH_SIGMA for k in COMPARED):
         out.append(PRIOR_MISMATCH)
+    # polish round 2: a quantity neither side gives an error for has no sigma, so the rule is its plain difference
+    if any(_unerred_mismatch(k, cmp.get(k)) for k in ("period", "epoch")):
+        out.append(PRIOR_MISMATCH_NO_ERROR)
     abstract = abstract_text(raw)
     zenodo = metadata_from(raw, None, prior=zenodo_prior(raw))
     description = re.sub(r"<[^>]+>", " ", zenodo["description"])
@@ -2197,7 +2206,7 @@ def gate_problems(raw: dict) -> list[str]:
     block = raw.get("cross_check")
     if cc.complete(block) and block.get("current") is True:
         for name, text in (("abstract", abstract), ("Zenodo description", description)):
-            if not _triceratops_first(text):
+            if not _triceratops_first(text, block.get("tool_version")):
                 out.append(f"the {name} carries the in-house false-positive probability without the TRICERATOPS "
                            "one")
     return out
@@ -2205,15 +2214,36 @@ def gate_problems(raw: dict) -> list[str]:
 
 PRIOR_MISMATCH_SIGMA = 5.0      # a compared quantity further than this from the prior claim's is a mismatch
 PRIOR_MISMATCH = "the prior claim does not match this signal; check the claim's star and numbers"
+PRIOR_MISMATCH_PERIOD = 0.01    # with no error on either side, a period further than this fraction from ours
+PRIOR_MISMATCH_EPOCH_D = 0.1    # or a mid-transit time further than this many days from ours (same epoch)
+PRIOR_MISMATCH_NO_ERROR = (PRIOR_MISMATCH + " (the claim and the dossier give no error for the quantity, and the "
+                           "period differs by more than 1 percent or the mid-transit time by more than 0.1 d)")
 
 
-def _triceratops_first(text: str) -> bool:
-    """Whether ``text`` names the TRICERATOPS probability, and before the in-house four-scenario estimate when it
-    names that too (spec 11.2's order)."""
-    if "TRICERATOPS" not in text:
+def _unerred_mismatch(name: str, row) -> bool:
+    """Whether a compared period or epoch with no error on either side (no sigma) is further apart than
+    ``PRIOR_MISMATCH_PERIOD`` of ours (period) or ``PRIOR_MISMATCH_EPOCH_D`` days (epoch)."""
+    if name not in ("period", "epoch") or not isinstance(row, dict) or row.get("sigma") is not None:
         return False
-    own = text.find("four-scenario estimate")
-    return own < 0 or text.find("TRICERATOPS") < own
+    ours, theirs = _num(row.get("ours")), _num(row.get("theirs"))
+    if ours is None or theirs is None:
+        return False
+    if name == "period":
+        return ours != 0 and abs(ours - theirs) / abs(ours) > PRIOR_MISMATCH_PERIOD
+    return abs(ours - theirs) > PRIOR_MISMATCH_EPOCH_D
+
+
+def _triceratops_first(text: str, version) -> bool:
+    """Whether ``text`` carries our own TRICERATOPS headline sentence ("TRICERATOPS <version> gives", the opening
+    ``crosscheck.headline`` prints), and before the in-house four-scenario estimate when it names that too (spec
+    11.2's order). The word TRICERATOPS elsewhere does not count: a prior claim that names the tool ("its
+    false-positive probability of 0.07 (TRICERATOPS)") is not our probability; nor does the same claim's naming of
+    "SkySift's four-scenario estimate" in its comparison count as the in-house sentence."""
+    start = text.find(f"TRICERATOPS {version} gives")
+    if start < 0:
+        return False
+    own = re.search(r"(?<!SkySift's )four-scenario estimate", text)
+    return own is None or start < own.start()
 
 
 def zenodo_prior(data: dict) -> str | None:
@@ -3038,7 +3068,7 @@ def _write_pack(out_dir: Path, data: dict, raw: dict, row: dict, lc, fnorm, targ
     for name, header, table in (
             ("transit_times.csv", ["epoch", "t_bkjd", "t_bjd", "err_days", "chi2_red", "used", "reason"],
              timing_rows(data)),
-            ("shape.csv", ["parameter", "value", "minus", "plus", "unit", "point", "note"], shape_rows(data)),
+            ("shape.csv", ["parameter", "value", "minus", "plus", "unit", "point", "note"], shape_csv_rows(data)),
             ("events.csv", ["epoch", "t_mid_bkjd", "quarter", "depth_ppm", "err_ppm", "coverage", "ses", "timed",
                             "timing_reason"], event_rows(data)),
             ("stellar_provenance.csv", ["parameter", "value", "minus", "plus", "unit", "method", "inputs",

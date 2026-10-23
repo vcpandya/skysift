@@ -47,6 +47,8 @@ def _comparison(data: dict) -> dict:
 
 # the README table's b row when the density prior sets b (round-2 final review, I-4)
 B_PRIOR_LABEL = "with the density prior"
+# shape.csv's note for b and a/R* when the density prior sets them (polish round 2)
+B_PRIOR_NOTE = f"{B_PRIOR_LABEL}; unconstrained by the data at this cadence"
 
 
 def a_over_r_fitted(data: dict) -> bool:
@@ -235,8 +237,29 @@ def shape_rows(data: dict) -> list[dict]:
             why = (shape.get("degeneracy_reason") if degenerate else shape.get("reason")) or "no reason stored"
             note = f"no error; {why.removesuffix(', errors not quoted')}"       # an older reason said it again
         rows.append({"key": key, "parameter": name, "value": value, "minus": lo, "plus": hi, "unit": unit,
-                     "point": boot, "note": note, "nd": nd})
+                     "point": boot, "note": note, "nd": nd,
+                     "fit_note": _fit_note(shape) if key in ("b", "a_over_r") else ""})
     return rows
+
+
+def _fit_note(shape: dict) -> str:
+    """What sets b and a/R* (polish round 2): the density prior when the data leave them unconstrained
+    (``B_PRIOR_NOTE``); the free fit, with the sigma at which the data reject the host's density, when the
+    comparison constrained them; nothing otherwise."""
+    cmp = shape.get("comparison") or {}
+    if cmp.get("quoted") == "prior" and cmp.get("constrained") is False:
+        return B_PRIOR_NOTE
+    if cmp.get("quoted") == "free" and cmp.get("constrained") is True:
+        tension = _num(cmp.get("density_tension_sigma"))
+        return ("free fit" if tension is None
+                else f"free fit; the data reject the host's density at {abs(tension):.1f} sigma")
+    return ""
+
+
+def shape_csv_rows(data: dict) -> list[dict]:
+    """``shape_rows`` for ``shape.csv``: the note column carries the row's missing-error reason and, for b and
+    a/R*, what sets them (``_fit_note``), joined by "; "."""
+    return [{**r, "note": "; ".join(x for x in (r["note"], r["fit_note"]) if x)} for r in shape_rows(data)]
 
 
 def event_rows(data: dict) -> list[dict]:

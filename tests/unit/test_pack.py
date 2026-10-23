@@ -584,7 +584,7 @@ def test_a_season_that_did_not_vote_is_named_and_its_null_depths_are_skipped(env
     data = _with_a_silent_season(env_with_dossier.data)
     text = pack_module.pixel_sentence(data)
     assert "the dip is nearer this star than its brightest neighbour in 2 of 2 seasons that voted" in text
-    assert "Season 3 did not vote: box incomplete, target." in text and "nan" not in text
+    assert "Season 3 did not vote: box incomplete: target." in text and "nan" not in text
     assert "A two-source fit gives a median depth of 2,550 ppm on this star" in text  # the voting seasons only
     abstract = pack_module.abstract_text(data)
     assert "nearer this star than its brightest neighbour in 2 of 2 seasons that voted" in abstract
@@ -647,7 +647,7 @@ def test_pixel_sentence_without_box_keys_is_unchanged(env_with_dossier):
         "away, with an exclusion radius of 0.50 arcsec (max(3 sigma, 0.5 arcsec)) within which a background source "
         "is not excluded; the nearest Gaia source beyond it is Gaia DR3 2101234567890120001 at 6.6 arcsec from the "
         "centroid (G = 19.8). A two-source fit gives a median depth of 2,213 ppm on this star and -21 ppm on the "
-        "neighbour. Season 3 did not vote: box incomplete, target.")
+        "neighbour. Season 3 did not vote: box incomplete: target.")
 
 
 def test_a_crashed_build_leaves_no_folder_that_blocks_the_retry(env_with_dossier, monkeypatch):
@@ -1140,8 +1140,31 @@ def test_transit_times_and_shape_csvs(env_with_dossier):
     assert float(shape["radius ratio k"]["minus"]) == 0.0011 and float(shape["radius ratio k"]["plus"]) == 0.0012
     assert float(shape["radius ratio k"]["point"]) == 0.0469 and shape["radius ratio k"]["note"] == ""
     b = shape["impact parameter b"]
-    assert b["minus"] == "" and b["note"] == "no error; " + DEGENERATE.removesuffix(", errors not quoted")
-    assert shape["T14"]["unit"] == "h" and float(shape["model depth"]["plus"]) == 110.0
+    # polish round 2: the note says what sets b and a/R* (the density prior here), after the missing-error reason
+    assert b["minus"] == "" and b["note"] == ("no error; " + DEGENERATE.removesuffix(", errors not quoted")
+                                              + "; with the density prior; unconstrained by the data at this cadence")
+    assert shape["a/R* (density-prior fit)"]["note"].endswith(
+        "with the density prior; unconstrained by the data at this cadence")
+    assert shape["T14"]["unit"] == "h" and float(shape["model depth"]["plus"]) == 110.0 and shape["T14"]["note"] == ""
+
+
+def test_shape_csv_notes_say_what_sets_b_and_a_over_r():
+    """Polish round 2: b and a/R* carry "with the density prior; unconstrained by the data at this cadence" when the
+    prior sets them, "free fit; the data reject the host's density at X sigma" when the data constrain them, and
+    nothing else in the row changes."""
+    golden = _golden()
+    rows = {r["key"]: r for r in pack_rows.shape_csv_rows(golden)}
+    note = "with the density prior; unconstrained by the data at this cadence"
+    assert rows["b"]["note"].endswith(note) and rows["a_over_r"]["note"].endswith(note)
+    assert rows["k"]["note"] == "" and rows["t14_h"]["note"] == ""
+    free = json.loads(json.dumps(golden))
+    free["shape"]["comparison"] = {**free["shape"]["comparison"], "quoted": "free", "constrained": True,
+                                   "density_tension_sigma": -3.46, "a_over_r_label": "fitted", "reason": None}
+    rows = {r["key"]: r for r in pack_rows.shape_csv_rows(free)}
+    assert rows["b"]["note"].endswith("free fit; the data reject the host's density at 3.5 sigma")
+    assert rows["a_over_r"]["note"].endswith("free fit; the data reject the host's density at 3.5 sigma")
+    assert rows["k"]["note"] == ""
+    assert "density prior" not in rows["b"]["note"]
 
 
 def test_stellar_provenance_csv_names_the_method_and_the_reference(env_with_dossier):
@@ -1878,6 +1901,32 @@ def test_the_gate_refuses_an_abstract_with_the_in_house_fpp_alone(env_with_dossi
     monkeypatch.setattr(cross_check, "headline", lambda data, tex=False, named=True, short=False: None)
     assert ("the abstract carries the in-house false-positive probability without the TRICERATOPS one"
             in pack_module.gate_problems(_stored_with_cross_check(env)))
+
+
+def test_the_fpp_order_gate_keys_on_our_own_headline_not_on_a_prior_claims_naming_the_tool(env_with_dossier,
+                                                                                         monkeypatch):
+    """Polish round 2: only the prior-claim sentence names TRICERATOPS (its false-positive probability of 0.07
+    (TRICERATOPS)), and our own "TRICERATOPS 1.1.0 gives" sentence is gone: the gate refuses the Zenodo description
+    (it passed before, on the first word TRICERATOPS anywhere)."""
+    claim = "its false-positive probability of 0.07 (TRICERATOPS) sits beside our 0.0016 (SkySift's four-scenario"
+    assert not pack_module._triceratops_first(f"Prior claim: {claim} estimate). The tool gives 0.012.", "1.1.0")
+    assert not pack_module._triceratops_first(f"Prior claim: {claim} estimate).", "1.1.0")
+    own = "False-positive probability: TRICERATOPS 1.1.0 gives a false-positive probability of 0.012"
+    assert pack_module._triceratops_first(f"Prior claim: {claim} estimate). {own}; the four-scenario estimate", "1.1.0")
+    assert pack_module._triceratops_first(f"Prior claim: its probability (TRICERATOPS). {own}.", "1.1.0")
+    assert not pack_module._triceratops_first(f"A four-scenario estimate gives 0.1. {own}.", "1.1.0")    # in-house first
+    assert not pack_module._triceratops_first(own, "1.0.0")           # another version's sentence is not ours
+    env = env_with_dossier
+    _store_errors(env)
+    _store_cross_check(env)
+    data = {**_stored_with_cross_check(env),
+            "prior_claims": [{k: PRIOR_CLAIM[k] for k in dossier_module.PRIOR_CLAIM_PUBLIC}]}
+    assert "TRICERATOPS" in pack_module.zenodo_prior(data)
+    refusal = "carries the in-house false-positive probability without the TRICERATOPS one"
+    assert not [p for p in pack_module.gate_problems(data) if refusal in p]
+    monkeypatch.setattr(cross_check, "headline", lambda data, tex=False, named=True, short=False: None)
+    problems = pack_module.gate_problems(data)
+    assert "the Zenodo description " + refusal in problems and "the abstract " + refusal in problems
 
 
 def test_the_gate_refuses_a_151_word_abstract_under_the_total(env_with_dossier, monkeypatch):
@@ -2794,6 +2843,44 @@ def test_the_gate_refuses_a_prior_claim_far_from_the_signal():
     assert pack_module.PRIOR_MISMATCH not in pack_module.gate_problems(_golden())
 
 
+def test_the_mismatch_gate_also_fires_for_a_quantity_with_no_error_on_either_side():
+    """Polish round 2: with no error on either side there is no sigma, so a period more than 1 percent from the
+    claim's, or a mid-transit time more than 0.1 d from it, is a mismatch too; the message states the rule."""
+    assert "more than 1 percent" in pack_module.PRIOR_MISMATCH_NO_ERROR and "0.1 d" in pack_module.PRIOR_MISMATCH_NO_ERROR
+    assert pack_module.PRIOR_MISMATCH_NO_ERROR.startswith(pack_module.PRIOR_MISMATCH)
+    claim = {k: PRIOR_CLAIM[k] for k in dossier_module.PRIOR_CLAIM_PUBLIC}
+    bare = {"ephemeris": {"period_days": 13.769414}, "timing": {"ok": False, "t0": 136.314294, "period": 13.769414},
+            "prior_claims": [claim]}
+    cmp = pack_module.prior_comparison(bare)
+    assert cmp["period"]["sigma"] is None and cmp["epoch"]["sigma"] is None
+    assert not pack_module._unerred_mismatch("period", cmp["period"])
+    assert not pack_module._unerred_mismatch("epoch", cmp["epoch"])
+    # the epoch: 0.05 d off passes, 0.3 d off does not
+    for shift, fires in ((0.05, False), (0.3, True)):
+        moved = {**bare, "timing": {**bare["timing"], "t0": 136.314294 + shift}}
+        row = pack_module.prior_comparison(moved)["epoch"]
+        assert row["sigma"] is None and pack_module._unerred_mismatch("epoch", row) is fires
+    # the period: 0.95 percent off passes, 1.65 percent off does not
+    for period, fires in ((13.9, False), (14.0, True)):
+        row = pack_module.prior_comparison({**bare, "ephemeris": {"period_days": period}})["period"]
+        assert pack_module._unerred_mismatch("period", row) is fires
+    # a quantity with an error on either side keeps the sigma rule alone
+    assert not pack_module._unerred_mismatch("period", {"ours": 14.0, "theirs": 13.0, "sigma": 2.0})
+    assert not pack_module._unerred_mismatch("depth", {"ours": 1000.0, "theirs": 3000.0, "sigma": None})
+    assert not pack_module._unerred_mismatch("period", None)
+    # through the gate: the golden with no period error and a claim 3 percent off
+    golden = _golden()
+    period = golden["ephemeris"]["period_days"]
+    golden["ephemeris"] = {**golden["ephemeris"], "period_err_days": None}
+    off = {**claim, "period_days": period * 1.03, "period_err_days": None, "t0_bjd": None, "depth_ppm": None,
+           "fpp": None}
+    golden["prior_claims"] = [off]
+    assert pack_module.PRIOR_MISMATCH_NO_ERROR in pack_module.gate_problems(golden)
+    assert pack_module.PRIOR_MISMATCH not in pack_module.gate_problems(golden)
+    golden["prior_claims"] = [{**off, "period_days": period * 1.005}]
+    assert pack_module.PRIOR_MISMATCH_NO_ERROR not in pack_module.gate_problems(golden)
+
+
 def test_a_stale_cross_check_is_refused_once():
     """Minor 1: a stale cross-check is refused by its own reason, not again for the FPP order of the abstract and
     the Zenodo description."""
@@ -2836,8 +2923,8 @@ def test_the_follow_up_both_tools_and_radius_sentences_read_as_the_review_asks()
 
 def test_the_readme_gives_the_shape_call_with_its_evidence_and_the_note_does_not_cite_it():
     """I-4: the README's b row says "with the density prior"; a sentence gives the free fit, the chi-square
-    difference against the rule of 2 and the reading, citing Seager and Mallén-Ornelas (2003) and Kipping (2010),
-    both in the README's list; the note keeps "unconstrained at this cadence" without them."""
+    difference against the rule of 2 and the reading, citing Seager and Mallén-Ornelas (2003) at the density and
+    Kipping (2010) at the exposure integration, which the README names, both in the README's list; the note keeps "unconstrained at this cadence" without them."""
     golden = _golden()
     assert pack_module.b_set_by_prior(golden)
     readme = render_readme(golden, {})
@@ -2845,7 +2932,15 @@ def test_the_readme_gives_the_shape_call_with_its_evidence_and_the_note_does_not
     text = pack_module.shape_fit_text(golden)
     assert text.startswith("Shape fit: with the density prior b is 0.468 +0.052/-0.058 and a/R* 77.9")
     assert ("with a chi-square lower by only 0.27, within the rule of 2: the data do not constrain them; the quoted "
-            "values follow the host's density (Seager and Mallén-Ornelas 2003; Kipping 2010).") in text
+            "values follow the host's density (Seager and Mallén-Ornelas 2003). The model is integrated over the "
+            "29.4-minute exposure, which matters at this cadence (Kipping 2010).") in text
+    assert text.count("Kipping") == 1 and text.index("Seager") < text.index("integrated") < text.index("Kipping")
+    stated = json.loads(json.dumps(golden))
+    stated["shape"]["exposure_min"] = 29.43
+    assert "integrated over the 29.4-minute exposure" in pack_module.shape_fit_text(stated)
+    stated["shape"]["exposure_min"] = 1.966
+    assert "integrated over the 2.0-minute exposure, which matters at this cadence (Kipping 2010)" \
+        in pack_module.shape_fit_text(stated)
     assert text in readme
     assert "- Seager, S., & Mallén-Ornelas, G. 2003, ApJ, 585, 1038" in readme
     assert "- Kipping, D. M. 2010, MNRAS, 408, 1758" in readme
@@ -2892,12 +2987,13 @@ def test_the_silent_seasons_and_the_secondary_read_without_nested_brackets():
     """Minor 10 and the Task 13 parked minor: a non-voting season's reason is one clause; the note's short secondary
     keeps "in the same fold"."""
     assert pack_module._silent_sentence([{"season": 3, "non_voting_reason": "box cut: ambiguous (1.8 sigma)"}]) == \
-        "Season 3 did not vote: box cut, ambiguous at 1.8 sigma."
+        "Season 3 did not vote: box cut: ambiguous at 1.8 sigma."
     assert pack_module._silent_sentence([{"season": 0, "non_voting_reason": "box cut"},
                                          {"season": 3, "non_voting_reason": None}]) == \
         "Seasons 0 and 3 did not vote: season 0 box cut; season 3 no reason stored."
     assert pack_text.reason_words("too few points (0.5 sigma)") == "too few points at 0.5 sigma"
     assert pack_text.reason_words("") == "no reason stored"
+    assert pack_text.reason_words("box incomplete: target") == "box incomplete: target"      # one reason, not two
     short = str(pack_module.secondary_sentence(_golden(), True, short=True))
     assert ", and positive excursions in the same fold reach 5.2 sigma" in short
 

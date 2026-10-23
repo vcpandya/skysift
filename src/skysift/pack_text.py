@@ -18,11 +18,11 @@ class Raw(str):
 
 def reason_words(reason) -> str:
     """A stored reason as one clause without brackets inside brackets (round-2 final review, minor 10): "box cut:
-    ambiguous (1.8 sigma)" reads "box cut, ambiguous at 1.8 sigma"; "no reason stored" when there is none."""
+    ambiguous (1.8 sigma)" reads "box cut: ambiguous at 1.8 sigma"; "no reason stored" when there is none."""
     if not reason:
         return "no reason stored"
-    text = re.sub(r"\s*\((-?[\d.]+ sigma)\)", r" at \1", str(reason))
-    return text.replace(": ", ", ")
+    # the colon stays: "box incomplete: target" is one reason, not two (polish round 2)
+    return re.sub(r"\s*\((-?[\d.]+ sigma)\)", r" at \1", str(reason))
 
 
 def _num(x) -> float | None:
