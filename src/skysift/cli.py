@@ -590,8 +590,10 @@ def ui(host: str = "127.0.0.1", port: int = 8765, no_browser: bool = typer.Optio
                                  param_hint="--host")
     s, store, blob = _ctx()
     (s.data_dir / "ui").mkdir(parents=True, exist_ok=True)
+    # filename=, not handlers=[FileHandler(...)]: basicConfig opens the file only when it installs the handler, so a
+    # root logger that already has one (pytest's capture, any embedding) leaves no unclosed file behind
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s",
-                        handlers=[logging.FileHandler(s.data_dir / "ui" / "dashboard.log", encoding="utf-8")])
+                        filename=s.data_dir / "ui" / "dashboard.log", encoding="utf-8")
     plotly = ensure_plotly(s.data_dir)
     application = create_app(s, store=store, blob=blob, launcher=SweepLauncher(s.data_dir), plotly_path=plotly)
     shown = "127.0.0.1" if host == "0.0.0.0" else host

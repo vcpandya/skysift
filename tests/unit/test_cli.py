@@ -189,6 +189,8 @@ def test_ui_refuses_non_loopback_host(settings, monkeypatch):
     assert r.exit_code != 0 and "loopback" in r.output
 
 
+# the round 3 final review: no unclosed dashboard.log (the parked ResourceWarning) under warnings as errors
+@pytest.mark.filterwarnings("error")
 def test_ui_starts_uvicorn_on_loopback(settings, monkeypatch):
     import uvicorn
     seen = {}
@@ -198,6 +200,8 @@ def test_ui_starts_uvicorn_on_loopback(settings, monkeypatch):
     assert seen["host"] == "127.0.0.1" and seen["port"] == 8899 and seen["app"].title == "SkySift"
 
 
+# the round 3 final review: no unclosed dashboard.log (the parked ResourceWarning) under warnings as errors
+@pytest.mark.filterwarnings("error")
 def test_ui_allows_all_interfaces_only_inside_the_container(settings, monkeypatch):
     import uvicorn
     seen = {}
@@ -209,6 +213,8 @@ def test_ui_allows_all_interfaces_only_inside_the_container(settings, monkeypatc
     assert "http://127.0.0.1:8765/" in r.output
 
 
+# the round 3 final review: no unclosed dashboard.log (the parked ResourceWarning) under warnings as errors
+@pytest.mark.filterwarnings("error")
 def test_ui_brackets_an_ipv6_host_in_the_printed_url(settings, monkeypatch):
     import uvicorn
     monkeypatch.setattr(uvicorn, "run", lambda application, **kw: None)
