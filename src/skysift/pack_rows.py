@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 import numpy as np
 
 from skysift import ephemeris as ephem
+from skysift import stars as stars_module
 from skysift.ephemeris import BKJD_OFFSET
 from skysift.pack_text import _bjd, _errors, _num, date_words, pm_digits, pm_text, value_text
 
@@ -420,7 +421,7 @@ def extinction_rows(star: dict, gaia_inputs: str) -> list[dict]:
         return {"parameter": name, "value": _num(v["median"]), "minus": _num(v.get("minus")),
                 "plus": _num(v.get("plus")), "unit": "mag", "method": method, "inputs": gaia_inputs,
                 "reference": reference}
-    if e.get("state") != "not available" and _num(e.get("ebv")) is not None:
+    if e.get("state") != stars_module.EXT_NOT_AVAILABLE and _num(e.get("ebv")) is not None:
         ebv = _num(e["ebv"])
         rows.append({"parameter": EXTINCTION_ROWS[0][0], "value": ebv,
                      "minus": round(ebv - _num(e.get("ebv_p16")), 6), "plus": round(_num(e.get("ebv_p84")) - ebv, 6),
@@ -431,8 +432,9 @@ def extinction_rows(star: dict, gaia_inputs: str) -> list[dict]:
             name, e.get(key), "the stored E(B-V) through the Gaia (E)DR3 law, R_V 3.1, A_Ks = 0.117 A_0",
             f"Green et al. 2019; {LAW_REFERENCE}"))]
     col = e.get("column")
-    if isinstance(col, dict) and col.get("status") == "ok" and _num(col.get("ebv")) is not None:
-        rows.append({"parameter": COLUMN_ROWS[0][0], "value": _num(col["ebv"]), "minus": None, "plus": None,
+    if isinstance(col, dict) and col.get("status") == stars_module.COLUMN_OK and _num(col.get("ebv")) is not None:
+        spread = _num(col.get("ebv_std")) or None            # minor 8: the spread inside the 5 arcmin circle
+        rows.append({"parameter": COLUMN_ROWS[0][0], "value": _num(col["ebv"]), "minus": spread, "plus": spread,
                      "unit": "mag", "method": f"{col.get('source')}, the value at the star's position",
                      "inputs": f"{col.get('url')}; queried {col.get('queried_utc')}",
                      "reference": "Schlafly and Finkbeiner 2011"})

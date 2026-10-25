@@ -3204,7 +3204,7 @@ def test_without_a_3d_value_every_text_brackets_the_planet_and_adopts_the_unredd
     plain = pack_module.reddening_plain(data)
     assert plain.startswith("Reddening: not measured at the star's distance (Bayestar19 not available at build "
                             "time), so the unreddened parameters are adopted")
-    assert "full-column E(B-V) of 0.100 (Schlafly and Finkbeiner 2011) is an upper bound" in plain
+    assert "full-column E(B-V) of 0.100 ± 0.010 (Schlafly and Finkbeiner 2011) is an upper bound" in plain
     assert pack_text.value_text(star["extinction"]["column"]["rp_rearth"]) in plain
     for name in ("exofop/note.txt", "archive_email.txt"):
         assert plain in " ".join(texts[name].split()), name
@@ -3215,7 +3215,7 @@ def test_without_a_3d_value_every_text_brackets_the_planet_and_adopts_the_unredd
     assert set(rows) == {"Unreddened", "Full column (Schlafly and Finkbeiner 2011)", "GSP-Phot (Gaia DR3)"}
     assert rows["Unreddened"][-1] == "adopted" and rows["Unreddened"][1] == "0 (assumed)"
     assert rows["Unreddened"][6] == pack_text.value_text(star["unreddened"]["teff"])
-    assert rows["Full column (Schlafly and Finkbeiner 2011)"][1] == "0.100"
+    assert rows["Full column (Schlafly and Finkbeiner 2011)"][1] == "0.100 ± 0.010"
     assert rows["Full column (Schlafly and Finkbeiner 2011)"][-1] == "upper bound"
     assert rows["GSP-Phot (Gaia DR3)"][-1] == "not adopted" and rows["GSP-Phot (Gaia DR3)"][6] == "3,855"
     assert pack_module.reddening_key(data) in readme and "biased for cool dwarfs (Andrae et al. 2023)" in readme
@@ -3288,3 +3288,21 @@ def test_an_uncharacterised_host_keeps_its_crowding_metric_in_the_readme():
     assert text and text.startswith("The KBonus crowding metric is C = 0.8565")
     readme = render_readme(bare, {})
     assert f"Star: {text}" in readme
+
+
+def test_the_plain_texts_carry_the_height_clause_and_the_note_does_not(env_with_dossier):
+    """Task 16 fix round 1, ruling (c) and minors 7 and 8."""
+    data = _stored(env_with_dossier)
+    e = data["star"]["extinction"]
+    assert e["height_clause"].startswith(f"the star sits about {e['height_pc']} pc above the plane")
+    plain = pack_module.reddening_plain(data)
+    assert f"; {e['height_clause']}." in plain and e["height_clause"] not in render_note(data)
+    assert "full-column E(B-V) of 0.100 ± 0.010" in plain
+    rows = {r[0]: r for r in _readme_table(render_readme(data, {}))}
+    assert rows["Full column (Schlafly and Finkbeiner 2011)"][1] == "0.100 ± 0.010"
+    # minor 7: no GSP-Phot row, no GSP-Phot sentence in the key and no Andrae et al. 2023 for it
+    bare = {**data, "star": {**data["star"], "ebpminrp_gspphot": None,
+                             "gaia_cross_check": {**data["star"]["gaia_cross_check"], "teff_gspphot": None}}}
+    assert "GSP-Phot (Gaia DR3)" not in {r["estimate"] for r in pack_module.reddening_rows(bare)}
+    assert "GSP-Phot" not in pack_module.reddening_key(bare) and "andrae2023" not in pack_module.readme_works(bare)
+    assert "GSP-Phot" in pack_module.reddening_key(data)

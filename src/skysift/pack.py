@@ -56,6 +56,7 @@ from skysift import crosscheck as cc
 from skysift import dossier as ds
 from skysift import fpp as fpp_model
 from skysift import jsonutil
+from skysift import stars as stars_module
 from skysift import tess as tess_module
 from skysift.ephemeris import BKJD_OFFSET, SES_MIN, SHAPE_PRIOR_DRAW, predict_from
 from skysift.exofop import (
@@ -914,12 +915,12 @@ def _reddening_keys(data: dict) -> list[str]:
     """The works the README's reddening paragraph and table rest on (spec 12.3): the Gaia (E)DR3 law's Fitzpatrick et
     al. 2019 and Riello et al. 2021 and the A_Ks ratio's Cardelli et al. 1989 when the law was applied, Schlafly and
     Finkbeiner 2011 for a full column the note does not cite, Green et al. 2019 for a 3D value, and Andrae et al. 2023
-    for the GSP-Phot caveat the table's key always prints."""
+    for the GSP-Phot caveat the table's key prints with a GSP-Phot row (minor 7)."""
     state, col = reddening_state(data), _column_derived(data)
     if state is None:
         return []
-    keys = ["andrae2023"] + (["cardelli1989", "fitzpatrick2019", "riello2021"] if state == RED_ADOPTED or col is not None
-                             else [])
+    keys = ((["andrae2023"] if _gsp_row(data) else [])
+            + (["cardelli1989", "fitzpatrick2019", "riello2021"] if state == RED_ADOPTED or col is not None else []))
     return keys + (["schlafly2011"] if col is not None else []) + (["green2019"] if state == RED_ADOPTED else [])
 
 
@@ -1499,16 +1500,39 @@ def reddening_state(data: dict) -> str | None:
     ext = (data.get("star") or {}).get("extinction")
     if not isinstance(ext, dict) or not star_characterized(data):
         return None
-    if ext.get("state") != "not available":
+    if ext.get("state") != stars_module.EXT_NOT_AVAILABLE:
         return RED_ADOPTED
     column = ext.get("column")
-    return RED_BRACKET if isinstance(column, dict) and column.get("status") == "ok" else RED_NOT_AVAILABLE
+    ok = isinstance(column, dict) and column.get("status") == stars_module.COLUMN_OK
+    return RED_BRACKET if ok else RED_NOT_AVAILABLE
 
 
 def _column_derived(data: dict) -> dict | None:
     """The full-column block when it carries what the law made of it (``stars.derive``), else None."""
     col = ((data.get("star") or {}).get("extinction") or {}).get("column")
-    return col if isinstance(col, dict) and col.get("status") == "ok" and "ebprp" in col else None
+    return col if isinstance(col, dict) and col.get("status") == stars_module.COLUMN_OK and "ebprp" in col else None
+
+
+def column_ebv_text(col: dict) -> str:
+    """The full-column E(B-V) as the plain texts print it (minor 8): "0.674 ± 0.034", with the stored spread inside the
+    service's 5 arcmin circle; the value alone without one."""
+    std = _num(col.get("ebv_std"))
+    return f"{_num(col['ebv']):.3f} ± {std:.3f}" if std else f"{_num(col['ebv']):.3f}"
+
+
+def _height(data: dict) -> str:
+    """"; <clause>" (ruling (c): the star's height above the plane against the dust layer, ``stars.height_fields``)
+    for the plain texts' full-column sentence; empty without one."""
+    clause = ((data.get("star") or {}).get("extinction") or {}).get("height_clause")
+    return f"; {clause}" if clause else ""
+
+
+def _gsp_row(data: dict) -> bool:
+    """Whether the README's reddening table has a GSP-Phot row (its E(BP-RP) or its Teff). Minor 7: the key's
+    GSP-Phot sentence and Andrae et al. 2023 come only with it."""
+    star = data.get("star") or {}
+    return (_num(star.get("ebpminrp_gspphot")) is not None
+            or _num((star.get("gaia_cross_check") or {}).get("teff_gspphot")) is not None)
 
 
 def _red(v) -> str | None:
@@ -1569,7 +1593,7 @@ def reddening_plain(data: dict) -> str | None:
     gsp = _gsp_clause(star)
     col = _column_derived(data)
     if state == RED_ADOPTED:
-        how = (f", stored by hand ({e.get('source')})," if e.get("state") == "manual" else "")
+        how = (f", stored by hand ({e.get('source')})," if e.get("state") == stars_module.EXT_MANUAL else "")
         flag = (", outside the map's reliable distance range on this sightline" if e.get("reliable_distance") is False
                 else "")
         law = [f"E(BP-RP) {_red(e.get('ebprp'))}", f"A_G {_red(e.get('a_g'))}", f"A_Ks {_red(e.get('a_ks'))}"]
@@ -1578,8 +1602,8 @@ def reddening_plain(data: dict) -> str | None:
                 f"sightline average{flag}, gives {law[0]}, {law[1]} and {law[2]}; unreddened, the earlier assumption, "
                 f"{_trio(unred, unred.get('rp_rearth'))} against the adopted {_trio(star, planet.get('rp_rearth'))}")
         if col is not None:
-            text += (f"; the full-column E(B-V) of {col['ebv']:.3f} (Schlafly and Finkbeiner 2011), an upper bound, "
-                     f"gives {_trio(col, col.get('rp_rearth'))}")
+            text += (f"; the full-column E(B-V) of {column_ebv_text(col)} (Schlafly and Finkbeiner 2011), an upper "
+                     f"bound, gives {_trio(col, col.get('rp_rearth'))}{_height(data)}")
         return text + (f"; {gsp}." if gsp else ".")
     if state == RED_BRACKET:
         text = ("Reddening: not measured at the star's distance (Bayestar19 not available at build time), so the "
@@ -1587,9 +1611,9 @@ def reddening_plain(data: dict) -> str | None:
         if col is not None:
             law = [f"E(BP-RP) {_red(col.get('ebprp'))}", f"A_G {_red(col.get('a_g'))}",
                    f"A_Ks {_red(col.get('a_ks'))}"]
-            text += (f" The full-column E(B-V) of {col['ebv']:.3f} (Schlafly and Finkbeiner 2011) is an upper bound, "
-                     "since it counts the dust beyond the star too: through the Gaia DR3 law it gives "
-                     f"{law[0]}, {law[1]} and {law[2]}, and {_trio(col, col.get('rp_rearth'))}.")
+            text += (f" The full-column E(B-V) of {column_ebv_text(col)} (Schlafly and Finkbeiner 2011) is an upper "
+                     "bound, since it counts the dust beyond the star too: through the Gaia DR3 law it gives "
+                     f"{law[0]}, {law[1]} and {law[2]}, and {_trio(col, col.get('rp_rearth'))}{_height(data)}.")
         return text + (f" {_capital(gsp)}." if gsp else "")
     text = ("Reddening: not measured (Bayestar19 not available at build time, and the IRSA full-column value could "
             "not be fetched), so the unreddened parameters are adopted.")
@@ -1625,13 +1649,13 @@ def reddening_rows(data: dict) -> list[dict]:
                  "status": "the earlier assumption" if state == RED_ADOPTED else "adopted"})
     col = _column_derived(data)
     if col is not None:
-        rows.append({"estimate": FULL_COLUMN, "ebv": f"{col['ebv']:.3f}",
+        rows.append({"estimate": FULL_COLUMN, "ebv": column_ebv_text(col),
                      **{k: _red(col.get(k)) or na for k in ("ebprp", "a_g", "a_ks")},
                      "bp_rp0": _f(col.get("bp_rp0"), 3) or na,
                      **physical(col, col.get("rp_rearth"), col.get("insolation_earth")), "status": "upper bound"})
     red = _num(star.get("ebpminrp_gspphot"))
     teff = _num((star.get("gaia_cross_check") or {}).get("teff_gspphot"))
-    if red is not None or teff is not None:
+    if _gsp_row(data):
         rows.append({"estimate": "GSP-Phot (Gaia DR3)", "ebv": na, "ebprp": _f(red, 2) or na, "a_g": na, "a_ks": na,
                      "bp_rp0": na, "teff": f"{teff:,.0f}" if teff is not None else na, "radius": na, "mass": na,
                      "insolation": na, "rp": na, "status": "not adopted"})
@@ -1657,7 +1681,8 @@ def reddening_key(data: dict) -> str | None:
     if _column_derived(data) is not None:
         parts.append("Full column: the IRSA DUST value at the star, the whole line of sight with the dust beyond the "
                      "star, so an upper bound.")
-    parts.append("GSP-Phot: Gaia's own fit, biased for cool dwarfs (Andrae et al. 2023), not adopted.")
+    if _gsp_row(data):
+        parts.append("GSP-Phot: Gaia's own fit, biased for cool dwarfs (Andrae et al. 2023), not adopted.")
     if state == RED_ADOPTED or _column_derived(data) is not None:
         parts.append(GAIA_LAW_WORDS)
     return " ".join(parts)

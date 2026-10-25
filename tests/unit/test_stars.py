@@ -409,3 +409,32 @@ def test_load_extinction_reads_validates_and_refuses(tmp_path):
     (folder / "extinction.json").write_text("{", encoding="utf-8")
     with pytest.raises(stars.ExtinctionError, match="does not read as JSON"):
         stars.load_extinction("kic-006146676", tmp_path)
+
+
+def test_the_galactic_latitude_and_the_height_clause():
+    """Task 16 fix round 1, ruling (c): z = d sin|b| from the Gaia distance; over 150 pc the full column is probably
+    close to the true reddening, below it the star sits inside the dust layer."""
+    assert stars.galactic_latitude(297.86871, 41.455567) == pytest.approx(7.4198, abs=1e-3)   # astropy: 7.4198
+    assert stars.galactic_latitude(266.40499, -28.93617) == pytest.approx(0.0, abs=0.01)     # Sgr A* region
+    gaia = gaia_row_6146676()
+    near = derive(gaia, 40.29109, 0.048, 2165e-6, np.random.default_rng(1), extinction=NOT_AVAILABLE)[0].extinction
+    assert 35 <= near["height_pc"] <= 42 and near["b_deg"] == pytest.approx(7.42, abs=0.01)
+    assert near["height_clause"] == (f"the star sits about {near['height_pc']} pc above the plane, inside the dust "
+                                     "layer, so its true reddening lies well inside the bracket")
+    far_row = replace(gaia, parallax=0.5)                         # about 1,900 pc: z about 250 pc
+    far = derive(far_row, 40.29109, 0.048, 2165e-6, np.random.default_rng(1), extinction=NOT_AVAILABLE)[0].extinction
+    assert far["height_pc"] > stars.HEIGHT_DUST_LAYER_PC == 150
+    assert far["height_clause"] == (f"the star sits about {far['height_pc']} pc above the plane, so the full-column "
+                                    "value is probably close to its true reddening")
+
+
+def test_the_column_end_carries_the_spread_of_its_e_b_v():
+    """Minor 8: the column E(B-V) is drawn from a normal with the stored std, held at 0 and above, so the upper end's
+    extinctions carry an error; without a std it is the single value."""
+    gaia = gaia_row_6146676()
+    col = derive(gaia, 40.29109, 0.048, 2165e-6, np.random.default_rng(1), extinction=NOT_AVAILABLE)[0]
+    e = col.extinction["column"]
+    assert e["ebprp"]["minus"] > 0 and e["ebprp"]["plus"] > 0 and e["ebprp"]["median"] == pytest.approx(0.122, abs=0.003)
+    bare = {**NOT_AVAILABLE, "column": {k: v for k, v in COLUMN.items() if k != "ebv_std"}}
+    flat = derive(gaia, 40.29109, 0.048, 2165e-6, np.random.default_rng(1), extinction=bare)[0].extinction["column"]
+    assert flat["ebprp"]["minus"] == flat["ebprp"]["plus"] == 0.0

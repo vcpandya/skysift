@@ -1719,6 +1719,8 @@ def extinction_keys(target_id: str) -> dict:
     except stars.ExtinctionError:
         return {"extinction_ebv": MALFORMED, "column_ebv": MALFORMED}
     return {"extinction_ebv": (block or {}).get("ebv"), "column_ebv": stars.column_ebv(block)}
+
+
 PRIOR_CLAIM_FIELDS = ("doi", "date", "author", "title", "status", "note", "relationship", "development_note",
                       "development_note_short", *PRIOR_CLAIM_NUMBERS, "fpp_tool")
 PRIOR_CLAIM_REQUIRED = ("doi", "date", "author", "title")

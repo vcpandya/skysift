@@ -89,6 +89,13 @@ EXTINCTION_STATES = (EXT_ADOPTED, EXT_MANUAL, EXT_NOT_AVAILABLE)
 COLUMN_OK = "ok"
 COLUMN_FIELDS = ("ebv", "source", "queried_utc")
 BAYESTAR_LABEL = "Bayestar19"
+# Task 16 fix round 1, ruling (c): the star's height above the plane, z = d sin|b|, against the dust layer
+HEIGHT_DUST_LAYER_PC = 150.0
+GALACTIC_POLE = (192.85948, 27.12825)  # the north galactic pole in ICRS, degrees (Hipparcos and Gaia convention)
+HEIGHT_ABOVE = ("the star sits about {z} pc {side} the plane, so the full-column value is probably close to its true "
+                "reddening")
+HEIGHT_INSIDE = ("the star sits about {z} pc {side} the plane, inside the dust layer, so its true reddening lies well "
+                 "inside the bracket")
 COLUMN_LABEL = "the full column (Schlafly and Finkbeiner 2011)"
 KOPPARAPU_TEFF = (2600.0, 7200.0)
 # Kopparapu et al. 2013, erratum 2013 ApJ 770 82: effective-flux coefficients, t = Teff - 5780. The hand-built template
@@ -506,6 +513,24 @@ def gaia_extinction(ebv, bp_rp_observed: float) -> dict:
     return out
 
 
+def galactic_latitude(ra_deg: float, dec_deg: float) -> float:
+    """The galactic latitude b in degrees of an ICRS position: sin b = cos d cos d_P cos(a - a_P) + sin d sin d_P with
+    the north galactic pole at ``GALACTIC_POLE`` (good to about 0.001 deg, ample for a height above the plane)."""
+    a, d = math.radians(ra_deg), math.radians(dec_deg)
+    ap, dp = (math.radians(x) for x in GALACTIC_POLE)
+    return math.degrees(math.asin(math.cos(d) * math.cos(dp) * math.cos(a - ap) + math.sin(d) * math.sin(dp)))
+
+
+def height_fields(ra_deg: float, dec_deg: float, distance_pc: float) -> dict:
+    """{"b_deg", "height_pc", "height_clause"}: z = d sin|b| rounded to the parsec, and the clause of ruling (c),
+    ``HEIGHT_ABOVE`` over ``HEIGHT_DUST_LAYER_PC``, ``HEIGHT_INSIDE`` at or below it."""
+    b = galactic_latitude(ra_deg, dec_deg)
+    z = round(distance_pc * math.sin(math.radians(abs(b))))      # the printed parsec decides the branch too
+    side = "above" if b >= 0 else "below"
+    words = HEIGHT_ABOVE if z > HEIGHT_DUST_LAYER_PC else HEIGHT_INSIDE
+    return {"b_deg": round(b, 4), "height_pc": z, "height_clause": words.format(z=z, side=side)}
+
+
 def extinction_state(block: dict | None) -> str | None:
     """The 3D value's state of a stored block: ``EXT_ADOPTED`` (a block without ``status`` is a stored Bayestar19
     value), ``EXT_MANUAL`` or ``EXT_NOT_AVAILABLE``; None without a block."""
@@ -561,6 +586,8 @@ def _block_problem(block) -> str | None:
                 return "column ebv is not a finite number at or above 0"
             if not str(col["source"]).strip():
                 return "column source is empty"
+            if "ebv_std" in col and (not _finite(col["ebv_std"]) or col["ebv_std"] < 0):
+                return "column ebv_std is not a finite number at or above 0"
         elif col.get("status") == EXT_NOT_AVAILABLE:
             if not str(col.get("reason") or "").strip():
                 return "column reason is empty"
@@ -613,8 +640,10 @@ def derive(gaia: GaiaRow | None, period: float, fit_k: float | None, depth: floa
     A 3D value (adopted or manual) is drawn as a split normal from its percentiles (a generator of its own,
     ``EXTINCTION_SEED``), turned into E(BP-RP), A_G and A_Ks by ``gaia_extinction`` and taken out of the colour, the
     absolute magnitudes and the Ks draws: the adopted star. Without one the unreddened star stays adopted. The
-    full-column E(B-V), when stored, runs through the same law and draws from another copy of ``rng``: the upper end
-    of the bracket, under ``extinction["column"]``."""
+    full-column E(B-V), when stored (a normal with its stored ``ebv_std``, held at 0 and above), runs through the
+    same law and draws from another copy of ``rng``: the upper end of the bracket, under ``extinction["column"]``. The
+    block also carries the star's height above the plane (``height_fields``: ``b_deg``, ``height_pc``,
+    ``height_clause``) from the Gaia distance."""
     if extinction is None:
         return _derive(gaia, period, fit_k, depth, rng)
     plain_rng, column_rng = copy.deepcopy(rng), copy.deepcopy(rng)
@@ -633,9 +662,14 @@ def derive(gaia: GaiaRow | None, period: float, fit_k: float | None, depth: floa
                       **_values(e, source=f"{BAYESTAR_LABEL} E(B-V) through the Gaia (E)DR3 law")})
     else:
         star, planet = _derive(gaia, period, fit_k, depth, rng)
+    if plain.distance_pc is not None:
+        block.update(height_fields(gaia.ra, gaia.dec, plain.distance_pc.median))
     ebv_col = column_ebv(extinction)
     if ebv_col is not None:
-        e = gaia_extinction(np.full(N_DRAWS, ebv_col), gaia.bp_rp)
+        # minor 8: the stored spread inside the 5 arcmin circle, a normal held at 0 and above on a generator of its own
+        std = float(extinction["column"].get("ebv_std") or 0.0)
+        ebv = np.maximum(np.random.default_rng(EXTINCTION_SEED + 1).normal(ebv_col, std, N_DRAWS), 0.0)
+        e = gaia_extinction(ebv, gaia.bp_rp)
         cs, cp = _derive(gaia, period, fit_k, depth, column_rng, e, COLUMN_LABEL, f"(E(B-V) {ebv_col:.3f})")
         block["column"] = {**extinction["column"], "bp_rp0": round(float(np.median(e["bp_rp0"])), 4),
                            "colour_held": bool(np.any(e["colour_held"])),

@@ -4,6 +4,7 @@ WORKDIR /app
 COPY pyproject.toml README.md ./
 COPY src ./src
 COPY config ./config
+COPY docs/candidates ./docs/candidates
 # Editable install so that config/ (resolved relative to the source tree) is found at run time.
 # Behind a TLS-inspecting proxy or antivirus, pass its root certificate as a build secret
 # (docker build --secret id=pipcert,src=root.pem ...); production builds pass nothing and verify PyPI as usual.

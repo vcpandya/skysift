@@ -70,3 +70,11 @@ def test_readme_documents_the_dashboard():
     text = (ROOT / "README.md").read_text(encoding="utf-8")
     assert "python -m skysift ui" in text and "127.0.0.1:8765" in text and "--periodogram" in text
     assert "SKYSIFT_STORE_PERIODOGRAM" in (ROOT / ".env.example").read_text(encoding="utf-8")
+
+
+def test_the_image_carries_the_stored_extinction():
+    """Task 16 fix round 1, ruling (d): dossier generation reads docs/candidates/<target>/extinction.json, so the image
+    copies the folder to where ``dossier.EXTINCTION_DIR`` points (/app/docs/candidates)."""
+    text = (ROOT / "docker" / "Dockerfile").read_text(encoding="utf-8")
+    assert "COPY docs/candidates ./docs/candidates" in text.splitlines()
+    assert "docs" not in (ROOT / ".dockerignore").read_text(encoding="utf-8").split()

@@ -102,8 +102,9 @@ def test_query_column_stores_the_value_or_the_reason_and_asks_once():
     calls = []
     ok = ex.query_column(297.86871, 41.455567, fetch=fake_fetch(IRSA_OK, calls), now="2026-10-25T10:00:00+00:00")
     assert ok == {"status": "ok", "ebv": 0.6741, "ebv_mean": 0.6518, "ebv_std": 0.0344,
-                  "stats_radius_arcmin": ex.COLUMN_STATS_ARCMIN, "source": stars_source(), "queried_utc": "2026-10-25T10:00:00+00:00",
-                  "ra": 297.86871, "dec": 41.455567, "url": ex.column_url(297.86871, 41.455567)}
+                  "stats_radius_arcmin": ex.COLUMN_STATS_ARCMIN, "source": stars_source(),
+                  "queried_utc": "2026-10-25T10:00:00+00:00",
+                  "ra": 297.86871, "dec": 41.455567, "url": ex.column_url(297.86871, 41.455567), "used": "pixel"}
     assert calls == [{"url": ex.column_url(297.86871, 41.455567), "params": None, "service": "irsa-dust",
                       "attempts": 1}]
     down = ex.query_column(297.86871, 41.455567, fetch=fake_fetch(ServiceUnavailable("irsa-dust timed out")),
@@ -126,14 +127,15 @@ def test_main_writes_the_column_and_the_3d_state_once(tmp_path, capsys):
     calls = []
     assert ex.main(args, fetch=fake_fetch(IRSA_OK, calls)) == 3                  # written; the 3D value missing
     block = json.loads(ex.store_path(tmp_path / "c", TARGET).read_text(encoding="utf-8"))
-    assert block["status"] == "not available" and block["reason"] == ex.BAYESTAR_NOT_AVAILABLE
+    assert block["status"] == "not available"
+    assert block["reason"].startswith("Bayestar19 (Green et al. 2019) not available: the Argonaut web query failed")
     assert block["target"] == TARGET and block["distance_pc"] == 303.0 and block["column"]["ebv"] == 0.6741
     assert stars.load_extinction(TARGET, tmp_path / "c") == block
     err = capsys.readouterr().err
     assert "GET https://irsa.ipac.caltech.edu/cgi-bin/DUST/nph-dust" in err and "-> 200" in err
     assert "E(B-V) full column 0.674" in err and "--store --ebv" in err and "--distance-pc 303" in err
     assert ex.main(args, fetch=fake_fetch(AssertionError("no second query"))) == 0
-    assert "stored; nothing to do" in capsys.readouterr().err and len(calls) == 1
+    assert "stored; nothing to do" in capsys.readouterr().err and len(calls) == 2
     assert ex.main([*args, "--force"], fetch=fake_fetch(ServiceUnavailable("irsa-dust down"))) == 3
     again = json.loads(ex.store_path(tmp_path / "c", TARGET).read_text(encoding="utf-8"))
     assert again["column"] == {**again["column"], "status": "not available", "reason": "irsa-dust down"}
@@ -182,4 +184,101 @@ def test_all_runs_each_live_target_and_returns_the_largest_exit_code(tmp_path, m
     calls = []
     assert ex.main(["--all", "--data-dir", str(tmp_path / "data"), "--root", str(tmp_path / "c")],
                    fetch=fake_fetch(IRSA_OK, calls)) == 3                   # kic-005689121 has no dossier: 2 < 3
-    assert len(calls) == 1 and ex.store_path(tmp_path / "c", TARGET).is_file()
+    assert len(calls) == 2 and ex.store_path(tmp_path / "c", TARGET).is_file()
+
+
+# ---------------------------------------------------------------------------------------------------- fix round 1
+
+ARGONAUT_OK = json.dumps([0.05, 0.06, 0.07]).encode()       # Bayestar19's own units at the 16th, 50th, 84th percentile
+NEUTRAL_WORDS = ("owner", "approval", "download")
+
+
+def routed_fetch(argonaut, irsa, calls=None):
+    """``net.fetch`` answering the Argonaut query with ``argonaut`` and IRSA with ``irsa`` (bytes, or raised)."""
+    def fetch(url, *, params=None, service, store=None, attempts=5, timeout=60.0, **_kw):
+        if calls is not None:
+            calls.append({"service": service, "url": url, "params": params, "attempts": attempts, "timeout": timeout})
+        answer = argonaut if service == "argonaut" else irsa
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+    return fetch
+
+
+def _run(tmp_path, argonaut, irsa, calls=None, extra=()):
+    if not (tmp_path / "data" / "dossiers" / TARGET).is_dir():
+        _dossier(tmp_path / "data")
+    args = ["--target", TARGET, "--data-dir", str(tmp_path / "data"), "--root", str(tmp_path / "c"), *extra]
+    code = ex.main(args, fetch=routed_fetch(argonaut, irsa, calls))
+    path = ex.store_path(tmp_path / "c", TARGET)
+    return code, (json.loads(path.read_text(encoding="utf-8")) if path.is_file() else None)
+
+
+def test_an_argonaut_answer_is_the_adopted_3d_value_with_the_column_beside_it(tmp_path):
+    calls = []
+    code, block = _run(tmp_path, ARGONAUT_OK, IRSA_OK, calls)
+    assert code == 0 and block["status"] == "adopted"
+    assert (block["ebv"], block["ebv_p16"], block["ebv_p84"]) == (round(0.884 * 0.06, 4), round(0.884 * 0.05, 4),
+                                                                  round(0.884 * 0.07, 4))
+    assert block["source"] == "Bayestar19 (Green et al. 2019) via Argonaut" and block["distance_pc"] == 303.0
+    assert block["column"]["ebv"] == 0.6741 and block["column"]["used"] == "pixel"
+    assert [c["service"] for c in calls] == ["argonaut", "irsa-dust"]
+    assert calls[0]["url"] == ex.ARGONAUT_URL and calls[0]["attempts"] == 1 and calls[0]["timeout"] == 20.0
+    assert stars.load_extinction(TARGET, tmp_path / "c") == block and "reason" not in block
+
+
+@pytest.mark.parametrize(("failure", "words"), [
+    (ServiceUnavailable("argonaut http://argonaut.skymaps.info/api/v2/bayestar2019/query -> HTTP 404"), "HTTP 404"),
+    (ServiceUnavailable("argonaut http://x failed after 1 attempts: HTTP 503"), "HTTP 503"),
+    (ServiceUnavailable("argonaut http://x failed after 1 attempts: ConnectTimeout(MaxRetryError('x'))"),
+     "ConnectTimeout"),
+    (b"<html>not json</html>", "unexpected answer"),
+], ids=["404", "503", "timeout", "not-json"])
+def test_an_argonaut_failure_falls_through_to_irsa_with_a_neutral_reason(tmp_path, failure, words):
+    calls = []
+    code, block = _run(tmp_path, failure, IRSA_OK, calls)
+    assert code == 3 and block["status"] == "not available" and block["column"]["used"] == "pixel"
+    assert block["reason"] == (f"Bayestar19 (Green et al. 2019) not available: the Argonaut web query failed "
+                               f"({words}); no local map file")
+    assert [c["service"] for c in calls] == ["argonaut", "irsa-dust"]
+    text = json.dumps(block).lower()
+    assert not [w for w in NEUTRAL_WORDS if w in text]
+
+
+def test_store_wants_one_target_and_a_stored_file_is_validated(tmp_path, capsys):
+    hand = ["--store", "--ebv", "0.05", "--ebv-p16", "0.03", "--ebv-p84", "0.07", "--distance-pc", "303",
+            "--source", "read by hand"]
+    assert ex.main(["--all", "--data-dir", str(tmp_path), "--root", str(tmp_path / "c"), *hand],
+                   fetch=routed_fetch(AssertionError(), AssertionError())) == 2
+    assert "store one target at a time" in capsys.readouterr().err
+    path = ex.store_path(tmp_path / "c", TARGET)
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({"status": "not available"}), encoding="utf-8")
+    args = ["--target", TARGET, "--data-dir", str(tmp_path / "data"), "--root", str(tmp_path / "c")]
+    assert ex.main(args, fetch=routed_fetch(AssertionError(), AssertionError())) == 2
+    err = capsys.readouterr().err
+    assert "reason is empty" in err and str(path) in err and "nothing to do" not in err
+    code, block = _run(tmp_path, ARGONAUT_OK, IRSA_OK, extra=["--force"])    # --force writes it again
+    assert code == 0 and block["status"] == "adopted"
+    assert ex.main([*args, *hand, "--force"], fetch=routed_fetch(AssertionError(), AssertionError())) == 0
+    assert "kept the stored column" in capsys.readouterr().err
+    assert json.loads(path.read_text(encoding="utf-8"))["column"]["ebv"] == 0.6741
+
+
+def test_the_writer_keys_match_the_five_stored_records(tmp_path):
+    """Minor 10: the keys the tool writes (with the Argonaut query failing or answering, whichever the live run met)
+    are the keys of the five stored records, so a rename cannot drift from the records again."""
+    from pathlib import Path
+    by_state = {}
+    for name, argonaut in (("failed", ServiceUnavailable("argonaut x failed after 1 attempts: ConnectTimeout()")),
+                           ("answered", ARGONAUT_OK)):
+        _code, block = _run(tmp_path / name, argonaut, IRSA_OK)
+        by_state[block["status"]] = block
+    root = Path(__file__).resolve().parents[2] / "docs" / "candidates"
+    for target in ex.LIVE_TARGETS:
+        stored = json.loads(ex.store_path(root, target).read_text(encoding="utf-8"))
+        written = by_state[stored["status"]]
+        assert list(stored) == list(written), target
+        assert list(stored["column"]) == list(written["column"]), target
+        assert stars.load_extinction(target, root) == stored
+        assert not [w for w in NEUTRAL_WORDS if w in json.dumps(stored).lower()], target
