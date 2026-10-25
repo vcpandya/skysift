@@ -529,7 +529,8 @@
     // the median with its 16th to 84th percentile range (referee pack ruling s)
     const spread = (m) => `${g3(CC[m])} (16th to 84th percentile ${g3(CC[`${m}_p16`])} to ${g3(CC[`${m}_p84`])})`;
     sec(2).appendChild(h("h3", null, "Cross-check"));
-    if (CC && Array.isArray(CC.runs)) {
+    // the round 3 final review, M5: a block of an earlier result format says what it lacks (PT.stale_format)
+    if (CC && Array.isArray(CC.runs) && !PT.stale_format) {
       // the class name is only the label of where the medians fall (crosscheck.class_label_text, spec 11.2)
       para(2, `An estimate with TRICERATOPS ${CC.tool_version} (Giacalone et al. 2021) over ${CC.n_runs} runs${CC.n_degenerate ? `, ${CC.n_degenerate} degenerate and left out` : ""}: median false-positive probability ${spread("fpp")}, ${spread("fpp_no_stp")} without a planet transiting an unresolved bound companion (STP), which SkySift's model leaves out, and nearby false-positive probability ${spread("nfpp")}. ${PT.class_text ? `${PT.class_text} ` : ""}The cross-check never blocks the live draft. ${CC.current
         ? "It was made for this dossier's period, depth and neighbours."
@@ -561,7 +562,7 @@
         sec(2).appendChild(ul);
       }
     } else if (CC) {
-      para(2, "This cross-check was stored by an earlier version of the tool, before its median and range and the FPP without STP; run it again.");
+      para(2, PT.stale_format || "This cross-check was stored by an earlier version of the tool; run it again.");
     } else {
       para(2, "No TRICERATOPS cross-check is stored yet.");
     }

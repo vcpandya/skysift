@@ -2130,7 +2130,8 @@ def page_texts(data: dict) -> dict:
     ``cross_check`` the TRICERATOPS sentence with its ranges (``crosscheck.comparison_sentence``); ``excluded`` the
     scenario that carries the pixel-excluded set's weight (``crosscheck.dominant_excluded_sentence``);
     ``own_evidence`` which of the two FPPs rests on SkySift's own evidence (``crosscheck.own_evidence_sentence``);
-    ``leakage_basis`` the three-part basis of the leakage budget (``crosscheck.leakage_basis``); ``crowdsap`` the
+    ``leakage_basis`` the three-part basis of the leakage budget (``crosscheck.leakage_basis``); ``stale_format`` why
+    a stored block of an earlier result format does not count (``crosscheck.stale_format_text``); ``crowdsap`` the
     star provenance row of its crowding metric (``pack_rows.crowdsap_row``, Task 15 fix round 2, M7); ``tess`` the
     note's TESS sentence; and ``fold`` the figure's fold (``pack.fold_text``). Each None when it does not apply."""
     from skysift import pack, pack_rows, zenodo  # pack imports this module
@@ -2150,7 +2151,8 @@ def page_texts(data: dict) -> dict:
                                                                                    "rung5_pixels") else None,
             "star": pack.star_texts(data), "cross_check": cc.comparison_sentence(data),
             "excluded": cc.dominant_excluded_sentence(data), "own_evidence": cc.own_evidence_sentence(data),
-            "leakage_basis": cc.leakage_basis(data), "crowdsap": pack_rows.crowdsap_row(data),
+            "leakage_basis": cc.leakage_basis(data), "stale_format": cc.stale_format_text(data.get("cross_check")),
+            "crowdsap": pack_rows.crowdsap_row(data),
             "tess": pack.tess_text(data) if (data.get("tess") or {}).get("available") else None,
             "fold": pack.fold_text(data), "ephemeris": _ephemeris_words(data)}
 

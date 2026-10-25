@@ -240,7 +240,8 @@
     <h3>Cross-check</h3>
     {%- macro g3(x) %}{{ "–" if x is none else "%.3g" | format(x) }}{% endmacro %}
     {%- macro spread(block, m) %}<span class="mono">{{ g3(block[m]) }}</span> (16th to 84th percentile <span class="mono">{{ g3(block[m ~ "_p16"]) }} to {{ g3(block[m ~ "_p84"]) }}</span>){% endmacro %}
-    {%- if cc and cc.runs is defined %}
+    {#- the round 3 final review, M5: a block of an earlier result format says what it lacks, before its numbers #}
+    {%- if cc and cc.runs is defined and not texts.stale_format %}
     <p>An estimate with TRICERATOPS {{ cc.tool_version }} (Giacalone et al. 2021) over {{ cc.n_runs }} runs{% if cc.n_degenerate %}, {{ cc.n_degenerate }} degenerate and left out{% endif %}: median false-positive probability {{ spread(cc, "fpp") }}, {{ spread(cc, "fpp_no_stp") }} without a planet transiting an unresolved bound companion (STP), which SkySift's model leaves out, and nearby false-positive probability {{ spread(cc, "nfpp") }}. {% if texts.class_text %}{{ texts.class_text }} {% endif %}The cross-check never blocks the live draft. {% if cc.current %}It was made for this dossier's period, depth and neighbours.{% else %}It was made for an earlier dossier (the period, the depth or the neighbours have changed since), so it does not count until it is run again.{% endif %}</p>
     {%- set vx = cc.variant_excluded %}
     {%- if vx and vx.runs is defined %}
@@ -256,7 +257,7 @@
     <ul class="dossier-small">{% for c in cc.caveats %}<li>{{ c }}</li>{% endfor %}</ul>
     {%- endif %}
     {%- elif cc %}
-    <p>This cross-check was stored by an earlier version of the tool, before its median and range and the FPP without STP; run it again (<span class="mono">skysift crosscheck --target {{ target_id }} --export</span>, then <span class="mono">--import</span>).</p>
+    <p>{{ texts.stale_format or "This cross-check was stored by an earlier version of the tool; run it again." }} (<span class="mono">skysift crosscheck --target {{ target_id }} --export</span>, then <span class="mono">--import</span>).</p>
     {%- else %}
     <p>No TRICERATOPS cross-check is stored yet. <span class="mono">skysift crosscheck --target {{ target_id }} --export</span> writes the inputs for TRICERATOPS; its result comes back with <span class="mono">--import</span>.</p>
     {%- endif %}

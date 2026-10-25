@@ -3090,8 +3090,9 @@ def test_the_readme_traces_the_leakage_budget_to_the_catalogue(env_with_dossier)
     assert "most crowded quarter" not in pack_rows.crowdsap_text(data)          # C is not the lowest quarter here
     assert cross_check.leakage_basis(data) in readme and "so the cap did not bind." in readme
     own = cross_check.own_evidence_sentence(data)
-    assert own.startswith("The FPP with the pixel-excluded neighbours removed (0.0040) is the number that rests on "
-                          "our own evidence")
+    # the round 3 final review, I2: one form in every text
+    assert own.startswith("The pixel-excluded value (0.0040") and "rests on neighbour shares set by the PRF overlap " \
+        "rule within the catalogue's crowding budget, a bound rather than a measurement." in own
     for name in ("README.md", "exofop/note.txt", "archive_email.txt"):
         assert own in texts[name], name
     # Task 15 fix round 1, cut B2: the note carries the short form, once
@@ -3125,8 +3126,8 @@ def test_the_round_3_cuts_leave_the_note_and_keep_every_number_in_the_readme():
     # B2 and B8: the own-evidence sentence and the cross-check clause
     # B2, and fix round 2's M2: the excluded set's dominant scenario in two words
     assert ("The pixel-excluded value (0.31, mainly STP) rests on our own evidence, the difference-image centroids; "
-            "the all-neighbours value (0.60) rests on the catalogue's crowding metric split by the PRF overlap rule, "
-            "a bound rather than a measurement.") in body
+            "the all-neighbours value (0.60) rests on neighbour shares set by the PRF overlap rule within the "
+            "catalogue's crowding budget, a bound rather than a measurement.") in body
     assert ("gives a median false-positive probability of 0.60 (0.60 without a planet transiting an unresolved bound "
             "companion, STP, absent from SkySift's model; 0.31, and 0.014 without STP, with the 6 neighbours the "
             "difference images exclude removed) and a nearby false-positive probability of 0.0020 over 20 runs, 2 "

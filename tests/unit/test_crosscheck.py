@@ -928,7 +928,8 @@ def test_tool_parallel_check_and_caveats():
                          "order.")
     capped = tc.leakage_shares(R2_STARS, 0.95, R2_G, DEPTH_6146676, R2_SEPS, SIGMA_5)
     assert "above the budget, so they are scaled down to it" in tc.leakage_caveat(capped, 0.95)
-    assert "the cap did bind. " in tc.leakage_caveat(capped, 0.95)
+    assert ("the cap bound (the weights sum to 0.155 against the budget 0.053), so the shares are scaled to the "
+            "budget. ") in tc.leakage_caveat(capped, 0.95)
     # round 3 review M2: the PRF caveat stands beside the overlap shares only
     assert tc.PRF_CAVEAT not in tc.CAVEATS
     assert tc.share_caveats(shares, CROWDSAP_6146676) == [text, tc.PRF_CAVEAT]
@@ -1403,7 +1404,8 @@ def test_the_leakage_note_lists_each_neighbour_before_and_after(tmp_path):
         "2073896190925687296")
     sigma = cc.rung5_psf_sigma(_live())
     text = ln.render(R2_RESULT, sigma, rows)
-    assert "| 169822655 | 2073896190925687296 | 11.69 | 2.94 | 12.81 | 23.56 | 0.005864 | 0.1615 | 0.1381 |" in text
+    assert ("| 169822655 | 2073896190925687296 | 11.69 | 11.69 | 2.94 | 12.81 | 23.56 | 0.005864 | 0.1615 | 0.1381 |"
+            in text)
     assert "NFPP before: 0.022 (16th to 84th percentile 0.016 to 0.032) over 20 runs" in text
     assert "NFPP after: not yet measured (the round-3 run)" in text
     assert ("The largest share after the rule is 0.138 (TIC 169822655, 11.69 arcsec, 2.94 Kepler pixels): its "
@@ -1601,8 +1603,9 @@ def test_every_text_carries_the_four_numbers():
             "0).") in after
     assert after.endswith(
         "With those neighbours removed the false-positive weight sits mainly on STP, a planet transiting an "
-        "unresolved bound companion inside the 0.83 arcsec exclusion radius, which no high-resolution imaging "
-        "constrains, so the signal stays a candidate.")
+        "unresolved bound companion (TRICERATOPS places such companions within 2.2 arcsec; the pixels exclude "
+        "background sources beyond 0.83 arcsec, which does not bear on a bound companion), so the signal stays a "
+        "candidate.")
     # Task 16's cut 2 and Task 15 fix round 1, cut B8: the note's variant sits in the no-STP parenthesis
     assert ("gives a median false-positive probability of 0.080 (0.032 without a planet transiting an unresolved "
             "bound companion, STP, absent from SkySift's model; 0.055, and 0.0053 without STP, with the one neighbour "
@@ -1611,15 +1614,17 @@ def test_every_text_carries_the_four_numbers():
     assert ("absent from SkySift's model; the same with no neighbour removed, since the difference images exclude "
             "none) and a nearby") in cc.comparison_sentence(_four(same=True), short=True)
     assert cc.dominant_excluded_sentence(data, short=True) == (
-        "The remaining weight is mainly STP, a planet on an unresolved bound companion inside the 0.83 arcsec "
-        "exclusion radius, which no imaging constrains, so the signal stays a candidate.")
+        "The remaining weight is mainly STP, a planet on an unresolved bound companion (TRICERATOPS places such "
+        "companions within 2.2 arcsec; the pixels exclude background sources beyond 0.83 arcsec, which does not bear "
+        "on a bound companion), so the signal stays a candidate.")
     six = _four(removed=REMOVED * 6)
     assert "with the 6 neighbours the difference images exclude removed" in cc.headline(six)
     assert "and the same with no neighbour removed, since the difference images exclude none" in cc.headline(
         _four(same=True))
     assert cc.dominant_excluded_sentence({**data, "cross_check": {**data["cross_check"], "current": False}}) is None
     no_radius = {**data, "centroid_offset": None}
-    assert "within 2.2 arcsec, which no high-resolution imaging" in cc.dominant_excluded_sentence(no_radius)
+    assert "(TRICERATOPS places such companions within 2.2 arcsec), so the signal" in cc.dominant_excluded_sentence(
+        no_radius)
     assert "—" not in after
 
 
@@ -1628,18 +1633,16 @@ def test_the_texts_say_which_fpp_rests_on_our_own_evidence_and_trace_the_budget(
     """Task 15 addendum 2: the own-evidence sentence in the note's and the after-headline forms, and the leakage
     budget's three-part basis from the result's flux shares, with the catalogue column and the cap's state."""
     data = _four()
-    own = ("The FPP with the pixel-excluded neighbours removed (0.055) is the number that rests on our own evidence "
-           "(the difference-image centroids); the all-neighbours FPP (0.080) rests on the catalogue's crowding metric "
-           "split by the PRF overlap rule, a bound rather than a measurement.")
-    assert cc.own_evidence_sentence(data) == own
+    # the round 3 final review, I2: one form in every text, true whether the cap bound or not
+    own = ("The pixel-excluded value (0.055, mainly STP) rests on our own evidence, the difference-image centroids; "
+           "the all-neighbours value (0.080) rests on neighbour shares set by the PRF overlap rule within the "
+           "catalogue's crowding budget, a bound rather than a measurement.")
+    assert cc.own_evidence_sentence(data) == own == cc.own_evidence_sentence(data, short=True)
     assert own in cc.comparison_sentence(data, after_headline=True)
-    assert own not in cc.comparison_sentence(data, short=True) and own not in cc.comparison_sentence(data)
-    # Task 15 fix round 1, cut B2: the note's form
-    short = ("The pixel-excluded value (0.055, mainly STP) rests on our own evidence, the difference-image "
-             "centroids; the all-neighbours value (0.080) rests on the catalogue's crowding metric split by the PRF "
-             "overlap rule, a bound rather than a measurement.")
-    assert cc.own_evidence_sentence(data, short=True) == short
+    assert own not in cc.comparison_sentence(data)
+    short = own
     assert cc.comparison_sentence(data, short=True).count(short) == 1
+    assert "split" not in own and "crowding metric" not in own
     assert cc.own_evidence_sentence(_four(same=True)) is None
     assert cc.own_evidence_sentence(_four(same=True), short=True) is None
     assert cc.leakage_basis(data) is None                               # the fake result stores no flux shares
@@ -1658,8 +1661,8 @@ def test_the_texts_say_which_fpp_rests_on_our_own_evidence_and_trace_the_budget(
                           "did not bind.")
     bound = cc.leakage_basis({**data, "cross_check": {**block, "settings": {**block["settings"], "flux_shares": {
         **shares, "crowdsap": 0.95, "budget": 0.05263158, "capped": True}}}})
-    assert bound.endswith("Third, the overlap-weighted fluxes sum to 0.1548, above the budget, so the cap bound and "
-                          "they were scaled down to it.")
+    assert bound.endswith("Third, the cap bound (the weights sum to 0.155 against the budget 0.053), so the shares "
+                          "are scaled to the budget.")
     for text in (own, basis):
         assert "\u2014" not in text and "discover" not in text.lower() and "validated" not in text
 
@@ -1683,7 +1686,10 @@ def test_the_geometric_bound_divides_by_the_larger_axis_error():
     data = {"tests": [{"rung": "rung5_pixels", "status": "pass", "metrics": {"seasons": [season]}}],
             "fpp": {"inputs": {"neighbours": [{"source_id": "9", "sep_arcsec": sep, "gmag": 18.0}]}}}
     assert cc.pixel_excluded(data)["excluded_ids"] == []
-    assert "the larger axis error" in cc.EXCLUDE_RULE and "whatever its direction" in cc.EXCLUDE_RULE
+    # the round 3 final review, M7: what holds, the numerator whatever the direction, the denominator as it is
+    assert cc.EXCLUDE_RULE.endswith("the numerator is a lower bound on the centroid's distance from the neighbour "
+                                    "whatever the direction; the denominator is the larger axis error")
+    assert "which holds whatever its direction" not in cc.EXCLUDE_RULE
 
 
 def _absent(fpp: float = 0.08) -> dict:
@@ -1745,7 +1751,7 @@ def test_the_note_names_the_excluded_sets_dominant_scenario_in_the_own_evidence_
         **data["cross_check"]["variant_excluded"],
         "scenarios": [{"ID": "1", "scenario": "TP", "prob": 0.5}, {"ID": "2", "scenario": "NEB", "prob": 0.4}]}}}
     assert "(0.055, mainly NEB)" in cc.own_evidence_sentence(neb, short=True)
-    assert "mainly" not in cc.own_evidence_sentence(data)                     # the long form is unchanged
+    assert cc.own_evidence_sentence(data) == cc.own_evidence_sentence(data, short=True)   # one form (I2)
 
 
 def test_the_basis_is_worded_once_and_the_tool_names_the_same_source():
@@ -1819,3 +1825,113 @@ def test_a_resume_with_the_first_set_done_runs_only_the_rest_of_the_second(tmp_p
     assert len(saved["runs"]) == 20 and len(saved["runs_excluded"]) == 20
     err = capsys.readouterr().err
     assert "pixel-excluded run 8/20 (seed 8, parallel)" in err and "\nrun " not in f"\n{err}"
+
+
+# ------------------------------------------------------------------------- the round 3 final review (fix wave)
+
+GAIA_SEPS = [0.0, 6.938, 10.784, 11.452381]      # R2_STARS with the G 12.8 star at its Gaia DR3 separation
+
+
+def test_the_overlap_at_the_gaia_separation_binds_the_cap_and_at_the_tic_one_does_not():
+    """I1: TIC 169822655 at the Gaia DR3 separation the dossier stores (11.45 arcsec) has the overlap 0.00786, so the
+    weights sum to 0.202 against the budget 0.168 and the cap binds; at the TIC's epoch-2000 11.69 they sum to 0.155
+    and it does not."""
+    from tools import triceratops_check as tc
+    bound = tc.leakage_shares(R2_STARS, CROWDSAP_6146676, R2_G, DEPTH_6146676, GAIA_SEPS, SIGMA_5)
+    assert bound["capped"] is True and bound["weight_sum"] == pytest.approx(0.2019, abs=2e-4)
+    big = bound["rows"][3]
+    assert big["overlap"] == pytest.approx(0.007861, rel=1e-3) and big["overlap_sep_arcsec"] == 11.452381
+    assert big["share"] == pytest.approx(bound["budget"] * big["weight"] / bound["weight_sum"])
+    assert sum(r["share"] for r in bound["rows"][1:]) == pytest.approx(bound["budget"])
+    assert ("the cap bound (the weights sum to 0.202 against the budget 0.168), so the shares are scaled to the "
+            "budget") in tc.leakage_caveat(bound, CROWDSAP_6146676)
+    free = tc.leakage_shares(R2_STARS, CROWDSAP_6146676, R2_G, DEPTH_6146676, R2_SEPS, SIGMA_5)
+    assert free["capped"] is False and "the cap did not bind" in tc.leakage_caveat(free, CROWDSAP_6146676)
+    assert free["rows"][3]["overlap_sep_arcsec"] == 11.69
+
+
+def test_the_tool_takes_each_matched_neighbours_stored_gaia_separation():
+    """I1: a TIC row matched to a Gaia neighbour and an added star take the export's Gaia DR3 separation, recorded
+    with its source on the row; an unmatched TIC row keeps its own."""
+    from tools import triceratops_check as tc
+    rows = [{"ID": "169822650", "sep (arcsec)": 0.0}, {"ID": "169822655", "sep (arcsec)": 11.69},
+            {"ID": "1879962327", "sep (arcsec)": 20.886}, {"ID": "2073896294000000001", "sep (arcsec)": 0.0}]
+    matched = [{"tic_id": "169822655", "source_id": "2073896190925687296", "dsep_arcsec": 0.238}]
+    added = {"2073896294000000001": 18.0}
+    neighbours = [*LIVE_NEIGHBOURS, {"source_id": "2073896294000000001", "sep_arcsec": 9.0, "gmag": 18.5}]
+    seps, sources = tc.overlap_separations(rows, matched, added, neighbours)
+    assert seps == [0.0, 11.452381, 20.886, 9.0] and sources == [None, tc.SEP_GAIA, tc.SEP_TIC, tc.SEP_GAIA]
+    assert tc.SEP_GAIA == "Gaia DR3"
+    shares = tc.leakage_shares(R2_STARS, CROWDSAP_6146676, R2_G, DEPTH_6146676, GAIA_SEPS, SIGMA_5,
+                               sep_sources=[None, "TIC", "TIC", "Gaia DR3"])
+    assert [r["overlap_sep_source"] for r in shares["rows"]] == [None, "TIC", "TIC", "Gaia DR3"]
+    out = tc.star_rows(R2_STARS, [], {}, shares, R2_G, {})
+    assert out[3]["overlap_sep_arcsec"] == 11.452381 and out[3]["overlap_sep_source"] == "Gaia DR3"
+
+
+def test_the_tools_copy_of_the_basis_is_pinned_to_the_engines_on_both_cap_branches():
+    """I1 and the open point of the final review: the cap clause and rung 5's width, capped and uncapped."""
+    from skysift.sources.kbonus_bkg import CATALOGUE, CROWDSAP_COLUMN
+    from tools import triceratops_check as tc
+    budget = (1 - CROWDSAP_6146676) / CROWDSAP_6146676
+    target = {"crowdsap_column": CROWDSAP_COLUMN, "crowdsap_catalogue": CATALOGUE}
+    for capped, total in ((False, 0.1549), (True, 0.2019)):
+        shares = {"source": tc.OVERLAP, "budget": budget, "capped": capped, "sigma_pix": SIGMA_5, "weight_sum": total}
+        basis = cc.budget_basis(CROWDSAP_6146676, budget, total, capped, SIGMA_5, CROWDSAP_COLUMN, CATALOGUE)
+        caveat = tc.leakage_caveat(shares, CROWDSAP_6146676, target)
+        clause = cc.cap_bound_clause(total, budget) if capped else "the cap did not bind"
+        assert tc.cap_clause(shares) == clause and clause in basis and clause in caveat, capped
+        width = f"({SIGMA_5:.3f} Kepler pixels"
+        assert width in basis and width in caveat, capped
+    assert cc.cap_bound_clause(0.2019, budget) == ("the cap bound (the weights sum to 0.202 against the budget "
+                                                   "0.168), so the shares are scaled to the budget")
+
+
+def test_the_stp_sentence_names_the_region_triceratops_computed():
+    """M6: the package's 2.2 arcsec for a bound companion (the tool passes no contrast curve), and what the pixels'
+    0.83 arcsec does not bear on."""
+    from tools import triceratops_check as tc
+    assert cc.COMPANION_ARCSEC == tc.COMPANION_ARCSEC == 2.2
+    assert "anywhere within 2.2 arcsec of the target" in " ".join(tc.CAVEATS)
+    assert "contrast_curve_file" not in Path(tc.__file__).read_text(encoding="utf-8")
+    text = cc.dominant_excluded_sentence(_four(), short=True)
+    assert ("a planet on an unresolved bound companion (TRICERATOPS places such companions within 2.2 arcsec; the "
+            "pixels exclude background sources beyond 0.83 arcsec, which does not bear on a bound companion)") in text
+    assert "exclusion radius" not in text and "no imaging" not in text
+
+
+def test_the_prf_caveat_says_the_overlap_is_one_dimensional():
+    """M12: one clause, the overlap along the separation a lower bound on the two-dimensional box fraction."""
+    from tools import triceratops_check as tc
+    assert ("taken in one dimension along the separation (a lower bound on the two-dimensional box fraction)"
+            in tc.PRF_CAVEAT)
+
+
+def test_a_block_of_an_earlier_format_names_what_it_lacks():
+    """M5: the page's reason for a stored round-2 block names its missing keys."""
+    full = _four()["cross_check"]
+    round2 = {k: v for k, v in full.items() if k not in ("schema", "variant_excluded")}
+    assert cc.stale_format_text(round2) == ("This cross-check was stored by an earlier version of the tool: it has "
+                                            "no schema and no variant_excluded; run it again.")
+    assert cc.stale_format_text(full) is None and cc.stale_format_text(None) is None
+    old = {"tool": cc.TOOL, "fpp": 0.01, "fpp_runs": [0.01]}
+    assert cc.stale_format_text(old).endswith("more; run it again.")
+
+
+def test_the_leakage_note_takes_the_gaia_separations_and_says_so():
+    """I1: the note at the dossier's Gaia DR3 separations, the TIC ones beside them, the cap's state at both."""
+    from tools import leakage_note as ln
+    seps = ln.gaia_separations(_live())
+    assert seps["2073896190925687296"] == 11.452381
+    rows = ln.note_rows(R2_RESULT, SIGMA_5, seps)
+    big = next(r for r in rows if r["id"] == "169822655")
+    assert big["sep_arcsec"] == 11.452381 and big["tic_sep_arcsec"] == 11.69
+    total, budget, scale = ln._weights(R2_RESULT, SIGMA_5, seps)
+    assert total == pytest.approx(0.2001, abs=3e-4) and scale < 1         # the nine rows here; 0.2019 over all 35
+    assert sum(r["share"] for r in rows if r["share"] is not None) == pytest.approx(budget, rel=1e-3)
+    text = ln.render(R2_RESULT, cc.rung5_psf_sigma(_live()), rows, gaia_seps=seps)
+    assert cc.cap_bound_clause(total, budget) in text and "the cap did not bind" not in text
+    assert "| 169822655 | 2073896190925687296 | 11.45 | 11.69 | 2.88 |" in text
+    assert "For TIC 169822655, which takes the largest share, that is 11.45 arcsec against 11.69." in text
+    assert "at the TIC separations they sum to 0.1549, and the cap does not bind" in text
+    assert "a lower bound on the two-dimensional box fraction" in text and "—" not in text

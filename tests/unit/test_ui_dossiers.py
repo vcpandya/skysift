@@ -818,6 +818,16 @@ def test_dossier_page_shows_the_cross_check_block(seeded_dossier):
     app.state.store.set_cross_check(STAGE2_TARGET, old)                # the format before 22 October 2026
     checks = client.get(f"/dossiers/{STAGE2_TARGET}").text.split('id="checks"')[1].split('id="pixels"')[0]
     assert "stored by an earlier version of the tool" in checks and "median false-positive" not in checks
+    # the round 3 final review, M5: a round-2 block (no schema, no variant_excluded) says so, not "earlier dossier"
+    round2 = {k: v for k, v in result.items() if k not in ("schema", "variant_excluded")}
+    app.state.store.set_cross_check(STAGE2_TARGET, round2)
+    checks = html_module.unescape(
+        client.get(f"/dossiers/{STAGE2_TARGET}").text.split('id="checks"')[1].split('id="pixels"')[0])
+    assert ("This cross-check was stored by an earlier version of the tool: it has no schema and no "
+            "variant_excluded; run it again.") in checks
+    assert "median false-positive" not in checks and "earlier dossier" not in checks
+    standalone = client.get(f"/dossiers/{STAGE2_TARGET}/export.html").text
+    assert "it has no schema and no variant_excluded" in standalone          # dossier.js reads PT.stale_format
 
 
 def test_the_standalone_page_carries_a_cross_check_imported_after_its_export(seeded_dossier, tmp_path):
@@ -842,7 +852,7 @@ def test_the_standalone_page_carries_a_cross_check_imported_after_its_export(see
     assert "with the one neighbour the difference images exclude removed" in texts["fpp_lead"]
     assert block["variant_excluded"]["fpp"] == 0.004 and texts["excluded"].startswith("With those neighbours")
     assert "removed, over ${VX.n_runs} runs: median false-positive probability ${vspread(\"fpp\")}" in after
-    assert texts["own_evidence"].startswith("The FPP with the pixel-excluded neighbours removed (0.0040)")
+    assert texts["own_evidence"].startswith("The pixel-excluded value (0.0040, mainly ")          # I2: one form
     assert "PT.own_evidence" in after and "PT.leakage_basis" in after and "PT.crowdsap" in after
 
 

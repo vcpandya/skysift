@@ -63,9 +63,13 @@ EXCLUDE_SIGMA = 3.0                 # spec 12.2: nearer the target than the neig
 STAMP_MATCH_ARCSEC = 1.0
 EXCLUDE_RULE = ("a neighbour is excluded when, in every voting season of rung 5, the difference-image centroid lies "
                 "nearer the target than the neighbour by more than 3 sigma: for the neighbour rung 5 fitted, its own "
-                "vote (separation_sigma, nearer the target); for every other Gaia neighbour the lower bound (D / 2 - "
-                "dist_target_pix) / (the larger axis error) on the same bisector statistic, D its separation in "
-                "Kepler pixels, which holds whatever its direction")
+                "vote (separation_sigma, nearer the target); for every other Gaia neighbour (D / 2 - dist_target_pix) "
+                "/ (the larger axis error) on the same bisector statistic, D its separation in Kepler pixels: the "
+                "numerator is a lower bound on the centroid's distance from the neighbour whatever the direction; the "
+                "denominator is the larger axis error")
+# the package's limiting separation for an unresolved bound companion without a contrast curve (TRICERATOPS 1.1.0,
+# marginal_likelihoods: lnprior_bound_TP(..., 2.2)); the tool passes none, and its COMPANION_ARCSEC is pinned to this
+COMPANION_ARCSEC = 2.2
 # the flux shares' source in a result the tool made by spec 12.1 (its ``OVERLAP`` starts with this; a test pins both)
 OVERLAP_SOURCE = "Kepler-pixel overlap"
 # the texts' wording when every neighbour the difference images exclude is absent from the package's star list
@@ -748,6 +752,18 @@ def complete(block: dict | None) -> bool:
     return isinstance(block, dict) and all(k in block for k in RESULT_KEYS)
 
 
+def stale_format_text(block: dict | None) -> str | None:
+    """The page's reason for a stored block of an earlier result format (the round 3 final review, M5), naming the
+    keys of ``RESULT_KEYS`` it lacks (three at most, then how many more): "This cross-check was stored by an earlier
+    version of the tool: it has no schema and no variant_excluded; run it again." None for a complete block or
+    without one."""
+    if not isinstance(block, dict) or complete(block):
+        return None
+    missing = [k for k in RESULT_KEYS if k not in block]
+    named = " and no ".join(missing[:3]) + (f", and {len(missing) - 3} more" if len(missing) > 3 else "")
+    return f"This cross-check was stored by an earlier version of the tool: it has no {named}; run it again."
+
+
 def classify(fpp: float | None, nfpp: float | None) -> str | None:
     """Giacalone et al. 2021's class of an FPP and an NFPP, a label only (ruling t): "validated" (FPP below 0.015 and
     NFPP below 0.001), "likely planet" (FPP below 0.5 and NFPP below 0.001), "likely nearby false positive" (NFPP
@@ -943,27 +959,22 @@ def excluded_text(block: dict, ranges: bool) -> str:
 
 
 def own_evidence_sentence(data: dict, short: bool = False) -> str | None:
-    """Which of the two FPPs rests on SkySift's own evidence (Task 15 addendum 2): "The FPP with the pixel-excluded
-    neighbours removed (<FPP>) is the number that rests on our own evidence (the difference-image centroids); the
-    all-neighbours FPP (<FPP>) rests on the catalogue's crowding metric split by the PRF overlap rule, a bound rather
-    than a measurement." ``short`` is the Research Note's form (Task 15 fix round 1, cut B2; fix round 2, M2): "The
-    pixel-excluded value (<FPP>, mainly <scenario>) rests on our own evidence, the difference-image centroids; the
-    all-neighbours value (<FPP>) rests on the catalogue's crowding metric split by the PRF overlap rule, a bound
-    rather than a measurement." None without a current, complete cross-check, or when the difference images exclude
-    no neighbour (``same_as_all``: the two sets are one)."""
+    """Which of the two FPPs rests on SkySift's own evidence (Task 15 addendum 2), in one form for every text (the
+    round 3 final review, I2, which replaced the "split" of the round-2 quota and holds whether the cap bound or not):
+    "The pixel-excluded value (<FPP>, mainly <scenario>) rests on our own evidence, the difference-image centroids;
+    the all-neighbours value (<FPP>) rests on neighbour shares set by the PRF overlap rule within the catalogue's
+    crowding budget, a bound rather than a measurement." ``short`` is kept for the callers and changes nothing. None
+    without a current, complete cross-check, or when the difference images exclude no neighbour (``same_as_all``: the
+    two sets are one)."""
     block = _current(data)
     v = _variant(block) if block else None
     if v is None or v.get("same_as_all"):
         return None
-    if short:              # Task 15 fix round 2, M2: the excluded set's dominant scenario by its short name
-        top = dominant_scenario(v)
-        mainly = f", mainly {top['scenario']}" if top else ""
-        return (f"The pixel-excluded value ({_p(v['fpp'])}{mainly}) rests on our own evidence, the difference-image "
-                f"centroids; the all-neighbours value ({_p(block['fpp'])}) rests on the catalogue's crowding metric "
-                "split by the PRF overlap rule, a bound rather than a measurement.")
-    return (f"The FPP with the pixel-excluded neighbours removed ({_p(v['fpp'])}) is the number that rests on our "
-            f"own evidence (the difference-image centroids); the all-neighbours FPP ({_p(block['fpp'])}) rests on the "
-            "catalogue's crowding metric split by the PRF overlap rule, a bound rather than a measurement.")
+    top = dominant_scenario(v)             # Task 15 fix round 2, M2: the excluded set's dominant scenario
+    mainly = f", mainly {top['scenario']}" if top else ""
+    return (f"The pixel-excluded value ({_p(v['fpp'])}{mainly}) rests on our own evidence, the difference-image "
+            f"centroids; the all-neighbours value ({_p(block['fpp'])}) rests on neighbour shares set by the PRF overlap "
+            "rule within the catalogue's crowding budget, a bound rather than a measurement.")
 
 
 def leakage_basis(data: dict) -> str | None:
@@ -984,6 +995,14 @@ def leakage_basis(data: dict) -> str | None:
                         crowd.get("catalogue") or CATALOGUE)
 
 
+def cap_bound_clause(total: float, budget: float) -> str:
+    """The cap's state when it binds, in every text's one wording (the round 3 final review, I1): "the cap bound (the
+    weights sum to 0.202 against the budget 0.168), so the shares are scaled to the budget". The tool, which does not
+    import the engine, keeps a copy that a test pins to this one."""
+    return (f"the cap bound (the weights sum to {total:.3f} against the budget {budget:.3f}), so the shares are scaled "
+            "to the budget")
+
+
 def budget_basis(c: float, budget: float, total: float, capped: bool, sigma: float, column: str,
                  catalogue: str) -> str:
     """The leakage budget's three-part basis (Task 15 addendum 2), worded once (fix round 2, M6) for the README, the
@@ -991,8 +1010,7 @@ def budget_basis(c: float, budget: float, total: float, capped: bool, sigma: flo
     crowding metric C, its ``column`` of the ``catalogue``; the split by the PRF overlap rule at rung 5's width
     ``sigma`` (Kepler pixels); and whether the cap bound, the overlap-weighted fluxes summing to ``total``. The
     tool's caveat says the same three parts in its own copy, since the tool does not import the engine."""
-    cap = (f"the overlap-weighted fluxes sum to {total:.4f}, above the budget, so the cap bound and they were scaled "
-           "down to it" if capped else
+    cap = (cap_bound_clause(total, budget) if capped else
            f"the overlap-weighted fluxes sum to {total:.4f}, below the budget of {budget:.4f}, so the cap did not "
            "bind")
     return ("The leakage budget behind the nearby false-positive probability has three parts. First, it comes from "
@@ -1006,11 +1024,12 @@ def budget_basis(c: float, budget: float, total: float, capped: bool, sigma: flo
 
 def dominant_excluded_sentence(data: dict, tex: bool = False, short: bool = False) -> str | None:
     """The scenario that carries the pixel-excluded set's false-positive weight (``dominant_scenario`` of its median
-    run's table), and that the signal stays a candidate. For STP, inside the exclusion radius
-    (``centroid_offset.exclusion_radius_arcsec``; without it, within ``dossier.UNRESOLVED_COMPANION_ARCSEC``), which
-    no imaging constrains. ``short`` is the Research Note's form. With ``tex`` a LaTeX ``Raw``. None without a
-    current, complete cross-check or without such a scenario."""
-    from skysift.dossier import UNRESOLVED_COMPANION_ARCSEC
+    run's table), and that the signal stays a candidate. For STP, the region TRICERATOPS computed (the round 3 final
+    review, M6): "(TRICERATOPS places such companions within 2.2 arcsec; the pixels exclude background sources beyond
+    0.83 arcsec, which does not bear on a bound companion)", with ``COMPANION_ARCSEC`` and the exclusion radius
+    (``centroid_offset.exclusion_radius_arcsec``; without it the first clause alone). ``short`` is the Research
+    Note's form. With ``tex`` a LaTeX ``Raw``. None without a current, complete cross-check or without such a
+    scenario."""
     block = _current(data)
     v = _variant(block) if block else None
     top = dominant_scenario(v) if v else None
@@ -1018,8 +1037,9 @@ def dominant_excluded_sentence(data: dict, tex: bool = False, short: bool = Fals
         return None
     radius = _finite((data.get("centroid_offset") or {}).get("exclusion_radius_arcsec")) \
         if isinstance(data.get("centroid_offset"), dict) else None
-    where = (f"inside the {radius:.2f} arcsec exclusion radius" if radius is not None
-             else f"within {UNRESOLVED_COMPANION_ARCSEC:g} arcsec")
+    pixels = (f"; the pixels exclude background sources beyond {radius:.2f} arcsec, which does not bear on a bound "
+              "companion" if radius is not None else "")
+    where = f"(TRICERATOPS places such companions within {COMPANION_ARCSEC:g} arcsec{pixels})"
     if short and v.get("same_as_all") and dominant_sentence(block) is not None:
         return None        # Task 15 fix round 2, M4: the first set's sentence has named the same scenario
     lead = ("With no neighbour removed the two values coincide; the weight is mainly" if short and v.get("same_as_all")
@@ -1027,9 +1047,8 @@ def dominant_excluded_sentence(data: dict, tex: bool = False, short: bool = Fals
             "The false-positive weight sits mainly on" if v.get("same_as_all") else
             "With those neighbours removed the false-positive weight sits mainly on")
     if top["scenario"] == "STP":
-        what = (f"a planet on an unresolved bound companion {where}, which no imaging constrains" if short else
-                f"a planet transiting an unresolved bound companion {where}, which no high-resolution imaging "
-                "constrains")
+        what = (f"a planet on an unresolved bound companion {where}" if short else
+                f"a planet transiting an unresolved bound companion {where}")
     else:
         star = f" (TIC {top['id']})" if top["scenario"] in NEARBY_SCENARIOS else ""
         what = f"{SCENARIO_WORDS.get(top['scenario'], top['scenario'])}{star}"
