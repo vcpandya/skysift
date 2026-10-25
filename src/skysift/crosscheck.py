@@ -64,8 +64,13 @@ STAMP_MATCH_ARCSEC = 1.0
 EXCLUDE_RULE = ("a neighbour is excluded when, in every voting season of rung 5, the difference-image centroid lies "
                 "nearer the target than the neighbour by more than 3 sigma: for the neighbour rung 5 fitted, its own "
                 "vote (separation_sigma, nearer the target); for every other Gaia neighbour the lower bound (D / 2 - "
-                "dist_target_pix) / centroid_sigma_axis_pix on the same bisector statistic, D its separation in "
+                "dist_target_pix) / (the larger axis error) on the same bisector statistic, D its separation in "
                 "Kepler pixels, which holds whatever its direction")
+# the flux shares' source in a result the tool made by spec 12.1 (its ``OVERLAP`` starts with this; a test pins both)
+OVERLAP_SOURCE = "Kepler-pixel overlap"
+# the texts' wording when every neighbour the difference images exclude is absent from the package's star list
+NOT_IN_STAR_LIST = ("none of the neighbours the difference images exclude is in TRICERATOPS's star list, so the "
+                    "pixel-excluded run equals the first")
 # the pixel-excluded run set of the result (spec 12.2), stored beside the first
 VARIANT_KEYS = ("n_runs", "n_degenerate", *SUMMARY_KEYS, "runs", "scenarios", "removed", "same_as_all", "seeds",
                 "median_run_seed")
@@ -355,13 +360,26 @@ def stamp_neighbour(neighbours: list[dict], seasons: list[dict]) -> str | None:
     return min(near)[2] if near else None
 
 
+def larger_axis_sigma(season: dict) -> float | None:
+    """The larger of a rung 5 season's two centroid axis errors (Task 15 fix round 2, M1): along the stamp
+    neighbour's axis (``centroid_sigma_axis_pix``) and across it, which the per-axis mean ``centroid_sigma_pix`` (the
+    root of half the covariance's trace) gives as sqrt(2 centroid_sigma_pix^2 - centroid_sigma_axis_pix^2), the trace
+    being the same on any pair of perpendicular axes. None without both."""
+    from skysift import dossier as ds
+    axis, mean = ds._num(season, "centroid_sigma_axis_pix"), ds._num(season, "centroid_sigma_pix")
+    if axis is None or mean is None:
+        return None
+    return max(axis, math.sqrt(max(2.0 * mean * mean - axis * axis, 0.0)))
+
+
 def season_margin(season: dict, sep_arcsec: float | None, stamp: bool) -> tuple[float | None, str, str | None]:
     """(the margin in sigma by which the season's difference centroid lies nearer the target than the neighbour, its
     basis, why it is None). For rung 5's own neighbour (``stamp``) the season's vote: ``separation_sigma``, positive
     when ``nearer`` is "target" and negative when "neighbour" ("rung 5 vote"). For any other neighbour the
-    "geometric bound" (D / 2 - ``dist_target_pix``) / ``centroid_sigma_axis_pix``, D the separation in Kepler pixels:
-    a point within ``dist_target_pix`` of the target is at least D / 2 - dist_target_pix nearer the target than the
-    bisector of any star D away, whatever its direction."""
+    "geometric bound" (D / 2 - ``dist_target_pix``) / (the larger axis error, ``larger_axis_sigma``), D the separation
+    in Kepler pixels: a point within ``dist_target_pix`` of the target is at least D / 2 - dist_target_pix nearer the
+    target than the bisector of any star D away, whatever its direction, and the larger of the two axis errors bounds
+    the error along that star's axis (Task 15 fix round 2, M1)."""
     from skysift import dossier as ds
     from skysift.priors import PIXEL_ARCSEC
     n = season.get("season")
@@ -370,7 +388,7 @@ def season_margin(season: dict, sep_arcsec: float | None, stamp: bool) -> tuple[
         if value is None or nearer not in ("target", "neighbour"):
             return None, "rung 5 vote", f"season {n} has no rung 5 vote against this neighbour"
         return (abs(value) if nearer == "target" else -abs(value)), "rung 5 vote", None
-    dist, err = ds._num(season, "dist_target_pix"), ds._num(season, "centroid_sigma_axis_pix")
+    dist, err = ds._num(season, "dist_target_pix"), larger_axis_sigma(season)
     if dist is None or err is None or err <= 0 or sep_arcsec is None:
         return None, "geometric bound", f"season {n} has no centroid distance or error"
     return (sep_arcsec / PIXEL_ARCSEC / 2 - dist) / err, "geometric bound", None
@@ -616,7 +634,8 @@ def _validate_variant(result: dict) -> None:
     object of ``VARIANT_KEYS``, another run count than the first set's, a run that fails the first set's checks, seeds
     other than the first set's, a degenerate count or a median or percentile that is not its runs', every run
     degenerate, a ``removed`` list that is not of {tic_id, source_id} objects, or a ``same_as_all`` that is not a bool
-    or is true over runs that differ from the first set's."""
+    or is true over runs that differ from the first set's, or a ``not_in_star_list`` (optional: the excluded
+    neighbours the package's star list lacks, Task 15 fix round 2, M3) that is not a list of source ids."""
     v = result["variant_excluded"]
     if not isinstance(v, dict) or any(k not in v for k in VARIANT_KEYS):
         raise BadResult(f"variant_excluded must be an object holding {', '.join(VARIANT_KEYS)}")
@@ -654,6 +673,9 @@ def _validate_variant(result: dict) -> None:
     if not isinstance(same, bool) or (same and differ):
         raise BadResult("variant_excluded says same_as_all but its runs differ from the first set's"
                         if isinstance(same, bool) else "variant_excluded.same_as_all must be true or false")
+    absent = v.get("not_in_star_list", [])
+    if not isinstance(absent, list) or not all(isinstance(x, str) for x in absent):
+        raise BadResult("variant_excluded.not_in_star_list must list Gaia DR3 source ids")
 
 
 def validate_result(result) -> None:
@@ -900,10 +922,13 @@ def excluded_text(block: dict, ranges: bool) -> str:
     <FPP> (16th to 84th percentile <range>), <FPP without STP> (<range>) without STP and a nearby false-positive
     probability of <NFPP> (<range>)."; without, the Research Note's clause inside the parenthesis of its cross-check
     sentence (Task 16's cut 2 and Task 15 fix round 1, cut B8): "; <FPP>, and <FPP without STP> without STP, with
-    <removed_phrase> removed". A set that removed nothing (``same_as_all``) says so."""
+    <removed_phrase> removed". A set that removed nothing (``same_as_all``) says why (``NOT_IN_STAR_LIST`` when the
+    difference images exclude neighbours the star list lacks, Task 15 fix round 2, M3)."""
     v = _variant(block)
     if v is None:
         return ""
+    if v.get("same_as_all") and v.get("not_in_star_list"):
+        return f"{NOT_IN_STAR_LIST[:1].upper()}{NOT_IN_STAR_LIST[1:]}." if ranges else f"; {NOT_IN_STAR_LIST}"
     if v.get("same_as_all"):
         return ("The difference images exclude no neighbour, so no run set with neighbours removed differs from this "
                 "one." if ranges else "; the same with no neighbour removed, since the difference images exclude none")
@@ -921,17 +946,19 @@ def own_evidence_sentence(data: dict, short: bool = False) -> str | None:
     """Which of the two FPPs rests on SkySift's own evidence (Task 15 addendum 2): "The FPP with the pixel-excluded
     neighbours removed (<FPP>) is the number that rests on our own evidence (the difference-image centroids); the
     all-neighbours FPP (<FPP>) rests on the catalogue's crowding metric split by the PRF overlap rule, a bound rather
-    than a measurement." ``short`` is the Research Note's form (Task 15 fix round 1, cut B2): "The pixel-excluded
-    value (<FPP>) rests on our own evidence, the difference-image centroids; the all-neighbours value (<FPP>) rests on
-    the catalogue's crowding metric split by the PRF overlap rule, a bound rather than a measurement." None without a
-    current, complete cross-check, or when the difference images exclude no neighbour (``same_as_all``: the two sets
-    are one)."""
+    than a measurement." ``short`` is the Research Note's form (Task 15 fix round 1, cut B2; fix round 2, M2): "The
+    pixel-excluded value (<FPP>, mainly <scenario>) rests on our own evidence, the difference-image centroids; the
+    all-neighbours value (<FPP>) rests on the catalogue's crowding metric split by the PRF overlap rule, a bound
+    rather than a measurement." None without a current, complete cross-check, or when the difference images exclude
+    no neighbour (``same_as_all``: the two sets are one)."""
     block = _current(data)
     v = _variant(block) if block else None
     if v is None or v.get("same_as_all"):
         return None
-    if short:
-        return (f"The pixel-excluded value ({_p(v['fpp'])}) rests on our own evidence, the difference-image "
+    if short:              # Task 15 fix round 2, M2: the excluded set's dominant scenario by its short name
+        top = dominant_scenario(v)
+        mainly = f", mainly {top['scenario']}" if top else ""
+        return (f"The pixel-excluded value ({_p(v['fpp'])}{mainly}) rests on our own evidence, the difference-image "
                 f"centroids; the all-neighbours value ({_p(block['fpp'])}) rests on the catalogue's crowding metric "
                 "split by the PRF overlap rule, a bound rather than a measurement.")
     return (f"The FPP with the pixel-excluded neighbours removed ({_p(v['fpp'])}) is the number that rests on our "
@@ -949,13 +976,23 @@ def leakage_basis(data: dict) -> str | None:
     shares = ((block or {}).get("settings") or {}).get("flux_shares") or {}
     c, budget = _finite(shares.get("crowdsap")), _finite(shares.get("budget"))
     total, sigma = _finite(shares.get("weight_sum")), _finite(shares.get("sigma_pix"))
-    if block is None or not str(shares.get("source") or "").startswith("Kepler-pixel overlap") or None in (
+    if block is None or not str(shares.get("source") or "").startswith(OVERLAP_SOURCE) or None in (
             c, budget, total, sigma):
         return None
     crowd = (data.get("star") or {}).get("crowdsap") or {}
-    column, catalogue = crowd.get("column") or CROWDSAP_COLUMN, crowd.get("catalogue") or CATALOGUE
+    return budget_basis(c, budget, total, bool(shares.get("capped")), sigma, crowd.get("column") or CROWDSAP_COLUMN,
+                        crowd.get("catalogue") or CATALOGUE)
+
+
+def budget_basis(c: float, budget: float, total: float, capped: bool, sigma: float, column: str,
+                 catalogue: str) -> str:
+    """The leakage budget's three-part basis (Task 15 addendum 2), worded once (fix round 2, M6) for the README, the
+    page (``leakage_basis``) and the comparison note (``tools/leakage_note.py``): (1 - C) / C from the catalogue's
+    crowding metric C, its ``column`` of the ``catalogue``; the split by the PRF overlap rule at rung 5's width
+    ``sigma`` (Kepler pixels); and whether the cap bound, the overlap-weighted fluxes summing to ``total``. The
+    tool's caveat says the same three parts in its own copy, since the tool does not import the engine."""
     cap = (f"the overlap-weighted fluxes sum to {total:.4f}, above the budget, so the cap bound and they were scaled "
-           "down to it" if shares.get("capped") else
+           "down to it" if capped else
            f"the overlap-weighted fluxes sum to {total:.4f}, below the budget of {budget:.4f}, so the cap did not "
            "bind")
     return ("The leakage budget behind the nearby false-positive probability has three parts. First, it comes from "
@@ -983,7 +1020,10 @@ def dominant_excluded_sentence(data: dict, tex: bool = False, short: bool = Fals
         if isinstance(data.get("centroid_offset"), dict) else None
     where = (f"inside the {radius:.2f} arcsec exclusion radius" if radius is not None
              else f"within {UNRESOLVED_COMPANION_ARCSEC:g} arcsec")
-    lead = ("The remaining weight is mainly" if short else
+    if short and v.get("same_as_all") and dominant_sentence(block) is not None:
+        return None        # Task 15 fix round 2, M4: the first set's sentence has named the same scenario
+    lead = ("With no neighbour removed the two values coincide; the weight is mainly" if short and v.get("same_as_all")
+            else "The remaining weight is mainly" if short else
             "The false-positive weight sits mainly on" if v.get("same_as_all") else
             "With those neighbours removed the false-positive weight sits mainly on")
     if top["scenario"] == "STP":
@@ -1016,7 +1056,8 @@ def headline(data: dict, tex: bool = False, named: bool = True, short: bool = Fa
         if v is None:
             middle = ""
         elif v.get("same_as_all"):
-            middle = ", the same with no neighbour removed, since the difference images exclude none"
+            middle = (f", and {NOT_IN_STAR_LIST}" if v.get("not_in_star_list") else
+                      ", the same with no neighbour removed, since the difference images exclude none")
         else:
             middle = f", or {_p(v['fpp'])} with {removed_phrase(v)} removed"
         return (f"TRICERATOPS {block['tool_version']} gives {what}{_p(block['fpp'])}{middle} ({NO_CLASS_SHORT}; "
@@ -1024,7 +1065,8 @@ def headline(data: dict, tex: bool = False, named: bool = True, short: bool = Fa
     if v is None:
         middle = ""
     elif v.get("same_as_all"):
-        middle = ", and the same with no neighbour removed, since the difference images exclude none"
+        middle = (f", and {NOT_IN_STAR_LIST}" if v.get("not_in_star_list") else
+                  ", and the same with no neighbour removed, since the difference images exclude none")
     else:
         middle = f", and {_p(v['fpp'])} ({_p(v['fpp_no_stp'])} without it) with {removed_phrase(v)} removed"
     words = (f"TRICERATOPS {block['tool_version']} gives {what}{_p(block['fpp'])} "

@@ -659,16 +659,54 @@ def excluded_stars(pixel_excluded: dict | None, matched: list[dict],
     return removed, notes
 
 
-def variant_block(runs: list[dict], removed: list[dict], same_as_all: bool) -> dict:
+def variant_block(runs: list[dict], removed: list[dict], same_as_all: bool, not_in_star_list=()) -> dict:
     """The result's ``variant_excluded`` (spec 12.2), keyed ``VARIANT_KEYS``: the run and degenerate counts, the
     medians and percentiles (``summarise``), every run (``RUN_KEYS``), the scenario table of the non-degenerate run
     nearest the median FPP, the stars removed, whether the set is the first one (``same_as_all``, nothing removed),
-    the seeds and that run's seed."""
+    the seeds and that run's seed; and ``not_in_star_list``, the excluded Gaia neighbours the star list lacks, so
+    that a set with nothing to remove is not read as one the difference images exclude nothing from (Task 15 fix
+    round 2, M3)."""
     i = _median_run(runs)
     return {"n_runs": len(runs), "n_degenerate": sum(1 for r in runs if r["degenerate"]), **summarise(runs),
             "runs": [{k: r[k] for k in RUN_KEYS} for r in runs], "scenarios": runs[i]["scenarios"],
             "removed": list(removed), "same_as_all": bool(same_as_all), "seeds": [r["seed"] for r in runs],
-            "median_run_seed": runs[i]["seed"]}
+            "median_run_seed": runs[i]["seed"], "not_in_star_list": [str(x) for x in not_in_star_list]}
+
+
+def run_set(t, runs: list[dict], state: dict, probs, *, seed: int, n_runs: int, draws: int, write,
+            label: str = "run") -> None:
+    """One seeded run set (ruling s) on the package's target ``t``, from where ``runs`` stops up to ``n_runs``: run k
+    on seed ``seed + k`` (``probs(seed, draws, parallel)``), on the parallel path while ``state["parallel"]`` holds
+    and on the serial loop for good once it fails (the failure kept in ``state``), each run recorded (``run_record``)
+    and the checkpoint written (``write()``) after it. Both sets run through it (Task 15 fix round 2, M6)."""
+    for k in range(len(runs), n_runs):
+        s, started = seed + k, clock.monotonic()
+        try:
+            probs(s, draws, state["parallel"])
+        except Exception as e:  # the parallel path failing is reported, then the serial loop is used
+            if not state["parallel"]:
+                raise
+            state["failure"], state["parallel"] = f"{type(e).__name__}: {e}", False
+            probs(s, draws, False)
+        runs.append(run_record(s, t.FPP, t.NFPP, t.FPP_degenerate, _probs(t)))
+        write()
+        print(f"{label} {k + 1}/{n_runs} (seed {s}, {'parallel' if state['parallel'] else 'serial'}): FPP "
+              f"{t.FPP:.3g}, NFPP {t.NFPP:.3g} ({clock.monotonic() - started:.1f} s)", file=sys.stderr)
+
+
+def run_sets(t, state: dict, probs, removed: list[dict], *, seed: int, n_runs: int, draws: int, write,
+             not_in_star_list=()) -> dict:
+    """Both seeded run sets of spec 12.2 through ``run_set``: the first on the full star list, then, when the
+    difference images exclude a star the list holds (``removed``), ``remove_star`` and the pixel-excluded set on the
+    same seeds. A resumed ``state`` runs only what its checkpoint lacks. Returns the result's ``variant_excluded``
+    (``variant_block``; the first set again, ``same_as_all``, when nothing is removed)."""
+    run_set(t, state["runs"], state, probs, seed=seed, n_runs=n_runs, draws=draws, write=write)
+    if not removed:
+        return variant_block(state["runs"], [], True, not_in_star_list)
+    t.remove_star([r["tic_id"] for r in removed])
+    run_set(t, state["runs_excluded"], state, probs, seed=seed, n_runs=n_runs, draws=draws, write=write,
+            label="pixel-excluded run")
+    return variant_block(state["runs_excluded"], removed, False)
 
 
 def _clamp(x) -> float:
@@ -1160,40 +1198,17 @@ def main(argv=None) -> int:
                       file=sys.stderr)
             state["check"] = parallel_check_record(a.seed, a.check_draws, answers[False], answers[True], seed_nfpps)
         write_partial(partial, key, state)
+    absent = [str(x) for x in (inputs.get("pixel_excluded") or {}).get("excluded_ids") or []
+              if str(x) not in {r["source_id"] for r in removed}]
+    variant = run_sets(t, state, probs, removed, seed=a.seed, n_runs=a.runs, draws=a.draws,
+                       write=lambda: write_partial(partial, key, state), not_in_star_list=absent)
     runs = state["runs"]
-    for k in range(len(runs), a.runs):
-        seed, started = a.seed + k, clock.monotonic()
-        try:
-            probs(seed, a.draws, state["parallel"])
-        except Exception as e:  # as above: the parallel path failing switches to the serial loop
-            if not state["parallel"]:
-                raise
-            state["failure"], state["parallel"] = f"{type(e).__name__}: {e}", False
-            probs(seed, a.draws, False)
-        runs.append(run_record(seed, t.FPP, t.NFPP, t.FPP_degenerate, _probs(t)))
-        write_partial(partial, key, state)
-        print(f"run {k + 1}/{a.runs} (seed {seed}, {'parallel' if state['parallel'] else 'serial'}): FPP "
-              f"{t.FPP:.3g}, NFPP {t.NFPP:.3g} ({clock.monotonic() - started:.1f} s)", file=sys.stderr)
-    if not removed:
-        variant = variant_block(runs, [], True)
+    if not removed and absent:
+        notes.append("None of the neighbours the difference images exclude is in TRICERATOPS's star list, so the "
+                     "pixel-excluded run equals the first.")
+    elif not removed:
         notes.append("The difference images exclude no neighbour, so the pixel-excluded variant is the first set.")
     else:
-        t.remove_star([r["tic_id"] for r in removed])
-        second = state["runs_excluded"]
-        for k in range(len(second), a.runs):
-            seed, started = a.seed + k, clock.monotonic()
-            try:
-                probs(seed, a.draws, state["parallel"])
-            except Exception as e:  # as above: the parallel path failing switches to the serial loop
-                if not state["parallel"]:
-                    raise
-                state["failure"], state["parallel"] = f"{type(e).__name__}: {e}", False
-                probs(seed, a.draws, False)
-            second.append(run_record(seed, t.FPP, t.NFPP, t.FPP_degenerate, _probs(t)))
-            write_partial(partial, key, state)
-            print(f"pixel-excluded run {k + 1}/{a.runs} (seed {seed}): FPP {t.FPP:.3g}, NFPP {t.NFPP:.3g} "
-                  f"({clock.monotonic() - started:.1f} s)", file=sys.stderr)
-        variant = variant_block(second, removed, False)
         n = len(removed)
         notes.append(f"The pixel-excluded variant removes {n} neighbour{'s' if n != 1 else ''} (TIC "
                      f"{', '.join(r['tic_id'] for r in removed)}) with remove_star before calc_probs and runs the "

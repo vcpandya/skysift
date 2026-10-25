@@ -1128,3 +1128,41 @@ def test_the_star_section_leads_with_the_reddening_paragraph(seeded_dossier):
     export = client.get(f"/dossiers/{STAGE2_TARGET}/export.html").text
     blob = re.search(r'<script id="dossier-data" type="application/json">(.*?)</script>', export, re.DOTALL).group(1)
     assert json.loads(blob)["page_texts"]["star"] == words
+
+
+def test_the_crowding_metric_is_a_row_of_the_star_provenance_list(seeded_dossier):
+    """Task 15 fix round 2, M7: the page gives the crowding metric as a row of the star's list (value, column,
+    catalogue, per-quarter range and the most-crowded-quarter clause when it holds), not as a sentence, in the served
+    page and in the standalone script."""
+    import html as html_module
+    from pathlib import Path
+
+    from skysift import pack_rows
+    client, _app, _ids, data = seeded_dossier
+    row = pack_rows.crowdsap_row(data)
+    assert row == "0.9000 (the crowdsap column of the KBonus-bkg v1.0 source catalogue, Martinez-Palomera et al. 2023)"
+    page = html_module.unescape(client.get(f"/dossiers/{STAGE2_TARGET}").text)
+    star = page.split('id="star"')[1].split("</section>")[0]
+    assert f"<dt>Crowding metric (CROWDSAP)</dt><dd>{row}</dd>" in star
+    assert "The KBonus crowding metric is C =" not in star
+    crowd = {"value": 0.85650748, "column": "crowdsap",
+             "catalogue": "KBonus-bkg v1.0 source catalogue (Martinez-Palomera et al. 2023)",
+             "per_quarter": {"16": 1.0, "17": 0.85650748}, "per_quarter_min": 0.85650748, "per_quarter_max": 1.0}
+    assert pack_rows.crowdsap_row({"star": {"crowdsap": crowd}}).endswith(
+        "runs 0.8565 to 1.0000 over its 2 usable quarters, and the catalogue value equals the most crowded "
+        "quarter's)")
+    js = (Path(__file__).resolve().parents[2] / "src" / "skysift" / "ui" / "static" / "dossier.js").read_text(
+        encoding="utf-8")
+    assert '...(PT.crowdsap ? [["Crowding metric (CROWDSAP)", PT.crowdsap]] : [])' in js
+    assert 'para(4, PT.crowdsap' not in js
+
+
+def test_the_page_says_when_the_star_list_lacks_every_excluded_neighbour():
+    """Task 15 fix round 2, M3: the served template and the standalone script carry the sentence for a pixel-excluded
+    set that removed nothing because TRICERATOPS's star list lacks every excluded neighbour."""
+    from pathlib import Path
+    ui = Path(__file__).resolve().parents[2] / "src" / "skysift" / "ui"
+    sentence = ("None of the neighbours the difference images exclude is in TRICERATOPS's star list, so the "
+                "pixel-excluded run equals the first.")
+    assert sentence in (ui / "templates" / "dossier.html").read_text(encoding="utf-8")
+    assert sentence in (ui / "static" / "dossier.js").read_text(encoding="utf-8")

@@ -124,7 +124,7 @@ def render(result: dict, sigma: dict, rows: list[dict], after: dict | None = Non
     header = ("| TIC | Gaia DR3 | sep (arcsec) | sep (Kepler px) | G | Kepler flux / target | overlap | share before "
               "| share after |")
     lines = [f"# Leakage shares of {star} before and after spec 12.1 (23 October 2026)", "", opening, ""]
-    basis = _basis(crowdsap, budget, total)
+    basis = _basis(crowdsap, budget, total, s)
     lines += [basis, ""] if basis else []
     lines += [header, "|---|---|---|---|---|---|---|---|---|"]
     for r in rows:
@@ -152,23 +152,17 @@ def render(result: dict, sigma: dict, rows: list[dict], after: dict | None = Non
     return "\n".join(lines)
 
 
-def _basis(crowdsap: float | None, budget: float | None, total: float) -> str | None:
-    """The budget's basis in three parts, in the order every text gives them (Task 15 addendum 2): the catalogue's
-    crowding metric, the PRF overlap rule, whether the cap bound. None without a CROWDSAP or a budget."""
+def _basis(crowdsap: float | None, budget: float | None, total: float, sigma: float) -> str | None:
+    """The budget's basis in three parts (Task 15 addendum 2), in the engine's one wording
+    (``skysift.crosscheck.budget_basis``, fix round 2, M6), then where the code reads C. None without a CROWDSAP or a
+    budget."""
+    from skysift.crosscheck import budget_basis
     from skysift.sources.kbonus_bkg import CATALOGUE, CROWDSAP_COLUMN
     if crowdsap is None or budget is None:
         return None
-    cap = (f"the cap bound: the overlap-weighted fluxes sum to {total:.4f}, above the budget of {budget:.4f}"
-           if total > budget else
-           f"the cap did not bind: the overlap-weighted fluxes sum to {total:.4f} against the budget of {budget:.4f}")
-    return ("The budget's basis has three parts. First, it comes from the catalogue, not from SkySift: (1 - C) / C = "
-            f"{budget:.5f} with C = {crowdsap:.8g} the KBonus crowding metric for this extraction, the "
-            f"{CROWDSAP_COLUMN} column of the {CATALOGUE} (`src/skysift/sources/kbonus_bkg.py` reads it into the "
-            "target's `meta[\"crowdsap\"]`; the light-curve file's per-quarter CROWDSAP keywords, `lc/kbonus.py`, "
-            "are the same metric per quarter), the catalogue's own estimate that "
-            f"{100 * (1 - crowdsap):.0f} percent of the fitted flux belongs to other sources, PRF wings included. "
-            "Second, the split among the neighbours follows the PRF overlap rule above, each share an absolute "
-            f"fraction of the target's flux. Third, {cap}.")
+    return (f"{budget_basis(crowdsap, budget, total, total > budget, sigma, CROWDSAP_COLUMN, CATALOGUE)} "
+            "`src/skysift/sources/kbonus_bkg.py` reads C into the target's `meta[\"crowdsap\"]`; the light-curve "
+            "file's per-quarter CROWDSAP keywords (`lc/kbonus.py`) are the same metric per quarter.")
 
 
 def _shown(path: str) -> str:

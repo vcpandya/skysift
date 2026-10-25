@@ -733,15 +733,19 @@ def test_tool_without_rung_5s_width_or_a_budget_the_package_box_stands():
 LIVE_SEASONS = [                    # KIC 6146676's rung 5 seasons in the live dossier, the fields spec 12 reads
     {"season": 0, "voting": True, "psf_sigma_pix": 0.58222301, "nearer": "target", "separation_sigma": 27.845078,
      "dist_target_pix": 0.19970259, "centroid_sigma_axis_pix": 0.057549507,
+     "centroid_sigma_pix": 0.063594178,
      "pos_target": [0.4881452, 4.1079262], "pos_neighbour": [3.2587867, 3.2589792]},
     {"season": 1, "voting": True, "psf_sigma_pix": 0.55311152, "nearer": "target", "separation_sigma": 19.814692,
      "dist_target_pix": 0.18730524, "centroid_sigma_axis_pix": 0.068707453,
+     "centroid_sigma_pix": 0.072737804,
      "pos_target": [0.92328348, 3.0889016], "pos_neighbour": [3.6952899, 2.2423046]},
     {"season": 2, "voting": True, "psf_sigma_pix": 0.54572735, "nearer": "target", "separation_sigma": 17.424733,
      "dist_target_pix": 0.11745102, "centroid_sigma_axis_pix": 0.078553466,
+     "centroid_sigma_pix": 0.076771451,
      "pos_target": [0.90604171, 2.9713739], "pos_neighbour": [3.6771262, 2.1225931]},
     {"season": 3, "voting": True, "psf_sigma_pix": 0.59730051, "nearer": "target", "separation_sigma": 12.657602,
      "dist_target_pix": 0.18658094, "centroid_sigma_axis_pix": 0.10056612,
+     "centroid_sigma_pix": 0.10787247,
      "pos_target": [0.73929463, 3.0401927], "pos_neighbour": [3.5106545, 2.1932004]}]
 LIVE_NEIGHBOURS = [                 # its fpp.inputs.neighbours (Gaia DR3 id, separation, G)
     {"source_id": "2073896294004902144", "sep_arcsec": 7.1422442, "gmag": 19.771944},
@@ -1412,12 +1416,12 @@ def test_the_leakage_note_lists_each_neighbour_before_and_after(tmp_path):
     assert text.rstrip().endswith(ln.tc.PRF_CAVEAT) and "Both columns" not in text
     assert "\u2014" not in text
     # Task 15 addendum 2: the budget's basis in three parts, in order, with the cap's state
-    assert ("The budget's basis has three parts. First, it comes from the catalogue, not from SkySift: (1 - C) / C = "
-            "0.16753 with C = 0.85650748 the KBonus crowding metric for this extraction, the crowdsap column of the "
-            "KBonus-bkg v1.0 source catalogue (Martinez-Palomera et al. 2023)") in text
+    # Task 15 fix round 2, M6: in the engine's one wording (crosscheck.budget_basis), then where the code reads C
+    assert ("The leakage budget behind the nearby false-positive probability has three parts. First, it comes from "
+            "the catalogue, not from SkySift: (1 - C) / C = 0.1675, with C = 0.8565 the KBonus crowding metric") in text
     assert "14 percent of the fitted flux belongs to other sources, PRF wings included. Second, " in text
-    assert ("Third, the cap did not bind: the overlap-weighted fluxes sum to 0.1549 against the budget of "
-            "0.1675.") in text
+    assert ("Third, the overlap-weighted fluxes sum to 0.1549, below the budget of 0.1675, so the cap did not bind. "
+            "`src/skysift/sources/kbonus_bkg.py` reads C into the target's") in text
     # round 3 review M5: the "keeps most of its round-2 share" clause only beyond two pixels and at half or more
     keeps = "keeps most of its round-2 share"
     assert keeps in text
@@ -1450,11 +1454,12 @@ def test_pixel_excluded_takes_rung_5s_vote_for_its_neighbour_and_the_bound_for_t
                                                                            12.657602])
     near = rows["2073896294004902144"]                                # 7.14 arcsec: D / 2 = 0.8973 px
     assert [m["basis"] for m in near["margins"]] == ["geometric bound"] * 4
-    assert [m["margin_sigma"] for m in near["margins"]] == pytest.approx([12.12, 10.33, 9.93, 7.07], abs=0.01)
-    assert near["min_margin_sigma"] == pytest.approx(7.07, abs=0.01) and near["reason"] is None
+    # Task 15 fix round 2, M1: over the larger axis error (across the stamp axis in seasons 0, 1 and 3)
+    assert [m["margin_sigma"] for m in near["margins"]] == pytest.approx([10.09, 9.27, 9.93, 6.20], abs=0.01)
+    assert near["min_margin_sigma"] == pytest.approx(6.20, abs=0.01) and near["reason"] is None
     # 10.94 arcsec lies within 1 arcsec of the stamp separation too, but 11.45 is nearer: the bound for it
     other = rows["2073896289692192128"]["margins"][0]
-    assert other["basis"] == "geometric bound" and other["margin_sigma"] == pytest.approx(20.41, abs=0.01)
+    assert other["basis"] == "geometric bound" and other["margin_sigma"] == pytest.approx(17.00, abs=0.01)
     assert out["excluded_ids"] == [n["source_id"] for n in LIVE_NEIGHBOURS]
     assert all(n["excluded"] for n in rows.values()) and out["rule"] == cc.EXCLUDE_RULE
 
@@ -1515,7 +1520,8 @@ def test_tool_result_carries_the_pixel_excluded_variant_and_passes_the_import():
                                 variant=tc.variant_block(ex, removed, False))
     assert result["schema"] == 3 and tuple(result) == cc.RESULT_KEYS
     v = result["variant_excluded"]
-    assert tuple(v) == cc.VARIANT_KEYS and v["removed"] == removed and v["seeds"] == list(range(1, 21))
+    assert tuple(v) == (*cc.VARIANT_KEYS, "not_in_star_list") and v["not_in_star_list"] == []
+    assert v["removed"] == removed and v["seeds"] == list(range(1, 21))
     assert v["fpp"] == pytest.approx(0.055) and v["nfpp"] == 0.0 and v["same_as_all"] is False
     cc.validate_result(result)
     same = tc.assemble_result(runs, [], settings, {"fingerprint": "a" * 64}, "1.1.0",
@@ -1629,9 +1635,9 @@ def test_the_texts_say_which_fpp_rests_on_our_own_evidence_and_trace_the_budget(
     assert own in cc.comparison_sentence(data, after_headline=True)
     assert own not in cc.comparison_sentence(data, short=True) and own not in cc.comparison_sentence(data)
     # Task 15 fix round 1, cut B2: the note's form
-    short = ("The pixel-excluded value (0.055) rests on our own evidence, the difference-image centroids; the "
-             "all-neighbours value (0.080) rests on the catalogue's crowding metric split by the PRF overlap rule, a "
-             "bound rather than a measurement.")
+    short = ("The pixel-excluded value (0.055, mainly STP) rests on our own evidence, the difference-image "
+             "centroids; the all-neighbours value (0.080) rests on the catalogue's crowding metric split by the PRF "
+             "overlap rule, a bound rather than a measurement.")
     assert cc.own_evidence_sentence(data, short=True) == short
     assert cc.comparison_sentence(data, short=True).count(short) == 1
     assert cc.own_evidence_sentence(_four(same=True)) is None
@@ -1656,3 +1662,160 @@ def test_the_texts_say_which_fpp_rests_on_our_own_evidence_and_trace_the_budget(
                           "they were scaled down to it.")
     for text in (own, basis):
         assert "\u2014" not in text and "discover" not in text.lower() and "validated" not in text
+
+
+# ------------------------------------------------------------------------------- Task 15 fix round 2 (review minors)
+
+def test_the_geometric_bound_divides_by_the_larger_axis_error():
+    """M1: the bound over the larger of the two axis errors (along the stamp axis, and across it from the per-axis
+    mean), so a neighbour the smaller axis would exclude stays in the list when the larger does not."""
+    from skysift.priors import PIXEL_ARCSEC
+    season = {"season": 0, "voting": True, "dist_target_pix": 0.1, "centroid_sigma_axis_pix": 0.1,
+              "centroid_sigma_pix": 0.15}
+    across = math.sqrt(2 * 0.15 ** 2 - 0.1 ** 2)
+    assert cc.larger_axis_sigma(season) == pytest.approx(across)
+    assert cc.larger_axis_sigma({**season, "centroid_sigma_pix": 0.1}) == pytest.approx(0.1)   # isotropic
+    assert cc.larger_axis_sigma({**season, "centroid_sigma_pix": None}) is None
+    sep = 0.9 * PIXEL_ARCSEC                    # D / 2 = 0.45 px: (0.45 - 0.1) / 0.1 = 3.5 along the stamp axis
+    margin, basis, why = cc.season_margin(season, sep, stamp=False)
+    assert basis == "geometric bound" and why is None and margin == pytest.approx(0.35 / across)
+    assert margin < cc.EXCLUDE_SIGMA < 0.35 / 0.1
+    data = {"tests": [{"rung": "rung5_pixels", "status": "pass", "metrics": {"seasons": [season]}}],
+            "fpp": {"inputs": {"neighbours": [{"source_id": "9", "sep_arcsec": sep, "gmag": 18.0}]}}}
+    assert cc.pixel_excluded(data)["excluded_ids"] == []
+    assert "the larger axis error" in cc.EXCLUDE_RULE and "whatever its direction" in cc.EXCLUDE_RULE
+
+
+def _absent(fpp: float = 0.08) -> dict:
+    """``_four`` with a pixel-excluded set that removed nothing because the star list lacks every excluded
+    neighbour."""
+    data = _four(same=True)
+    block = data["cross_check"]
+    variant = {**block["variant_excluded"], "not_in_star_list": ["2073896190925687296"]}
+    if fpp != 0.08:
+        sha = cc.inputs_fingerprint(DATA)
+        variant = {**fake_variant(fpp=fpp, nfpp=0.02, p_stp=0.05, removed=[]), "same_as_all": True,
+                   "not_in_star_list": ["2073896190925687296"]}
+        table = [{"ID": "169822650", "scenario": "TP", "prob": 1 - fpp}, {"ID": "169822650", "scenario": "STP",
+                                                                         "prob": fpp}]
+        block = {**fake_result(sha, fpp=fpp, nfpp=0.02, p_stp=0.05, scenarios=table, variant=variant),
+                 "current": True}
+    return {**data, "cross_check": {**block, "variant_excluded": variant}}
+
+
+def test_an_excluded_set_the_star_list_lacks_is_not_called_empty():
+    """M3: when every neighbour the difference images exclude is absent from TRICERATOPS's star list, the texts say
+    so and never "exclude none"; the result's optional ``not_in_star_list`` is validated."""
+    data = _absent()
+    texts = [cc.headline(data), cc.headline(data, short=True), cc.comparison_sentence(data, after_headline=True),
+             cc.comparison_sentence(data, short=True), cc.comparison_sentence(data)]
+    for text in texts:
+        assert cc.NOT_IN_STAR_LIST in text or cc.NOT_IN_STAR_LIST[:1].upper() + cc.NOT_IN_STAR_LIST[1:] in text
+        assert "exclude none" not in text and "exclude no neighbour" not in text
+    assert cc.headline(data, short=True) == (
+        "TRICERATOPS 1.1.0 gives a false-positive probability of 0.080, and none of the neighbours the difference "
+        "images exclude is in TRICERATOPS's star list, so the pixel-excluded run equals the first (no validation "
+        "class applies at 30-minute cadence; Giacalone et al. 2021)")
+    cc.validate_result({k: v for k, v in data["cross_check"].items() if k != "current"})
+    bad = {**data["cross_check"], "variant_excluded": {**data["cross_check"]["variant_excluded"],
+                                                       "not_in_star_list": [7]}}
+    with pytest.raises(cc.BadResult, match="not_in_star_list must list Gaia DR3 source ids"):
+        cc.validate_result({k: v for k, v in bad.items() if k != "current"})
+    from tools import triceratops_check as tc
+    runs = [tc.run_record(1 + k, 0.1, 1e-4, False, []) for k in range(3)]
+    assert tc.variant_block(runs, [], True, ["5"])["not_in_star_list"] == ["5"]
+
+
+def test_with_nothing_removed_the_note_does_not_speak_of_remaining_weight():
+    """M4: the note's short sentence with nothing removed says the two values coincide, and says nothing when the
+    first set's dominant sentence (an FPP at or above 0.5) has named the same scenario."""
+    for data in (_four(same=True), _absent()):
+        short = cc.dominant_excluded_sentence(data, short=True)
+        assert short.startswith("With no neighbour removed the two values coincide; the weight is mainly STP, ")
+        assert "remaining" not in short
+    assert cc.dominant_excluded_sentence(_absent(fpp=0.6), short=True) is None
+    assert cc.dominant_excluded_sentence(_absent(fpp=0.6)).startswith("The false-positive weight sits mainly on")
+
+
+def test_the_note_names_the_excluded_sets_dominant_scenario_in_the_own_evidence_sentence():
+    """M2: two words inside the note's own-evidence sentence, the scenario's short name from the result."""
+    data = _four()
+    assert cc.own_evidence_sentence(data, short=True).startswith("The pixel-excluded value (0.055, mainly STP) rests")
+    neb = {**data, "cross_check": {**data["cross_check"], "variant_excluded": {
+        **data["cross_check"]["variant_excluded"],
+        "scenarios": [{"ID": "1", "scenario": "TP", "prob": 0.5}, {"ID": "2", "scenario": "NEB", "prob": 0.4}]}}}
+    assert "(0.055, mainly NEB)" in cc.own_evidence_sentence(neb, short=True)
+    assert "mainly" not in cc.own_evidence_sentence(data)                     # the long form is unchanged
+
+
+def test_the_basis_is_worded_once_and_the_tool_names_the_same_source():
+    """M6: the README's, the page's and the note's basis come from ``crosscheck.budget_basis``; the tool's
+    ``OVERLAP`` source starts with the engine's ``OVERLAP_SOURCE``, which ``leakage_basis`` keys on."""
+    from skysift.sources.kbonus_bkg import CATALOGUE, CROWDSAP_COLUMN
+    from tools import leakage_note
+    from tools import triceratops_check as tc
+    assert tc.OVERLAP.startswith(cc.OVERLAP_SOURCE)
+    budget = (1 - CROWDSAP_6146676) / CROWDSAP_6146676
+    basis = cc.budget_basis(CROWDSAP_6146676, budget, 0.1549, False, SIGMA_5, CROWDSAP_COLUMN, CATALOGUE)
+    assert leakage_note._basis(CROWDSAP_6146676, budget, 0.1549, SIGMA_5).startswith(basis)
+    caveat = tc.leakage_caveat({"source": tc.OVERLAP, "budget": budget, "capped": False, "sigma_pix": SIGMA_5,
+                                "weight_sum": 0.1549}, CROWDSAP_6146676,
+                               {"crowdsap_column": CROWDSAP_COLUMN, "crowdsap_catalogue": CATALOGUE})
+    column = f"the {CROWDSAP_COLUMN} column of the {CATALOGUE}"
+    for part in (f"(1 - C) / C = {budget:.4f}", f"C = {CROWDSAP_6146676:.4f}", column, "14 percent of the fitted flux",
+                 "the cap did not bind"):
+        assert part in basis and part in caveat, part
+
+
+class _FakeTarget:
+    """TRICERATOPS's target as ``run_sets`` uses it: calc_probs through ``probs``, the FPP, NFPP, degenerate flag
+    and probability table it leaves, and ``remove_star``."""
+
+    def __init__(self):
+        self.calls, self.removed = [], []
+        self.FPP, self.NFPP, self.FPP_degenerate = 0.1, 1e-4, False
+
+    class _Table:
+        def __getitem__(self, _cols):
+            return self
+
+        def to_json(self, orient):
+            return json.dumps([{"ID": "1", "scenario": "TP", "prob": 0.9}, {"ID": "1", "scenario": "STP",
+                                                                            "prob": 0.1}])
+
+    probs = _Table()
+
+    def remove_star(self, ids):
+        self.removed.append(list(ids))
+
+
+def test_a_resume_with_the_first_set_done_runs_only_the_rest_of_the_second(tmp_path, capsys):
+    """M8: a checkpoint with the first set complete and the pixel-excluded set at run 7 of 20 resumes, through the
+    run loop both sets share (M6), into exactly 13 more pixel-excluded runs on seeds 8 to 20, with the star removed
+    once and none of the first set's runs repeated; the checkpoint then holds both sets whole."""
+    from tools import triceratops_check as tc
+    key = tc.checkpoint_key("a" * 64, seed=1, draws=2000, check_draws=2000, parallel_check=False, flux_err=0.001,
+                            shares={"source": "x"}, quarters=[1], allow_old_export=False, version="1.1.0",
+                            excluded_tic_ids=["169822655"])
+    state = tc.new_state()
+    state["runs"] = [tc.run_record(1 + k, 0.2, 1e-4, False, []) for k in range(20)]
+    state["runs_excluded"] = [tc.run_record(1 + k, 0.1, 1e-4, False, []) for k in range(7)]
+    partial = tc.partial_path(tmp_path / "r.json")
+    tc.write_partial(partial, key, state)
+    assert tc.checkpoint_runs(partial) == 20
+    resumed = tc.resume_state(partial, key)
+    target = _FakeTarget()
+
+    def probs(seed, draws, parallel):
+        target.calls.append((seed, draws, parallel))
+    removed = [{"tic_id": "169822655", "source_id": "2073896190925687296", "sep_arcsec": 11.45,
+                "min_margin_sigma": 12.66}]
+    variant = tc.run_sets(target, resumed, probs, removed, seed=1, n_runs=20, draws=2000,
+                          write=lambda: tc.write_partial(partial, key, resumed))
+    assert [c[0] for c in target.calls] == list(range(8, 21)) and len(target.calls) == 13
+    assert target.removed == [["169822655"]]
+    assert variant["n_runs"] == 20 and variant["seeds"] == list(range(1, 21)) and variant["same_as_all"] is False
+    saved = tc.resume_state(partial, key)
+    assert len(saved["runs"]) == 20 and len(saved["runs_excluded"]) == 20
+    err = capsys.readouterr().err
+    assert "pixel-excluded run 8/20 (seed 8, parallel)" in err and "\nrun " not in f"\n{err}"

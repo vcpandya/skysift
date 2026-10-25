@@ -540,7 +540,10 @@
         const nx = (VX.removed || []).length;
         const vspread = (m) => `${g3(VX[m])} (16th to 84th percentile ${g3(VX[`${m}_p16`])} to ${g3(VX[`${m}_p84`])})`;
         const phrase = nx === 1 ? "the one neighbour the difference images exclude" : `the ${nx} neighbours the difference images exclude`;
-        const lead = VX.same_as_all
+        const absent = VX.same_as_all && (VX.not_in_star_list || []).length;
+        const lead = absent
+          ? "None of the neighbours the difference images exclude is in TRICERATOPS's star list, so the pixel-excluded run equals the first."
+          : VX.same_as_all
           ? "The difference images exclude no neighbour, so the run set with them removed is this one."
           : `With ${phrase} removed, over ${VX.n_runs} runs: median false-positive probability ${vspread("fpp")}, ${vspread("fpp_no_stp")} without STP, and nearby false-positive probability ${vspread("nfpp")}.`;
         para(2, [lead, PT.own_evidence, PT.excluded].filter(Boolean).join(" "));
@@ -641,10 +644,10 @@
     const S = D.star || {}, PL = D.planet || {};
     const v = (x, d, unit) => (x && isNum(x.median) ? `${fmt(x.median, d)} (+${fmt(x.plus, d)} / -${fmt(x.minus, d)}) ${unit}` : "not known");
     list(4, [["Spectral type", S.spectral_type || "not known"], ["Distance", v(S.distance_pc, 0, "pc")], ["Temperature", v(S.teff, 0, "K")],
-      ["Radius", v(S.radius, 3, "solar radii")], ["Mass", v(S.mass, 3, "solar masses")], ["Planet radius", v(PL.rp_rearth, 2, "Earth radii")],
+      ["Radius", v(S.radius, 3, "solar radii")], ["Mass", v(S.mass, 3, "solar masses")],
+      ...(PT.crowdsap ? [["Crowding metric (CROWDSAP)", PT.crowdsap]] : []), ["Planet radius", v(PL.rp_rearth, 2, "Earth radii")],
       ["Orbit", v(PL.a_au, 3, "AU")], ["Equilibrium temperature", v(PL.teq_k, 0, "K")]]);
     para(4, PT.star, "pack-words dossier-small");
-    para(4, PT.crowdsap, "pack-words dossier-small");
     if (L) {
       [["look-star", "The star beside the Sun, to scale. The colour follows the surface temperature."],
         ["look-planet", "The planet beside Earth and Neptune, to scale. Its size is measured; its surface is a guess."],

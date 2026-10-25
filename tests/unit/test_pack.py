@@ -2231,7 +2231,9 @@ def test_the_live_shape_stays_inside_the_word_limit_with_margin(cross, prior):
     1,494 and 1,522 with one, abstracts 156 and 160; its fix round 1 cuts (A1, B1 to B8): 1,344 and 1,372 without,
     1,448 and 1,476 with one; abstracts 146 without a prior claim, 150 with. Task 16 (the planet-radius bracket up to
     the full-column E(B-V), the caveat title) took the longest to 1,508; its cut 1 (no GSP-Phot sentence in the note):
-    1,335 and 1,363 without, 1,439 and 1,467 with one; abstracts unchanged."""
+    1,335 and 1,363 without, 1,439 and 1,467 with one; abstracts unchanged. Task 15 fix round 2, M2 (the excluded
+    set's dominant scenario in the own-evidence sentence, two words): 1,337 and 1,365 without, 1,441 and 1,469 with
+    one; abstracts 146 and 150."""
     words = _check_live_shape(cross, prior)
     assert words["total"] <= LIVE_SHAPE_LIMIT, words
     assert words["abstract"] <= NOTE_LIMITS["abstract"], words
@@ -3120,9 +3122,10 @@ def test_the_round_3_cuts_leave_the_note_and_keep_every_number_in_the_readme():
                              "pixels from its brightest neighbour, nearer this star in 4 of 4 observing seasons, its "
                              "error carrying a pointing-jitter floor of 0.017 px. In seasons 0 and 3")
     # B2 and B8: the own-evidence sentence and the cross-check clause
-    assert ("The pixel-excluded value (0.31) rests on our own evidence, the difference-image centroids; the "
-            "all-neighbours value (0.60) rests on the catalogue's crowding metric split by the PRF overlap rule, a "
-            "bound rather than a measurement.") in body
+    # B2, and fix round 2's M2: the excluded set's dominant scenario in two words
+    assert ("The pixel-excluded value (0.31, mainly STP) rests on our own evidence, the difference-image centroids; "
+            "the all-neighbours value (0.60) rests on the catalogue's crowding metric split by the PRF overlap rule, "
+            "a bound rather than a measurement.") in body
     assert ("gives a median false-positive probability of 0.60 (0.60 without a planet transiting an unresolved bound "
             "companion, STP, absent from SkySift's model; 0.31, and 0.014 without STP, with the 6 neighbours the "
             "difference images exclude removed) and a nearby false-positive probability of 0.0020 over 20 runs, 2 "
@@ -3274,3 +3277,14 @@ def test_with_neither_value_the_texts_say_not_available(env_with_dossier):
     rows = {r[0]: r for r in _readme_table(render_readme(data, {}))}
     assert set(rows) == {"Unreddened", "GSP-Phot (Gaia DR3)"}
     assert pack_module.references(data)["schlafly2011"] is False
+
+
+def test_an_uncharacterised_host_keeps_its_crowding_metric_in_the_readme():
+    """Task 15 fix round 2, M5: the README's Star line prints the crowding metric for a star block with no
+    parameters (no method, reddening, FLAME or habitable-zone text)."""
+    golden = _golden()
+    bare = {**golden, "star": {"route": "none", "crowdsap": golden["star"]["crowdsap"]}}
+    text = pack_rows.crowdsap_text(bare)
+    assert text and text.startswith("The KBonus crowding metric is C = 0.8565")
+    readme = render_readme(bare, {})
+    assert f"Star: {text}" in readme
