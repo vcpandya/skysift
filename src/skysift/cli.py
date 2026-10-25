@@ -286,7 +286,7 @@ def dossier(target: str = typer.Option(..., "--target", help="The target id, e.g
     except ds.NoSignal as e:
         _plain(console, f"{e}: nothing to build a dossier from")
         raise typer.Exit(1) from None
-    except (ds.LightCurveReleased, ds.PriorClaimsError) as e:
+    except (ds.LightCurveReleased, ds.PriorClaimsError, ds.NoExtinction, ds.ExtinctionError) as e:
         _plain(console, str(e))
         raise typer.Exit(2) from None
     report = rep.as_dict()

@@ -8,16 +8,27 @@ point (from the installed ``gaiadr3-zeropoint`` package, the optional ``dossier`
 vendored; without it the global offset of -0.017 mas with a caveat), the
 Mamajek dwarf table at the observed BP-RP for Teff and spectral type, and below 4,000 K the Mann et al. 2015 radius
 and Mann et al. 2019 mass from the absolute Ks; errors from a ``N_DRAWS`` Monte Carlo reported as the 16th, 50th and
-84th percentiles. Gaia's own GSP-Phot and FLAME values are kept as a cross-check, never as the headline."""
+84th percentiles. Gaia's own GSP-Phot and FLAME values are kept as a cross-check, never as the headline.
+
+The extinction (spec 12.3 as amended on 23 October 2026) is read from ``docs/candidates/<target>/extinction.json``,
+written once by ``tools/extinction.py``. A 3D value at the Gaia distance (Bayestar19, Green et al. 2019), adopted or
+stored by hand, is turned into E(BP-RP), A_G and A_Ks by the Gaia (E)DR3 law (A_Ks over A_0 from Cardelli et al.
+1989) and taken out of the draws; without one the unreddened star stays adopted, and the Schlafly and Finkbeiner 2011
+full-column E(B-V) runs through the same law as the upper end of a bracket. GSP-Phot's E(BP-RP) is never adopted:
+Andrae et al. 2023 document its bias for cool dwarfs."""
 from __future__ import annotations
 
+import copy
+import dataclasses
 import functools
 import importlib
+import json
 import math
 import re
 import warnings
 from dataclasses import dataclass
 from importlib import resources
+from pathlib import Path
 
 import numpy as np
 
@@ -47,6 +58,38 @@ TSUN = 5772.0
 RUWE_MAX = 1.4
 DWARF_MG_TOLERANCE = 1.0         # mag between the absolute G and the dwarf sequence before a caveat
 SELF_MATCH_ARCSEC = 1.0          # without a Gaia id, the nearest cone row within this is the target itself
+# the extinction (spec 12.3 as amended by the controller's addenda of 23 October): E(B-V) through the Gaia (E)DR3 law
+R_V = 3.1
+GAIA_COLOUR_RANGE = (-0.06, 2.5)      # the fit's validity in (BP-RP)_0; outside it the colour is held at the edge
+GAIA_A0_RANGE = (0.01, 20.0)          # the fit's validity in A_0 (documented, not enforced: below 0.01 is no dust)
+GAIA_LAW = ("Gaia (E)DR3 extinction law, main-sequence fit (log g 4.5) in (BP-RP)_0 and A_0 on the Fitzpatrick "
+            "et al. 2019 law (Riello et al. 2021 passbands): www.cosmos.esa.int/web/gaia/edr3-extinction-law, "
+            "Fitz19_EDR3_MainSequence.csv")
+# k = a1 + a2 X + a3 X^2 + a4 X^3 + a5 A0 + a6 A0^2 + a7 A0^3 + a8 A0 X + a9 A0 X^2 + a10 X A0^2, X = (BP-RP)_0
+GAIA_K_G = (0.995969721536602, -0.159726460302015, 0.0122380738156057, 0.00090726555099859, -0.0377160263914123,
+            0.00151347495244888, -2.52364537395142e-05, 0.0114522658102451, -0.000936914989014318,
+            -0.000260296774134201)
+GAIA_K_BP = (1.15363197483424, -0.0814012991657388, -0.036013023976704, 0.0192143585568966, -0.022397548243016,
+             0.000840562680547171, -1.31018008013549e-05, 0.00660124080271006, -0.000882247501989453,
+             -0.000111215755291684)
+GAIA_K_RP = (0.66320787941067, -0.0179847164933981, 0.000493769449961458, -0.00267994405695751,
+             -0.00651422146709376, 3.30179903473159e-05, 1.57894227641527e-06, -7.9800898337247e-05,
+             0.000255679812110045, 1.10476584967393e-05)
+GAIA_COLOUR_ITERATIONS = 10
+A_KS_OVER_A0 = 0.117                  # Cardelli, Clayton and Mathis 1989 at R_V 3.1 and the 2MASS Ks 2.159 um
+EXTINCTION_SEED = 20261023            # the E(B-V) draws, a generator of their own, so the other draws do not move
+EXTINCTION_FILE = "extinction.json"
+EXTINCTION_FIELDS = ("ebv", "ebv_p16", "ebv_p84", "source", "map", "queried_utc", "distance_pc")
+# the 3D value's three states: "adopted" (a stored Bayestar19 value; a block without ``status`` is one), "manual"
+# (stored by hand with ``tools/extinction.py --store``), "not available" (with its reason)
+EXT_ADOPTED, EXT_MANUAL, EXT_NOT_AVAILABLE = "adopted", "manual", "not available"
+EXTINCTION_STATES = (EXT_ADOPTED, EXT_MANUAL, EXT_NOT_AVAILABLE)
+# the full-column E(B-V) of Schlafly and Finkbeiner 2011 (IRSA DUST, the pixel at the star), stored under "column":
+# the whole line of sight, dust beyond the star included, so an upper bound on the reddening at the star's distance
+COLUMN_OK = "ok"
+COLUMN_FIELDS = ("ebv", "source", "queried_utc")
+BAYESTAR_LABEL = "Bayestar19"
+COLUMN_LABEL = "the full column (Schlafly and Finkbeiner 2011)"
 KOPPARAPU_TEFF = (2600.0, 7200.0)
 # Kopparapu et al. 2013, erratum 2013 ApJ 770 82: effective-flux coefficients, t = Teff - 5780. The hand-built template
 # carried the pre-erratum recent-Venus set; the other three are unchanged by the erratum.
@@ -144,6 +187,10 @@ class StarParams:
     ruwe: float | None = None                # Gaia DR3, copied for the star sentence and the provenance (spec 11.6)
     non_single_star: int | None = None
     ebpminrp_gspphot: float | None = None
+    # spec 12.3: the stored extinction block with what the law makes of it (``derive``), and the unreddened star and
+    # planet beside it; None without a block or for a star that cannot be characterised
+    extinction: dict | None = None
+    unreddened: dict | None = None
 
 
 @dataclass(frozen=True)
@@ -417,15 +464,200 @@ def _hz_distance(teff: float, lum: float, coeffs) -> float:
     return round(math.sqrt(lum / s_eff), 4)
 
 
-def derive(gaia: GaiaRow | None, period: float, fit_k: float | None, depth: float,
-           rng: np.random.Generator) -> tuple[StarParams, PlanetParams]:
+# ---------------------------------------------------------------------------------------------------- extinction
+
+class ExtinctionError(ValueError):
+    """A stored ``extinction.json`` that is not a valid block; the message names the first problem."""
+
+
+class NoExtinction(LookupError):
+    """A star Gaia can characterise, without a stored ``extinction.json`` (spec 12.3: never a silent fallback)."""
+
+
+def gaia_k(coeffs, x, a0):
+    """The Gaia (E)DR3 extinction coefficient ``A_band / A_0`` of the ten-term polynomial in X = (BP-RP)_0 and A_0
+    (``GAIA_K_G``, ``GAIA_K_BP``, ``GAIA_K_RP``); scalars or numpy arrays."""
+    x, a0 = np.asarray(x, dtype=float), np.asarray(a0, dtype=float)
+    c = coeffs
+    return (c[0] + c[1] * x + c[2] * x ** 2 + c[3] * x ** 3 + c[4] * a0 + c[5] * a0 ** 2 + c[6] * a0 ** 3
+            + c[7] * a0 * x + c[8] * a0 * x ** 2 + c[9] * x * a0 ** 2)
+
+
+def gaia_extinction(ebv, bp_rp_observed: float) -> dict:
+    """E(B-V) through the Gaia (E)DR3 law: A_0 = R_V E(B-V); the intrinsic colour X_0 starts at the observed one and,
+    ``GAIA_COLOUR_ITERATIONS`` times, becomes observed - A_0 (k_BP - k_RP) at X_0 held inside ``GAIA_COLOUR_RANGE``.
+    {"ebv", "a0", "bp_rp0", "colour_held" (X_0 outside the range), "k_g", "k_bp", "k_rp", "ebprp", "a_g", "a_ks"},
+    every k at the held X_0, A_Ks = ``A_KS_OVER_A0`` A_0. Python floats (and a bool) for a scalar ``ebv``; for an
+    array (the draws) each value is an array and ``colour_held`` a bool array."""
+    scalar = np.ndim(ebv) == 0
+    ebv_a = np.asarray(ebv, dtype=float)
+    a0 = R_V * ebv_a
+    x0 = np.full_like(a0, float(bp_rp_observed))
+    for _ in range(GAIA_COLOUR_ITERATIONS):
+        held = np.clip(x0, *GAIA_COLOUR_RANGE)
+        x0 = bp_rp_observed - a0 * (gaia_k(GAIA_K_BP, held, a0) - gaia_k(GAIA_K_RP, held, a0))
+    held = np.clip(x0, *GAIA_COLOUR_RANGE)
+    k_g, k_bp, k_rp = (gaia_k(c, held, a0) for c in (GAIA_K_G, GAIA_K_BP, GAIA_K_RP))
+    out = {"ebv": ebv_a, "a0": a0, "bp_rp0": x0, "colour_held": (x0 < GAIA_COLOUR_RANGE[0]) | (x0 > GAIA_COLOUR_RANGE[1]),
+           "k_g": k_g, "k_bp": k_bp, "k_rp": k_rp, "ebprp": a0 * (k_bp - k_rp), "a_g": a0 * k_g,
+           "a_ks": A_KS_OVER_A0 * a0}
+    if scalar:
+        return {k: (bool(v) if k == "colour_held" else float(v)) for k, v in out.items()}
+    return out
+
+
+def extinction_state(block: dict | None) -> str | None:
+    """The 3D value's state of a stored block: ``EXT_ADOPTED`` (a block without ``status`` is a stored Bayestar19
+    value), ``EXT_MANUAL`` or ``EXT_NOT_AVAILABLE``; None without a block."""
+    if not isinstance(block, dict):
+        return None
+    return block.get("status") or EXT_ADOPTED
+
+
+def column_ebv(block: dict | None) -> float | None:
+    """The stored full-column E(B-V) (the upper bound) when the block's ``column`` was fetched, else None."""
+    col = (block or {}).get("column") if isinstance(block, dict) else None
+    if not isinstance(col, dict) or col.get("status") != COLUMN_OK:
+        return None
+    return float(col["ebv"])
+
+
+def _finite(value) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+
+def _block_problem(block) -> str | None:
+    """The first thing that makes ``block`` not a valid stored extinction, or None."""
+    if not isinstance(block, dict):
+        return "not a JSON object"
+    state = extinction_state(block)
+    if state not in EXTINCTION_STATES:
+        return f"status {state!r} is not one of {', '.join(EXTINCTION_STATES)}"
+    if state == EXT_NOT_AVAILABLE:
+        if not str(block.get("reason") or "").strip():
+            return "reason is empty"
+        if not str(block.get("queried_utc") or "").strip():
+            return "queried_utc is missing"
+    else:
+        for field in EXTINCTION_FIELDS:
+            if field not in block:
+                return f"{field} is missing"
+        for field in ("ebv", "ebv_p16", "ebv_p84", "distance_pc"):
+            if not _finite(block[field]):
+                return f"{field} is not a finite number"
+        if not 0 <= block["ebv_p16"] <= block["ebv"] <= block["ebv_p84"]:
+            return "not 0 <= ebv_p16 <= ebv <= ebv_p84"
+        if not str(block["source"]).strip():
+            return "source is empty"
+    col = block.get("column")
+    if col is not None:
+        if not isinstance(col, dict):
+            return "column is not a JSON object"
+        if col.get("status") == COLUMN_OK:
+            for field in COLUMN_FIELDS:
+                if field not in col:
+                    return f"column {field} is missing"
+            if not _finite(col["ebv"]) or col["ebv"] < 0:
+                return "column ebv is not a finite number at or above 0"
+            if not str(col["source"]).strip():
+                return "column source is empty"
+        elif col.get("status") == EXT_NOT_AVAILABLE:
+            if not str(col.get("reason") or "").strip():
+                return "column reason is empty"
+        else:
+            return f"column status {col.get('status')!r} is not {COLUMN_OK!r} or {EXT_NOT_AVAILABLE!r}"
+    return None
+
+
+def load_extinction(target_id: str, root) -> dict | None:
+    """``root / target_id / EXTINCTION_FILE`` as a dict, or None without the file. ``ExtinctionError`` naming the
+    first problem: not JSON, not a JSON object, a state outside ``EXTINCTION_STATES``; for a 3D value a field of
+    ``EXTINCTION_FIELDS`` missing, a number not finite, not 0 <= ebv_p16 <= ebv <= ebv_p84 or an empty source; for
+    "not available" an empty reason; a ``column`` that is neither a fetched value nor a reason."""
+    path = Path(root) / target_id / EXTINCTION_FILE
+    if not path.is_file():
+        return None
+    try:
+        block = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        raise ExtinctionError(f"{path} does not read as JSON ({e})") from e
+    problem = _block_problem(block)
+    if problem:
+        raise ExtinctionError(f"{path}: {problem}")
+    return block
+
+
+def _split_normal(rng: np.random.Generator, median: float, low: float, high: float, n: int) -> np.ndarray:
+    """``n`` draws of a split normal with the stored 16th and 84th percentiles: median + z (median - low) for z < 0,
+    median + z (high - median) for z >= 0, z standard normal, held at 0 and above."""
+    z = rng.standard_normal(n)
+    return np.maximum(median + np.where(z < 0, z * (median - low), z * (high - median)), 0.0)
+
+
+def _values(draws: dict, keys=("a0", "ebprp", "a_g", "a_ks"), source: str = "") -> dict:
+    return {k: _value(draws[k], 3, source).as_dict() for k in keys}
+
+
+def derive(gaia: GaiaRow | None, period: float, fit_k: float | None, depth: float, rng: np.random.Generator,
+           extinction: dict | None = None) -> tuple[StarParams, PlanetParams]:
     """The star and planet of spec 5.3 from one Gaia row, the period (days), the fitted radius ratio (None without a
     fit: the depth is used) and the depth (fraction). Every draw comes from ``rng``.
 
     The Mann relations are used only for a dwarf inside their calibration: an M-type colour with Ks, the median M_Ks
     inside ``MANN_MKS_RANGE`` and the absolute G within ``DWARF_MG_TOLERANCE`` of the dwarf sequence. Otherwise the
     dwarf-table radius and mass at the colour, with a caveat saying why, or no star when the colour is off the table
-    too."""
+    too.
+
+    ``extinction`` (spec 12.3, the stored block of ``load_extinction``): None leaves everything as before. With a
+    block, the unreddened pair is taken first from a copy of ``rng`` (the version 5 numbers, ``StarParams.unreddened``).
+    A 3D value (adopted or manual) is drawn as a split normal from its percentiles (a generator of its own,
+    ``EXTINCTION_SEED``), turned into E(BP-RP), A_G and A_Ks by ``gaia_extinction`` and taken out of the colour, the
+    absolute magnitudes and the Ks draws: the adopted star. Without one the unreddened star stays adopted. The
+    full-column E(B-V), when stored, runs through the same law and draws from another copy of ``rng``: the upper end
+    of the bracket, under ``extinction["column"]``."""
+    if extinction is None:
+        return _derive(gaia, period, fit_k, depth, rng)
+    plain_rng, column_rng = copy.deepcopy(rng), copy.deepcopy(rng)
+    plain, plain_planet = _derive(gaia, period, fit_k, depth, plain_rng)
+    if plain.route == "none":
+        return _derive(gaia, period, fit_k, depth, rng)
+    state = extinction_state(extinction)
+    block = {**extinction, "state": state, "r_v": R_V, "law": GAIA_LAW, "a_ks_over_a0": A_KS_OVER_A0}
+    if state in (EXT_ADOPTED, EXT_MANUAL):
+        ebv = _split_normal(np.random.default_rng(EXTINCTION_SEED), float(extinction["ebv"]),
+                            float(extinction["ebv_p16"]), float(extinction["ebv_p84"]), N_DRAWS)
+        e = gaia_extinction(ebv, gaia.bp_rp)
+        tail = f"(E(B-V) {float(extinction['ebv']):.3f} at {float(extinction['distance_pc']):.0f} pc)"
+        star, planet = _derive(gaia, period, fit_k, depth, rng, e, BAYESTAR_LABEL, tail)
+        block.update({"bp_rp0": round(float(np.median(e["bp_rp0"])), 4), "colour_held": bool(np.any(e["colour_held"])),
+                      **_values(e, source=f"{BAYESTAR_LABEL} E(B-V) through the Gaia (E)DR3 law")})
+    else:
+        star, planet = _derive(gaia, period, fit_k, depth, rng)
+    ebv_col = column_ebv(extinction)
+    if ebv_col is not None:
+        e = gaia_extinction(np.full(N_DRAWS, ebv_col), gaia.bp_rp)
+        cs, cp = _derive(gaia, period, fit_k, depth, column_rng, e, COLUMN_LABEL, f"(E(B-V) {ebv_col:.3f})")
+        block["column"] = {**extinction["column"], "bp_rp0": round(float(np.median(e["bp_rp0"])), 4),
+                           "colour_held": bool(np.any(e["colour_held"])),
+                           **_values(e, source="the full-column E(B-V) through the Gaia (E)DR3 law"),
+                           **_star_planet(cs, cp)}
+    unreddened = {**_star_planet(plain, plain_planet), "bp_rp0": gaia.bp_rp}
+    return dataclasses.replace(star, extinction=block, unreddened=unreddened), planet
+
+
+def _star_planet(star: StarParams, planet: PlanetParams) -> dict:
+    """The route, Teff, radius and mass of a star and the planet radius and insolation it gives, as Value dicts."""
+    def d(v):
+        return v.as_dict() if v is not None else None
+    return {"route": star.route, "teff": d(star.teff), "radius": d(star.radius), "mass": d(star.mass),
+            "rp_rearth": d(planet.rp_rearth), "insolation_earth": d(planet.insolation_earth)}
+
+
+def _derive(gaia: GaiaRow | None, period: float, fit_k: float | None, depth: float, rng: np.random.Generator,
+            e: dict | None = None, label: str | None = None,
+            tail: str = "") -> tuple[StarParams, PlanetParams]:
+    """``derive`` for one reddening: ``e`` None is the unreddened star (the version 5 route); otherwise the
+    ``gaia_extinction`` draws, named ``label`` in the sources, ``tail`` after the E(BP-RP) in the reddening note."""
     if gaia is None or gaia.parallax is None or gaia.parallax_error is None or gaia.bp_rp is None:
         return _unknown(gaia)
     caveats: list[str] = []
@@ -444,13 +676,22 @@ def derive(gaia: GaiaRow | None, period: float, fit_k: float | None, depth: floa
     if gaia.ruwe is not None and gaia.ruwe > RUWE_MAX:
         caveats.append(f"RUWE {gaia.ruwe:.2f} above {RUWE_MAX}: the astrometry may be disturbed by a companion")
     bp_rp, tab = gaia.bp_rp, mamajek_table()
-    in_table = bool(tab[0, 0] <= bp_rp <= tab[-1, 0])
+    # with a reddening the dwarf sequence, the table check and the spectral type are read at the median intrinsic
+    # colour, and the absolute magnitudes lose the median extinction (spec 12.3)
+    ebprp = 0.0 if e is None else e["ebprp"]
+    x0 = bp_rp if e is None else float(np.median(e["bp_rp0"]))
+    a_g = 0.0 if e is None else float(np.median(e["a_g"]))
+    a_ks = 0.0 if e is None else float(np.median(e["a_ks"]))
+    which = "BP-RP" if e is None else "dereddened BP-RP"
+    at = "BP-RP" if e is None else "the dereddened BP-RP"
+    in_table = bool(tab[0, 0] <= x0 <= tab[-1, 0])
     if not in_table:
-        caveats.append(f"BP-RP {bp_rp:.2f} is outside the dwarf table ({tab[0, 0]:.2f} to {tab[-1, 0]:.2f}): "
+        caveats.append(f"{which} {x0:.2f} is outside the dwarf table ({tab[0, 0]:.2f} to {tab[-1, 0]:.2f}): "
                        "values are held at the table edge")
 
-    # the draws, in a fixed order so a seed always gives the same numbers
-    colour = rng.normal(bp_rp, COLOUR_SIGMA, N_DRAWS)
+    # the draws, in a fixed order so a seed always gives the same numbers (the reddening has its own generator)
+    colour_obs = rng.normal(bp_rp, COLOUR_SIGMA, N_DRAWS)
+    colour = colour_obs - ebprp
     plx_s = rng.normal(plx, eplx, N_DRAWS)
     dropped = float(np.mean(plx_s <= 0))
     plx_s[plx_s <= 0] = np.nan
@@ -461,20 +702,24 @@ def derive(gaia: GaiaRow | None, period: float, fit_k: float | None, depth: floa
     teff_s = _interp(colour, 1)
     dist0 = 1000.0 / plx
     dm0 = 5 * math.log10(dist0) - 5
-    abs_g = round(gaia.gmag - dm0, 3) if gaia.gmag is not None else None
-    abs_ks = round(gaia.ks - dm0, 3) if gaia.ks is not None else None
-    mg_dwarf = float(_interp(bp_rp, 4))
+    abs_g = round(gaia.gmag - dm0 - a_g, 3) if gaia.gmag is not None else None
+    abs_ks = round(gaia.ks - dm0 - a_ks, 3) if gaia.ks is not None else None
+    mg_dwarf = float(_interp(x0, 4))
     off_dwarf = abs_g is not None and abs(abs_g - mg_dwarf) > DWARF_MG_TOLERANCE
     if off_dwarf:
         caveats.append(f"absolute G {abs_g:.2f} is more than {DWARF_MG_TOLERANCE:.0f} mag from the dwarf sequence "
                        f"({mg_dwarf:.2f}) at this colour: the star may be evolved, an unresolved binary or reddened")
-    cool = float(_interp(bp_rp, 1)) < M_TEFF_MAX
-    table_src = f"Mamajek dwarf table at BP-RP {bp_rp:.3f} +- {COLOUR_SIGMA:.2f} ({CITATIONS['DWARF_SEQUENCE']})"
+    cool = float(_interp(x0, 1)) < M_TEFF_MAX
+    emed = float(np.median(ebprp))
+    from_label = f", E(BP-RP) {emed:.3f} from {label}" if e is not None else ""
+    table_src = (f"Mamajek dwarf table at {at} {x0:.3f} +- {COLOUR_SIGMA:.2f} "
+                 f"({CITATIONS['DWARF_SEQUENCE']}){from_label}")
 
     route = None
     if cool and gaia.ks is not None:
         ks_s = rng.normal(gaia.ks, gaia.ks_err or KS_ERR_DEFAULT, N_DRAWS)
-        mks = ks_s - dm_s - rng.uniform(0.0, A_KS_MAX, N_DRAWS)
+        a_ks_uniform = rng.uniform(0.0, A_KS_MAX, N_DRAWS)     # drawn with a reddening too, so later draws stay
+        mks = ks_s - dm_s - (a_ks_uniform if e is None else e["a_ks"])
         mks_med = float(np.nanmedian(mks))
         why = None
         if not MANN_MKS_RANGE[0] <= mks_med <= MANN_MKS_RANGE[1]:
@@ -498,7 +743,8 @@ def derive(gaia: GaiaRow | None, period: float, fit_k: float | None, depth: floa
                     radius_s[bad], mass_s[bad] = np.nan, np.nan
                     caveats.append(f"{100 * bad.mean():.1f} percent of the Mann draws gave no finite radius or mass "
                                    "and were dropped")
-                ks_src = f"2MASS Ks {gaia.ks:.3f}, A_Ks 0 to {A_KS_MAX}, Gaia parallax"
+                ks_src = (f"2MASS Ks {gaia.ks:.3f}, A_Ks 0 to {A_KS_MAX}, Gaia parallax" if e is None else
+                          f"2MASS Ks {gaia.ks:.3f}, A_Ks {a_ks:.3f} from {label}, Gaia parallax")
                 r_src = f"Mann et al. 2015 R(M_Ks) ({CITATIONS['M_DWARF_RADIUS']}), {ks_src}"
                 m_src = f"Mann et al. 2019 M(M_Ks) ({CITATIONS['M_DWARF_MASS']}), {ks_src}"
         if why is not None:
@@ -513,25 +759,32 @@ def derive(gaia: GaiaRow | None, period: float, fit_k: float | None, depth: floa
         no_ks = cool and gaia.ks is None
         rm_colour = colour
         if no_ks:  # an M dwarf without Ks: the colour radius, with the colour scatter doubled
-            rm_colour = bp_rp + 2.0 * (colour - bp_rp)
+            rm_colour = (bp_rp - ebprp) + 2.0 * (colour_obs - bp_rp)
             caveats.append(KS_MISSING)
         radius_s, mass_s = _interp(rm_colour, 2), _interp(rm_colour, 3)
         width = 2 * COLOUR_SIGMA if no_ks else COLOUR_SIGMA
-        r_src = m_src = f"Mamajek dwarf table at BP-RP {bp_rp:.3f} +- {width:.2f} ({CITATIONS['DWARF_SEQUENCE']})"
+        r_src = m_src = (f"Mamajek dwarf table at {at} {x0:.3f} +- {width:.2f} "
+                         f"({CITATIONS['DWARF_SEQUENCE']}){from_label}")
 
     density_s = mass_s * MSUN / (4 / 3 * np.pi * (radius_s * RSUN) ** 3) / 1000.0
-    teff = _value(teff_s, 0, table_src + ", E(BP-RP) <= 0.1 assumed")
+    teff = _value(teff_s, 0, table_src + (", E(BP-RP) <= 0.1 assumed" if e is None else ""))
     radius, mass = _value(radius_s, 3, r_src), _value(mass_s, 3, m_src)
     distance = _value(dist_s, 1, f"1000 / Gaia DR3 parallax, zero point {zp:+.4f} mas ({zp_source}; "
                                  f"{CITATIONS['GAIA_PARALLAX_ZERO_POINT']}), +- {eplx:.4f} mas")
-    alt = _value(_interp(colour - REDDENING_ALT, 2), 3,
+    alt = _value(_interp(colour_obs - REDDENING_ALT, 2), 3,
                  f"Mamajek dwarf table at BP-RP {bp_rp - REDDENING_ALT:.3f} +- {COLOUR_SIGMA:.2f} (if E(BP-RP) = 0.2)")
-    reddening_note = (f"Teff and spectral type assume E(BP-RP) at or below 0.1 at the observed BP-RP {bp_rp:.2f}; "
-                      f"if E(BP-RP) were {REDDENING_ALT} the dwarf-table radius would be {alt.median:.3f} Rsun.")
-    if route == "mann":
-        reddening_note += " The Ks radius barely depends on reddening: A_Ks 0 to 0.07 is in the draws."
+    if e is None:
+        reddening_note = (f"Teff and spectral type assume E(BP-RP) at or below 0.1 at the observed BP-RP "
+                          f"{bp_rp:.2f}; if E(BP-RP) were {REDDENING_ALT} the dwarf-table radius would be "
+                          f"{alt.median:.3f} Rsun.")
+        if route == "mann":
+            reddening_note += " The Ks radius barely depends on reddening: A_Ks 0 to 0.07 is in the draws."
+    else:
+        reddening_note = (f"Teff and spectral type use the BP-RP {bp_rp:.2f} dereddened by the {label} E(BP-RP) of "
+                          f"{emed:.3f} {tail}; if E(BP-RP) were {REDDENING_ALT} the dwarf-table radius would be "
+                          f"{alt.median:.3f} Rsun.")
     labels = mamajek_labels()
-    spectral_type = labels[int(np.argmin(np.abs(tab[:, 0] - bp_rp)))]
+    spectral_type = labels[int(np.argmin(np.abs(tab[:, 0] - x0)))]
     star = StarParams(route=route, spectral_type=spectral_type, teff=teff, radius=radius, mass=mass,
                       density_gcc=_value(density_s, 2, "M* / (4/3 pi R*^3) from the same draws"),
                       distance_pc=distance, abs_g=abs_g, abs_ks=abs_ks,

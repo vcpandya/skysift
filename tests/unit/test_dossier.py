@@ -82,6 +82,25 @@ RESPONSES = {"CONTAINS": CONE_CSV, "WHERE g.source_id": GAIA_CSV, "gaiaedr3_dist
              "tmass": TMASS_CSV}
 PERIOD, T0 = 40.2899, 136.3
 K, B, A_OVER_R = 0.047, 0.31, 74.0          # the injected geometry (and the seed's rung 2 k and b)
+# spec 12.3 as amended: the stored extinction of the live state (no 3D value, the IRSA full column as the upper bound),
+# written for every seeded target; EXTINCTION_ADOPTED is a 3D value stored by hand, for the other state
+EXTINCTION_FIXTURE = {"target": "fixture", "status": "not available", "reason": "test fixture: Bayestar19 not queried",
+                      "queried_utc": "2026-10-23T20:00:00+00:00", "distance_pc": 303.0,
+                      "column": {"status": "ok", "ebv": 0.10, "ebv_mean": 0.09, "ebv_std": 0.01,
+                                 "stats_radius_arcmin": 5.0, "source": "IRSA DUST, Schlafly and Finkbeiner 2011",
+                                 "queried_utc": "2026-10-23T20:00:00+00:00", "ra": 285.9, "dec": 40.9,
+                                 "url": "https://irsa.ipac.caltech.edu/cgi-bin/DUST/nph-dust"}}
+EXTINCTION_ADOPTED = {"status": "manual", "ebv": 0.05, "ebv_p16": 0.03, "ebv_p84": 0.07, "source": "test fixture",
+                      "map": "by hand", "queried_utc": "2026-10-23T20:00:00+00:00", "distance_pc": 303.0,
+                      "column": EXTINCTION_FIXTURE["column"]}
+
+
+def write_extinction(target_id: str, block: dict) -> Path:
+    """``block`` as the stored extinction of ``target_id`` under the fixture's ``EXTINCTION_DIR``."""
+    path = dossier_module.EXTINCTION_DIR / target_id / "extinction.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(block), encoding="utf-8")
+    return path
 
 
 def fake_fetch(responses=None):
@@ -160,6 +179,12 @@ def _make_env(settings, monkeypatch, responses=None, calibration=True, calibrati
     # the seed target shares its id with docs/candidates/kic-006146676: a fixture reads its own empty folder instead
     monkeypatch.setattr(dossier_module, "CANDIDATES_DIR", Path(settings.data_dir) / "candidates")
     dossier_module.CANDIDATES_DIR.mkdir(parents=True, exist_ok=True)
+    # spec 12.3: every seeded target carries the stored extinction a characterised star needs
+    monkeypatch.setattr(dossier_module, "EXTINCTION_DIR", Path(settings.data_dir) / "extinction")
+    from skysift.store.db import TargetRow
+    with store.session() as s:
+        for target_id in s.scalars(select(TargetRow.target_id)):
+            write_extinction(target_id, {**EXTINCTION_FIXTURE, "target": target_id})
     path = cal.default_path(settings.data_dir, "kbonus_bkg")
     if calibration:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -1680,3 +1705,76 @@ def test_generate_stores_the_crowding_metric_in_the_star_block(env):
     crowd = d["star"]["crowdsap"]
     assert crowd["column"] == "crowdsap" and crowd["catalogue"].startswith("KBonus-bkg v1.0 source catalogue")
     assert crowd["value"] == d["target"]["meta"]["crowdsap"]
+
+
+# ---------------------------------------------------------------------------------------------------- Task 16 (spec 12.3)
+
+def test_generate_refuses_a_characterised_star_without_a_stored_extinction(env):
+    (dossier_module.EXTINCTION_DIR / STAGE2_TARGET / "extinction.json").unlink()
+    with pytest.raises(dossier_module.NoExtinction, match=r"no stored extinction for kic-006146676: run "
+                                                          r"tools/extinction.py --target kic-006146676"):
+        generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch, force=True)
+
+
+def test_a_malformed_extinction_stops_the_run_before_any_work(env):
+    write_extinction(STAGE2_TARGET, {**EXTINCTION_FIXTURE, "reason": ""})
+
+    def explode(*_a, **_kw):
+        raise AssertionError("no query expected")
+    with pytest.raises(dossier_module.ExtinctionError, match="reason is empty"):
+        generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=explode, force=True)
+
+
+def test_a_star_gaia_cannot_characterise_needs_no_extinction(env_no_gaia):
+    (dossier_module.EXTINCTION_DIR / STAGE2_TARGET / "extinction.json").unlink()
+    d = _data(generate(env_no_gaia.store, env_no_gaia.blob, env_no_gaia.settings, STAGE2_TARGET,
+                       fetch=env_no_gaia.fetch, force=True))
+    assert d["star"]["route"] == "none" and d["star"]["extinction"] is None and d["star"]["unreddened"] is None
+
+
+def test_version_6_stores_the_bracket_and_the_extinction_moves_the_fingerprint(env):
+    """The live state: no 3D value, so the unreddened star is the adopted one, and the full column bounds it."""
+    rep = generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch, force=True)
+    star, planet = _data(rep)["star"], _data(rep)["planet"]
+    e = star["extinction"]
+    assert e["state"] == "not available" and e["reason"] == "test fixture: Bayestar19 not queried"
+    assert e["column"]["ebv"] == 0.10 and set(e["column"]) >= {"teff", "radius", "mass", "rp_rearth", "ebprp", "a_ks"}
+    assert set(star["unreddened"]) >= {"teff", "radius", "mass", "rp_rearth", "insolation_earth", "bp_rp0"}
+    assert star["unreddened"]["radius"] == star["radius"] and star["unreddened"]["rp_rearth"] == planet["rp_rearth"]
+    assert dossier_module.no_spectrum_title(star) == dossier_module.NO_SPECTRUM + dossier_module.REDDENING_BRACKETED
+    path = dossier_module.EXTINCTION_DIR / STAGE2_TARGET / "extinction.json"
+    write_extinction(STAGE2_TARGET, {**json.loads(path.read_text(encoding="utf-8")),
+                                     "column": {**EXTINCTION_FIXTURE["column"], "ebv": 0.2}})
+    again = generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch)
+    assert again.generated is True and _data(again)["star"]["extinction"]["column"]["ebv"] == 0.2
+    assert generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch).generated is False
+
+
+def test_a_3d_value_is_adopted_and_the_unreddened_star_kept_beside_it(env):
+    plain = _data(generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch, force=True))["star"]
+    write_extinction(STAGE2_TARGET, EXTINCTION_ADOPTED)
+    rep = generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch)
+    star = _data(rep)["star"]
+    assert rep.generated is True and star["extinction"]["state"] == "manual" and star["extinction"]["ebv"] == 0.05
+    assert star["teff"]["median"] > plain["teff"]["median"] and star["unreddened"]["teff"] == plain["teff"]
+    assert "Bayestar19" in star["radius"]["source"] and star["extinction"]["column"]["ebv"] == 0.10
+    assert dossier_module.no_spectrum_title(star) == dossier_module.NO_SPECTRUM
+
+
+def test_the_fingerprint_watches_the_adopted_and_the_column_e_b_v():
+    tests = [{"id": 1}]
+    base = fingerprint(tests, "candidate_stage2", None)
+    assert base != fingerprint(tests, "candidate_stage2", None, extinction_ebv=0.05)
+    assert base != fingerprint(tests, "candidate_stage2", None, column_ebv=0.674)
+    assert fingerprint(tests, "candidate_stage2", None, column_ebv=0.674) != fingerprint(
+        tests, "candidate_stage2", None, column_ebv=0.675)
+
+
+def test_the_star_caveat_title_follows_the_extinction_state():
+    star = {"ebpminrp_gspphot": 0.27, "extinction": {"state": "not available", "column": {"status": "ok"}}}
+    assert dossier_module.no_spectrum_title(star) == dossier_module.NO_SPECTRUM + dossier_module.REDDENING_BRACKETED
+    bare = {**star, "extinction": {"state": "not available", "column": {"status": "not available"}}}
+    assert dossier_module.no_spectrum_title(bare) == (dossier_module.NO_SPECTRUM + dossier_module.NO_REDDENING
+                                                      + " (Bayestar19 not available at build time)")
+    assert dossier_module.no_spectrum_title({**star, "extinction": {"state": "adopted"}}) == dossier_module.NO_SPECTRUM
+    assert dossier_module.no_spectrum_title({"ebpminrp_gspphot": 0.27}) == dossier_module.NO_SPECTRUM   # before v6

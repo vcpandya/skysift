@@ -308,16 +308,20 @@ def pick_signal(store: Store, target_id: str, signal_id: int | None = None) -> d
 
 
 def fingerprint(latest_tests: list[dict], final_status: str, decision: str | None, calibration_rows: int = 0,
-                sweep_size: int | None = None) -> str:
+                sweep_size: int | None = None, extinction_ebv: float | str | None = None,
+                column_ebv: float | str | None = None) -> str:
     """sha256 of the sorted test row ids, the final status, the latest decision, the number of rows in the source's
     null calibration (``calibration_rows``), the sweep size the false-alarm sentence quotes (``sweep_size_of``; 0 for
-    none) and the FPP model version: a dossier is stale when any of them changed since it was written, so one written
-    while the calibration was short goes stale as the null searches arrive, one written before the sweep grew goes
-    stale with it, and one written under an older false-positive model goes stale with the model."""
+    none), the FPP model version and the stored extinction (spec 12.3: the adopted E(B-V), ``extinction_ebv``, and
+    the full-column upper bound, ``column_ebv``, each None without one): a dossier is stale when any of them changed
+    since it was written, so one written while the calibration was short goes stale as the null searches arrive, one
+    written before the sweep grew goes stale with it, one written under an older false-positive model goes stale with
+    the model, and one written before a reddening was stored goes stale with it."""
     ids = sorted(int(t["id"]) for t in latest_tests)
     text = json.dumps({"tests": ids, "status": final_status, "decision": decision,
                        "calibration_rows": int(calibration_rows), "sweep_size": int(sweep_size or 0),
-                       "fpp_model": FPP_MODEL_VERSION}, sort_keys=True)
+                       "fpp_model": FPP_MODEL_VERSION, "extinction_ebv": extinction_ebv, "column_ebv": column_ebv},
+                      sort_keys=True)
     return hashlib.sha256(text.encode()).hexdigest()
 
 
@@ -707,6 +711,15 @@ def with_k_error(planet: dict, shape: dict | None) -> dict:
               "plus": round(math.hypot(rp["plus"], r * kp / kv), 2),
               "source": f"{rp['source']}; radius-ratio error from the bootstrap"}
     return {**planet, "rp_rearth": folded}
+
+
+def _star_with_k_errors(star_d: dict, shape: dict | None) -> dict:
+    """The star block with the bootstrap error of the radius ratio folded into the unreddened and the full-column
+    planet radii too (``with_k_error``), so every planet radius the reddening texts set side by side carries it."""
+    for holder in (star_d.get("unreddened"), (star_d.get("extinction") or {}).get("column")):
+        if isinstance(holder, dict) and isinstance(holder.get("rp_rearth"), dict):
+            holder["rp_rearth"] = with_k_error({"rp_rearth": holder["rp_rearth"]}, shape)["rp_rearth"]
+    return star_d
 
 
 # ---------------------------------------------------------------------------------------------------- pixels
@@ -1132,10 +1145,12 @@ def gaia_refused(error: str) -> str | None:
     return m.group(1) if m else None
 
 
-def _lookup(target: Target, signal: dict, tests: list[dict], *, fetch, store: Store):
+def _lookup(target: Target, signal: dict, tests: list[dict], *, fetch, store: Store, extinction: dict | None = None):
     """``stars.lookup`` with each query group caught: a failed query on the star's own row gives route "none", one on
     the neighbour cone gives ``None`` for the neighbours (unknown, not empty); each is logged at warning level and
-    returned in the error list as "<group>: <error>" (``GAIA_STAR`` or ``GAIA_CONE``)."""
+    returned in the error list as "<group>: <error>" (``GAIA_STAR`` or ``GAIA_CONE``). A Gaia row ``stars.derive``
+    would characterise (a parallax, its error and a BP-RP) without a stored ``extinction`` raises ``NoExtinction``
+    (spec 12.3: never a silent fallback); the block goes to ``stars.derive``."""
     shape = _metrics(tests, "rung2_shape")
     depth = _depth_fraction(signal, shape)
     fit_k = _num(shape, "fit_k") if shape.get("fit_ok") is True else None
@@ -1146,6 +1161,9 @@ def _lookup(target: Target, signal: dict, tests: list[dict], *, fetch, store: St
         gaia = None
         errors.append(f"{GAIA_STAR}: {e}")
         log.warning("Gaia query for the star of %s failed: %s", target.target_id, e)
+    if (extinction is None and gaia is not None and gaia.parallax is not None and gaia.parallax_error is not None
+            and gaia.bp_rp is not None):
+        raise NoExtinction(NO_EXTINCTION.format(target=target.target_id))
     cone_target = target
     if target.gmag is None and gaia is not None and gaia.gmag is not None:
         cone_target = target.model_copy(update={"gmag": gaia.gmag})
@@ -1155,7 +1173,8 @@ def _lookup(target: Target, signal: dict, tests: list[dict], *, fetch, store: St
         neighbours = None
         errors.append(f"{GAIA_CONE}: {e}")
         log.warning("Gaia neighbour cone for %s failed: %s", target.target_id, e)
-    star, planet = stars.derive(gaia, float(signal["period"]), fit_k, depth, np.random.default_rng(STARS_SEED))
+    star, planet = stars.derive(gaia, float(signal["period"]), fit_k, depth, np.random.default_rng(STARS_SEED),
+                                extinction)
     return star, planet, neighbours, gaia, errors
 
 
@@ -1394,12 +1413,26 @@ def prior_claims_unchecked(data: dict) -> bool:
 CANDIDATE_CAVEAT = "This is a candidate until follow-up confirms it"
 NO_SPECTRUM = "No spectrum: the planet radius depends on the stellar radius from Gaia colour and parallax"
 NO_REDDENING = ", and the reddening is not measured"
+# spec 12.3 as amended: no 3D value, the reddening bracketed by the full column; neither, the build-time clause
+REDDENING_BRACKETED = ", and the reddening is only bracketed"
+NO_BAYESTAR = " (Bayestar19 not available at build time)"
 
 
 def no_spectrum_title(star: dict | None) -> str:
-    """The stellar-radius caveat's title (spec 11.6): ``NO_SPECTRUM``, with ``NO_REDDENING`` when Gaia gives no GSP-Phot
-    E(BP-RP) for the star. The pack reads the title from here, so it follows the star block it prints."""
-    red = (star or {}).get("ebpminrp_gspphot")
+    """The stellar-radius caveat's title (spec 11.6, 12.3): ``NO_SPECTRUM`` alone when the star carries a 3D
+    extinction (adopted or stored by hand); with ``REDDENING_BRACKETED`` when it is not available and the full column
+    bounds it; with ``NO_REDDENING`` and ``NO_BAYESTAR`` when neither is there. A star block without an extinction (a
+    dossier before version 6) keeps the earlier rule: ``NO_REDDENING`` when Gaia gives no GSP-Phot E(BP-RP). The pack
+    reads the title from here, so it follows the star block it prints."""
+    star = star or {}
+    ext = star.get("extinction")
+    if isinstance(ext, dict):
+        if ext.get("state") != stars.EXT_NOT_AVAILABLE:
+            return NO_SPECTRUM
+        if (ext.get("column") or {}).get("status") == stars.COLUMN_OK:
+            return NO_SPECTRUM + REDDENING_BRACKETED
+        return NO_SPECTRUM + NO_REDDENING + NO_BAYESTAR
+    red = star.get("ebpminrp_gspphot")
     return NO_SPECTRUM + ("" if isinstance(red, (int, float)) and not isinstance(red, bool) else NO_REDDENING)
 
 
@@ -1668,6 +1701,24 @@ def _section(name: str, errors: dict, build: Callable[[], object]):
 
 
 CANDIDATES_DIR = Path(__file__).resolve().parents[2] / "docs" / "candidates"     # present in a source checkout only
+# spec 12.3: docs/candidates/<target>/extinction.json, written once by tools/extinction.py; tests point it elsewhere
+EXTINCTION_DIR = CANDIDATES_DIR
+NoExtinction, ExtinctionError = stars.NoExtinction, stars.ExtinctionError
+NO_EXTINCTION = ("no stored extinction for {target}: run tools/extinction.py --target {target} --data-dir <data dir> "
+                 "(it stores the IRSA full-column E(B-V) and the state of the Bayestar19 value), or store a 3D value "
+                 "by hand with --store")
+MALFORMED = "malformed"
+
+
+def extinction_keys(target_id: str) -> dict:
+    """``fingerprint``'s extinction arguments from the target's stored file, {"extinction_ebv", "column_ebv"}, for the
+    checks that recompute the fingerprint (the page's staleness, the pack's approval) as ``generate`` does; a malformed
+    file gives ``MALFORMED`` for both, so the dossier reads as stale until the file is fixed."""
+    try:
+        block = stars.load_extinction(target_id, EXTINCTION_DIR)
+    except stars.ExtinctionError:
+        return {"extinction_ebv": MALFORMED, "column_ebv": MALFORMED}
+    return {"extinction_ebv": (block or {}).get("ebv"), "column_ebv": stars.column_ebv(block)}
 PRIOR_CLAIM_FIELDS = ("doi", "date", "author", "title", "status", "note", "relationship", "development_note",
                       "development_note_short", *PRIOR_CLAIM_NUMBERS, "fpp_tool")
 PRIOR_CLAIM_REQUIRED = ("doi", "date", "author", "title")
@@ -1783,16 +1834,17 @@ def quoted_radius_ratio(shape: dict | None) -> float | None:
     return _finite_or_none(median if median is not None else fit.get("k"))
 
 
-def _rederive(gaia, star: stars.StarParams, planet: stars.PlanetParams, blocks: dict | None):
+def _rederive(gaia, star: stars.StarParams, planet: stars.PlanetParams, blocks: dict | None,
+              extinction: dict | None = None):
     """The star and planet again with the quoted radius ratio (``quoted_radius_ratio``) at the fold's period and
-    depth, when Gaia answered; the same seed, so the star's draws are those of ``_lookup``. Unchanged without a
-    fit."""
+    depth, when Gaia answered; the same seed and the same stored extinction, so the star's draws are those of
+    ``_lookup``. Unchanged without a fit."""
     k = quoted_radius_ratio((blocks or {}).get("shape"))
     if gaia is None or k is None:
         return star, planet
     extra = blocks.get("ephemeris_extra") or {}
     depth = (_num(extra, "depth_ppm") or 0.0) / 1e6
-    return stars.derive(gaia, float(extra["period_days"]), k, depth, np.random.default_rng(STARS_SEED))
+    return stars.derive(gaia, float(extra["period_days"]), k, depth, np.random.default_rng(STARS_SEED), extinction)
 
 
 def _model_line(shape: dict | None) -> dict | None:
@@ -1851,8 +1903,11 @@ def generate(store: Store, blob, settings, target_id: str, *, signal_id: int | N
     decisions = store.decisions(sid)
     decision = decisions[0]["decision"] if decisions else None
     source = _target_dict(store, target_id).get("source") or "kbonus_bkg"
+    # spec 12.3: the stored extinction first, so a malformed file stops the run before any work
+    extinction = stars.load_extinction(target_id, EXTINCTION_DIR)
     fp = fingerprint(tests, signal["final_status"], decision, calibration_rows(settings.data_dir, source),
-                     sweep_size_of(store, signal, source))
+                     sweep_size_of(store, signal, source), extinction_ebv=(extinction or {}).get("ebv"),
+                     column_ebv=stars.column_ebv(extinction))
     data_path = Path(settings.data_dir) / "dossiers" / target_id / "dossier_data.json"
     old = store.dossier(target_id)
     if (old is not None and not force and old["tests_fingerprint"] == fp and old["signal_id"] == sid
@@ -1875,14 +1930,15 @@ def generate(store: Store, blob, settings, target_id: str, *, signal_id: int | N
     # the star first: the shape fit's limb darkening and density prior come from it (spec 11.3)
     say("asking Gaia for the star and its neighbours")
     tgt = Target(**{k: target[k] for k in TARGET_FIELDS if target.get(k) is not None}, meta=target.get("meta") or {})
-    star, planet, neighbours, gaia, gaia_errors = _lookup(tgt, signal, tests, fetch=fetch, store=store)
+    star, planet, neighbours, gaia, gaia_errors = _lookup(tgt, signal, tests, fetch=fetch, store=store,
+                                                         extinction=extinction)
     for err in gaia_errors:
         say(f"Gaia query failed: {err}")
     say(f"timing the transits, fitting the shape and bootstrapping it ({n_boot} resamples)")
     blocks = _section("ephemeris", errors, lambda: ephemeris_blocks(
         lc, fnorm, signal, tests, n_boot=n_boot, star=star, fnorm_alt=_alt_flux(lc, settings.thresholds, signal),
         thresholds=settings.thresholds, target=tgt))
-    star, planet = _rederive(gaia, star, planet, blocks)
+    star, planet = _rederive(gaia, star, planet, blocks, extinction)
     plots = plot_arrays(lc, fnorm, signal, tests, periodogram=periodogram, fold=(blocks or {}).get("fold"),
                         shape=_model_line((blocks or {}).get("shape")))
     gmag = target.get("gmag") if target.get("gmag") is not None else (gaia.gmag if gaia is not None else None)
@@ -1953,7 +2009,8 @@ def _assemble(store, signal, target, tests, decisions, plots, pixels, star, plan
     verdict = explain.verdict(signal, tests, {"status": signal.get("candidate_status")} if signal.get(
         "candidate_status") else None, decisions)
     label, label_text = status_label(verdict)
-    star_d = {**dataclasses.asdict(star), "gaia_errors": list(gaia_errors)}
+    star_d = _star_with_k_errors({**dataclasses.asdict(star), "gaia_errors": list(gaia_errors)},
+                                 (blocks or {}).get("shape"))
     period, t0, dur = float(signal["period"]), float(signal["t0"]), float(signal["duration"])
     blocks = blocks or {}
     ephemeris = {"period_days": period, "t0_bkjd": t0, "t0_bjd": t0 + BKJD_OFFSET, "duration_h": dur * 24,

@@ -611,12 +611,12 @@ def stale_reason(store: Store, row: dict, best_signal_id: int | None = None) -> 
     source = ds._target_dict(store, row["target_id"]).get("source")
     fp = ds.fingerprint(store.latest_tests(sid), status, decisions[0]["decision"] if decisions else None,
                         ds.calibration_rows(ds.data_dir_of(row["data_path"]), source),
-                        ds.sweep_size_of(store, search, source))
+                        ds.sweep_size_of(store, search, source), **ds.extinction_keys(row["target_id"]))
     if fp == row.get("tests_fingerprint"):
         return None
     if status != row.get("status_at_generation"):
         return "the signal's status changed"
-    return "the checks, the reviewer's decision, the null calibration or the sweep size changed"
+    return "the checks, the reviewer's decision, the null calibration, the sweep size or the stored extinction changed"
 
 
 def _tile_facts(data: dict | None) -> dict:

@@ -1,0 +1,19 @@
+{
+ "target": "kic-010352243",
+ "status": "not available",
+ "reason": "Bayestar19 at the Gaia distance was not queried: the 728 MB map file (doi:10.7910/DVN/2EJ9TX) needs the owner's approval to download, not given, and the Argonaut web service (argonaut.skymaps.info) did not answer from the build machine on 23 October 2026",
+ "queried_utc": "2026-10-25T04:59:38+00:00",
+ "distance_pc": 1149.7,
+ "column": {
+  "status": "ok",
+  "ebv": 0.0938,
+  "ebv_mean": 0.0927,
+  "ebv_std": 0.0015,
+  "stats_radius_arcmin": 5.0,
+  "source": "IRSA DUST, Schlafly and Finkbeiner 2011",
+  "queried_utc": "2026-10-25T04:59:38+00:00",
+  "ra": 296.47484,
+  "dec": 47.478915,
+  "url": "https://irsa.ipac.caltech.edu/cgi-bin/DUST/nph-dust?locstr=296.47484+47.478915+equ+j2000"
+ }
+}

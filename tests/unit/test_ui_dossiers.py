@@ -1106,3 +1106,25 @@ def test_every_number_the_note_prints_is_on_the_dossier_page(seeded_dossier):
     note = _note_prose(pack.render_note(stored))
     missing = sorted(_numbers(note) - _numbers(text))
     assert missing == [], missing
+
+
+def test_the_star_section_leads_with_the_reddening_paragraph(seeded_dossier):
+    """Spec 12.3 as amended: the served and the standalone page print ``pack.star_texts``, which leads with the plain
+    reddening paragraph, and the expert block drops the old reddening note beside it."""
+    import re
+    from pathlib import Path
+
+    from skysift import pack
+    from tests.unit.ui_seed import seed_extinction
+    client, app, _ids, data = seeded_dossier
+    extinction, unreddened = seed_extinction()
+    data = {**data, "star": {**data["star"], "extinction": extinction, "unreddened": unreddened}}
+    Path(app.state.store.dossier(STAGE2_TARGET)["data_path"]).write_text(json.dumps(data), encoding="utf-8")
+    words = pack.star_texts(data)
+    assert words.startswith(pack.reddening_plain(data)) and "upper bound" in words
+    page = html_module.unescape(client.get(f"/dossiers/{STAGE2_TARGET}").text)
+    star = page.split('id="star"')[1].split('id="look"')[0] if 'id="look"' in page else page.split('id="star"')[1]
+    assert words in star and "<strong>Reddening.</strong>" not in star
+    export = client.get(f"/dossiers/{STAGE2_TARGET}/export.html").text
+    blob = re.search(r'<script id="dossier-data" type="application/json">(.*?)</script>', export, re.DOTALL).group(1)
+    assert json.loads(blob)["page_texts"]["star"] == words

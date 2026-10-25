@@ -260,9 +260,11 @@ def metadata_from(data: dict, citation: dict | None, prior: str | None = None) -
     own = cc.own_evidence_sentence(data)            # Task 15 addendum 2: which FPP rests on our own evidence
     fpp_text = f"{fpp_text} {own}" if own else fpp_text
     ephemeris = ephemeris_sentence(data)
+    from skysift.pack import reddening_plain  # spec 12.3: the reddening paragraph (a cycle at import time)
     how = "vetted" if prior else "found"
     paragraphs = [data.get("summary") or "", f"Prior claim: {prior}" if prior else "",
-                  f"Ephemeris: {ephemeris}." if ephemeris else "", f"{fap_text} {fpp_text}",
+                  f"Ephemeris: {ephemeris}." if ephemeris else "", reddening_plain(data) or "",
+                  f"{fap_text} {fpp_text}",
                   (f"This record is the submission pack of a transit candidate {how} by the SkySift engine in the "
                    "KBonus Kepler Background light curves: the detrended light curve, the ephemeris and parameters "
                    "with their errors, the per-event depths, the vetting metrics, the figures, the standalone "

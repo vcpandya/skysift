@@ -50,9 +50,19 @@ This pack was built on {{ f.built_words }} by SkySift (pack format {{ f.pack_ver
 | {{ row.parameter }} | {{ row.text }} |
 {% endfor %}
 | TESS | {{ n.tess_row }} |
-{% if n.star_method_text or n.reddening_plain or n.flame_text or n.hz_text %}
+{% if n.star_method_text or n.reddening_plain or n.reddening_sentence or n.flame_text or n.hz_text %}
 
-Star:{% if n.star_method_text %} {{ n.star_method_text }}{% endif %}{% if n.crowdsap_text %} {{ n.crowdsap_text }}{% endif %}{% if n.reddening_plain %} {{ n.reddening_plain }}; the radius sensitivity is under "What is not yet known".{% endif %}{% if n.flame_text %} {{ n.flame_text }}{% endif %}{% if n.hz_text %} {{ n.hz_text }}{% endif %}{{ "" }}
+Star:{% if n.star_method_text %} {{ n.star_method_text }}{% endif %}{% if n.crowdsap_text %} {{ n.crowdsap_text }}{% endif %}{% if n.reddening_plain %} {{ n.reddening_plain }} The radius sensitivity is under "What is not yet known".{% elif n.reddening_sentence %} {{ n.reddening_sentence }}; the radius sensitivity is under "What is not yet known".{% endif %}{% if n.flame_text %} {{ n.flame_text }}{% endif %}{% if n.hz_text %} {{ n.hz_text }}{% endif %}{{ "" }}
+{% endif %}
+{% if n.reddening_rows %}
+
+|{% for _key, label in n.reddening_columns %} {{ label }} |{% endfor %}{{ "" }}
+|{% for _column in n.reddening_columns %}---|{% endfor %}{{ "" }}
+{% for row in n.reddening_rows %}
+|{% for key, _label in n.reddening_columns %} {{ row[key] }} |{% endfor %}{{ "" }}
+{% endfor %}
+
+{{ n.reddening_key }}
 {% endif %}
 {% if n.errors_methods %}
 

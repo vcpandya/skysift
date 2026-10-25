@@ -223,3 +223,21 @@ def test_the_probability_sentence_carries_the_pixel_excluded_numbers():
     fpp = zenodo.probability_sentences(data)[1]
     assert "with the one neighbour the difference images exclude removed" in fpp
     assert fpp.startswith(f"False-positive probability: {cc.headline(data, named=False)};")
+
+
+def test_the_description_carries_the_reddening_paragraph_after_the_ephemeris():
+    """Spec 12.3 as amended: the plain reddening paragraph (``pack.reddening_plain``) as its own paragraph, after the
+    ephemeris; none for a dossier without the block."""
+    from skysift import pack
+    from tests.unit.ui_seed import _seed_star, seed_extinction
+    star, planet, _look = _seed_star()
+    extinction, unreddened = seed_extinction()
+    data = {**DATA, "star": {**star, "extinction": extinction, "unreddened": unreddened}, "planet": planet}
+    plain = pack.reddening_plain(data)
+    assert plain and plain.startswith("Reddening: not measured at the star's distance")
+    text = metadata_from(data, None)["description"]
+    paragraphs = text.split("</p><p>")
+    where = next(i for i, p in enumerate(paragraphs) if p.removeprefix("<p>").startswith("Reddening:"))
+    assert paragraphs[where - 1].removeprefix("<p>").startswith("Ephemeris: ")
+    assert zenodo._html(plain) in paragraphs[where]
+    assert "Reddening:" not in metadata_from(DATA, None)["description"]

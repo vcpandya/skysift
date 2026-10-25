@@ -341,7 +341,10 @@ def references(data: dict) -> dict[str, bool]:
             # Kopparapu et al. edges are the README's
             "borucki2010": True, "gaia2016": star_ok, "gaia2023": star_ok,
             # Task 13 fix round 1 (I-1): the GSP-Phot reddening prints with the cool-dwarf bias it carries
-            "andrae2023": star_ok and _num(star.get("ebpminrp_gspphot")) is not None}
+            "andrae2023": "Andrae" in (reddening_text(data) or ""),
+            # spec 12.3: the note cites the map of the adopted 3D value, or the full column of its planet-radius bracket
+            "green2019": reddening_state(data) == RED_ADOPTED,
+            "schlafly2011": rp_bracket_text(data) is not None}
 
 
 BIBLIOGRAPHY = (
@@ -352,6 +355,8 @@ BIBLIOGRAPHY = (
     ("borucki2010", r"{Borucki} et~al.(2010)", r"Borucki, W.~J., Koch, D., Basri, G., et~al. 2010, Science, 327, 977"),
     ("bryson2013", r"{Bryson} et~al.(2013)",
      r"Bryson, S.~T., Jenkins, J.~M., Gilliland, R.~L., et~al. 2013, PASP, 125, 889"),
+    ("cardelli1989", r"{Cardelli} et~al.(1989)",
+     r"Cardelli, J.~A., Clayton, G.~C., \& Mathis, J.~S. 1989, ApJ, 345, 245"),
     ("christ2019", r"{Christ} et~al.(2019)", r"Christ, C.~N., Montet, B.~T., \& Fabrycky, D.~C. 2019, AJ, 157, 235"),
     ("claret2011", r"{Claret} \& {Bloemen}(2011)", r"Claret, A., \& Bloemen, S. 2011, A\&A, 529, A75"),
     ("coughlin2017", r"{Coughlin}(2017)",
@@ -360,6 +365,8 @@ BIBLIOGRAPHY = (
     ("deeg2015", r"{Deeg}(2015)", r"Deeg, H.~J. 2015, arXiv:1503.05368"),
     ("dressing2015", r"{Dressing} \& {Charbonneau}(2015)",
      r"Dressing, C.~D., \& Charbonneau, D. 2015, ApJ, 807, 45"),
+    ("fitzpatrick2019", r"{Fitzpatrick} et~al.(2019)",
+     r"Fitzpatrick, E.~L., Massa, D., Gordon, K.~D., Bohlin, R., \& Clayton, G.~C. 2019, ApJ, 886, 108"),
     ("fressin2013", r"{Fressin} et~al.(2013)", r"Fressin, F., Torres, G., Charbonneau, D., et~al. 2013, ApJ, 766, 81"),
     ("fulton2017", r"{Fulton} et~al.(2017)",
      r"Fulton, B.~J., Petigura, E.~A., Howard, A.~W., et~al. 2017, AJ, 154, 109"),
@@ -369,6 +376,8 @@ BIBLIOGRAPHY = (
      r"Gaia Collaboration, Vallenari, A., Brown, A.~G.~A., et~al. 2023, A\&A, 674, A1"),
     ("giacalone2021", r"{Giacalone} et~al.(2021)",
      r"Giacalone, S., Dressing, C.~D., Jensen, E.~L.~N., et~al. 2021, AJ, 161, 24"),
+    ("green2019", r"{Green} et~al.(2019)",
+     r"Green, G.~M., Schlafly, E., Zucker, C., Speagle, J.~S., \& Finkbeiner, D. 2019, ApJ, 887, 93"),
     ("guerrero2021", r"{Guerrero} et~al.(2021)",
      r"Guerrero, N.~M., Seager, S., Huang, C.~X., et~al. 2021, ApJS, 254, 39"),
     ("holczer2016", r"{Holczer} et~al.(2016)", r"Holczer, T., et~al. 2016, ApJS, 225, 9"),
@@ -390,7 +399,9 @@ BIBLIOGRAPHY = (
     ("pecaut2013", r"{Pecaut} \& {Mamajek}(2013)", r"Pecaut, M.~J., \& Mamajek, E.~E. 2013, ApJS, 208, 9"),
     ("ricker2015", r"{Ricker} et~al.(2015)",
      r"Ricker, G.~R., Winn, J.~N., Vanderspek, R., et~al. 2015, JATIS, 1, 014003"),
+    ("riello2021", r"{Riello} et~al.(2021)", r"Riello, M., De Angeli, F., Evans, D.~W., et~al. 2021, A\&A, 649, A3"),
     ("rogers2015", r"{Rogers}(2015)", r"Rogers, L.~A. 2015, ApJ, 801, 41"),
+    ("schlafly2011", r"{Schlafly} \& {Finkbeiner}(2011)", r"Schlafly, E.~F., \& Finkbeiner, D.~P. 2011, ApJ, 737, 103"),
     ("schmitt2014", r"{Schmitt} et~al.(2014)", r"Schmitt, J.~R., et~al. 2014, AJ, 148, 28"),
     ("seager2003", r"{Seager} \& {Mall{\'e}n-Ornelas}(2003)",
      r"Seager, S., \& Mall{\'e}n-Ornelas, G. 2003, ApJ, 585, 1038"),
@@ -895,7 +906,21 @@ def readme_works(data: dict) -> list[str]:
     return (["morton2012", *_occurrence_keys(data)] + [k for k, _w in _star_method_keys(data)]
             + (["kopparapu2013", "rogers2015", "fulton2017"] if hz_text(data) else [])
             + (["seager2003", "kipping2010"] if shape_fit_text(data) else [])
-            + (["coughlin2017"] if fap_method_text(data) else []))
+            + (["coughlin2017"] if fap_method_text(data) else [])
+            + _reddening_keys(data))
+
+
+def _reddening_keys(data: dict) -> list[str]:
+    """The works the README's reddening paragraph and table rest on (spec 12.3): the Gaia (E)DR3 law's Fitzpatrick et
+    al. 2019 and Riello et al. 2021 and the A_Ks ratio's Cardelli et al. 1989 when the law was applied, Schlafly and
+    Finkbeiner 2011 for a full column the note does not cite, Green et al. 2019 for a 3D value, and Andrae et al. 2023
+    for the GSP-Phot caveat the table's key always prints."""
+    state, col = reddening_state(data), _column_derived(data)
+    if state is None:
+        return []
+    keys = ["andrae2023"] + (["cardelli1989", "fitzpatrick2019", "riello2021"] if state == RED_ADOPTED or col is not None
+                             else [])
+    return keys + (["schlafly2011"] if col is not None else []) + (["green2019"] if state == RED_ADOPTED else [])
 
 
 def _star_method_keys(data: dict) -> list[tuple[str, str]]:
@@ -1202,10 +1227,12 @@ def vetting_texts(data: dict) -> dict:
 
 
 def star_texts(data: dict) -> str | None:
-    """The note's Gaia flags and reddening sentences in plain text, for the dossier page (I-2); None without
-    either."""
-    flags, red = gaia_flags_text(data), reddening_text(data)
-    parts = [f"{flags[:1].upper()}{flags[1:]}." if flags else None, f"{red}." if red else None]
+    """The reddening paragraph (``reddening_plain``, spec 12.3) and the note's Gaia flags sentence in plain text, for
+    the dossier page (I-2); a dossier without the extinction block keeps the note's GSP-Phot sentence after the flags.
+    None without any."""
+    flags, plain = gaia_flags_text(data), reddening_plain(data)
+    red = None if plain else reddening_text(data)
+    parts = [plain, f"{flags[:1].upper()}{flags[1:]}." if flags else None, f"{red}." if red else None]
     return " ".join(p for p in parts if p) or None
 
 
@@ -1450,6 +1477,190 @@ def gaia_flags_text(data: dict) -> str | None:
 
 
 REDDENING_BIAS = "a value biased for cool dwarfs"
+# spec 12.3: the note's clause with a 3D value adopted. Task 16 Step 13, cut 1: without "a sightline average, " and
+# the GSP-Phot half, which the README's paragraph and table keep
+REDDENING_CLAUSE = ("the reddening E(B-V) = {ebv} ({p16} to {p84}) comes from the Bayestar19 dust map at the Gaia "
+                    "distance{green}, in place of the unreddened colour assumed before")
+# the three states the texts follow (spec 12.3 as amended by the controller's addenda of 23 October)
+RED_ADOPTED, RED_BRACKET, RED_NOT_AVAILABLE = "adopted", "bracket", "not available"
+FULL_COLUMN = "Full column (Schlafly and Finkbeiner 2011)"
+REDDENING_COLUMNS = (("estimate", "Estimate"), ("ebv", "E(B-V)"), ("ebprp", "E(BP-RP)"), ("a_g", "A_G"),
+                     ("a_ks", "A_Ks"), ("bp_rp0", "(BP-RP)_0"), ("teff", "Teff (K)"), ("radius", "Radius (Rsun)"),
+                     ("mass", "Mass (Msun)"), ("insolation", "Insolation (Earth)"),
+                     ("rp", "Planet radius (Earth radii)"), ("status", "Status"))
+GAIA_LAW_WORDS = ("E(BP-RP), A_G and A_Ks follow from E(B-V) through the Gaia (E)DR3 extinction law at R_V 3.1 "
+                  "(Fitzpatrick et al. 2019; Riello et al. 2021), with A_Ks = 0.117 A_0 (Cardelli et al. 1989).")
+
+
+def reddening_state(data: dict) -> str | None:
+    """Which reddening the texts print (spec 12.3 as amended): ``RED_ADOPTED`` for a 3D value (a stored Bayestar19
+    value or one stored by hand); ``RED_BRACKET`` without one but with the full-column E(B-V); ``RED_NOT_AVAILABLE``
+    with neither; None for a star that is not characterised or a dossier without the block (before version 6)."""
+    ext = (data.get("star") or {}).get("extinction")
+    if not isinstance(ext, dict) or not star_characterized(data):
+        return None
+    if ext.get("state") != "not available":
+        return RED_ADOPTED
+    column = ext.get("column")
+    return RED_BRACKET if isinstance(column, dict) and column.get("status") == "ok" else RED_NOT_AVAILABLE
+
+
+def _column_derived(data: dict) -> dict | None:
+    """The full-column block when it carries what the law made of it (``stars.derive``), else None."""
+    col = ((data.get("star") or {}).get("extinction") or {}).get("column")
+    return col if isinstance(col, dict) and col.get("status") == "ok" and "ebprp" in col else None
+
+
+def _red(v) -> str | None:
+    """An extinction value as the texts print it: with its error by the precision rule, three decimals without one."""
+    if not isinstance(v, dict) or _num(v.get("median")) is None:
+        return None
+    if (_num(v.get("minus")) or 0) > 0 or (_num(v.get("plus")) or 0) > 0:
+        return value_text(v)
+    return f"{_num(v['median']):.3f}"
+
+
+def rp_bracket_text(data: dict, tex: bool = False) -> str | None:
+    """The note's one clause on the planet radius without a 3D value (the controller's addendum 2), after the adopted
+    radius: ", 2.61 to 3.55 R_Earth between no reddening and the full-column E(B-V) of 0.674 (Schlafly and Finkbeiner
+    2011)"; both ends at the adopted radius's decimals. None outside the bracket state or without both radii."""
+    if reddening_state(data) != RED_BRACKET:
+        return None
+    col, rp = _column_derived(data), (data.get("planet") or {}).get("rp_rearth")
+    hi = _num(((col or {}).get("rp_rearth") or {}).get("median"))
+    if not isinstance(rp, dict) or _num(rp.get("median")) is None or hi is None:
+        return None
+    d = pm_digits(rp.get("minus"), rp.get("plus"))
+    unit = Raw(r" $R_\oplus$") if tex else " Earth radii"
+    cite = Raw(r" \citep{schlafly2011}") if tex else " (Schlafly and Finkbeiner 2011)"
+    return _joined(tex, f", {_num(rp['median']):.{d}f} to {hi:.{d}f}", unit,
+                   f" between no reddening and the full-column E(B-V) of {_num(col['ebv']):.3f}", cite)
+
+
+def _gsp_clause(star: dict) -> str | None:
+    red = _num(star.get("ebpminrp_gspphot"))
+    return f"GSP-Phot E(BP-RP) {red:.2f}, biased for cool dwarfs (Andrae et al. 2023), is not adopted" if (
+        red is not None) else None
+
+
+def _trio(block: dict, planet_rp) -> str:
+    """"Teff T K, radius R Rsun and planet radius P Earth radii" from Value dicts, the parts there are."""
+    parts = [f"Teff {value_text(block.get('teff'))} K" if value_text(block.get("teff")) else None,
+             f"radius {value_text(block.get('radius'))} Rsun" if value_text(block.get("radius")) else None,
+             f"planet radius {value_text(planet_rp)} Earth radii" if value_text(planet_rp) else None]
+    parts = [p for p in parts if p]
+    return ", ".join(parts[:-1]) + (" and " if len(parts) > 1 else "") + parts[-1] if parts else ""
+
+
+def reddening_plain(data: dict) -> str | None:
+    """The reddening paragraph of the plain texts (README, ExoFOP note, archive email, Zenodo, the page), by
+    ``reddening_state``; None without the block or a characterised star.
+
+    Adopted: "Reddening: E(B-V) E (16th to 84th percentile L to H) from Bayestar19 (Green et al. 2019) at D pc, a
+    sightline average, gives E(BP-RP) ..., A_G ... and A_Ks ...; unreddened, the earlier assumption, Teff ..., radius
+    ... and planet radius ... against the adopted ...[; the full column ...][; GSP-Phot ...]." Bracket: not measured
+    at the star's distance, the unreddened star adopted, the full column as the upper bound with what the law makes of
+    it, GSP-Phot not adopted. Not available: the unreddened star adopted, neither value there."""
+    state = reddening_state(data)
+    if state is None:
+        return None
+    star, planet = data.get("star") or {}, data.get("planet") or {}
+    e, unred = star["extinction"], star.get("unreddened") or {}
+    gsp = _gsp_clause(star)
+    col = _column_derived(data)
+    if state == RED_ADOPTED:
+        how = (f", stored by hand ({e.get('source')})," if e.get("state") == "manual" else "")
+        flag = (", outside the map's reliable distance range on this sightline" if e.get("reliable_distance") is False
+                else "")
+        law = [f"E(BP-RP) {_red(e.get('ebprp'))}", f"A_G {_red(e.get('a_g'))}", f"A_Ks {_red(e.get('a_ks'))}"]
+        text = (f"Reddening: E(B-V) {e['ebv']:.3f} (16th to 84th percentile {e['ebv_p16']:.3f} to "
+                f"{e['ebv_p84']:.3f}) from Bayestar19 (Green et al. 2019){how} at {e['distance_pc']:.0f} pc, a "
+                f"sightline average{flag}, gives {law[0]}, {law[1]} and {law[2]}; unreddened, the earlier assumption, "
+                f"{_trio(unred, unred.get('rp_rearth'))} against the adopted {_trio(star, planet.get('rp_rearth'))}")
+        if col is not None:
+            text += (f"; the full-column E(B-V) of {col['ebv']:.3f} (Schlafly and Finkbeiner 2011), an upper bound, "
+                     f"gives {_trio(col, col.get('rp_rearth'))}")
+        return text + (f"; {gsp}." if gsp else ".")
+    if state == RED_BRACKET:
+        text = ("Reddening: not measured at the star's distance (Bayestar19 not available at build time), so the "
+                f"unreddened parameters are adopted ({_trio(star, planet.get('rp_rearth'))}).")
+        if col is not None:
+            law = [f"E(BP-RP) {_red(col.get('ebprp'))}", f"A_G {_red(col.get('a_g'))}",
+                   f"A_Ks {_red(col.get('a_ks'))}"]
+            text += (f" The full-column E(B-V) of {col['ebv']:.3f} (Schlafly and Finkbeiner 2011) is an upper bound, "
+                     "since it counts the dust beyond the star too: through the Gaia DR3 law it gives "
+                     f"{law[0]}, {law[1]} and {law[2]}, and {_trio(col, col.get('rp_rearth'))}.")
+        return text + (f" {_capital(gsp)}." if gsp else "")
+    text = ("Reddening: not measured (Bayestar19 not available at build time, and the IRSA full-column value could "
+            "not be fetched), so the unreddened parameters are adopted.")
+    return text + (f" {_capital(gsp)}." if gsp else "")
+
+
+def reddening_rows(data: dict) -> list[dict]:
+    """The README's table under the star paragraph, one row per estimate (``REDDENING_COLUMNS``): the 3D value
+    (adopted), the unreddened star (the earlier assumption, or adopted without a 3D value), the full column (the upper
+    bound) and GSP-Phot (not adopted: E(BP-RP) and Teff only, "not given" elsewhere), each where the dossier has it;
+    "0 (assumed)" for the unreddened extinctions. Empty without the block."""
+    state = reddening_state(data)
+    if state is None:
+        return []
+    star, planet = data.get("star") or {}, data.get("planet") or {}
+    e, unred = star["extinction"], star.get("unreddened") or {}
+    na = "not given"
+
+    def physical(block: dict, rp, insolation) -> dict:
+        return {"teff": value_text(block.get("teff")) or na, "radius": value_text(block.get("radius")) or na,
+                "mass": value_text(block.get("mass")) or na, "insolation": value_text(insolation) or na,
+                "rp": value_text(rp) or na}
+    rows = []
+    if state == RED_ADOPTED:
+        rows.append({"estimate": "Bayestar19 (Green et al. 2019)",
+                     "ebv": f"{e['ebv']:.3f} ({e['ebv_p16']:.3f} to {e['ebv_p84']:.3f})",
+                     **{k: _red(e.get(k)) or na for k in ("ebprp", "a_g", "a_ks")},
+                     "bp_rp0": _f(e.get("bp_rp0"), 3) or na,
+                     **physical(star, planet.get("rp_rearth"), planet.get("insolation_earth")), "status": "adopted"})
+    rows.append({"estimate": "Unreddened", **{k: "0 (assumed)" for k in ("ebv", "ebprp", "a_g", "a_ks")},
+                 "bp_rp0": _f(unred.get("bp_rp0"), 3) or na,
+                 **physical(unred, unred.get("rp_rearth"), unred.get("insolation_earth")),
+                 "status": "the earlier assumption" if state == RED_ADOPTED else "adopted"})
+    col = _column_derived(data)
+    if col is not None:
+        rows.append({"estimate": FULL_COLUMN, "ebv": f"{col['ebv']:.3f}",
+                     **{k: _red(col.get(k)) or na for k in ("ebprp", "a_g", "a_ks")},
+                     "bp_rp0": _f(col.get("bp_rp0"), 3) or na,
+                     **physical(col, col.get("rp_rearth"), col.get("insolation_earth")), "status": "upper bound"})
+    red = _num(star.get("ebpminrp_gspphot"))
+    teff = _num((star.get("gaia_cross_check") or {}).get("teff_gspphot"))
+    if red is not None or teff is not None:
+        rows.append({"estimate": "GSP-Phot (Gaia DR3)", "ebv": na, "ebprp": _f(red, 2) or na, "a_g": na, "a_ks": na,
+                     "bp_rp0": na, "teff": f"{teff:,.0f}" if teff is not None else na, "radius": na, "mass": na,
+                     "insolation": na, "rp": na, "status": "not adopted"})
+    return rows
+
+
+def reddening_key(data: dict) -> str | None:
+    """The caveat line under the README's table: each estimate with its one-clause reason, and the law; None without
+    the block."""
+    state = reddening_state(data)
+    if state is None:
+        return None
+    parts = []
+    if state == RED_ADOPTED:
+        parts.append("Bayestar19: a dust-map sightline average at the Gaia distance with its 16th to 84th percentile "
+                     "range, adopted.")
+        parts.append("Unreddened: the assumption of round 2, E(BP-RP) at or below 0.1.")
+    else:
+        why = ("Bayestar19 not available at build time" if state == RED_BRACKET else
+               "Bayestar19 not available at build time, and the full column could not be fetched")
+        parts.append(f"Unreddened: the assumption of round 2, E(BP-RP) at or below 0.1, adopted while no 3D value "
+                     f"at the star's distance is there ({why}).")
+    if _column_derived(data) is not None:
+        parts.append("Full column: the IRSA DUST value at the star, the whole line of sight with the dust beyond the "
+                     "star, so an upper bound.")
+    parts.append("GSP-Phot: Gaia's own fit, biased for cool dwarfs (Andrae et al. 2023), not adopted.")
+    if state == RED_ADOPTED or _column_derived(data) is not None:
+        parts.append(GAIA_LAW_WORDS)
+    return " ".join(parts)
 
 
 def reddening_text(data: dict, tex: bool = False) -> str | None:
@@ -1457,10 +1668,22 @@ def reddening_text(data: dict, tex: bool = False) -> str | None:
     value biased for cool dwarfs (Andrae et al. 2023); ..." and what the parameters assume. On the Mann route the
     radius comes from the absolute Ks magnitude, which barely depends on reddening, so the clause says the temperature
     assumes 0.1 or less; on the colour-table route the radius itself assumes it, "which raises (lowers) it to X Rsun
-    at 0.2". None without the value or a characterised star. With ``tex`` a ``Raw`` citing ``andrae2023``."""
+    at 0.2". None without the value or a characterised star. With ``tex`` a ``Raw`` citing ``andrae2023``.
+
+    With a 3D extinction adopted (spec 12.3, ``reddening_state`` "adopted") the clause is ``REDDENING_CLAUSE``
+    instead, capitalised, citing ``green2019``. In the bracket state the note's planet sentence carries
+    ``rp_bracket_text`` and no GSP-Phot sentence: None (Task 16 Step 13, cut 1; the README's paragraph and table keep
+    GSP-Phot, as not adopted). With neither value, or for a dossier before version 6, the GSP-Phot sentence stands."""
     star = data.get("star") or {}
     red = _num(star.get("ebpminrp_gspphot"))
-    if red is None or not star_characterized(data):
+    state = reddening_state(data)
+    if state == RED_ADOPTED:
+        e = star["extinction"]
+        green = Raw(r" \citep{green2019}") if tex else " (Green et al. 2019)"
+        head, rest = REDDENING_CLAUSE.split("{green}")
+        head = head.format(ebv=f"{e['ebv']:.3f}", p16=f"{e['ebv_p16']:.3f}", p84=f"{e['ebv_p84']:.3f}")
+        return _joined(tex, _capital(head), green, rest)
+    if state == RED_BRACKET or red is None or not star_characterized(data):
         return None
     cite = Raw(r" \citep{andrae2023}") if tex else " (Andrae et al. 2023)"
     alt, radius = (_num((star.get(k) or {}).get("median")) for k in ("alt_radius_e02", "radius"))
@@ -1770,7 +1993,10 @@ def numbers(data: dict, tex: bool = False, after_bjd: float | None = None) -> di
         "dilution_rows": list(dilution.values()),
         "software_line": software_line(data), "facilities": FACILITIES,
         "gaia_flags_text": gaia_flags_text(data), "flame_text": flame_text(data), "hz_text": hz_text(data),
-        "reddening_text": reddening_text(data, tex), "reddening_plain": reddening_text(data),
+        "reddening_text": reddening_text(data, tex), "reddening_sentence": reddening_text(data),
+        "reddening_plain": reddening_plain(data), "reddening_rows": reddening_rows(data),
+        "reddening_columns": REDDENING_COLUMNS, "reddening_key": reddening_key(data),
+        "rp_bracket": rp_bracket_text(data, tex),
         "star_method_text": star_method_text(data), "note_forms": note_forms(data),
         "followup_text": followup_text(data, julian_date(datetime.now(UTC)) if after_bjd is None else after_bjd),
         "references_plain": readme_references(data), "in_house_method": in_house_method_text(data),
@@ -1896,6 +2122,7 @@ def archive_paragraph(data: dict, doi: str, tic: str | None) -> str:
     rp = f", which gives a planet radius of {n['rp_text']} Earth radii" if n["rp_text"] else ""
     exofop = f"under TIC {tic}" if tic else f"on the {n['name']} page"
     cross = f" {n['cross_check_after']}" if n["cross_check_after"] else ""
+    red = f" {n['reddening_plain']}" if n["reddening_plain"] else ""
     claims = prior_claims(data)
     if claims:
         c = claims[0]
@@ -1915,7 +2142,7 @@ def archive_paragraph(data: dict, doi: str, tic: str | None) -> str:
                    f"(search version {n['search_version']}, commit {n['commit']}) found it in the KBonus Kepler "
                    "Background light curves. ")
     return opening + (
-            f"The ephemeris is {n['ephemeris_text']}{rp}. {n['fap_text']} {n['fpp_text']}{cross} The light curve, "
+            f"The ephemeris is {n['ephemeris_text']}{rp}.{red} {n['fap_text']} {n['fpp_text']}{cross} The light curve, "
             f"ephemeris, transit times, vetting metrics and figures are frozen on Zenodo (doi:{doi}) and uploaded to "
             f"ExoFOP-TESS {exofop}. I would be glad to see it considered for the archive's tables, and I can send "
             "anything else you need.")
@@ -2821,12 +3048,13 @@ def _approval(store: Store, target_id: str, signal_id: int, data_dir) -> tuple[b
     row = store.dossier(target_id) or {}
     source = ds._target_dict(store, target_id).get("source")
     fp = ds.fingerprint(store.latest_tests(signal_id), sig["final_status"], sig.get("decision"),
-                        ds.calibration_rows(data_dir, source), ds.sweep_size_of(store, sig, source))
+                        ds.calibration_rows(data_dir, source), ds.sweep_size_of(store, sig, source),
+                        **ds.extinction_keys(target_id))
     if ds.pick_signal(store, target_id)["id"] != signal_id:
         return approved, "another signal is now the target's best"
     if row.get("tests_fingerprint") != fp:
-        return approved, ("the signal's tests, status or reviewer decision, or the null calibration, changed since "
-                          "it was generated")
+        return approved, ("the signal's tests, status or reviewer decision, the null calibration or the stored "
+                          "extinction changed since it was generated")
     return approved, None
 
 

@@ -463,3 +463,20 @@ def test_pack_final_needs_zenodo_live():
     assert r.exit_code == 2 and "--final needs --zenodo-live" in r.output
     r = runner.invoke(app, ["pack", "--target", "kic-006146676", "--final", "--zenodo"])
     assert r.exit_code == 2 and "--final needs --zenodo-live" in r.output
+
+
+def test_cli_dossier_refuses_a_characterised_star_without_a_stored_extinction(settings, monkeypatch):
+    """Spec 12.3: no silent fallback; the run stops with the store instruction (exit 2), and so does a malformed
+    file."""
+    from skysift import dossier as ds
+    from skysift import net
+    from tests.unit.test_dossier import _make_env, fake_fetch, write_extinction
+    from tests.unit.ui_seed import STAGE2_TARGET
+    _make_env(settings, monkeypatch)
+    monkeypatch.setattr(net, "fetch", fake_fetch())
+    (ds.EXTINCTION_DIR / STAGE2_TARGET / "extinction.json").unlink()
+    r = runner.invoke(app, ["dossier", "--target", STAGE2_TARGET])
+    assert r.exit_code == 2 and "no stored extinction for kic-006146676" in r.output and "Traceback" not in r.output
+    write_extinction(STAGE2_TARGET, {"status": "not available"})
+    r = runner.invoke(app, ["dossier", "--target", STAGE2_TARGET])
+    assert r.exit_code == 2 and "reason is empty" in r.output and "Traceback" not in r.output

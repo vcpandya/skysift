@@ -18,3 +18,13 @@ def _default_explain_thresholds():
     from skysift.config import Thresholds
     from skysift.ui import explain
     explain.configure(Thresholds())
+
+
+@pytest.fixture(autouse=True)
+def _no_live_extinction(monkeypatch):
+    """Spec 12.3: no test reads the checkout's docs/candidates/<target>/extinction.json; a fixture that needs one
+    (``tests.unit.test_dossier._make_env``) points ``EXTINCTION_DIR`` at its own folder."""
+    from pathlib import Path
+
+    from skysift import dossier
+    monkeypatch.setattr(dossier, "EXTINCTION_DIR", Path(__file__).resolve().parent / "no-stored-extinction")

@@ -298,7 +298,8 @@ def _seed_star() -> tuple[dict, dict, dict]:
             "reddening_note": ("Teff and spectral type assume E(BP-RP) at or below 0.1 at the observed BP-RP 2.10; if "
                                "E(BP-RP) were 0.2 the dwarf-table radius would be 0.569 Rsun."),
             "alt_radius_e02": _v(0.569, 0.034, 0.036), "caveats": [], "gaia_errors": [],
-            "ruwe": None, "non_single_star": None, "ebpminrp_gspphot": None}       # the Gaia flags (Task 13)
+            "ruwe": None, "non_single_star": None, "ebpminrp_gspphot": None,       # the Gaia flags (Task 13)
+            "extinction": None, "unreddened": None}     # spec 12.3: set by a test that needs them (seed_extinction)
     planet = {"rp_rearth": _v(2.61, 0.08, 0.09), "a_au": _v(a_au, 0.0016, 0.0016), "a_over_r": _v(77.5, 2.3, 2.5),
               "teq_k": _v(269.0, 7.0, 8.0), "insolation_earth": _v(1.24, 0.12, 0.15),
               "transit_probability": _v(0.0129, 0.0004, 0.0004), "hz_inner_au": 0.2177, "hz_outer_au": 0.413,
@@ -501,6 +502,27 @@ def seed_dossier(store: Store, data_dir, target_id: str = STAGE2_TARGET) -> dict
                          ladder_version=ladder, dossier_version=ds.DOSSIER_VERSION, fap=fap["fap"],
                          fpp=fpp["value"], fap_detail=fap, fpp_detail=fpp,
                          tests_fingerprint=ds.fingerprint(tests, sig["final_status"], decision, 0,
-                                                          ds.sweep_size_of(store, sig, target.get("source"))),
+                                                          ds.sweep_size_of(store, sig, target.get("source")),
+                                                          **ds.extinction_keys(target_id)),
                          status_at_generation=sig["final_status"])
     return json.loads(text)
+
+
+def seed_extinction() -> tuple[dict, dict]:
+    """The ``extinction`` and ``unreddened`` blocks of a version 6 star in the live state (spec 12.3 as amended): no
+    3D value, the full-column E(B-V) as the upper end of the bracket (round numbers of the KIC 6146676 kind)."""
+    star, planet, _look = _seed_star()
+    column = {"status": "ok", "ebv": 0.6741, "ebv_mean": 0.6518, "ebv_std": 0.0344, "stats_radius_arcmin": 5.0,
+              "source": "IRSA DUST, Schlafly and Finkbeiner 2011", "queried_utc": "2026-10-25T04:59:32+00:00",
+              "ra": 297.86871, "dec": 41.455567, "url": "https://irsa.ipac.caltech.edu/cgi-bin/DUST/nph-dust",
+              "bp_rp0": 1.2623, "colour_held": False, "a0": _v(2.09, 0.0, 0.0), "ebprp": _v(0.835, 0.0, 0.0),
+              "a_g": _v(1.62, 0.0, 0.0), "a_ks": _v(0.245, 0.0, 0.0), "route": "mamajek",
+              "teff": _v(4540.0, 150.0, 160.0), "radius": _v(0.69, 0.03, 0.03), "mass": _v(0.71, 0.03, 0.03),
+              "rp_rearth": _v(3.55, 0.15, 0.16), "insolation_earth": _v(4.1, 0.6, 0.7)}
+    extinction = {"target": "kic-006146676", "status": "not available", "reason": "seed: Bayestar19 not queried",
+                  "queried_utc": "2026-10-25T04:59:32+00:00", "distance_pc": 303.0, "column": column,
+                  "state": "not available", "r_v": 3.1, "law": "Gaia (E)DR3 extinction law (seed)",
+                  "a_ks_over_a0": 0.117}
+    unreddened = {"route": "mann", "bp_rp0": 2.0971918, "teff": star["teff"], "radius": star["radius"],
+                  "mass": star["mass"], "rp_rearth": planet["rp_rearth"], "insolation_earth": planet["insolation_earth"]}
+    return extinction, unreddened

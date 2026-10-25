@@ -393,6 +393,52 @@ def provenance_rows(data: dict) -> list[dict]:
         rows.append({"parameter": "KBonus crowding metric (CROWDSAP)", "value": _num(crowd["value"]), "minus": None,
                      "plus": None, "unit": "", "method": f"the {crowd.get('column')} column of the {catalogue}",
                      "inputs": spread, "reference": ref.rstrip(")")})
+    return rows + extinction_rows(star, inputs(""))
+
+
+# spec 12.3: the adopted 3D extinction and the full-column upper bound as provenance rows, (parameter, key)
+EXTINCTION_ROWS = (("E(B-V) (Bayestar19)", "ebv"), ("E(BP-RP) adopted", "ebprp"), ("A_G adopted", "a_g"),
+                   ("A_Ks adopted", "a_ks"))
+COLUMN_ROWS = (("E(B-V) full column (Schlafly and Finkbeiner 2011), an upper bound", "ebv"),
+               ("E(BP-RP) at the full column, an upper bound", "ebprp"), ("A_G at the full column, an upper bound", "a_g"),
+               ("A_Ks at the full column, an upper bound", "a_ks"))
+LAW_REFERENCE = "Gaia (E)DR3 extinction law; Cardelli et al. 1989"
+
+
+def extinction_rows(star: dict, gaia_inputs: str) -> list[dict]:
+    """The stored extinction as provenance rows (spec 12.3): ``EXTINCTION_ROWS`` for a 3D value (adopted or stored by
+    hand: E(B-V) with its stored percentiles, the rest the medians of the draws with their spread), and
+    ``COLUMN_ROWS`` for the full column when it was fetched; none without the block."""
+    e = star.get("extinction")
+    if not isinstance(e, dict):
+        return []
+    rows = []
+
+    def law_row(name: str, v, method: str, reference: str) -> dict | None:
+        if not isinstance(v, dict) or _num(v.get("median")) is None:
+            return None
+        return {"parameter": name, "value": _num(v["median"]), "minus": _num(v.get("minus")),
+                "plus": _num(v.get("plus")), "unit": "mag", "method": method, "inputs": gaia_inputs,
+                "reference": reference}
+    if e.get("state") != "not available" and _num(e.get("ebv")) is not None:
+        ebv = _num(e["ebv"])
+        rows.append({"parameter": EXTINCTION_ROWS[0][0], "value": ebv,
+                     "minus": round(ebv - _num(e.get("ebv_p16")), 6), "plus": round(_num(e.get("ebv_p84")) - ebv, 6),
+                     "unit": "mag", "method": str(e.get("source") or ""),
+                     "inputs": f"{e.get('map')}; queried {e.get('queried_utc')}; {e.get('distance_pc')} pc",
+                     "reference": f"Green et al. 2019; {LAW_REFERENCE}"})
+        rows += [r for name, key in EXTINCTION_ROWS[1:] if (r := law_row(
+            name, e.get(key), "the stored E(B-V) through the Gaia (E)DR3 law, R_V 3.1, A_Ks = 0.117 A_0",
+            f"Green et al. 2019; {LAW_REFERENCE}"))]
+    col = e.get("column")
+    if isinstance(col, dict) and col.get("status") == "ok" and _num(col.get("ebv")) is not None:
+        rows.append({"parameter": COLUMN_ROWS[0][0], "value": _num(col["ebv"]), "minus": None, "plus": None,
+                     "unit": "mag", "method": f"{col.get('source')}, the value at the star's position",
+                     "inputs": f"{col.get('url')}; queried {col.get('queried_utc')}",
+                     "reference": "Schlafly and Finkbeiner 2011"})
+        rows += [r for name, key in COLUMN_ROWS[1:] if (r := law_row(
+            name, col.get(key), "the full-column E(B-V) through the Gaia (E)DR3 law, R_V 3.1, A_Ks = 0.117 A_0",
+            f"Schlafly and Finkbeiner 2011; {LAW_REFERENCE}"))]
     return rows
 
 

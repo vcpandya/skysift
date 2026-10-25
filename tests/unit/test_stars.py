@@ -306,3 +306,106 @@ def test_the_star_carries_ruwe_the_nss_flag_and_the_reddening():
     plain = gaia_row_6146676()
     assert plain.non_single_star is None and plain.ebpminrp_gspphot is None
     assert derive(plain, 40.29109, 0.048, 2165e-6, np.random.default_rng(1))[0].ebpminrp_gspphot is None
+
+
+# ---------------------------------------------------------------------------------------------------- Task 16 (spec 12.3)
+
+EXT = {"ebv": 0.05, "ebv_p16": 0.03, "ebv_p84": 0.07, "source": "a test block", "map": "bayestar2019",
+       "queried_utc": "2026-10-23T20:00:00+00:00", "distance_pc": 303.0}
+COLUMN = {"status": "ok", "ebv": 0.10, "ebv_mean": 0.09, "ebv_std": 0.01, "stats_radius_arcmin": 5.0,
+          "source": "IRSA DUST, Schlafly and Finkbeiner 2011", "queried_utc": "2026-10-23T20:00:00+00:00",
+          "ra": 297.86871, "dec": 41.455567, "url": "https://irsa.ipac.caltech.edu/cgi-bin/DUST/nph-dust"}
+# the live state (the controller's addenda): no 3D value, the IRSA full column stored as the upper bound
+NOT_AVAILABLE = {"target": "kic-006146676", "status": "not available", "reason": "a test reason",
+                 "queried_utc": "2026-10-23T20:00:00+00:00", "distance_pc": 303.0, "column": COLUMN}
+
+
+def test_the_gaia_dr3_law_turns_e_b_v_into_e_bp_rp_a_g_and_a_ks():
+    out = stars.gaia_extinction(0.05, 2.0971918)                 # KIC 6146676's BP-RP
+    assert out["a0"] == pytest.approx(0.155) and out["colour_held"] is False
+    assert out["bp_rp0"] == pytest.approx(2.0361684, abs=1e-6)
+    assert out["ebprp"] == pytest.approx(0.0610234, abs=1e-6) and out["a_g"] == pytest.approx(0.1125808, abs=1e-6)
+    assert out["a_ks"] == pytest.approx(0.018135, abs=1e-9)
+    zero = stars.gaia_extinction(0.0, 2.0971918)
+    assert (zero["ebprp"], zero["a_g"], zero["a_ks"], zero["bp_rp0"]) == (0.0, 0.0, 0.0, 2.0971918)
+    held = stars.gaia_extinction(0.05, 2.7)                      # (BP-RP)_0 2.63 is above the fit's 2.5
+    assert held["colour_held"] is True and held["ebprp"] == pytest.approx(0.0689518, abs=1e-6)
+    hot = stars.gaia_extinction(0.30, 0.8)
+    assert hot["ebprp"] == pytest.approx(0.4187245, abs=1e-6) and hot["a_g"] == pytest.approx(0.8434732, abs=1e-6)
+    many = stars.gaia_extinction(np.array([0.0, 0.05]), 2.0971918)
+    assert many["ebprp"] == pytest.approx([0.0, 0.0610234], abs=1e-6)
+
+
+def test_a_ks_over_a0_is_ccm_at_the_2mass_ks_wavelength():
+    x = 1 / 2.159                                                # um^-1; CCM 1989 infrared: a = 0.574 x^1.61
+    assert stars.A_KS_OVER_A0 == round(0.574 * x ** 1.61 - 0.527 * x ** 1.61 / 3.1, 3) == 0.117
+
+
+def test_derive_with_a_stored_extinction_dereddens_and_keeps_the_unreddened_values():
+    gaia = gaia_row_6146676()
+    plain, plain_planet = derive(gaia, 40.29109, 0.048, 2165e-6, np.random.default_rng(1))
+    star, planet = derive(gaia, 40.29109, 0.048, 2165e-6, np.random.default_rng(1), extinction=EXT)
+    assert star.unreddened["teff"] == plain.teff.as_dict() and star.unreddened["radius"] == plain.radius.as_dict()
+    assert star.unreddened["rp_rearth"] == plain_planet.rp_rearth.as_dict() and star.unreddened["bp_rp0"] == (
+        gaia.bp_rp)
+    assert star.teff.median > plain.teff.median                  # a bluer intrinsic colour is a hotter star
+    e = star.extinction
+    assert e["ebv"] == 0.05 and e["ebprp"]["median"] == pytest.approx(0.061, abs=0.003)
+    assert e["a_ks"]["median"] == pytest.approx(0.018, abs=0.002) and e["bp_rp0"] == pytest.approx(2.036, abs=0.002)
+    assert e["law"] == stars.GAIA_LAW and e["r_v"] == 3.1 and e["state"] == "adopted"
+    assert "Bayestar19" in star.radius.source and "A_Ks 0 to 0.07" not in star.radius.source
+    assert "dereddened by the Bayestar19 E(BP-RP)" in star.reddening_note
+    assert derive(gaia, 40.29109, 0.048, 2165e-6, np.random.default_rng(1), extinction=EXT) == (star, planet)
+    assert plain.extinction is None and plain.unreddened is None
+    manual = derive(gaia, 40.29109, 0.048, 2165e-6, np.random.default_rng(1),
+                    extinction={**EXT, "status": "manual", "map": "by hand"})[0]
+    assert manual.extinction["state"] == "manual" and manual.teff == star.teff
+
+
+def test_without_a_3d_value_the_unreddened_star_is_adopted_and_the_full_column_bounds_it():
+    """The controller's addendum 2: no 3D value, so the unreddened star stays adopted (the version 5 numbers); the
+    IRSA full-column E(B-V) runs through the same law and draws to the upper end of the bracket."""
+    gaia = gaia_row_6146676()
+    plain, plain_planet = derive(gaia, 40.29109, 0.048, 2165e-6, np.random.default_rng(1))
+    star, planet = derive(gaia, 40.29109, 0.048, 2165e-6, np.random.default_rng(1), extinction=NOT_AVAILABLE)
+    assert (star.teff, star.radius, star.mass, planet) == (plain.teff, plain.radius, plain.mass, plain_planet)
+    assert star.reddening_note == plain.reddening_note
+    e = star.extinction
+    assert e["state"] == "not available" and e["reason"] == "a test reason" and "ebprp" not in e
+    col = e["column"]
+    assert col["ebv"] == 0.10 and col["ebprp"]["median"] == pytest.approx(0.122, abs=0.003)
+    # A_Ks 0.036 sits inside the unreddened draws' 0 to 0.07, so the Ks radius barely moves; the colour does
+    assert col["teff"]["median"] > plain.teff.median and col["rp_rearth"]["median"] >= plain_planet.rp_rearth.median
+    assert col["route"] == "mann" and set(col) >= {"radius", "mass", "insolation_earth", "a_g", "a_ks", "bp_rp0"}
+    assert star.unreddened["radius"] == plain.radius.as_dict()
+    unreachable = {**NOT_AVAILABLE, "column": {"status": "not available", "reason": "IRSA timed out",
+                                               "queried_utc": "2026-10-23T20:00:00+00:00"}}
+    bare = derive(gaia, 40.29109, 0.048, 2165e-6, np.random.default_rng(1), extinction=unreachable)[0]
+    assert bare.teff == plain.teff and bare.extinction["column"] == unreachable["column"]
+    none = derive(None, 40.29109, 0.048, 2165e-6, np.random.default_rng(1), extinction=NOT_AVAILABLE)[0]
+    assert none.route == "none" and none.extinction is None and none.unreddened is None
+
+
+def test_load_extinction_reads_validates_and_refuses(tmp_path):
+    import json
+    folder = tmp_path / "kic-006146676"
+    folder.mkdir()
+    assert stars.load_extinction("kic-006146676", tmp_path) is None
+    for good in (EXT, {**EXT, "status": "manual"}, NOT_AVAILABLE, {**NOT_AVAILABLE, "column": {
+            "status": "not available", "reason": "IRSA timed out", "queried_utc": "2026-10-23T20:00:00+00:00"}}):
+        (folder / "extinction.json").write_text(json.dumps(good), encoding="utf-8")
+        assert stars.load_extinction("kic-006146676", tmp_path) == good
+    for bad, words in (({**EXT, "ebv": None}, "ebv is not a finite number"),
+                       ({**EXT, "ebv_p16": 0.06}, "not 0 <= ebv_p16 <= ebv <= ebv_p84"),
+                       ({**EXT, "source": " "}, "source is empty"),
+                       ({k: v for k, v in EXT.items() if k != "map"}, "map is missing"),
+                       ({**EXT, "status": "guessed"}, "status 'guessed' is not one of"),
+                       ({**NOT_AVAILABLE, "reason": ""}, "reason is empty"),
+                       ({**NOT_AVAILABLE, "column": {**COLUMN, "ebv": -0.1}}, "column ebv is not a finite number"),
+                       ([EXT], "not a JSON object")):
+        (folder / "extinction.json").write_text(json.dumps(bad), encoding="utf-8")
+        with pytest.raises(stars.ExtinctionError, match=words):
+            stars.load_extinction("kic-006146676", tmp_path)
+    (folder / "extinction.json").write_text("{", encoding="utf-8")
+    with pytest.raises(stars.ExtinctionError, match="does not read as JSON"):
+        stars.load_extinction("kic-006146676", tmp_path)

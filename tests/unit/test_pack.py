@@ -2585,7 +2585,8 @@ def _star_extras(data, **star):
 
 
 def test_the_star_sentence_and_the_provenance_carry_ruwe_nss_and_the_reddening(env_with_dossier):
-    data = _star_extras(_stored(env_with_dossier))
+    # a star block before version 6 (no extinction): the title rule of spec 11.6; Task 16 tests the states after it
+    data = _star_extras(_stored(env_with_dossier), extinction=None)
     flat = " ".join(render_note(data).split())
     assert "a RUWE of 0.94 and no non-single-star solution" in flat
     assert "the reddening is not measured" in flat                     # the "not yet known" titles name it
@@ -2743,7 +2744,7 @@ def test_one_clause_gives_the_follow_up_window_and_the_photometry(env_with_dossi
 def test_the_gsp_phot_reddening_prints_with_its_cool_dwarf_caveat(env_with_dossier):
     """I-1 (spec 11.6, the controller's ruling): GSP-Phot's E(BP-RP) carries the cool-dwarf bias (Andrae et al.
     2023) and what the parameters assume, in the note and in the README's Star paragraph; without it neither."""
-    data = _star_extras(_stored(env_with_dossier), ebpminrp_gspphot=0.27)
+    data = _star_extras(_stored(env_with_dossier), ebpminrp_gspphot=0.27, extinction=None)   # before version 6
     flat = " ".join(render_note(data).split())
     assert (r"GSP-Phot gives E(BP-RP) 0.27, a value biased for cool dwarfs \citep{andrae2023}; the temperature "
             r"assumes 0.1 or less, and the $K_s$ radius barely depends on it.") in flat
@@ -2758,6 +2759,14 @@ def test_the_gsp_phot_reddening_prints_with_its_cool_dwarf_caveat(env_with_dossi
     readme = pack_module.render_readme(data, {})
     star = next(p for p in readme.split("\n\n") if p.startswith("Star:"))
     assert "GSP-Phot gives E(BP-RP) 0.27, a value biased for cool dwarfs (Andrae et al. 2023)" in star
+    # spec 12.3 as amended, with Task 16's cut 1: with the stored block (the bracket) the note drops the GSP-Phot
+    # sentence and its citation, and the README prints GSP-Phot as not adopted in the reddening paragraph
+    stored = _star_extras(_stored(env_with_dossier), ebpminrp_gspphot=0.27)
+    assert pack_module.reddening_text(stored, True) is None and not pack_module.references(stored)["andrae2023"]
+    assert "GSP-Phot" not in render_note(stored)
+    assert any(r.startswith("Andrae, R.") for r in pack_module.readme_references(stored))
+    star = next(p for p in pack_module.render_readme(stored, {}).split("\n\n") if p.startswith("Star:"))
+    assert "GSP-Phot E(BP-RP) 0.27, biased for cool dwarfs (Andrae et al. 2023), is not adopted." in star
     assert any(r.startswith("Andrae, R.") for r in pack_module.readme_references(data))
     bare = _star_extras(_stored(env_with_dossier))
     assert pack_module.reddening_text(bare) is None and "andrae2023" not in render_note(bare)
@@ -3151,3 +3160,115 @@ def test_the_crowding_metric_says_when_it_is_the_most_crowded_quarters():
     golden = _golden()
     assert "and the catalogue value equals the most crowded quarter's" in pack_rows.crowdsap_text(golden)
     assert "most crowded" not in render_note(golden)                      # the note does not change (C1)
+
+
+# ---------------------------------------------------------------------------------------------------- Task 16 (spec 12.3)
+
+def _with_adopted_extinction(env) -> dict:
+    """The fixture dossier again with a 3D value stored by hand (adopted, the full column kept as a check)."""
+    from tests.unit.test_dossier import EXTINCTION_ADOPTED, write_extinction
+    write_extinction(STAGE2_TARGET, EXTINCTION_ADOPTED)
+    generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch)
+    return _stored(env)
+
+
+def _readme_table(readme: str) -> list[list[str]]:
+    lines = readme.split("| Estimate | E(B-V) |")[1].split("\n\n")[0].splitlines()
+    return [[c.strip() for c in line.strip("|").split("|")] for line in lines[2:]]
+
+
+def test_without_a_3d_value_every_text_brackets_the_planet_and_adopts_the_unreddened_star(env_with_dossier):
+    """The controller's addendum 2: the unreddened star stays adopted; the note prints the planet radius as a bracket
+    up to the full-column value in one clause, the README a row per estimate with the reasons, and the plain texts
+    the whole paragraph."""
+    data = _stored(env_with_dossier)
+    star, planet = data["star"], data["planet"]
+    assert star["extinction"]["state"] == "not available" and star["extinction"]["column"]["ebv"] == 0.10
+    rep = _build(env_with_dossier)
+    texts = _texts(rep)
+    flat = " ".join(texts["note/note.tex"].split())
+    clause = str(pack_module.rp_bracket_text(data, True))
+    lo, hi = planet["rp_rearth"]["median"], star["extinction"]["column"]["rp_rearth"]["median"]
+    assert clause == (rf", {lo:.2f} to {hi:.2f} $R_\oplus$ between no reddening and the full-column E(B-V) of 0.100 "
+                      r"\citep{schlafly2011}")
+    assert rf"$R_\oplus${clause}, on an orbit of" in flat
+    assert r"]{schlafly2011} Schlafly, E.~F., \& Finkbeiner, D.~P. 2011, ApJ, 737, 103" in flat
+    cited, items = _cites(texts["note/note.tex"])
+    assert cited == items and "green2019" not in items
+    assert "only bracketed" in flat and "Bayestar19" not in flat                 # the caveat title, no 3D clause
+    plain = pack_module.reddening_plain(data)
+    assert plain.startswith("Reddening: not measured at the star's distance (Bayestar19 not available at build "
+                            "time), so the unreddened parameters are adopted")
+    assert "full-column E(B-V) of 0.100 (Schlafly and Finkbeiner 2011) is an upper bound" in plain
+    assert pack_text.value_text(star["extinction"]["column"]["rp_rearth"]) in plain
+    for name in ("exofop/note.txt", "archive_email.txt"):
+        assert plain in " ".join(texts[name].split()), name
+    readme = texts["README.md"]
+    assert ("| Estimate | E(B-V) | E(BP-RP) | A_G | A_Ks | (BP-RP)_0 | Teff (K) | Radius (Rsun) | Mass (Msun) | "
+            "Insolation (Earth) | Planet radius (Earth radii) | Status |") in readme
+    rows = {r[0]: r for r in _readme_table(readme)}
+    assert set(rows) == {"Unreddened", "Full column (Schlafly and Finkbeiner 2011)", "GSP-Phot (Gaia DR3)"}
+    assert rows["Unreddened"][-1] == "adopted" and rows["Unreddened"][1] == "0 (assumed)"
+    assert rows["Unreddened"][6] == pack_text.value_text(star["unreddened"]["teff"])
+    assert rows["Full column (Schlafly and Finkbeiner 2011)"][1] == "0.100"
+    assert rows["Full column (Schlafly and Finkbeiner 2011)"][-1] == "upper bound"
+    assert rows["GSP-Phot (Gaia DR3)"][-1] == "not adopted" and rows["GSP-Phot (Gaia DR3)"][6] == "3,855"
+    assert pack_module.reddening_key(data) in readme and "biased for cool dwarfs (Andrae et al. 2023)" in readme
+    for ref in ("Cardelli, J. A., Clayton, G. C., & Mathis, J. S. 1989, ApJ, 345, 245",
+                "Fitzpatrick, E. L., Massa, D., Gordon, K. D., Bohlin, R., & Clayton, G. C. 2019, ApJ, 886, 108",
+                "Riello, M., De Angeli, F., Evans, D. W., et al. 2021, A&A, 649, A3",
+                "Schlafly, E. F., & Finkbeiner, D. P. 2011, ApJ, 737, 103"):
+        assert ref in readme, ref
+    prov = {r["parameter"]: r for r in _rows(rep, "data/stellar_provenance.csv")}
+    assert float(prov["E(B-V) full column (Schlafly and Finkbeiner 2011), an upper bound"]["value"]) == 0.10
+    assert {name for name, _key in pack_rows.COLUMN_ROWS} <= set(prov)
+    assert not {name for name, _key in pack_rows.EXTINCTION_ROWS} & set(prov)
+    assert pack_module.star_texts(data).startswith(plain)
+    for text in texts.values():
+        assert EM_DASH not in text and not IZE.search(text) and "discover" not in text.lower()
+
+
+def test_a_3d_value_is_adopted_with_the_unreddened_star_and_gsp_phot_beside_it(env_with_dossier):
+    data = _with_adopted_extinction(env_with_dossier)
+    star = data["star"]
+    assert star["extinction"]["state"] == "manual"
+    tex = render_note(data)
+    flat = " ".join(tex.split())
+    sentence = str(pack_module.reddening_text(data, True))
+    assert sentence in flat and r"\citep{green2019}" in sentence and "E(B-V) = 0.050 (0.030 to 0.070)" in sentence
+    assert pack_text.value_text(star["unreddened"]["teff"], True) not in flat     # the note's one clause only
+    assert "between no reddening" not in flat and "schlafly2011" not in flat
+    cited, items = _cites(tex)
+    assert cited == items and "green2019" in items
+    assert r"Green, G.~M., Schlafly, E., Zucker, C., Speagle, J.~S., \& Finkbeiner, D. 2019, ApJ, 887, 93" in flat
+    plain = pack_module.reddening_plain(data)
+    assert plain.startswith("Reddening: E(B-V) 0.050 (16th to 84th percentile 0.030 to 0.070) from Bayestar19 "
+                            "(Green et al. 2019), stored by hand (test fixture), at 303 pc, a sightline average")
+    assert "unreddened, the earlier assumption, Teff" in plain and pack_text.value_text(star["teff"]) in plain
+    readme = render_readme(data, {})
+    rows = {r[0]: r for r in _readme_table(readme)}
+    assert rows["Bayestar19 (Green et al. 2019)"][-1] == "adopted"
+    assert rows["Bayestar19 (Green et al. 2019)"][1] == "0.050 (0.030 to 0.070)"
+    assert rows["Unreddened"][-1] == "the earlier assumption"
+    assert rows["Full column (Schlafly and Finkbeiner 2011)"][-1] == "upper bound"
+    prov = {r["parameter"]: r for r in pack_rows.provenance_rows(data)}
+    assert {name for name, _key in pack_rows.EXTINCTION_ROWS} <= set(prov)
+    ebv = prov["E(B-V) (Bayestar19)"]
+    assert (ebv["value"], ebv["minus"], ebv["plus"]) == (0.05, 0.02, 0.02)
+    assert ebv["reference"] == "Green et al. 2019; Gaia (E)DR3 extinction law; Cardelli et al. 1989"
+    assert dossier_module.no_spectrum_title(star) == dossier_module.NO_SPECTRUM
+
+
+def test_with_neither_value_the_texts_say_not_available(env_with_dossier):
+    data = _stored(env_with_dossier)
+    column = {"status": "not available", "reason": "irsa-dust timed out", "queried_utc": "2026-10-23T20:00:00+00:00"}
+    data["star"]["extinction"] = {**data["star"]["extinction"], "column": column}
+    assert pack_module.rp_bracket_text(data, True) is None
+    flat = " ".join(render_note(data).split())
+    assert "(Bayestar19 not available at build time)" in flat and "between no reddening" not in flat
+    assert pack_module.reddening_plain(data) == (
+        "Reddening: not measured (Bayestar19 not available at build time, and the IRSA full-column value could not "
+        "be fetched), so the unreddened parameters are adopted.")
+    rows = {r[0]: r for r in _readme_table(render_readme(data, {}))}
+    assert set(rows) == {"Unreddened", "GSP-Phot (Gaia DR3)"}
+    assert pack_module.references(data)["schlafly2011"] is False

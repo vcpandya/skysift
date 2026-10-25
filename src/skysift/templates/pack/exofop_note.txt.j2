@@ -16,6 +16,9 @@ Ephemeris: {{ n.ephemeris_text }}; {{ n.n_events }} transits, SDE {{ n.sde }}, S
 {% if n.rp_text %}
 Planet radius {{ n.rp_text }} Earth radii on a {{ n.a_text }} AU orbit{% if n.teq_text %}, Teq {{ n.teq_text }} K{% endif %}; host {{ n.host_text }}.
 {% endif %}
+{% if n.reddening_plain %}
+{{ n.reddening_plain }}
+{% endif %}
 {% if n.trend_plain %}
 {{ n.trend_plain }}
 {% endif %}

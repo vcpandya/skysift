@@ -408,7 +408,9 @@
     {%- if gx %}
     <p><strong>Gaia's own values, as a cross-check.</strong> GSP-Phot Teff {{ gx.teff_gspphot | fmt(0) }} K, FLAME radius {{ gx.radius_flame | fmt(3) }} solar radii and mass {{ gx.mass_flame | fmt(3) }}, Bailer-Jones distance {{ gx.distance_bailer_jones_pc | fmt(1) }} pc. {{ gx.note or "" }}</p>
     {%- endif %}
-    {%- if star.reddening_note %}
+    {#- spec 12.3: with the extinction block the section's own words (texts.star) carry the reddening #}
+    {%- if star.extinction %}
+    {%- elif star.reddening_note %}
     <p><strong>Reddening.</strong> {{ star.reddening_note }}</p>
     {%- elif star.alt_radius_e02 %}
     <p><strong>Reddening.</strong> At E(BP-RP) = 0.2 the stellar radius would be {{ val(star.alt_radius_e02, 3, "solar radii") }}.</p>
