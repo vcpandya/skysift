@@ -178,7 +178,9 @@ def fap_sentence(data: dict, short: bool = False) -> str:
     """"False-alarm probability: <words>." and, when calibrated, ``FAP_NULLS`` with ``FAP_SWEEP`` (the stored
     ``calibration.sweep_size`` times the FAP) or ``FAP_NO_SWEEP`` without a sweep size. A dossier stored before the
     calibration block says "other KBonus stars" without their count. ``short`` is the note's form,
-    ``FAP_NULLS_SHORT``, without the method parenthetical, which the README and the other texts keep."""
+    ``FAP_NULLS_SHORT``, without the method parenthetical, which the README and the other texts keep, and without the
+    label sentence: the words follow the count in brackets, "... reached the signal's SDE (1 in 170); ..." (Task 15
+    fix round 1, cut B5)."""
     fap, calib = data.get("fap") or {}, data.get("calibration") or {}
     words = fap.get("words") or "not computed"
     if not (fap.get("calibrated") and fap.get("n") is not None):
@@ -195,6 +197,8 @@ def fap_sentence(data: dict, short: bool = False) -> str:
         sweep = FAP_SWEEP.format(s=size, expected=_expected(size * value))
     else:
         sweep = FAP_NO_SWEEP
+    if short:
+        return f"{nulls} ({words}){sweep}."
     return f"False-alarm probability: {words}. {nulls}{sweep}."
 
 

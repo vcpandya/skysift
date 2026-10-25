@@ -103,6 +103,12 @@ VERDICT_PHRASES = {
     "not observed in transit": "no transit fell in a TESS window",
     "not assessed": "TESS coverage was not assessed",
 }
+# the note's verdicts after "the predicted folded significance of S to S sigma means" (Task 15 fix round 1, cut B3)
+NOTE_VERDICTS = {
+    "should have detected": "TESS should have detected the transit and a TESS search is the natural follow-up",
+    "marginal": "a TESS detection would be marginal",
+    "not expected": "no detection is expected at the nominal noise",
+}
 # the note's sentence ends with this pointer and its one citation when a prediction was made (fix round 2, N1)
 README_POINTER = "noise model and thresholds in the README;"
 # the note says once which README it means, in its first pointer (Task 8 fix round 4, M-3): the errors pointer of the
@@ -453,15 +459,16 @@ def note_sentence(block: dict | None, tex: bool = False, readme: bool = True, fi
     "TESS coverage was not assessed." without the inputs. ``readme=False`` leaves the pointer out (the dossier
     page prints the method under it); ``first`` makes it the note's first pointer, "in the Zenodo pack's
     README" (``README_POINTER_FIRST``). ``short`` is the Research Note's form since Task 13 fix round 1 (the word
-    limit) when transits fell in counted windows: "TESS observed the star in N sectors; the predicted folded
-    significance is S to S sigma, so <verdict> (Christ et al. 2019, methods in the README)." (``_short_sentence``),
-    the README's TESS row keeping the rest. With ``tex`` a LaTeX ``Raw``."""
+    limit) when transits fell in counted windows: "TESS observed the star in N sectors (Sector 109 not assessed);
+    the predicted folded significance of S to S sigma means <verdict>; no TESS data were examined (Christ et al.
+    2019)." (``_short_sentence``, ``NOTE_VERDICTS``; Task 15 fix round 1, cut B3: no README pointer, the note's
+    Data availability line names the pack's methods), the README's TESS row keeping the rest. With ``tex`` a LaTeX
+    ``Raw``."""
     brief = _short_sentence(block) if short and readme and note_cites(block) else None
     if brief is not None:
-        where = f"methods in {PACK_README}" if first else "methods in the README"
         if tex:
-            return Raw(tex_escape(brief[:-1]) + rf" \citep[{tex_escape(where)}]{{christ2019}}.")
-        return f"{brief[:-1]} (Christ et al. 2019; {where})."
+            return Raw(tex_escape(brief[:-1]) + r" \citep{christ2019}.")
+        return f"{brief[:-1]} (Christ et al. 2019)."
     text = _plain_sentence(block)
     if not (readme and note_cites(block)):
         return Raw(tex_escape(text)) if tex else text
@@ -479,9 +486,12 @@ def _short_sentence(b: dict | None) -> str | None:
     if not isinstance(b, dict) or not b.get("available") or not b.get("sectors") or not b.get("n_transits"):
         return None
     k, sig = len(b["sectors"]), b["significance"]
-    return (f"TESS observed the star in {k} sector{'s' if k != 1 else ''}{_skipped(b)}; the predicted folded "
-            f"significance is {_s(sig['folded_conservative'])} to {_s(sig['folded_nominal'])} sigma, so "
-            f"{VERDICT_PHRASES[b['verdict']]}{NO_DATA_EXAMINED}.")
+    skipped = b.get("sectors_skipped") or []
+    gone = f" (Sector{'s' if len(skipped) > 1 else ''} {_and(skipped)} not assessed)" if skipped else ""
+    verdict = NOTE_VERDICTS.get(b["verdict"], VERDICT_PHRASES[b["verdict"]])
+    return (f"TESS observed the star in {k} sector{'s' if k != 1 else ''}{gone}; the predicted folded "
+            f"significance of {_s(sig['folded_conservative'])} to {_s(sig['folded_nominal'])} sigma means "
+            f"{verdict}{NO_DATA_EXAMINED}.")
 
 
 def _plain_sentence(b: dict | None) -> str:

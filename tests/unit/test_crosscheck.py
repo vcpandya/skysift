@@ -1580,9 +1580,14 @@ def test_every_text_carries_the_four_numbers():
         "TRICERATOPS 1.1.0 gives a false-positive probability of 0.080 (0.032 without a planet on an unresolved bound "
         "companion), and 0.055 (0.0053 without it) with the one neighbour the difference images exclude removed, in "
         "none of its validation classes, which do not apply at 30-minute cadence (Giacalone et al. 2021)")
-    assert cc.headline(data, short=True).endswith(
-        "(0.032 without a planet on an unresolved bound companion; 0.055 and 0.0053 with the one neighbour the "
-        "difference images exclude removed; no validation class applies at 30-minute cadence; Giacalone et al. 2021)")
+    # Task 15 fix round 1, cut A1: the abstract carries the two FPPs; the no-STP values are the body's
+    assert cc.headline(data, short=True) == (
+        "TRICERATOPS 1.1.0 gives a false-positive probability of 0.080, or 0.055 with the one neighbour the "
+        "difference images exclude removed (no validation class applies at 30-minute cadence; Giacalone et al. 2021)")
+    assert cc.headline(_four(same=True), short=True) == (
+        "TRICERATOPS 1.1.0 gives a false-positive probability of 0.080, the same with no neighbour removed, since the "
+        "difference images exclude none (no validation class applies at 30-minute cadence; Giacalone et al. 2021)")
+    assert "without" not in cc.headline(data, short=True)
     after = cc.comparison_sentence(data, after_headline=True)
     assert ("With the one neighbour the difference images exclude removed (Gaia DR3 2073896190925687296 at 11.45 "
             "arcsec, smallest margin 12.7 sigma), 20 seeded runs give 0.055 (16th to 84th percentile 0.055 to "
@@ -1592,10 +1597,13 @@ def test_every_text_carries_the_four_numbers():
         "With those neighbours removed the false-positive weight sits mainly on STP, a planet transiting an "
         "unresolved bound companion inside the 0.83 arcsec exclusion radius, which no high-resolution imaging "
         "constrains, so the signal stays a candidate.")
-    # Task 16's cut 2, taken in Task 15 for the word limit: the note's variant is a parenthesis in its sentence
-    assert ("absent from SkySift's model (0.055 and 0.0053 without STP with the one neighbour the difference images "
-            "exclude removed), and a nearby false-positive probability of 0.020") in cc.comparison_sentence(data,
-                                                                                                         short=True)
+    # Task 16's cut 2 and Task 15 fix round 1, cut B8: the note's variant sits in the no-STP parenthesis
+    assert ("gives a median false-positive probability of 0.080 (0.032 without a planet transiting an unresolved "
+            "bound companion, STP, absent from SkySift's model; 0.055, and 0.0053 without STP, with the one neighbour "
+            "the difference images exclude removed) and a nearby false-positive probability of 0.020 over 20 runs "
+            "(no validation class applies at 30-minute cadence).") in cc.comparison_sentence(data, short=True)
+    assert ("absent from SkySift's model; the same with no neighbour removed, since the difference images exclude "
+            "none) and a nearby") in cc.comparison_sentence(_four(same=True), short=True)
     assert cc.dominant_excluded_sentence(data, short=True) == (
         "The remaining weight is mainly STP, a planet on an unresolved bound companion inside the 0.83 arcsec "
         "exclusion radius, which no imaging constrains, so the signal stays a candidate.")
@@ -1619,8 +1627,15 @@ def test_the_texts_say_which_fpp_rests_on_our_own_evidence_and_trace_the_budget(
            "split by the PRF overlap rule, a bound rather than a measurement.")
     assert cc.own_evidence_sentence(data) == own
     assert own in cc.comparison_sentence(data, after_headline=True)
-    assert own in cc.comparison_sentence(data, short=True) and own not in cc.comparison_sentence(data)
+    assert own not in cc.comparison_sentence(data, short=True) and own not in cc.comparison_sentence(data)
+    # Task 15 fix round 1, cut B2: the note's form
+    short = ("The pixel-excluded value (0.055) rests on our own evidence, the difference-image centroids; the "
+             "all-neighbours value (0.080) rests on the catalogue's crowding metric split by the PRF overlap rule, a "
+             "bound rather than a measurement.")
+    assert cc.own_evidence_sentence(data, short=True) == short
+    assert cc.comparison_sentence(data, short=True).count(short) == 1
     assert cc.own_evidence_sentence(_four(same=True)) is None
+    assert cc.own_evidence_sentence(_four(same=True), short=True) is None
     assert cc.leakage_basis(data) is None                               # the fake result stores no flux shares
     shares = {"source": "Kepler-pixel overlap, capped by the contamination budget", "budget": 0.16753213,
               "crowdsap": 0.85650748, "sigma_pix": 0.5695906, "weight_sum": 0.1548311, "capped": False}

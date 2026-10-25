@@ -898,18 +898,18 @@ def excluded_text(block: dict, ranges: bool) -> str:
     """The pixel-excluded set's numbers in prose, for ``comparison_sentence``. With ``ranges`` (the README, the ExoFOP
     note, the archive email and the page): "With <removed_phrase> removed (<each neighbour>), <n> seeded runs give
     <FPP> (16th to 84th percentile <range>), <FPP without STP> (<range>) without STP and a nearby false-positive
-    probability of <NFPP> (<range>)."; without, the Research Note's parenthesis inside its cross-check sentence
-    (Task 16's cut 2, taken here for the word limit): "(<FPP> and <FPP without STP> without STP with <removed_phrase>
-    removed)". A set that removed nothing (``same_as_all``) says so."""
+    probability of <NFPP> (<range>)."; without, the Research Note's clause inside the parenthesis of its cross-check
+    sentence (Task 16's cut 2 and Task 15 fix round 1, cut B8): "; <FPP>, and <FPP without STP> without STP, with
+    <removed_phrase> removed". A set that removed nothing (``same_as_all``) says so."""
     v = _variant(block)
     if v is None:
         return ""
     if v.get("same_as_all"):
         return ("The difference images exclude no neighbour, so no run set with neighbours removed differs from this "
-                "one." if ranges else "(the same with no neighbour removed, since the difference images exclude none)")
+                "one." if ranges else "; the same with no neighbour removed, since the difference images exclude none")
     phrase = removed_phrase(v)
     if not ranges:
-        return f"({_p(v['fpp'])} and {_p(v['fpp_no_stp'])} without STP with {phrase} removed)"
+        return f"; {_p(v['fpp'])}, and {_p(v['fpp_no_stp'])} without STP, with {phrase} removed"
     listed = _removed_list(v)
     return (f"With {phrase} removed{f' ({listed})' if listed else ''}, {v['n_runs']} seeded runs give {_p(v['fpp'])} "
             f"(16th to 84th percentile {range_text(v, 'fpp')}), {_p(v['fpp_no_stp'])} "
@@ -917,16 +917,23 @@ def excluded_text(block: dict, ranges: bool) -> str:
             f"{_p(v['nfpp'])} ({range_text(v, 'nfpp')}).")
 
 
-def own_evidence_sentence(data: dict) -> str | None:
+def own_evidence_sentence(data: dict, short: bool = False) -> str | None:
     """Which of the two FPPs rests on SkySift's own evidence (Task 15 addendum 2): "The FPP with the pixel-excluded
     neighbours removed (<FPP>) is the number that rests on our own evidence (the difference-image centroids); the
     all-neighbours FPP (<FPP>) rests on the catalogue's crowding metric split by the PRF overlap rule, a bound rather
-    than a measurement." None without a current, complete cross-check, or when the difference images exclude no
-    neighbour (``same_as_all``: the two sets are one)."""
+    than a measurement." ``short`` is the Research Note's form (Task 15 fix round 1, cut B2): "The pixel-excluded
+    value (<FPP>) rests on our own evidence, the difference-image centroids; the all-neighbours value (<FPP>) rests on
+    the catalogue's crowding metric split by the PRF overlap rule, a bound rather than a measurement." None without a
+    current, complete cross-check, or when the difference images exclude no neighbour (``same_as_all``: the two sets
+    are one)."""
     block = _current(data)
     v = _variant(block) if block else None
     if v is None or v.get("same_as_all"):
         return None
+    if short:
+        return (f"The pixel-excluded value ({_p(v['fpp'])}) rests on our own evidence, the difference-image "
+                f"centroids; the all-neighbours value ({_p(block['fpp'])}) rests on the catalogue's crowding metric "
+                "split by the PRF overlap rule, a bound rather than a measurement.")
     return (f"The FPP with the pixel-excluded neighbours removed ({_p(v['fpp'])}) is the number that rests on our "
             f"own evidence (the difference-image centroids); the all-neighbours FPP ({_p(block['fpp'])}) rests on the "
             "catalogue's crowding metric split by the PRF overlap rule, a bound rather than a measurement.")
@@ -995,10 +1002,11 @@ def headline(data: dict, tex: bool = False, named: bool = True, short: bool = Fa
     its value without STP and ``NO_CLASS_CLAUSE``, citing Giacalone et al. 2021; None without a complete, current
     cross-check. ``named`` False drops "a false-positive probability of", for a text whose label already names it
     ("False-positive probability: TRICERATOPS 1.1.0 gives 0.012 ..."). With ``tex`` a LaTeX ``Raw`` citing
-    ``giacalone2021``. ``short`` is the note's abstract: "(<no-STP value> without a planet on an unresolved bound
-    companion; no validation class applies at 30-minute cadence; Giacalone et al. 2021)" (``NO_CLASS_SHORT``). Spec
-    12.2: after the first set's two numbers come the pixel-excluded set's two, "and <FPP> (<FPP without STP> without
-    it) with <removed_phrase> removed" (in the abstract "; <FPP> and <FPP without STP> with ... removed")."""
+    ``giacalone2021``. Spec 12.2: after the first set's two numbers come the pixel-excluded set's two, "and <FPP>
+    (<FPP without STP> without it) with <removed_phrase> removed". ``short`` is the note's abstract, which carries
+    the two FPPs alone (Task 15 fix round 1, cut A1; the no-STP values are in the body): "<FPP>, or <FPP> with
+    <removed_phrase> removed (no validation class applies at 30-minute cadence; Giacalone et al. 2021)"
+    (``NO_CLASS_SHORT``)."""
     block = _current(data)
     if block is None:
         return None
@@ -1008,11 +1016,11 @@ def headline(data: dict, tex: bool = False, named: bool = True, short: bool = Fa
         if v is None:
             middle = ""
         elif v.get("same_as_all"):
-            middle = "; the same with no neighbour removed, since the difference images exclude none"
+            middle = ", the same with no neighbour removed, since the difference images exclude none"
         else:
-            middle = f"; {_p(v['fpp'])} and {_p(v['fpp_no_stp'])} with {removed_phrase(v)} removed"
-        return (f"TRICERATOPS {block['tool_version']} gives {what}{_p(block['fpp'])} ({_p(block['fpp_no_stp'])} "
-                f"without a planet on an unresolved bound companion{middle}; {NO_CLASS_SHORT}; Giacalone et al. 2021)")
+            middle = f", or {_p(v['fpp'])} with {removed_phrase(v)} removed"
+        return (f"TRICERATOPS {block['tool_version']} gives {what}{_p(block['fpp'])}{middle} ({NO_CLASS_SHORT}; "
+                "Giacalone et al. 2021)")
     if v is None:
         middle = ""
     elif v.get("same_as_all"):
@@ -1066,15 +1074,14 @@ def comparison_sentence(data: dict, tex: bool = False, after_headline: bool = Fa
         return Raw(tex_escape(text)) if tex else text
     head = f"TRICERATOPS {block['tool_version']} "
     if short:              # the Research Note (Task 13, the word limit): the README carries the ranges
-        variant = f" {excluded_text(block, False)}" if _variant(block) else ""
+        variant = excluded_text(block, False) if _variant(block) else ""
         rest = (", run on the KBonus light curve with Kepler limb darkening and Gaia DR3 field stars, gives a median "
-                f"false-positive probability of {_p(block['fpp'])}, {_p(block['fpp_no_stp'])} without "
-                f"a planet transiting an unresolved bound companion (STP), absent from SkySift's model{variant}, and "
-                f"a nearby false-positive probability of {_p(block['nfpp'])} over {n} runs{left_out} "
-                f"({NO_CLASS_SHORT}).")
+                f"false-positive probability of {_p(block['fpp'])} ({_p(block['fpp_no_stp'])} without a planet "
+                f"transiting an unresolved bound companion, STP, absent from SkySift's model{variant}) and a nearby "
+                f"false-positive probability of {_p(block['nfpp'])} over {n} runs{left_out} ({NO_CLASS_SHORT}).")
         if dominant:
             rest += f" {dominant_sentence(block, short=True)}"
-        own = own_evidence_sentence(data)
+        own = own_evidence_sentence(data, short=True)
         rest += f" {own}" if own else ""
         if tex:
             return Raw(tex_escape(head) + r"\citep{giacalone2021}" + tex_escape(rest))

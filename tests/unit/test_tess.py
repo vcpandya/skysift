@@ -543,14 +543,22 @@ def test_the_tess_clause_says_no_data_were_examined_and_qualifies_not_expected()
 
 def test_the_short_note_sentence_names_a_skipped_sector_and_says_no_data_were_examined():
     """Round-2 final review, minor 9 and the Task 13 parked minor: the Research Note's short TESS sentence names a
-    sector TESScut lists that is not assessed and ends "no TESS data were examined" before its citation."""
+    sector TESScut lists that is not assessed and ends "no TESS data were examined" before its citation. Task 15 fix
+    round 1, cut B3: the skipped sector in brackets, "of S to S sigma means <verdict>" (``NOTE_VERDICTS``) and no
+    README pointer; a star without a skipped sector has no brackets."""
     b = tess.statement({**META, "sectors": [*META["sectors"], 109]}, EPHEMERIS)
     assert b["sectors_skipped"] == [109]
     sig = b["significance"]
     text = tess.note_sentence(b, short=True)
-    assert text == (f"TESS observed the star in {len(b['sectors'])} sectors, and Sector 109, not assessed; the "
-                    f"predicted folded significance is {sig['folded_conservative']:.2f} to "
-                    f"{sig['folded_nominal']:.2f} sigma, so {tess.VERDICT_PHRASES[b['verdict']]}; no TESS data were "
-                    "examined (Christ et al. 2019; methods in the README).")
+    assert text == (f"TESS observed the star in {len(b['sectors'])} sectors (Sector 109 not assessed); the "
+                    f"predicted folded significance of {sig['folded_conservative']:.2f} to "
+                    f"{sig['folded_nominal']:.2f} sigma means {tess.NOTE_VERDICTS[b['verdict']]}; no TESS data were "
+                    "examined (Christ et al. 2019).")
+    assert str(tess.note_sentence(b, tex=True, short=True)).endswith(r"no TESS data were examined \citep{christ2019}.")
     plain = tess.note_sentence(tess.statement(META, EPHEMERIS), short=True)
     assert plain.startswith(f"TESS observed the star in {len(b['sectors'])} sectors; the predicted")
+    assert "README" not in plain and "(Sector" not in plain
+    gone = {**b, "verdict": "not expected"}
+    assert "sigma means no detection is expected at the nominal noise; no TESS data were examined" in \
+        tess.note_sentence(gone, short=True)
+    assert set(tess.NOTE_VERDICTS) == {"should have detected", "marginal", "not expected"}

@@ -1393,7 +1393,8 @@ def test_note_has_software_facilities_and_the_model_clause_within_the_limits(env
         # fix round 1 cut 14: the data sentence keeps the commit and both DOIs without its connectives
         assert (f"code: SkySift at commit {tex_safe(commit)}, doi:10.5281/zenodo.SOFTWARE (to be minted)."
                 in " ".join(tex.split()))
-        assert "CROWDSAP" in tex and "PSFFRAC" in tex
+        # Task 15 fix round 1, cut B7: the note glosses PSFFRAC without the keyword; the README defines it
+        assert "CROWDSAP" in tex and "PSFFRAC" not in tex and "a PSF flux fraction inside the aperture of" in tex
         assert "No Kepler stellar catalogue covers a background star" in tex
         words = note_words(tex)
         assert note_problems(words, tex) == [] and words["total"] <= NOTE_LIMITS["total"]
@@ -1598,8 +1599,9 @@ def test_the_note_names_its_methods_and_cites_them(env_with_dossier):
     signal = tex.split(r"\section{The signal}")[1].split(r"\section{")[0]
     # Task 8 fix round 3: the note keeps a pointer without citations, the sentence and its works are in the README;
     # fix round 4, M-3: the note's first pointer says which README; round-2 word budget: a clause closing the
-    # ephemeris sentence
-    assert "on the linear-fit ephemeris (methods in the Zenodo pack's README)." in " ".join(signal.split())
+    # ephemeris sentence; Task 15 fix round 1, cut B6: the clause goes, the Data availability line names the methods
+    assert "on the linear-fit ephemeris." in " ".join(signal.split()) and "(methods in" not in signal
+    assert "Pack (data and methods): " in " ".join(tex.split())
     assert pack_module.errors_pointer(data) == "methods in the Zenodo pack's README"
     assert "deeg2015" not in tex and "holczer2016" not in tex and "schmitt2014" not in tex
     assert "It remains a candidate until follow-up confirms it." not in signal   # the abstract says it
@@ -1888,8 +1890,11 @@ def test_the_fpp_headline_leads_with_triceratops(env_with_dossier):
     data = _stored_with_cross_check(env)
     abstract = pack_module.abstract_text(data)
     assert abstract.index("TRICERATOPS") < abstract.index("a four-scenario estimate without a bound-companion")
-    # the abstract's short class clause (Task 13, addendum cut 8)
-    assert "; no validation class applies at 30-minute cadence; Giacalone et al. 2021)" in abstract
+    # the abstract's short class clause (Task 13, addendum cut 8); Task 15 fix round 1, cut A1: the abstract
+    # carries the FPPs alone, the no-STP values are the body's, and the gate keys on the headline's opening
+    assert "(no validation class applies at 30-minute cadence; Giacalone et al. 2021)" in abstract
+    assert "without a planet on an unresolved bound companion" not in abstract
+    assert not [p for p in pack_module.gate_problems(data) if "in-house false-positive probability without" in p]
     assert f"gives {cross_check.probability_text(data['fpp']['value'])}, a lower bound" in abstract
     texts = _texts(_build(env))
     assert all("answer different questions" not in t for t in texts.values())
@@ -1898,7 +1903,7 @@ def test_the_fpp_headline_leads_with_triceratops(env_with_dossier):
     assert str(cross_check.comparison_sentence(data, tex=True, short=True)) in note
     # addendum 2: the own-evidence sentence takes the dominant-excluded sentence's place in the note
     assert str(cross_check.dominant_excluded_sentence(data, tex=True, short=True)) not in note
-    assert cross_check.own_evidence_sentence(data) in note
+    assert cross_check.own_evidence_sentence(data, short=True) in note          # fix round 1, B2
     assert "a run without them is a follow-up" not in note
     assert cross_check.comparison_sentence(data, after_headline=True) in texts["README.md"]
     for name in ("exofop/note.txt", "archive_email.txt"):
@@ -2066,7 +2071,8 @@ def test_the_texts_carry_the_tess_statement(env_with_dossier):
     assert str(pack_module.tess_text(data, True)) in section.replace("\n", " ")
     # round 2, N1: the note keeps the one sentence, citing Christ et al. 2019 alone; the methods go to the README;
     # Task 13 fix round 1 (cut 11): its short form
-    assert r"; the predicted folded significance is " in section and r"]{christ2019}." in section
+    # Task 15 fix round 1, cut B3: "of S to S sigma means <verdict>", citing without a pointer
+    assert r"; the predicted folded significance of " in section and r"\citep{christ2019}." in section
     assert "noise model and thresholds" not in section
     assert "The method follows" not in tex and "no TESS light curve was examined" not in tex
     cited, items = _cites(tex)
@@ -2176,17 +2182,20 @@ def _check_live_shape(cross: str, prior: bool) -> dict:
     assert cross_check.NO_CLASS_SHORT in flat and "validation lines" not in flat
     # spec 12.2: the pixel-excluded set's two medians and the scenario that carries its weight
     v = data["cross_check"]["variant_excluded"]
-    assert f"({cross_check.probability_text(v['fpp'])} and {cross_check.probability_text(v['fpp_no_stp'])} without " \
-           "STP with the " in flat
-    assert cross_check.own_evidence_sentence(data) in flat
+    # Task 15 fix round 1, cuts B8 and B2
+    assert f"; {cross_check.probability_text(v['fpp'])}, and {cross_check.probability_text(v['fpp_no_stp'])} " \
+           "without STP, with the " in flat
+    assert cross_check.own_evidence_sentence(data, short=True) in flat
     assert (str(pack_module.comparison_text(data, True)) in flat) == prior
     # Task 13 fix round 1 (cut 11): the note's short TESS sentence; the README's row keeps the skipped sector and
     # the uncertain count
     sentence = str(pack_module.tess_text(data, True))
-    assert sentence in flat and sentence.endswith(r"\citep[methods in the README]{christ2019}.")
+    assert sentence in flat and sentence.endswith(r"\citep{christ2019}.")          # fix round 1, B3
     row = tess.readme_row(block)
     assert "Sector 109, not assessed" in row and "expected)" in row and "diluted depth" in row
-    assert flat.count("the Zenodo pack's README") == 1                            # M-3: said once
+    # M-3 said it once; Task 15 fix round 1 (B3, B6) leaves the note no README pointer: the Data availability
+    # line names the pack's methods
+    assert flat.count("the Zenodo pack's README") == 0 and "Pack (data and methods)" in flat
     # the version 4 sentences the round 3 test did not see (I-1)
     assert r"by the rule of \citet{bryson2013}" in flat and r"]{bryson2013} Bryson" in flat
     assert "hand-built" not in flat                                               # spec 11.5: the README's
@@ -2217,7 +2226,10 @@ def test_the_live_shape_stays_inside_the_word_limit_with_margin(cross, prior):
     and 1,376 without a prior claim, 1,447 and 1,475 with one (validated, dominant). The round-2 final review's
     additions (I-1, minors 4, 5 and 9, the skipped sector) and its pointer cut (the errors pointer as a clause, the
     Pack line without its gloss): 1,347 and 1,375 without, 1,451 and 1,479 with one. I-1: the abstract carries the
-    sweep-wide expectation and stays at or under 150 words on every shape (144 without a prior claim, 148 with)."""
+    sweep-wide expectation and stays at or under 150 words on every shape (144 without a prior claim, 148 with).
+    Task 15 (the pixel-excluded variant and addendum 2) took the shapes to 1,390 and 1,418 without a prior claim and
+    1,494 and 1,522 with one, abstracts 156 and 160; its fix round 1 cuts (A1, B1 to B8): 1,344 and 1,372 without,
+    1,448 and 1,476 with one; abstracts 146 without a prior claim, 150 with."""
     words = _check_live_shape(cross, prior)
     assert words["total"] <= LIVE_SHAPE_LIMIT, words
     assert words["abstract"] <= NOTE_LIMITS["abstract"], words
@@ -2270,18 +2282,17 @@ def test_the_short_offset_sentence_keeps_both_offsets_and_the_verdict():
 
 def test_the_note_says_once_which_readme_it_points_to(env_with_dossier):
     """Fix round 4, M-3: the first pointer of the note names the Zenodo pack's README, the errors pointer when
-    the note has one, else the TESS sentence's; a later pointer says "the README"."""
+    the note has one, else the TESS sentence's; a later pointer says "the README". Task 15 fix round 1 (cuts B3 and
+    B6) drops both pointers: the note names the README nowhere, and its Data availability line reads "Pack (data and
+    methods)", with or without the errors blocks."""
     from skysift import tess
     data = _with_tess(_with_errors(env_with_dossier.data))
     assert pack_module.errors_pointer(data) and tess.note_cites(data["tess"])
-    flat = " ".join(render_note(data).split())
-    assert flat.count("the Zenodo pack's README") == 1
-    assert flat.index("(methods in the Zenodo pack's README)") < flat.index(
-        r"\citep[methods in the README]{christ2019}")
     bare = {**data, "timing": {"ok": False, "reason": "x"}, "shape": {"ok": False, "reason": "y"}}
-    flat = " ".join(render_note(bare).split())
-    assert flat.count("the Zenodo pack's README") == 1
-    assert r"\citep[methods in the Zenodo pack's README]{christ2019}" in flat
+    for shape in (data, bare):
+        flat = " ".join(render_note(shape).split())
+        assert "README" not in flat and "Pack (data and methods): " in flat
+        assert r"\citep{christ2019}" in flat
 
 
 def test_the_readme_labels_the_tess_paragraph_by_what_the_note_says(env_with_dossier):
@@ -2464,7 +2475,7 @@ def test_the_note_names_the_photometry_the_aperture_ratio_and_the_predicted_leak
         "The SAP depth is 0.635 ± 0.064 of the PSF depth against a CROWDSAP (this star's light fraction in the "
         "aperture) of 0.75, 1.8 sigma short of it.")
     assert flat.count("CROWDSAP") == 1                       # Task 12 review M-5: defined once, in the ratio sentence
-    assert "a PSF flux fraction inside the aperture (PSFFRAC)" in flat
+    assert "a PSF flux fraction inside the aperture of" in flat and "PSFFRAC" not in flat    # fix round 1, B7
     assert pack_module.leak_sentence(data) == (       # the share and the method are the README's (addendum cut 5)
         "The target's light predicts 61 ppm in KIC 5689116's optimal aperture against 130 ± 42 ppm measured.")
 
@@ -2837,11 +2848,12 @@ def test_the_note_gives_the_short_tess_sentence_and_leaves_the_follow_up_to_the_
     data = _live_shape("dominant", True)
     flat = " ".join(render_note(data).split())
     sig = data["tess"]["significance"]
-    # round-2 final review: the skipped sector again (Task 13 parked minor) and "no TESS data were examined" (minor 9)
-    assert (f"TESS observed the star in {len(data['tess']['sectors'])} sectors, and Sector 109, not assessed; the "
-            f"predicted folded significance is {sig['folded_conservative']:.2f} to {sig['folded_nominal']:.2f} sigma, "
-            "so TESS is not expected to have detected the transit at the nominal noise; no TESS data were examined "
-            r"\citep[methods in the README]{christ2019}.") in flat
+    # round-2 final review: the skipped sector again (Task 13 parked minor) and "no TESS data were examined" (minor 9);
+    # Task 15 fix round 1, cut B3
+    assert (f"TESS observed the star in {len(data['tess']['sectors'])} sectors (Sector 109 not assessed); the "
+            f"predicted folded significance of {sig['folded_conservative']:.2f} to {sig['folded_nominal']:.2f} sigma "
+            "means no detection is expected at the nominal noise; no TESS data were examined "
+            r"\citep{christ2019}.") in flat
     assert "is predicted to within" not in flat
 
 
@@ -3061,16 +3073,81 @@ def test_the_readme_traces_the_leakage_budget_to_the_catalogue(env_with_dossier)
     readme = texts["README.md"]
     assert pack_rows.crowdsap_text(data) in readme and "(the crowdsap column of the KBonus-bkg v1.0 source " \
         "catalogue, Martinez-Palomera et al. 2023;" in readme
+    assert "most crowded quarter" not in pack_rows.crowdsap_text(data)          # C is not the lowest quarter here
     assert cross_check.leakage_basis(data) in readme and "so the cap did not bind." in readme
     own = cross_check.own_evidence_sentence(data)
     assert own.startswith("The FPP with the pixel-excluded neighbours removed (0.0040) is the number that rests on "
                           "our own evidence")
     for name in ("README.md", "exofop/note.txt", "archive_email.txt"):
         assert own in texts[name], name
-    assert str(pack_text.tex_escape(own)) in " ".join(texts["note/note.tex"].split())
+    # Task 15 fix round 1, cut B2: the note carries the short form, once
+    assert str(pack_text.tex_escape(cross_check.own_evidence_sentence(data, short=True))) in " ".join(
+        texts["note/note.tex"].split())
     assert " ".join(texts["note/note.tex"].split()).count("rests on our own evidence") == 1
     meta = json.loads((rep.out_dir / "zenodo_metadata.json").read_text(encoding="utf-8"))
     assert own in meta["description"]
     assert "KBonus crowding metric (CROWDSAP)" in (rep.out_dir / "data" / "stellar_provenance.csv").read_text(
         encoding="utf-8")
     assert not [p for p in pack_module.gate_problems(data) if "spec 11.1" in p]
+
+
+def test_the_round_3_cuts_leave_the_note_and_keep_every_number_in_the_readme():
+    """Task 15 fix round 1 (the controller's rulings of 24 October 2026): cuts A1 and B1 to B8 on the longest live
+    shape (dominant, with a prior claim). What leaves the note stays in the README."""
+    data = _live_shape("dominant", True)
+    tex = " ".join(render_note(data).split())
+    abstract = tex.split(r"\begin{abstract}")[1].split(r"\end{abstract}")[0]
+    body = tex.split(r"\end{abstract}")[1]
+    # A1: the abstract carries the two FPPs; the no-STP values are in the body
+    assert ("TRICERATOPS 1.1.0 gives a false-positive probability of 0.60, or 0.31 with the 6 neighbours the "
+            "difference images exclude removed (no validation class applies at 30-minute cadence; Giacalone et al. "
+            "2021)") in abstract
+    assert "without" not in abstract.split("TRICERATOPS")[1].split("Giacalone")[0]
+    # B1: the pixel section opens on one sentence
+    pixels = body.split(r"\section{Which star is dimming}")[1].lstrip()
+    assert pixels.startswith("In difference images the centroid sits a median 0.19 pixels from this star and 2.82 "
+                             "pixels from its brightest neighbour, nearer this star in 4 of 4 observing seasons, its "
+                             "error carrying a pointing-jitter floor of 0.017 px. In seasons 0 and 3")
+    # B2 and B8: the own-evidence sentence and the cross-check clause
+    assert ("The pixel-excluded value (0.31) rests on our own evidence, the difference-image centroids; the "
+            "all-neighbours value (0.60) rests on the catalogue's crowding metric split by the PRF overlap rule, a "
+            "bound rather than a measurement.") in body
+    assert ("gives a median false-positive probability of 0.60 (0.60 without a planet transiting an unresolved bound "
+            "companion, STP, absent from SkySift's model; 0.31, and 0.014 without STP, with the 6 neighbours the "
+            "difference images exclude removed) and a nearby false-positive probability of 0.0020 over 20 runs, 2 "
+            "degenerate runs left out (no validation class applies at 30-minute cadence).") in body
+    # B3: the TESS sentence, no README pointer
+    assert ("TESS observed the star in 9 sectors (Sector 109 not assessed); the predicted folded significance of "
+            r"0.56 to 0.96 sigma means no detection is expected at the nominal noise; no TESS data were examined "
+            r"\citep{christ2019}.") in body
+    # B4, B5, B6 and B7
+    assert "The SkySift engine found the signal with a box search" in body and "ladder version" not in body
+    assert "False-alarm probability:" not in body
+    assert ("11 of 1,998 null searches of other KBonus stars reached the signal's SDE (1 in 170); across the "
+            "1,579-star sweep about 9 such peaks are expected by chance") in body
+    assert "README" not in tex.split(r"\begin{document}")[1].split(r"\software")[0]
+    assert r"Pack (data and methods): \dataset[" in body
+    assert "a PSF flux fraction inside the aperture of 0.80" in body and "(PSFFRAC)" not in body
+    assert "search version 5+6cfe4cf4" in tex.split(r"\software")[1]
+    # what left the note stays in the README
+    readme = render_readme(data, {})
+    for kept in ("ladder version", "PSFFRAC", "False-alarm probability: 1 in 170", "0.014", "Christ"):
+        assert kept in readme, kept
+
+
+def test_the_crowding_metric_says_when_it_is_the_most_crowded_quarters():
+    """Task 15 fix round 1, C1: the catalogue value stays the budget; when it equals the lowest per-quarter CROWDSAP
+    the README's and the page's text says so beside the range, and not otherwise."""
+    crowd = {"value": 0.85650748, "column": "crowdsap",
+             "catalogue": "KBonus-bkg v1.0 source catalogue (Martinez-Palomera et al. 2023)",
+             "per_quarter": {"12": 0.85693011, "16": 1.0, "17": 0.85650748}, "per_quarter_min": 0.85650748,
+             "per_quarter_max": 1.0}
+    text = pack_rows.crowdsap_text({"star": {"crowdsap": crowd}})
+    assert text == ("The KBonus crowding metric is C = 0.8565 (the crowdsap column of the KBonus-bkg v1.0 source "
+                    "catalogue, Martinez-Palomera et al. 2023; the light-curve file's CROWDSAP keyword runs 0.8565 to "
+                    "1.0000 over its 3 usable quarters, and the catalogue value equals the most crowded quarter's).")
+    lower = {**crowd, "value": 0.84}
+    assert "most crowded" not in pack_rows.crowdsap_text({"star": {"crowdsap": lower}})
+    golden = _golden()
+    assert "and the catalogue value equals the most crowded quarter's" in pack_rows.crowdsap_text(golden)
+    assert "most crowded" not in render_note(golden)                      # the note does not change (C1)

@@ -396,11 +396,17 @@ def provenance_rows(data: dict) -> list[dict]:
     return rows
 
 
+# the catalogue's C and a quarter's CROWDSAP keyword count as one value within this (both are stored to 8 places)
+CROWDSAP_SAME = 5e-9
+
+
 def crowdsap_text(data: dict) -> str | None:
     """The star's crowding metric with its catalogue column (Task 15 addendum 2), for the README's star line and the
     page: "The KBonus crowding metric is C = 0.8565 (the crowdsap column of the KBonus-bkg v1.0 source catalogue,
     Martinez-Palomera et al. 2023; the light-curve file's CROWDSAP keyword runs 0.8401 to 0.8702 over its 17 usable
-    quarters)."; None without it."""
+    quarters)."; None without it. When C is the lowest per-quarter value, the range ends "..., and the catalogue
+    value equals the most crowded quarter's" (Task 15 fix round 1, C1: the catalogue value stays the budget, the
+    catalogue's own estimate and the largest budget)."""
     crowd = (data.get("star") or {}).get("crowdsap")
     if not isinstance(crowd, dict) or _num(crowd.get("value")) is None:
         return None
@@ -409,6 +415,8 @@ def crowdsap_text(data: dict) -> str | None:
                                                                                              or {})
     spread = (f"; the light-curve file's CROWDSAP keyword runs {lo:.4f} to {hi:.4f} over its {n} usable quarters"
               if None not in (lo, hi) else "")
+    if lo is not None and abs(_num(crowd["value"]) - lo) <= CROWDSAP_SAME:
+        spread += ", and the catalogue value equals the most crowded quarter's"
     return (f"The KBonus crowding metric is C = {_num(crowd['value']):.4f} (the {crowd.get('column')} column of the "
             f"{catalogue}{spread}).")
 

@@ -710,7 +710,9 @@ def errors_pointer(data: dict) -> str | None:
     Zenodo pack's README" that closes the signal section's ephemeris sentence, in brackets, when the ephemeris or the
     shape errors have a method to point to (the round-2 word budget: the sentence naming the methods is the
     README's). It is the note's first pointer, so it names the README as the Zenodo pack's (fix round 4, M-3;
-    ``PACK_README``) and the TESS sentence's later pointer says "the README" alone. None when neither block is ok."""
+    ``PACK_README``) and the TESS sentence's later pointer says "the README" alone. None when neither block is ok.
+    Since Task 15 fix round 1 (cut B6) the note prints neither pointer: its Data availability line names the pack's
+    methods; the long TESS sentence still reads this for which README it names."""
     return f"methods in {PACK_README}" if _timed(data) or _bootstrapped(data) else None
 
 
@@ -1404,8 +1406,14 @@ def pixel_sentence(data: dict, tex: bool = False) -> str:
     if dt and dn:
         floor = ds.floor_pix(seasons)
         carried = "" if floor is None else f", its error carrying a {JITTER_FLOOR} of {floor:.3f} px"
-        text += (f" The centroid sits a median {np.median(dt):.2f} pixels from this star and {np.median(dn):.2f} "
-                 f"pixels from the neighbour{carried}.")
+        if tex:         # the note opens on one sentence (Task 15 fix round 1, cut B1; the abstract has the vote)
+            kind = "seasons that voted" if silent else "observing seasons"
+            text = (f"In difference images the centroid sits a median {np.median(dt):.2f} pixels from this star and "
+                    f"{np.median(dn):.2f} pixels from its brightest neighbour, nearer this star in {near} of "
+                    f"{len(voting)} {kind}{carried}.")
+        else:
+            text += (f" The centroid sits a median {np.median(dt):.2f} pixels from this star and "
+                     f"{np.median(dn):.2f} pixels from the neighbour{carried}.")
     cut = ds.partial_box_sentence(seasons, short=tex)
     if cut:
         text += f" {cut}"
@@ -1599,7 +1607,8 @@ def dilution_sentence(data: dict, tex: bool = False) -> str | None:
     if kbonus:
         # the ratio is one clause of the photometry sentence in the note (addendum cut 7)
         sentences.append([f"The depth is {ds.PSF_PHOTOMETRY}", *(["; ", ratio] if ratio else []),
-                          f", with {words['psffrac']} of {psf['text']}" if psf else "", "."])
+                          # the note drops the keyword (Task 15 fix round 1, cut B7); the README defines it
+                          f", with a PSF flux fraction inside the aperture of {psf['text']}" if psf else "", "."])
     elif ratio:
         sentences.append([aperture_sentence(data, tex)])
     # CROWDSAP is printed once (Task 12 review M-5): in the ratio clause when that carries it
