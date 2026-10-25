@@ -1,6 +1,6 @@
 {
  "dossier_version": "6",
- "generated": "2026-10-25T11:21:32.942515+00:00",
+ "generated": "2026-10-25T14:23:03.020695+00:00",
  "target": {
   "target_id": "kic-006146676",
   "source": "kbonus_bkg",
@@ -1878,7 +1878,7 @@
   "period_days": 40.290812,
   "t0_bkjd": 135.79502,
   "t0_bjd": 2454968.795018,
-  "duration_h": 3.6887426,
+  "duration_h": 3.6854543,
   "depth_ppm": 2213.9651,
   "sde": 50.501758,
   "snr": 30.039973,
@@ -1892,8 +1892,8 @@
   "t_ref_err_days": 0.0014183356,
   "epoch_ref": 19,
   "duration_h_err": {
-   "minus": 0.07200766,
-   "plus": 0.063001064
+   "minus": 0.072263953,
+   "plus": 0.063056256
   },
   "duration_source": "fitted T14",
   "depth_ppm_err": 114.37157,
@@ -1928,7 +1928,7 @@
   "sentence_not_covered": "This is about noise. A real dip on a neighbouring star or an eclipsing binary passes this test."
  },
  "fpp": {
-  "value": 0.003350251,
+  "value": 0.0032197254,
   "words": "under 1 percent",
   "label": "False positive",
   "signed_off": true,
@@ -1936,8 +1936,8 @@
   "neighbours_known": true,
   "value_without_beb": null,
   "spec_product": {
-   "eb_weight": 5.8212894e-07,
-   "value": 6.9980597e-05,
+   "eb_weight": 5.7751805e-07,
+   "value": 6.7245534e-05,
    "rule": "spec 4.2 as first written: one EB scenario at 2P weighted by S_sec x S_oe"
   },
   "confusion_radius_arcsec": 0.83480394,
@@ -2006,21 +2006,21 @@
   "scenarios": [
    {
     "name": "PL",
-    "prior": 0.66263756,
-    "geometric": 0.012838661,
-    "data": 0.97772198,
-    "weight": 0.0083178513,
+    "prior": 0.68667256,
+    "geometric": 0.012736969,
+    "data": 0.98187708,
+    "weight": 0.0085876218,
     "factors": {
      "class": "M",
-     "rp_rearth": 2.51,
-     "f_pl": 0.66263756,
-     "a_au": 0.18292308,
-     "R_star_over_a": 0.012838661,
-     "T14_circ": 0.16466103,
-     "T14_fit": 0.15367938,
-     "sigma": 0.05173361,
-     "z": -0.21227307,
-     "D_shape": 0.97772198
+     "rp_rearth": 2.47,
+     "f_pl": 0.68667256,
+     "a_au": 0.18219284,
+     "R_star_over_a": 0.012736969,
+     "T14_circ": 0.16335672,
+     "T14_fit": 0.15353469,
+     "sigma": 0.051355784,
+     "z": -0.19125457,
+     "D_shape": 0.98187708
     }
    },
    {
@@ -2042,17 +2042,17 @@
    {
     "name": "EB-P",
     "prior": 0.0088963842,
-    "geometric": 0.016823405,
+    "geometric": 0.016690151,
     "data": 0.16294852,
-    "weight": 2.4388093e-05,
+    "weight": 2.4194921e-05,
     "factors": {
      "class": "M",
      "f_bin": 0.26,
-     "pair_mass_msun": 0.7545,
-     "fit_b": 0.46828869,
+     "pair_mass_msun": 0.7455,
+     "fit_b": 0.45507938,
      "S_v": 1.0,
      "g_P": 0.034216862,
-     "a_P_au": 0.20939465,
+     "a_P_au": 0.20855874,
      "secondary_predicted_ppm": 221.39651,
      "secondary_ppm": 95.430951,
      "secondary_err_ppm": 128.22074,
@@ -2062,17 +2062,17 @@
    {
     "name": "EB-2P",
     "prior": 0.010741941,
-    "geometric": 0.010598081,
+    "geometric": 0.010514136,
     "data": 0.031380423,
-    "weight": 3.5724716e-06,
+    "weight": 3.5441749e-06,
     "factors": {
      "class": "M",
      "f_bin": 0.26,
-     "pair_mass_msun": 0.7545,
-     "fit_b": 0.46828869,
+     "pair_mass_msun": 0.7455,
+     "fit_b": 0.45507938,
      "S_v": 1.0,
      "g_2P": 0.041315157,
-     "a_2P_au": 0.33239329,
+     "a_2P_au": 0.33106636,
      "odd_even_predicted_ppm": 553.49128,
      "odd_even_ppm": 120.50733,
      "odd_even_err_ppm": 232.67674,
@@ -2085,12 +2085,12 @@
    "depth": 0.0022139651,
    "gmag": 16.236654,
    "teff": 3653.0,
-   "radius": 0.505,
-   "mass": 0.503,
-   "rp_rearth": 2.51,
-   "fit_k": 0.045496089,
-   "fit_b": 0.46828869,
-   "fit_a_over_r": 78.010295,
+   "radius": 0.499,
+   "mass": 0.497,
+   "rp_rearth": 2.47,
+   "fit_k": 0.04541391,
+   "fit_b": 0.45507938,
+   "fit_a_over_r": 78.619284,
    "secondary_ppm": 95.430951,
    "secondary_err_ppm": 128.22074,
    "odd_ppm": 2276.335,
@@ -2156,24 +2156,24 @@
    "median": 3653.0,
    "minus": 73.0,
    "plus": 90.0,
-   "source": "Mamajek dwarf table at BP-RP 2.097 +- 0.10 (Pecaut, M. J. and Mamajek, E. E. 2013, ApJS 208, 9), E(BP-RP) <= 0.1 assumed"
+   "source": "Mamajek dwarf table at BP-RP 2.097 +- 0.10 (Pecaut, M. J. and Mamajek, E. E. 2013, ApJS 208, 9), unreddened (E(B-V) = 0)"
   },
   "radius": {
-   "median": 0.505,
+   "median": 0.499,
    "minus": 0.016,
-   "plus": 0.016,
-   "source": "Mann et al. 2015 R(M_Ks) (Mann, A. W. et al. 2015, ApJ 804, 64), 2MASS Ks 13.055, A_Ks 0 to 0.07, Gaia parallax"
+   "plus": 0.015,
+   "source": "Mann et al. 2015 R(M_Ks) (Mann, A. W. et al. 2015, ApJ 804, 64), 2MASS Ks 13.055, A_Ks 0 (unreddened (E(B-V) = 0)), Gaia parallax"
   },
   "mass": {
-   "median": 0.503,
-   "minus": 0.013,
-   "plus": 0.013,
-   "source": "Mann et al. 2019 M(M_Ks) (Mann, A. W. et al. 2019, ApJ 871, 63), 2MASS Ks 13.055, A_Ks 0 to 0.07, Gaia parallax"
+   "median": 0.497,
+   "minus": 0.012,
+   "plus": 0.012,
+   "source": "Mann et al. 2019 M(M_Ks) (Mann, A. W. et al. 2019, ApJ 871, 63), 2MASS Ks 13.055, A_Ks 0 (unreddened (E(B-V) = 0)), Gaia parallax"
   },
   "density_gcc": {
-   "median": 5.51,
-   "minus": 0.48,
-   "plus": 0.54,
+   "median": 5.64,
+   "minus": 0.49,
+   "plus": 0.55,
    "source": "M* / (4/3 pi R*^3) from the same draws"
   },
   "distance_pc": {
@@ -2189,9 +2189,9 @@
    "radius_flame": 0.53941935,
    "mass_flame": 0.55954725,
    "distance_bailer_jones_pc": 302.95593,
-   "note": "Gaia DR3: GSP-Phot Teff 3855 K is 202 K hotter than the colour route; FLAME gives radius 0.539 Rsun (7 per cent above the route) and mass 0.560 Msun (11 per cent above the route); the Bailer-Jones geometric distance 303.0 pc is within 1 per cent of the inverted parallax. Gaia's values fold in its own extinction and model grids, so they are shown as a cross-check, not as the headline."
+   "note": "Gaia DR3: GSP-Phot Teff 3855 K is 202 K hotter than the colour route; FLAME gives radius 0.539 Rsun (8 per cent above the route) and mass 0.560 Msun (13 per cent above the route); the Bailer-Jones geometric distance 303.0 pc is within 1 per cent of the inverted parallax. Gaia's values fold in its own extinction and model grids, so they are shown as a cross-check, not as the headline."
   },
-  "reddening_note": "Teff and spectral type assume E(BP-RP) at or below 0.1 at the observed BP-RP 2.10; if E(BP-RP) were 0.2 the dwarf-table radius would be 0.569 Rsun. The Ks radius barely depends on reddening: A_Ks 0 to 0.07 is in the draws.",
+  "reddening_note": "Teff and spectral type assume no reddening (E(B-V) = 0) at the observed BP-RP 2.10; if E(BP-RP) were 0.2 the dwarf-table radius would be 0.569 Rsun. The Ks radius barely depends on reddening.",
   "alt_radius_e02": {
    "median": 0.569,
    "minus": 0.034,
@@ -2246,7 +2246,7 @@
      "plus": 0.012,
      "source": "the full-column E(B-V) through the Gaia (E)DR3 law"
     },
-    "route": "mamajek",
+    "route": "mann",
     "teff": {
      "median": 4657.0,
      "minus": 192.0,
@@ -2254,29 +2254,30 @@
      "source": "Mamajek dwarf table at the dereddened BP-RP 1.308 +- 0.10 (Pecaut, M. J. and Mamajek, E. E. 2013, ApJS 208, 9), E(BP-RP) 0.789 from the full column (Schlafly and Finkbeiner 2011)"
     },
     "radius": {
-     "median": 0.723,
-     "minus": 0.02,
-     "plus": 0.034,
-     "source": "Mamajek dwarf table at the dereddened BP-RP 1.308 +- 0.10 (Pecaut, M. J. and Mamajek, E. E. 2013, ApJS 208, 9), E(BP-RP) 0.789 from the full column (Schlafly and Finkbeiner 2011)"
+     "median": 0.54,
+     "minus": 0.017,
+     "plus": 0.017,
+     "source": "Mann et al. 2015 R(M_Ks) (Mann, A. W. et al. 2015, ApJ 804, 64), 2MASS Ks 13.055, A_Ks 0.244 from the full column (Schlafly and Finkbeiner 2011), Gaia parallax"
     },
     "mass": {
-     "median": 0.742,
-     "minus": 0.038,
-     "plus": 0.042,
-     "source": "Mamajek dwarf table at the dereddened BP-RP 1.308 +- 0.10 (Pecaut, M. J. and Mamajek, E. E. 2013, ApJS 208, 9), E(BP-RP) 0.789 from the full column (Schlafly and Finkbeiner 2011)"
+     "median": 0.536,
+     "minus": 0.013,
+     "plus": 0.013,
+     "source": "Mann et al. 2019 M(M_Ks) (Mann, A. W. et al. 2019, ApJ 871, 63), 2MASS Ks 13.055, A_Ks 0.244 from the full column (Schlafly and Finkbeiner 2011), Gaia parallax"
     },
     "rp_rearth": {
-     "median": 3.59,
-     "minus": 0.14,
-     "plus": 0.19,
-     "source": "k 0.0455 from the transit fit x R*; radius-ratio error from the bootstrap"
+     "median": 2.67,
+     "minus": 0.11,
+     "plus": 0.1,
+     "source": "k 0.0454 from the transit fit x R*; radius-ratio error from the bootstrap"
     },
     "insolation_earth": {
-     "median": 5.11,
-     "minus": 0.89,
-     "plus": 1.28,
+     "median": 3.53,
+     "minus": 0.57,
+     "plus": 0.72,
      "source": "L* / a^2, L* = R*^2 (Teff / 5772 K)^4, Earth = 1"
-    }
+    },
+    "outside_mann_range": true
    },
    "state": "not available",
    "r_v": 3.1,
@@ -2292,28 +2293,28 @@
     "median": 3653.0,
     "minus": 73.0,
     "plus": 90.0,
-    "source": "Mamajek dwarf table at BP-RP 2.097 +- 0.10 (Pecaut, M. J. and Mamajek, E. E. 2013, ApJS 208, 9), E(BP-RP) <= 0.1 assumed"
+    "source": "Mamajek dwarf table at BP-RP 2.097 +- 0.10 (Pecaut, M. J. and Mamajek, E. E. 2013, ApJS 208, 9), unreddened (E(B-V) = 0)"
    },
    "radius": {
-    "median": 0.505,
+    "median": 0.499,
     "minus": 0.016,
-    "plus": 0.016,
-    "source": "Mann et al. 2015 R(M_Ks) (Mann, A. W. et al. 2015, ApJ 804, 64), 2MASS Ks 13.055, A_Ks 0 to 0.07, Gaia parallax"
+    "plus": 0.015,
+    "source": "Mann et al. 2015 R(M_Ks) (Mann, A. W. et al. 2015, ApJ 804, 64), 2MASS Ks 13.055, A_Ks 0 (unreddened (E(B-V) = 0)), Gaia parallax"
    },
    "mass": {
-    "median": 0.503,
-    "minus": 0.013,
-    "plus": 0.013,
-    "source": "Mann et al. 2019 M(M_Ks) (Mann, A. W. et al. 2019, ApJ 871, 63), 2MASS Ks 13.055, A_Ks 0 to 0.07, Gaia parallax"
+    "median": 0.497,
+    "minus": 0.012,
+    "plus": 0.012,
+    "source": "Mann et al. 2019 M(M_Ks) (Mann, A. W. et al. 2019, ApJ 871, 63), 2MASS Ks 13.055, A_Ks 0 (unreddened (E(B-V) = 0)), Gaia parallax"
    },
    "rp_rearth": {
-    "median": 2.51,
+    "median": 2.47,
     "minus": 0.1,
     "plus": 0.1,
-    "source": "k 0.0455 from the transit fit x R*; radius-ratio error from the bootstrap"
+    "source": "k 0.0454 from the transit fit x R*; radius-ratio error from the bootstrap"
    },
    "insolation_earth": {
-    "median": 1.22,
+    "median": 1.21,
     "minus": 0.12,
     "plus": 0.14,
     "source": "L* / a^2, L* = R*^2 (Teff / 5772 K)^4, Earth = 1"
@@ -2351,67 +2352,67 @@
  },
  "planet": {
   "rp_rearth": {
-   "median": 2.51,
+   "median": 2.47,
    "minus": 0.1,
    "plus": 0.1,
-   "source": "k 0.0455 from the transit fit x R*; radius-ratio error from the bootstrap"
+   "source": "k 0.0454 from the transit fit x R*; radius-ratio error from the bootstrap"
   },
   "a_au": {
-   "median": 0.1829,
+   "median": 0.1823,
    "minus": 0.0015,
    "plus": 0.0015,
    "source": "Kepler's third law, P 40.29081 d and the stellar mass draws"
   },
   "a_over_r": {
-   "median": 77.9,
+   "median": 78.5,
    "minus": 2.3,
    "plus": 2.5,
    "source": "a / R* from the same draws"
   },
   "teq_k": {
-   "median": 268.0,
+   "median": 267.0,
    "minus": 7.0,
    "plus": 8.0,
    "source": "Teff (R*/2a)^0.5 at Bond albedo 0.3, full redistribution"
   },
   "insolation_earth": {
-   "median": 1.22,
+   "median": 1.21,
    "minus": 0.12,
    "plus": 0.14,
    "source": "L* / a^2, L* = R*^2 (Teff / 5772 K)^4, Earth = 1"
   },
   "transit_probability": {
-   "median": 0.0128,
+   "median": 0.0127,
    "minus": 0.0004,
    "plus": 0.0004,
    "source": "R* / a, circular orbit"
   },
-  "hz_inner_au": 0.2159,
-  "hz_outer_au": 0.4097,
+  "hz_inner_au": 0.2134,
+  "hz_outer_au": 0.405,
   "in_habitable_zone": false,
-  "hz_optimistic_inner_au": 0.1634,
-  "hz_optimistic_outer_au": 0.4261,
+  "hz_optimistic_inner_au": 0.1616,
+  "hz_optimistic_outer_au": 0.4212,
   "in_optimistic_habitable_zone": true
  },
  "look": {
   "teff_k": 3653.0,
-  "radius_rsun": 0.505,
-  "mass_msun": 0.503,
-  "luminosity_lsun": 0.040914397,
+  "radius_rsun": 0.499,
+  "mass_msun": 0.497,
+  "luminosity_lsun": 0.039947949,
   "spectral_type": "M1V",
   "star_colour": "red",
-  "a_au": 0.1829,
-  "rp_rearth": 2.51,
-  "teq_k": 268.0,
-  "insolation_earth": 1.22,
-  "hz_inner_au": 0.2159,
-  "hz_outer_au": 0.4097,
-  "hz_optimistic_inner_au": 0.1634,
-  "hz_optimistic_outer_au": 0.4261,
+  "a_au": 0.1823,
+  "rp_rearth": 2.47,
+  "teq_k": 267.0,
+  "insolation_earth": 1.21,
+  "hz_inner_au": 0.2134,
+  "hz_outer_au": 0.405,
+  "hz_optimistic_inner_au": 0.1616,
+  "hz_optimistic_outer_au": 0.4212,
   "in_habitable_zone": false,
   "in_optimistic_habitable_zone": true,
-  "angular_size_deg": 1.4713069,
-  "angular_size_sun": 2.7604258
+  "angular_size_deg": 1.4586124,
+  "angular_size_sun": 2.7366086
  },
  "timing": {
   "ok": true,
@@ -2843,34 +2844,34 @@
   "n_converged": 200,
   "seed": 20261022,
   "k": {
-   "median": 0.045496089,
-   "minus": 0.0012193187,
-   "plus": 0.0011457397,
-   "point": 0.045463382
+   "median": 0.04541391,
+   "minus": 0.0012172297,
+   "plus": 0.0011434748,
+   "point": 0.045378816
   },
   "b": {
-   "median": 0.46828869,
-   "minus": 0.058438262,
-   "plus": 0.052219884,
-   "point": 0.46965798
+   "median": 0.45507938,
+   "minus": 0.061355028,
+   "plus": 0.054481636,
+   "point": 0.45655771
   },
   "a_over_r": {
-   "median": 78.010295,
-   "minus": 2.0910385,
-   "plus": 2.3625011,
-   "point": 77.96491
+   "median": 78.619284,
+   "minus": 2.0976086,
+   "plus": 2.3711304,
+   "point": 78.574469
   },
   "t14_h": {
-   "median": 3.6887426,
-   "minus": 0.07200766,
-   "plus": 0.063001064,
-   "point": 3.6875692
+   "median": 3.6854543,
+   "minus": 0.072263953,
+   "plus": 0.063056256,
+   "point": 3.6839505
   },
   "model_depth_ppm": {
-   "median": 2425.3464,
-   "minus": 114.8413,
-   "plus": 109.68801,
-   "point": 2419.3141
+   "median": 2424.8981,
+   "minus": 114.80425,
+   "plus": 109.70576,
+   "point": 2418.9058
   },
   "box_depth_ppm": {
    "median": 2213.9651,
@@ -2878,7 +2879,7 @@
    "plus": 114.37157
   },
   "box_duration_h": null,
-  "ingress_min": 12.203558,
+  "ingress_min": 11.992975,
   "degenerate": true,
   "degeneracy_reason": "ingress shorter than the cadence: b and a/R* are degenerate with k",
   "fits": {
@@ -2905,29 +2906,29 @@
     "ok": true,
     "reason": null,
     "variant": "prior",
-    "k": 0.045463382,
-    "b": 0.46965798,
-    "a_over_r": 77.96491,
-    "t14_days": 0.15364872,
-    "depth_ppm": 2419.3141,
-    "chi2_data": 1310.7267,
-    "chi2_prior": 0.00060958125,
-    "chi2_total": 1310.7273,
+    "k": 0.045378816,
+    "b": 0.45655771,
+    "a_over_r": 78.574469,
+    "t14_days": 0.15349794,
+    "depth_ppm": 2418.9058,
+    "chi2_data": 1310.714,
+    "chi2_prior": 0.00063855039,
+    "chi2_total": 1310.7147,
     "n_points": 1064,
     "u1": 0.4198392,
     "u2": 0.3101408,
     "exposure_min": 29.424465,
-    "density_gcc": 5.5225917,
+    "density_gcc": 5.6531402,
     "prior_gcc": [
-     5.51,
-     0.51
+     5.64,
+     0.52
     ]
    }
   },
   "comparison": {
    "constrained": false,
    "quoted": "prior",
-   "delta_chi2": 0.272598,
+   "delta_chi2": 0.25993493,
    "density_tension_sigma": null,
    "a_over_r_label": "from the stellar parameters",
    "reason": "unconstrained at this cadence (the quoted values follow the host's density)"
@@ -5123,6 +5124,6 @@
    "rung4_novelty": "4",
    "rung5_pixels": "4"
   },
-  "git_commit": "f1266d9"
+  "git_commit": "09ee6e3"
  }
 }
