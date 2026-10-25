@@ -198,7 +198,8 @@ def test_derive_reproduces_the_hand_built_dossier_within_its_errors():
 
 def test_derive_fixed_seed_regression():
     star, _ = derive(gaia_row_6146676(), 40.29109, 0.048, 2165e-6, np.random.default_rng(1))
-    assert star.radius.median == pytest.approx(0.509, abs=0.002) and star.mass.median == pytest.approx(0.507, abs=0.002)
+    # the round 3 final review, C1(ii): A_Ks 0 at the unreddened end, not 0 to 0.07 (0.509 and 0.507 before)
+    assert star.radius.median == pytest.approx(0.503, abs=0.002) and star.mass.median == pytest.approx(0.501, abs=0.002)
     assert star.distance_pc.median == pytest.approx(303.0, abs=0.3) and star.caveats == ()
 
 
@@ -374,7 +375,7 @@ def test_without_a_3d_value_the_unreddened_star_is_adopted_and_the_full_column_b
     assert e["state"] == "not available" and e["reason"] == "a test reason" and "ebprp" not in e
     col = e["column"]
     assert col["ebv"] == 0.10 and col["ebprp"]["median"] == pytest.approx(0.122, abs=0.003)
-    # A_Ks 0.036 sits inside the unreddened draws' 0 to 0.07, so the Ks radius barely moves; the colour does
+    # A_Ks 0.036 moves the Ks radius a little and the colour a lot
     assert col["teff"]["median"] > plain.teff.median and col["rp_rearth"]["median"] >= plain_planet.rp_rearth.median
     assert col["route"] == "mann" and set(col) >= {"radius", "mass", "insolation_earth", "a_g", "a_ks", "bp_rp0"}
     assert star.unreddened["radius"] == plain.radius.as_dict()
@@ -412,8 +413,8 @@ def test_load_extinction_reads_validates_and_refuses(tmp_path):
 
 
 def test_the_galactic_latitude_and_the_height_clause():
-    """Task 16 fix round 1, ruling (c): z = d sin|b| from the Gaia distance; over 150 pc the full column is probably
-    close to the true reddening, below it the star sits inside the dust layer."""
+    """Task 16 fix round 1, ruling (c): z = d sin|b| from the Gaia distance, its clause by the bands of the round 3
+    final review (M1)."""
     assert stars.galactic_latitude(297.86871, 41.455567) == pytest.approx(7.4198, abs=1e-3)   # astropy: 7.4198
     assert stars.galactic_latitude(266.40499, -28.93617) == pytest.approx(0.0, abs=0.01)     # Sgr A* region
     gaia = gaia_row_6146676()
@@ -423,9 +424,103 @@ def test_the_galactic_latitude_and_the_height_clause():
                                      "layer, so its true reddening lies well inside the bracket")
     far_row = replace(gaia, parallax=0.5)                         # about 1,900 pc: z about 250 pc
     far = derive(far_row, 40.29109, 0.048, 2165e-6, np.random.default_rng(1), extinction=NOT_AVAILABLE)[0].extinction
-    assert far["height_pc"] > stars.HEIGHT_DUST_LAYER_PC == 150
-    assert far["height_clause"] == (f"the star sits about {far['height_pc']} pc above the plane, so the full-column "
-                                    "value is probably close to its true reddening")
+    assert far["height_pc"] > stars.HEIGHT_BANDS_PC[1] == 200
+    assert far["height_clause"] == (f"the star sits about {far['height_pc']} pc above the plane, above most of the "
+                                    "dust, so the full-column value is probably close to its true reddening")
+
+
+def test_the_height_clause_comes_in_three_bands():
+    """The round 3 final review, M1: below 100 pc inside the dust layer, 100 to 200 pc within its upper part, above
+    200 pc above most of it. KIC 6699887 at 149 pc takes the middle band, which one threshold at 150 pc put inside."""
+    inside, upper, above = (stars.HEIGHT_INSIDE.format(z="{z}", side="above"),
+                            stars.HEIGHT_UPPER.format(z="{z}", side="above"),
+                            stars.HEIGHT_ABOVE.format(z="{z}", side="above"))
+    assert upper.endswith("within the upper dust layer, so its true reddening may lie anywhere in the bracket")
+    assert above.endswith("above most of the dust, so the full-column value is probably close to its true reddening")
+    kic_6699887 = stars.height_fields(294.14563, 42.187986, 840.6)
+    assert kic_6699887["height_pc"] == 149 and kic_6699887["height_clause"] == upper.format(z=149)
+    sin_b = math.sin(math.radians(stars.galactic_latitude(297.86871, 41.455567)))
+    for z, words in ((99, inside), (100, upper), (200, upper), (201, above)):
+        got = stars.height_fields(297.86871, 41.455567, z / sin_b)
+        assert got["height_pc"] == z and got["height_clause"] == words.format(z=z), z
+
+
+def _with_column(ebv: float, std: float) -> dict:
+    return {**NOT_AVAILABLE, "column": {**COLUMN, "ebv": ebv, "ebv_std": std}}
+
+
+def test_the_unreddened_end_is_e_b_v_zero_with_no_ks_extinction():
+    """The round 3 final review, C1(ii): the unreddened star draws A_Ks = 0 exactly, not 0 to 0.07, and its sources
+    say so; a full column of E(B-V) 0 then gives the unreddened star itself, the two ends on one footing."""
+    gaia = gaia_row_6146676()
+    star, planet = derive(gaia, 40.29109, 0.048, 2165e-6, np.random.default_rng(1))
+    assert "A_Ks 0 (unreddened (E(B-V) = 0))" in star.radius.source and "0 to 0.07" not in star.radius.source
+    assert star.teff.source.endswith(", unreddened (E(B-V) = 0)") and "0.1" not in star.reddening_note
+    assert star.reddening_note.startswith("Teff and spectral type assume no reddening (E(B-V) = 0) at the observed")
+    # M_Ks = Ks - DM with no extinction: 13.030 - 5 log10(303 pc / 10 pc)
+    assert star.abs_ks == pytest.approx(13.030 - (5 * math.log10(1000 / (3.268646 + 0.0317)) - 5), abs=1e-3)
+    zero = derive(gaia, 40.29109, 0.048, 2165e-6, np.random.default_rng(1), extinction=_with_column(0.0, 0.0))[0]
+    col = zero.extinction["column"]
+
+    def nums(v) -> tuple:
+        v = v if isinstance(v, dict) else v.as_dict()
+        return v["median"], v["minus"], v["plus"]
+    for key, adopted in (("radius", star.radius), ("teff", star.teff), ("mass", star.mass),
+                         ("rp_rearth", planet.rp_rearth), ("insolation_earth", planet.insolation_earth)):
+        assert nums(col[key]) == nums(adopted), key
+
+
+def test_the_column_end_keeps_the_adopted_route_and_flags_the_mann_range():
+    """The round 3 final review, C1(i): KIC 6146676 at the full column E(B-V) of 0.674 dereddens to 4,657 K, above
+    the Mann range, but the upper end stays on the Mann relations with Ks dereddened by A_Ks (about 0.54 Rsun, not
+    the colour table's 0.72), flagged ``outside_mann_range``; at E(B-V) 0.10 it stays inside the range."""
+    gaia = gaia_row_6146676()
+    star, planet = derive(gaia, 40.29109, 0.0455, 2165e-6, np.random.default_rng(1),
+                          extinction=_with_column(0.6741, 0.0344))
+    col = star.extinction["column"]
+    assert col["route"] == "mann" and col["teff"]["median"] > stars.MANN_TEFF_RANGE[1] == 4100
+    assert col["outside_mann_range"] is True and "A_Ks 0.244 from the full column" in col["radius"]["source"]
+    assert col["radius"]["median"] == pytest.approx(0.54, abs=0.01) and col["rp_rearth"]["median"] == pytest.approx(
+        2.7, abs=0.06)
+    assert col["radius"]["median"] > star.radius.median and col["rp_rearth"]["median"] > planet.rp_rearth.median
+    mild = derive(gaia, 40.29109, 0.0455, 2165e-6, np.random.default_rng(1), extinction=NOT_AVAILABLE)[0]
+    assert mild.extinction["column"]["route"] == "mann" and mild.extinction["column"]["outside_mann_range"] is False
+    hot = replace(gaia, bp_rp=0.82, parallax=10.0)                # an FGK star: both ends on the colour table
+    warm = derive(hot, 10.0, 0.05, 1000e-6, np.random.default_rng(1), extinction=_with_column(0.3, 0.01))[0]
+    assert warm.route == warm.extinction["column"]["route"] == "mamajek"
+    assert warm.extinction["column"]["outside_mann_range"] is False
+
+
+# the five stored records' stars (docs/candidates/<target>/extinction.json), their Gaia rows rebuilt from the live
+# version 5 dossiers: ra, dec, G, BP-RP, M_Ks, distance (pc), zero point (mas), parallax error with the systematic
+# (mas), period (d), radius ratio
+STORED_STARS = {
+    "kic-005689121": (285.90784, 40.941985, 16.282413, 2.194, 5.651, 290.7, -0.033, 0.0425, 13.769509, 0.0451),
+    "kic-006146676": (297.86871, 41.455567, 16.236654, 2.097, 5.648, 303.0, -0.0317, 0.0388, 40.291087, 0.0455),
+    "kic-006699887": (294.14563, 42.187986, 16.219015, 1.35, 4.249, 840.6, -0.0256, 0.0357, 15.113832, 0.0358),
+    "kic-009243078": (299.92285, 45.69381, 16.080002, 1.223, 2.614, 1860.1, -0.0247, 0.035, 6.1132021, 0.4345),
+    "kic-010352243": (296.47484, 47.478915, 16.702513, 1.224, 4.318, 1149.7, -0.0261, 0.0458, 0.92826648, 0.0194)}
+
+
+def _stored_row(ra, dec, g, bp_rp, abs_ks, d, zp, eplx) -> stars.GaiaRow:
+    return replace(gaia_row_6146676(), ra=ra, dec=dec, gmag=g, bp_rp=bp_rp, ks=abs_ks + 5 * math.log10(d) - 5,
+                   ks_err=0.03, parallax=1000 / d + zp, parallax_error=math.sqrt(eplx ** 2 - 0.015 ** 2),
+                   zero_point=zp, zero_point_source=stars.ZP_PACKAGE)
+
+
+@pytest.mark.parametrize("target", sorted(STORED_STARS))
+def test_the_upper_end_is_at_or_above_the_adopted_end_for_every_stored_record(target):
+    """The round 3 final review, C1(iii): on one footing the full-column end never falls below the adopted one."""
+    from pathlib import Path
+    *row, period, k = STORED_STARS[target]
+    block = stars.load_extinction(target, Path(__file__).resolve().parents[2] / "docs" / "candidates")
+    assert stars.column_ebv(block) is not None
+    star, planet = derive(_stored_row(*row), period, k, 0.002, np.random.default_rng(20261021), block)
+    col = star.extinction["column"]
+    assert col["route"] == star.route
+    for key, adopted in (("radius", star.radius), ("teff", star.teff), ("rp_rearth", planet.rp_rearth),
+                         ("insolation_earth", planet.insolation_earth)):
+        assert col[key]["median"] >= adopted.median, key
 
 
 def test_the_column_end_carries_the_spread_of_its_e_b_v():

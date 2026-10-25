@@ -13,9 +13,9 @@ and Mann et al. 2019 mass from the absolute Ks; errors from a ``N_DRAWS`` Monte 
 The extinction (spec 12.3 as amended on 23 October 2026) is read from ``docs/candidates/<target>/extinction.json``,
 written once by ``tools/extinction.py``. A 3D value at the Gaia distance (Bayestar19, Green et al. 2019), adopted or
 stored by hand, is turned into E(BP-RP), A_G and A_Ks by the Gaia (E)DR3 law (A_Ks over A_0 from Cardelli et al.
-1989) and taken out of the draws; without one the unreddened star stays adopted, and the Schlafly and Finkbeiner 2011
-full-column E(B-V) runs through the same law as the upper end of a bracket. GSP-Phot's E(BP-RP) is never adopted:
-Andrae et al. 2023 document its bias for cool dwarfs."""
+1989) and taken out of the draws; without one the unreddened star (E(B-V) = 0) stays adopted, and the Schlafly and
+Finkbeiner 2011 full-column E(B-V) runs through the same law, on the same route, as the upper end of a bracket.
+GSP-Phot's E(BP-RP) is never adopted: Andrae et al. 2023 document its bias for cool dwarfs."""
 from __future__ import annotations
 
 import copy
@@ -44,14 +44,19 @@ N_DRAWS = 20_000
 # 3.0 the interpolation is the same, since np.interp only reads the two rows either side of the colour.
 MAMAJEK_COLOUR_RANGE = (-0.2, 5.0)
 
-COLOUR_SIGMA = 0.10              # mag: the BP-RP draw width, E(BP-RP) at or below 0.1 assumed
+COLOUR_SIGMA = 0.10              # mag: the BP-RP draw width
 ZERO_POINT_SYSTEMATIC = 0.015    # mas, added in quadrature to the parallax error
 ZERO_POINT_GLOBAL = -0.017       # mas, the Lindegren et al. 2021 global median offset (quasars)
 KS_ERR_DEFAULT = 0.03            # mag, when 2MASS gives no error
-A_KS_MAX = 0.07                  # mag: Ks extinction drawn uniformly in 0 to this
+# round 3 final review C1(ii): the unreddened star is E(B-V) = 0 exactly (A_Ks 0). The uniform draw of the earlier
+# assumption (A_Ks 0 to 0.07) is still taken and not used, so every later draw keeps its place in the stream
+A_KS_RETIRED = 0.07
 MANN_R_SCATTER = 0.0289          # Mann et al. 2015, fractional
 MANN_M_SCATTER = 0.021           # Mann et al. 2019, fractional
 MANN_MKS_RANGE = (4.6, 9.8)      # M_Ks span of the Mann et al. 2015 calibration
+MANN_TEFF_RANGE = (2700.0, 4100.0)   # K: the Teff span of the Mann et al. 2015 calibration
+MANN_OUTSIDE = "outside the Mann relations' range, so indicative"
+UNREDDENED = "unreddened (E(B-V) = 0)"
 REDDENING_ALT = 0.2              # E(BP-RP) of the alternative radius
 BOND_ALBEDO = 0.3
 TSUN = 5772.0
@@ -89,13 +94,17 @@ EXTINCTION_STATES = (EXT_ADOPTED, EXT_MANUAL, EXT_NOT_AVAILABLE)
 COLUMN_OK = "ok"
 COLUMN_FIELDS = ("ebv", "source", "queried_utc")
 BAYESTAR_LABEL = "Bayestar19"
-# Task 16 fix round 1, ruling (c): the star's height above the plane, z = d sin|b|, against the dust layer
-HEIGHT_DUST_LAYER_PC = 150.0
+# Task 16 fix round 1, ruling (c), graded in bands by the round 3 final review (M1): the star's height above the
+# plane, z = d sin|b|, against the dust layer (a scale height of 100 to 125 pc puts 70 to 77 percent of the column in
+# front of a star at 149 pc, so one threshold at 150 pc overclaimed just below it)
+HEIGHT_BANDS_PC = (100.0, 200.0)       # below the first: inside the dust layer; to the second: its upper part
 GALACTIC_POLE = (192.85948, 27.12825)  # the north galactic pole in ICRS, degrees (Hipparcos and Gaia convention)
-HEIGHT_ABOVE = ("the star sits about {z} pc {side} the plane, so the full-column value is probably close to its true "
-                "reddening")
 HEIGHT_INSIDE = ("the star sits about {z} pc {side} the plane, inside the dust layer, so its true reddening lies well "
                  "inside the bracket")
+HEIGHT_UPPER = ("the star sits about {z} pc {side} the plane, within the upper dust layer, so its true reddening may "
+                "lie anywhere in the bracket")
+HEIGHT_ABOVE = ("the star sits about {z} pc {side} the plane, above most of the dust, so the full-column value is "
+                "probably close to its true reddening")
 COLUMN_LABEL = "the full column (Schlafly and Finkbeiner 2011)"
 KOPPARAPU_TEFF = (2600.0, 7200.0)
 # Kopparapu et al. 2013, erratum 2013 ApJ 770 82: effective-flux coefficients, t = Teff - 5780. The hand-built template
@@ -522,12 +531,14 @@ def galactic_latitude(ra_deg: float, dec_deg: float) -> float:
 
 
 def height_fields(ra_deg: float, dec_deg: float, distance_pc: float) -> dict:
-    """{"b_deg", "height_pc", "height_clause"}: z = d sin|b| rounded to the parsec, and the clause of ruling (c),
-    ``HEIGHT_ABOVE`` over ``HEIGHT_DUST_LAYER_PC``, ``HEIGHT_INSIDE`` at or below it."""
+    """{"b_deg", "height_pc", "height_clause"}: z = d sin|b| rounded to the parsec, and the clause of its band
+    (``HEIGHT_BANDS_PC``): ``HEIGHT_INSIDE`` below 100 pc, ``HEIGHT_UPPER`` from 100 to 200 pc, ``HEIGHT_ABOVE``
+    above 200 pc."""
     b = galactic_latitude(ra_deg, dec_deg)
-    z = round(distance_pc * math.sin(math.radians(abs(b))))      # the printed parsec decides the branch too
+    z = round(distance_pc * math.sin(math.radians(abs(b))))      # the printed parsec decides the band too
     side = "above" if b >= 0 else "below"
-    words = HEIGHT_ABOVE if z > HEIGHT_DUST_LAYER_PC else HEIGHT_INSIDE
+    low, high = HEIGHT_BANDS_PC
+    words = HEIGHT_INSIDE if z < low else HEIGHT_UPPER if z <= high else HEIGHT_ABOVE
     return {"b_deg": round(b, 4), "height_pc": z, "height_clause": words.format(z=z, side=side)}
 
 
@@ -639,9 +650,11 @@ def derive(gaia: GaiaRow | None, period: float, fit_k: float | None, depth: floa
     block, the unreddened pair is taken first from a copy of ``rng`` (the version 5 numbers, ``StarParams.unreddened``).
     A 3D value (adopted or manual) is drawn as a split normal from its percentiles (a generator of its own,
     ``EXTINCTION_SEED``), turned into E(BP-RP), A_G and A_Ks by ``gaia_extinction`` and taken out of the colour, the
-    absolute magnitudes and the Ks draws: the adopted star. Without one the unreddened star stays adopted. The
-    full-column E(B-V), when stored (a normal with its stored ``ebv_std``, held at 0 and above), runs through the
-    same law and draws from another copy of ``rng``: the upper end of the bracket, under ``extinction["column"]``. The
+    absolute magnitudes and the Ks draws: the adopted star. Without one the unreddened star (E(B-V) = 0) stays
+    adopted. The full-column E(B-V), when stored (a normal with its stored ``ebv_std``, held at 0 and above), runs
+    through the same law and draws from another copy of ``rng`` on the adopted star's route (the Mann relations with
+    Ks dereddened by A_Ks whatever the dereddened colour, ``outside_mann_range`` recording when that colour leaves
+    their calibration): the upper end of the bracket, under ``extinction["column"]``. The
     block also carries the star's height above the plane (``height_fields``: ``b_deg``, ``height_pc``,
     ``height_clause``) from the Gaia distance."""
     if extinction is None:
@@ -670,13 +683,25 @@ def derive(gaia: GaiaRow | None, period: float, fit_k: float | None, depth: floa
         std = float(extinction["column"].get("ebv_std") or 0.0)
         ebv = np.maximum(np.random.default_rng(EXTINCTION_SEED + 1).normal(ebv_col, std, N_DRAWS), 0.0)
         e = gaia_extinction(ebv, gaia.bp_rp)
-        cs, cp = _derive(gaia, period, fit_k, depth, column_rng, e, COLUMN_LABEL, f"(E(B-V) {ebv_col:.3f})")
+        # the round 3 final review, C1(i): the upper end on the adopted star's route, never switched to the table
+        cs, cp = _derive(gaia, period, fit_k, depth, column_rng, e, COLUMN_LABEL, f"(E(B-V) {ebv_col:.3f})",
+                         route=star.route if star.route in ("mann", "mamajek") else None)
         block["column"] = {**extinction["column"], "bp_rp0": round(float(np.median(e["bp_rp0"])), 4),
                            "colour_held": bool(np.any(e["colour_held"])),
                            **_values(e, source="the full-column E(B-V) through the Gaia (E)DR3 law"),
-                           **_star_planet(cs, cp)}
+                           **_star_planet(cs, cp), "outside_mann_range": outside_mann_range(cs)}
     unreddened = {**_star_planet(plain, plain_planet), "bp_rp0": gaia.bp_rp}
     return dataclasses.replace(star, extinction=block, unreddened=unreddened), planet
+
+
+def outside_mann_range(star: StarParams) -> bool:
+    """Whether a star on the Mann route lies outside the relations' calibration: its Teff outside
+    ``MANN_TEFF_RANGE`` (2,700 to 4,100 K) or its M_Ks outside ``MANN_MKS_RANGE``. False on any other route."""
+    if star.route != "mann":
+        return False
+    teff = star.teff.median if star.teff is not None else None
+    return bool((teff is not None and not MANN_TEFF_RANGE[0] <= teff <= MANN_TEFF_RANGE[1])
+                or (star.abs_ks is not None and not MANN_MKS_RANGE[0] <= star.abs_ks <= MANN_MKS_RANGE[1]))
 
 
 def _star_planet(star: StarParams, planet: PlanetParams) -> dict:
@@ -689,9 +714,12 @@ def _star_planet(star: StarParams, planet: PlanetParams) -> dict:
 
 def _derive(gaia: GaiaRow | None, period: float, fit_k: float | None, depth: float, rng: np.random.Generator,
             e: dict | None = None, label: str | None = None,
-            tail: str = "") -> tuple[StarParams, PlanetParams]:
-    """``derive`` for one reddening: ``e`` None is the unreddened star (the version 5 route); otherwise the
-    ``gaia_extinction`` draws, named ``label`` in the sources, ``tail`` after the E(BP-RP) in the reddening note."""
+            tail: str = "", route: str | None = None) -> tuple[StarParams, PlanetParams]:
+    """``derive`` for one reddening: ``e`` None is the unreddened star (E(B-V) = 0, A_Ks 0); otherwise the
+    ``gaia_extinction`` draws, named ``label`` in the sources, ``tail`` after the E(BP-RP) in the reddening note.
+    ``route`` ("mann" or "mamajek") forces the route, for the column end on the adopted star's footing (the round 3
+    final review, C1(i)): the Mann relations with Ks dereddened by A_Ks whatever the dereddened colour, or the dwarf
+    table; None lets the colour, M_Ks and the dwarf sequence choose."""
     if gaia is None or gaia.parallax is None or gaia.parallax_error is None or gaia.bp_rp is None:
         return _unknown(gaia)
     caveats: list[str] = []
@@ -749,19 +777,21 @@ def _derive(gaia: GaiaRow | None, period: float, fit_k: float | None, depth: flo
     table_src = (f"Mamajek dwarf table at {at} {x0:.3f} +- {COLOUR_SIGMA:.2f} "
                  f"({CITATIONS['DWARF_SEQUENCE']}){from_label}")
 
-    route = None
-    if cool and gaia.ks is not None:
+    forced, route = route, None
+    if (cool if forced is None else forced == "mann") and gaia.ks is not None:
         ks_s = rng.normal(gaia.ks, gaia.ks_err or KS_ERR_DEFAULT, N_DRAWS)
-        a_ks_uniform = rng.uniform(0.0, A_KS_MAX, N_DRAWS)     # drawn with a reddening too, so later draws stay
-        mks = ks_s - dm_s - (a_ks_uniform if e is None else e["a_ks"])
+        rng.uniform(0.0, A_KS_RETIRED, N_DRAWS)                # not used (C1(ii)); taken so later draws keep place
+        mks = ks_s - dm_s - (0.0 if e is None else e["a_ks"])
         mks_med = float(np.nanmedian(mks))
         why = None
-        if not MANN_MKS_RANGE[0] <= mks_med <= MANN_MKS_RANGE[1]:
+        if forced is not None:      # the column end on the adopted star's route: no check may switch it (C1(i))
+            pass
+        elif not MANN_MKS_RANGE[0] <= mks_med <= MANN_MKS_RANGE[1]:
             why = (f"M_Ks {mks_med:.2f} is outside their calibration ({MANN_MKS_RANGE[0]} to {MANN_MKS_RANGE[1]}), "
                    "so the star may not be a dwarf")
         elif off_dwarf:
             why = "the absolute G is off the dwarf sequence"
-        else:
+        if why is None:
             with np.errstate(over="ignore", invalid="ignore"):
                 radius_s = (1.9515 - 0.3520 * mks + 0.01680 * mks ** 2) * rng.normal(1, MANN_R_SCATTER, N_DRAWS)
                 x = mks - 7.5
@@ -769,7 +799,7 @@ def _derive(gaia: GaiaRow | None, period: float, fit_k: float | None, depth: flo
                 mass_s = 10 ** log_m * rng.normal(1, MANN_M_SCATTER, N_DRAWS)
                 good = np.isfinite(radius_s) & np.isfinite(mass_s) & (radius_s > 0) & (mass_s > 0)
             bad = np.isfinite(mks) & ~good
-            if bad.mean() > 0.5:
+            if bad.mean() > 0.5 and forced is None:
                 why = "most of their draws gave no finite radius or mass"
             else:
                 route = "mann"
@@ -777,7 +807,7 @@ def _derive(gaia: GaiaRow | None, period: float, fit_k: float | None, depth: flo
                     radius_s[bad], mass_s[bad] = np.nan, np.nan
                     caveats.append(f"{100 * bad.mean():.1f} percent of the Mann draws gave no finite radius or mass "
                                    "and were dropped")
-                ks_src = (f"2MASS Ks {gaia.ks:.3f}, A_Ks 0 to {A_KS_MAX}, Gaia parallax" if e is None else
+                ks_src = (f"2MASS Ks {gaia.ks:.3f}, A_Ks 0 ({UNREDDENED}), Gaia parallax" if e is None else
                           f"2MASS Ks {gaia.ks:.3f}, A_Ks {a_ks:.3f} from {label}, Gaia parallax")
                 r_src = f"Mann et al. 2015 R(M_Ks) ({CITATIONS['M_DWARF_RADIUS']}), {ks_src}"
                 m_src = f"Mann et al. 2019 M(M_Ks) ({CITATIONS['M_DWARF_MASS']}), {ks_src}"
@@ -801,18 +831,18 @@ def _derive(gaia: GaiaRow | None, period: float, fit_k: float | None, depth: flo
                          f"({CITATIONS['DWARF_SEQUENCE']}){from_label}")
 
     density_s = mass_s * MSUN / (4 / 3 * np.pi * (radius_s * RSUN) ** 3) / 1000.0
-    teff = _value(teff_s, 0, table_src + (", E(BP-RP) <= 0.1 assumed" if e is None else ""))
+    teff = _value(teff_s, 0, table_src + (f", {UNREDDENED}" if e is None else ""))
     radius, mass = _value(radius_s, 3, r_src), _value(mass_s, 3, m_src)
     distance = _value(dist_s, 1, f"1000 / Gaia DR3 parallax, zero point {zp:+.4f} mas ({zp_source}; "
                                  f"{CITATIONS['GAIA_PARALLAX_ZERO_POINT']}), +- {eplx:.4f} mas")
     alt = _value(_interp(colour_obs - REDDENING_ALT, 2), 3,
                  f"Mamajek dwarf table at BP-RP {bp_rp - REDDENING_ALT:.3f} +- {COLOUR_SIGMA:.2f} (if E(BP-RP) = 0.2)")
     if e is None:
-        reddening_note = (f"Teff and spectral type assume E(BP-RP) at or below 0.1 at the observed BP-RP "
+        reddening_note = (f"Teff and spectral type assume no reddening (E(B-V) = 0) at the observed BP-RP "
                           f"{bp_rp:.2f}; if E(BP-RP) were {REDDENING_ALT} the dwarf-table radius would be "
                           f"{alt.median:.3f} Rsun.")
         if route == "mann":
-            reddening_note += " The Ks radius barely depends on reddening: A_Ks 0 to 0.07 is in the draws."
+            reddening_note += " The Ks radius barely depends on reddening."
     else:
         reddening_note = (f"Teff and spectral type use the BP-RP {bp_rp:.2f} dereddened by the {label} E(BP-RP) of "
                           f"{emed:.3f} {tail}; if E(BP-RP) were {REDDENING_ALT} the dwarf-table radius would be "

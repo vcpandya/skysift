@@ -1768,6 +1768,24 @@ def test_the_fingerprint_watches_the_adopted_and_the_column_e_b_v():
     assert base != fingerprint(tests, "candidate_stage2", None, column_ebv=0.674)
     assert fingerprint(tests, "candidate_stage2", None, column_ebv=0.674) != fingerprint(
         tests, "candidate_stage2", None, column_ebv=0.675)
+    # the round 3 final review, M9: the column's stored spread sets the upper end's errors, so it moves it too
+    assert fingerprint(tests, "candidate_stage2", None, column_ebv=0.674, column_ebv_std=0.034) != fingerprint(
+        tests, "candidate_stage2", None, column_ebv=0.674, column_ebv_std=0.035)
+    args = dossier_module.extinction_args(EXTINCTION_FIXTURE)
+    assert args == {"extinction_ebv": None, "column_ebv": 0.10, "column_ebv_std": 0.01}
+    assert dossier_module.extinction_args(None) == dict.fromkeys(("extinction_ebv", "column_ebv", "column_ebv_std"))
+
+
+def test_a_changed_column_spread_makes_the_dossier_stale(env):
+    """M9: a rerun of tools/extinction.py that changes only the stored spread regenerates the dossier, whose upper
+    end's errors come from it."""
+    first = generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch, force=True)
+    narrow = _data(first)["star"]["extinction"]["column"]["ebprp"]["plus"]
+    assert generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch).generated is False
+    write_extinction(STAGE2_TARGET, {**EXTINCTION_FIXTURE, "column": {**EXTINCTION_FIXTURE["column"], "ebv_std": 0.03}})
+    again = generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch)
+    assert again.generated is True
+    assert _data(again)["star"]["extinction"]["column"]["ebprp"]["plus"] > narrow
 
 
 def test_the_star_caveat_title_follows_the_extinction_state():

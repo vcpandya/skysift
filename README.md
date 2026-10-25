@@ -287,6 +287,10 @@ docker build -f docker/Dockerfile -t skysift:dev .
 docker run --rm -v skysift-data:/data skysift:dev sources
 ```
 
+The image carries the stored extinction records of `docs/candidates` as they were at build time, and not `tools/`, so
+a new candidate needs its record from `tools/extinction.py`, run outside the image, and a rebuild before it can get a
+dossier.
+
 ## Golden tests
 
 The golden tests run the period search and vetting rungs 1 to 3 on real data: a published signal (KIC 5689121,

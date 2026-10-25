@@ -309,19 +309,21 @@ def pick_signal(store: Store, target_id: str, signal_id: int | None = None) -> d
 
 def fingerprint(latest_tests: list[dict], final_status: str, decision: str | None, calibration_rows: int = 0,
                 sweep_size: int | None = None, extinction_ebv: float | str | None = None,
-                column_ebv: float | str | None = None) -> str:
+                column_ebv: float | str | None = None, column_ebv_std: float | str | None = None) -> str:
     """sha256 of the sorted test row ids, the final status, the latest decision, the number of rows in the source's
     null calibration (``calibration_rows``), the sweep size the false-alarm sentence quotes (``sweep_size_of``; 0 for
     none), the FPP model version and the stored extinction (spec 12.3: the adopted E(B-V), ``extinction_ebv``, and
-    the full-column upper bound, ``column_ebv``, each None without one): a dossier is stale when any of them changed
+    the full-column upper bound, ``column_ebv``, with its stored spread, ``column_ebv_std``, since the upper end's
+    errors come from it (the round 3 final review, M9); each None without one): a dossier is stale when any of them
+    changed
     since it was written, so one written while the calibration was short goes stale as the null searches arrive, one
     written before the sweep grew goes stale with it, one written under an older false-positive model goes stale with
     the model, and one written before a reddening was stored goes stale with it."""
     ids = sorted(int(t["id"]) for t in latest_tests)
     text = json.dumps({"tests": ids, "status": final_status, "decision": decision,
                        "calibration_rows": int(calibration_rows), "sweep_size": int(sweep_size or 0),
-                       "fpp_model": FPP_MODEL_VERSION, "extinction_ebv": extinction_ebv, "column_ebv": column_ebv},
-                      sort_keys=True)
+                       "fpp_model": FPP_MODEL_VERSION, "extinction_ebv": extinction_ebv, "column_ebv": column_ebv,
+                       "column_ebv_std": column_ebv_std}, sort_keys=True)
     return hashlib.sha256(text.encode()).hexdigest()
 
 
@@ -1710,15 +1712,23 @@ NO_EXTINCTION = ("no stored extinction for {target}: run tools/extinction.py --t
 MALFORMED = "malformed"
 
 
+def extinction_args(block: dict | None) -> dict:
+    """``fingerprint``'s extinction arguments from a stored block (``stars.load_extinction``): {"extinction_ebv",
+    "column_ebv", "column_ebv_std"}, the last the full column's stored spread when the column was fetched."""
+    col = stars.column_ebv(block)
+    std = ((block or {}).get("column") or {}).get("ebv_std") if col is not None else None
+    return {"extinction_ebv": (block or {}).get("ebv"), "column_ebv": col, "column_ebv_std": std}
+
+
 def extinction_keys(target_id: str) -> dict:
-    """``fingerprint``'s extinction arguments from the target's stored file, {"extinction_ebv", "column_ebv"}, for the
-    checks that recompute the fingerprint (the page's staleness, the pack's approval) as ``generate`` does; a malformed
-    file gives ``MALFORMED`` for both, so the dossier reads as stale until the file is fixed."""
+    """``extinction_args`` of the target's stored file, for the checks that recompute the fingerprint (the page's
+    staleness, the pack's approval) as ``generate`` does; a malformed file gives ``MALFORMED`` for each, so the
+    dossier reads as stale until the file is fixed."""
     try:
         block = stars.load_extinction(target_id, EXTINCTION_DIR)
     except stars.ExtinctionError:
-        return {"extinction_ebv": MALFORMED, "column_ebv": MALFORMED}
-    return {"extinction_ebv": (block or {}).get("ebv"), "column_ebv": stars.column_ebv(block)}
+        return dict.fromkeys(("extinction_ebv", "column_ebv", "column_ebv_std"), MALFORMED)
+    return extinction_args(block)
 
 
 PRIOR_CLAIM_FIELDS = ("doi", "date", "author", "title", "status", "note", "relationship", "development_note",
@@ -1908,8 +1918,7 @@ def generate(store: Store, blob, settings, target_id: str, *, signal_id: int | N
     # spec 12.3: the stored extinction first, so a malformed file stops the run before any work
     extinction = stars.load_extinction(target_id, EXTINCTION_DIR)
     fp = fingerprint(tests, signal["final_status"], decision, calibration_rows(settings.data_dir, source),
-                     sweep_size_of(store, signal, source), extinction_ebv=(extinction or {}).get("ebv"),
-                     column_ebv=stars.column_ebv(extinction))
+                     sweep_size_of(store, signal, source), **extinction_args(extinction))
     data_path = Path(settings.data_dir) / "dossiers" / target_id / "dossier_data.json"
     old = store.dossier(target_id)
     if (old is not None and not force and old["tests_fingerprint"] == fp and old["signal_id"] == sid

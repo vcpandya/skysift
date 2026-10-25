@@ -4,6 +4,8 @@ WORKDIR /app
 COPY pyproject.toml README.md ./
 COPY src ./src
 COPY config ./config
+# the stored extinction records (spec 12.3), fixed at build: a target without one cannot get a dossier inside the
+# image (the dossier exits 2), since tools/ is not copied; run tools/extinction.py for it outside and rebuild
 COPY docs/candidates ./docs/candidates
 # Editable install so that config/ (resolved relative to the source tree) is found at run time.
 # Behind a TLS-inspecting proxy or antivirus, pass its root certificate as a build secret

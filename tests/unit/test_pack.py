@@ -202,7 +202,7 @@ def test_data_files_carry_the_ephemeris_events_and_metrics(env_with_dossier):
     eph = json.loads((rep.out_dir / "data" / "ephemeris.json").read_text(encoding="utf-8"))
     assert eph["ephemeris"]["period_days"] == env.data["ephemeris"]["period_days"]
     rows = {r["parameter"]: r for r in eph["rows"]}
-    assert rows["planet radius"]["value"] == 2.47 and rows["planet radius"]["minus"] == 0.08
+    assert rows["planet radius"]["value"] == 2.45 and rows["planet radius"]["minus"] == 0.08
     assert rows["planet radius"]["unit"] == "Earth radii" and rows["planet radius"]["source"]
     with (rep.out_dir / "data" / "ephemeris.csv").open(encoding="utf-8", newline="") as fh:
         table = list(csv.DictReader(fh))
@@ -425,7 +425,7 @@ def test_note_is_aastex7_with_an_abstract_inside_the_rnaas_limits(env_with_dossi
     assert not {"morton2012", "dressing2015", "fressin2013", "pecaut2013", "lindegren2021", "kopparapu2013"} & items
     assert "AJ, 166, 265, doi:10.3847/1538-3881/ad0727" in tex and "doi:10.17909/7jbr-w430" in tex
     assert "40.290" in tex and "1 in 440" in tex and "provisional" not in tex
-    assert r"2.47 $\pm$ 0.08 $R_\oplus$" in tex                                # Rp from the limb-darkened k
+    assert r"2.45 $\pm$ 0.08 $R_\oplus$" in tex                                # Rp from the limb-darkened k
     assert "3,653$^{+90}_{-73}$ K" in tex                                      # thousands as the dossier prints
 
 
@@ -484,7 +484,7 @@ def test_the_star_sentence_leaves_out_a_missing_mass_or_temperature(env_with_dos
     data = json.loads(json.dumps(env_with_dossier.data))
     data["star"] = {**data["star"], "teff": None, "mass": None, "spectral_type": None}
     tex = render_note(data)
-    assert "a mass of" not in tex and "effective temperature of" not in tex and "a radius of 0.509" in tex
+    assert "a mass of" not in tex and "effective temperature of" not in tex and "a radius of 0.503" in tex
     items = set(re.findall(r"\\bibitem\[[^\]]*\]\{([^}]+)\}", tex))
     keys = {k.strip() for c in re.findall(r"\\cite[pt]?\{([^}]+)\}", tex) for k in c.split(",")}
     assert keys == items and "mann2019" not in items and "pecaut2013" not in items
@@ -1173,16 +1173,17 @@ def test_stellar_provenance_csv_names_the_method_and_the_reference(env_with_doss
                                                            "inputs", "reference"]
     rows = {r["parameter"]: r for r in _rows(rep, "data/stellar_provenance.csv")}
     radius = rows["radius"]
-    assert float(radius["value"]) == 0.509 and float(radius["minus"]) == 0.016 and float(radius["plus"]) == 0.017
+    # the round 3 final review, C1(ii): A_Ks 0 at the unreddened end moved the seeded star (0.509 and 0.507 before)
+    assert float(radius["value"]) == 0.503 and float(radius["minus"]) == 0.016 and float(radius["plus"]) == 0.016
     assert radius["method"] == "Mann et al. 2015 R(M_Ks)"
     assert radius["reference"] == "Mann, A. W. et al. 2015, ApJ 804, 64"
     assert "Gaia DR3 2101234567890123462" in radius["inputs"] and "2MASS Ks 13.030" in radius["inputs"]
     assert rows["effective temperature"]["reference"].startswith("Pecaut, M. J. and Mamajek")
     assert "Lindegren" in rows["distance"]["reference"] and rows["spectral type"]["value"] == "M1V"
     logg = rows["surface gravity log g"]
-    assert float(logg["value"]) == pytest.approx(4.438 + np.log10(0.507) - 2 * np.log10(0.509), abs=1e-3)
-    assert float(logg["minus"]) == pytest.approx(np.hypot(0.013 / 0.507, 2 * 0.017 / 0.509) / np.log(10), abs=1e-3)
-    assert float(logg["plus"]) == pytest.approx(np.hypot(0.013 / 0.507, 2 * 0.016 / 0.509) / np.log(10), abs=1e-3)
+    assert float(logg["value"]) == pytest.approx(4.438 + np.log10(0.501) - 2 * np.log10(0.503), abs=1e-3)
+    assert float(logg["minus"]) == pytest.approx(np.hypot(0.012 / 0.501, 2 * 0.016 / 0.503) / np.log(10), abs=1e-3)
+    assert float(logg["plus"]) == pytest.approx(np.hypot(0.013 / 0.501, 2 * 0.016 / 0.503) / np.log(10), abs=1e-3)
     assert "mass and radius" in logg["method"] and logg["unit"] == "cgs"
 
 
@@ -1219,8 +1220,8 @@ def test_exofop_parameter_files_follow_the_templates(env_with_dossier):
     assert float(planet["epoch"]) == pytest.approx(eph["t_ref_bjd"], abs=5e-5)
     assert float(planet["epoch_unc"]) == pytest.approx(eph["t_ref_err_days"], abs=5e-5)
     assert planet["depth"] == "2167" and planet["depth_unc"] == "52" and planet["duration_unc"] == ""
-    assert planet["radius"] == "2.47" and planet["radius_unc"] == "0.08"
-    assert planet["temp"] == "269" and planet["temp_unc"] == "8" and planet["sma_unc"] == "0.0016"
+    assert planet["radius"] == "2.45" and planet["radius_unc"] == "0.08"
+    assert planet["temp"] == "267" and planet["temp_unc"] == "8" and planet["sma_unc"] == "0.0015"
     assert planet["r_planet"] == planet["imp"] == planet["ar_star"] == ""        # no bootstrap error yet
     assert planet["mass"] == planet["ecc"] == planet["inc"] == planet["group"] == "" and planet["prop_period"] == "0"
     assert planet["tag"] == f"{date}_<username>_skysift-{STAGE2_TARGET}_00001"
@@ -1232,7 +1233,7 @@ def test_exofop_parameter_files_follow_the_templates(env_with_dossier):
     assert head == ["\\ SkySift stellar parameters for ExoFOP's bulk upload",
                     f"\\ Data Tag: {date}_<username>_skysift-{STAGE2_TARGET}_00001", f"\\ pack date: {date}"]
     assert (stellar["teff"], stellar["teff_unc"]) == ("3653", "90") and stellar["group"] == stellar["age"] == ""
-    assert (stellar["radius"], stellar["radius_unc"]) == ("0.509", "0.017") and stellar["logg_unc"]
+    assert (stellar["radius"], stellar["radius_unc"]) == ("0.503", "0.016") and stellar["logg_unc"]
     assert (stellar["dist"], stellar["dist_unc"]) == ("303.0", "3.6") and stellar["mass_unc"] == "0.013"
     assert stellar["notes"] == ("Teff: Mamajek dwarf table; R: Mann et al. 2015 R(M_Ks); M: Mann et al. 2019 M(M_Ks); "
                                 "dist: 1000 / Gaia DR3 parallax")
@@ -1245,7 +1246,7 @@ def test_exofop_parameter_files_follow_the_templates(env_with_dossier):
     fitted = _parse_pipe(exofop.render_exofop_planet(_with_errors(env.data), "20261022", None, "t"), PLANET_COLUMNS)
     assert fitted["imp"] == fitted["imp_unc"] == ""                            # degenerate: b without errors
     # the quoted prior fit: ar_star is the stellar a/R* with its errors (spec 11.3)
-    assert (fitted["ar_star"], fitted["ar_star_err"]) == ("77.5", "2.5")
+    assert (fitted["ar_star"], fitted["ar_star_err"]) == ("78.1", "2.5")
     assert (fitted["r_planet"], fitted["r_planet_err"]) == ("0.0470", "0.0012")
     assert (fitted["duration"], fitted["duration_unc"]) == ("4.16", "0.06")
     readme = (rep.out_dir / "README.md").read_text(encoding="utf-8")
@@ -2751,15 +2752,15 @@ def test_the_gsp_phot_reddening_prints_with_its_cool_dwarf_caveat(env_with_dossi
     data = _star_extras(_stored(env_with_dossier), ebpminrp_gspphot=0.27, extinction=None)   # before version 6
     flat = " ".join(render_note(data).split())
     assert (r"GSP-Phot gives E(BP-RP) 0.27, a value biased for cool dwarfs \citep{andrae2023}; the temperature "
-            r"assumes 0.1 or less, and the $K_s$ radius barely depends on it.") in flat
+            r"assumes no reddening (E(B-V) = 0), and the $K_s$ radius barely depends on it.") in flat
     assert r"]{andrae2023} Andrae, R., Fouesneau, M., Sordo, R., et~al. 2023, A\&A, 674, A27" in flat
     assert pack_module.references(data)["andrae2023"]
     table = {**data, "star": {**data["star"], "route": "mamajek"}}
     radius, alt = data["star"]["radius"]["median"], data["star"]["alt_radius_e02"]["median"]
-    verb = "raises" if alt > radius else "lowers"
+    verb = "raise" if alt > radius else "lower"
     assert pack_module.reddening_text(table) == (f"GSP-Phot gives E(BP-RP) 0.27, a value biased for cool dwarfs "
-                                                 f"(Andrae et al. 2023); the radius assumes 0.1 or less, which {verb} "
-                                                 f"it to {alt:.3f} Rsun at 0.2")
+                                                 f"(Andrae et al. 2023); the radius assumes no reddening (E(B-V) = 0), "
+                                                 f"and an E(BP-RP) of 0.2 would {verb} it to {alt:.3f} Rsun")
     readme = pack_module.render_readme(data, {})
     star = next(p for p in readme.split("\n\n") if p.startswith("Star:"))
     assert "GSP-Phot gives E(BP-RP) 0.27, a value biased for cool dwarfs (Andrae et al. 2023)" in star
@@ -3194,8 +3195,10 @@ def test_without_a_3d_value_every_text_brackets_the_planet_and_adopts_the_unredd
     flat = " ".join(texts["note/note.tex"].split())
     clause = str(pack_module.rp_bracket_text(data, True))
     lo, hi = planet["rp_rearth"]["median"], star["extinction"]["column"]["rp_rearth"]["median"]
-    assert clause == (rf", {lo:.2f} to {hi:.2f} $R_\oplus$ between no reddening and the full-column E(B-V) of 0.100 "
-                      r"\citep{schlafly2011}")
+    d = pack_text.pm_digits(planet["rp_rearth"]["minus"], planet["rp_rearth"]["plus"])
+    assert float(f"{lo:.{d}f}") < float(f"{hi:.{d}f}")
+    assert clause == (rf", {lo:.{d}f} to {hi:.{d}f} from unreddened (E(B-V) = 0), adopted, to the "
+                      r"full-column 0.100 \citep{schlafly2011}")
     assert rf"$R_\oplus${clause}, on an orbit of" in flat
     assert r"]{schlafly2011} Schlafly, E.~F., \& Finkbeiner, D.~P. 2011, ApJ, 737, 103" in flat
     cited, items = _cites(texts["note/note.tex"])
@@ -3203,9 +3206,10 @@ def test_without_a_3d_value_every_text_brackets_the_planet_and_adopts_the_unredd
     assert "only bracketed" in flat and "Bayestar19" not in flat                 # the caveat title, no 3D clause
     plain = pack_module.reddening_plain(data)
     assert plain.startswith("Reddening: not measured at the star's distance (Bayestar19 not available at build "
-                            "time), so the unreddened parameters are adopted")
+                            "time), so the parameters are unreddened (E(B-V) = 0), adopted (")
     assert "full-column E(B-V) of 0.100 ± 0.010 (Schlafly and Finkbeiner 2011) is an upper bound" in plain
-    assert pack_text.value_text(star["extinction"]["column"]["rp_rearth"]) in plain
+    column_rp = pack_module._at_adopted(star["extinction"]["column"]["rp_rearth"], planet["rp_rearth"])
+    assert f"planet radius {column_rp} Earth radii" in plain
     for name in ("exofop/note.txt", "archive_email.txt"):
         assert plain in " ".join(texts[name].split()), name
     readme = texts["README.md"]
@@ -3213,10 +3217,11 @@ def test_without_a_3d_value_every_text_brackets_the_planet_and_adopts_the_unredd
             "Insolation (Earth) | Planet radius (Earth radii) | Status |") in readme
     rows = {r[0]: r for r in _readme_table(readme)}
     assert set(rows) == {"Unreddened", "Full column (Schlafly and Finkbeiner 2011)", "GSP-Phot (Gaia DR3)"}
-    assert rows["Unreddened"][-1] == "adopted" and rows["Unreddened"][1] == "0 (assumed)"
+    assert rows["Unreddened"][-1] == "adopted" and rows["Unreddened"][1:5] == ["0", "0", "0", "0"]
     assert rows["Unreddened"][6] == pack_text.value_text(star["unreddened"]["teff"])
     assert rows["Full column (Schlafly and Finkbeiner 2011)"][1] == "0.100 ± 0.010"
     assert rows["Full column (Schlafly and Finkbeiner 2011)"][-1] == "upper bound"
+    assert rows["Full column (Schlafly and Finkbeiner 2011)"][10] == column_rp
     assert rows["GSP-Phot (Gaia DR3)"][-1] == "not adopted" and rows["GSP-Phot (Gaia DR3)"][6] == "3,855"
     assert pack_module.reddening_key(data) in readme and "biased for cool dwarfs (Andrae et al. 2023)" in readme
     for ref in ("Cardelli, J. A., Clayton, G. C., & Mathis, J. S. 1989, ApJ, 345, 245",
@@ -3233,6 +3238,43 @@ def test_without_a_3d_value_every_text_brackets_the_planet_and_adopts_the_unredd
         assert EM_DASH not in text and not IZE.search(text) and "discover" not in text.lower()
 
 
+def _bracketed(data: dict, adopted: float, upper: float, flagged: bool = True) -> dict:
+    planet, col = data["planet"], data["star"]["extinction"]["column"]
+    star = {**data["star"], "extinction": {**data["star"]["extinction"], "column": {
+        **col, "outside_mann_range": flagged, "rp_rearth": {**col["rp_rearth"], "median": upper, "minus": 0.14,
+                                                            "plus": 0.19}}}}
+    return {**data, "star": star,
+            "planet": {**planet, "rp_rearth": {**planet["rp_rearth"], "median": adopted, "minus": 0.1, "plus": 0.1}}}
+
+
+def test_the_bracket_flags_the_mann_range_and_prints_the_upper_end_at_the_adopted_decimals(env_with_dossier):
+    """The round 3 final review: C1 (the Mann-range clause in every text; "a to b" with a <= b), M3 (the upper end at
+    the adopted value's decimals, 2.7 beside 2.5, not 2.68) and M2 (the README key states the unreddened assumption
+    once, as C1(ii) words it)."""
+    data = _bracketed(_stored(env_with_dossier), 2.48, 2.68)
+    flag = "outside the Mann relations' range, so indicative"
+    tail = (" from unreddened (E(B-V) = 0), adopted, to the full-column 0.100 (Schlafly and Finkbeiner "
+            f"2011), {flag}")
+    assert pack_module.rp_bracket_text(data) == ", 2.5 to 2.7" + tail
+    assert str(pack_module.rp_bracket_text(data, True)) in " ".join(render_note(data).split())
+    plain = pack_module.reddening_plain(data)
+    assert f"planet radius 2.7 +0.2/-0.1 Earth radii, {flag}; the star sits about" in plain
+    rows = {r[0]: r for r in _readme_table(render_readme(data, {}))}
+    full = rows["Full column (Schlafly and Finkbeiner 2011)"]
+    assert full[10] == "2.7 +0.2/-0.1" and full[-1] == f"upper bound, {flag}"
+    key = pack_module.reddening_key(data)
+    assert key.count("E(B-V) = 0") == 1 and "Unreddened (E(B-V) = 0), adopted while no 3D value" in key
+    assert flag in key and "round 2" not in key and "0.1 or less" not in key and "at or below" not in key
+    for text in (pack_module.star_texts(data), render_readme(data, {})):
+        assert flag in text and "0 (assumed)" not in text
+    # the two ends print alike, or arrive the other way round: no "2.5 to 2.5", and the smaller first
+    assert pack_module.rp_bracket_text(_bracketed(data, 2.48, 2.52)) == ", unchanged at the printed precision" + tail
+    assert pack_module.rp_bracket_text(_bracketed(data, 2.48, 2.31)).startswith(", 2.3 to 2.5 from ")
+    inside = _bracketed(data, 2.48, 2.68, flagged=False)
+    assert flag not in pack_module.rp_bracket_text(inside) and flag not in pack_module.reddening_plain(inside)
+    assert flag not in pack_module.reddening_key(inside)
+
+
 def test_a_3d_value_is_adopted_with_the_unreddened_star_and_gsp_phot_beside_it(env_with_dossier):
     data = _with_adopted_extinction(env_with_dossier)
     star = data["star"]
@@ -3242,19 +3284,20 @@ def test_a_3d_value_is_adopted_with_the_unreddened_star_and_gsp_phot_beside_it(e
     sentence = str(pack_module.reddening_text(data, True))
     assert sentence in flat and r"\citep{green2019}" in sentence and "E(B-V) = 0.050 (0.030 to 0.070)" in sentence
     assert pack_text.value_text(star["unreddened"]["teff"], True) not in flat     # the note's one clause only
-    assert "between no reddening" not in flat and "schlafly2011" not in flat
+    assert "from unreddened" not in flat and "schlafly2011" not in flat
     cited, items = _cites(tex)
     assert cited == items and "green2019" in items
     assert r"Green, G.~M., Schlafly, E., Zucker, C., Speagle, J.~S., \& Finkbeiner, D. 2019, ApJ, 887, 93" in flat
     plain = pack_module.reddening_plain(data)
     assert plain.startswith("Reddening: E(B-V) 0.050 (16th to 84th percentile 0.030 to 0.070) from Bayestar19 "
                             "(Green et al. 2019), stored by hand (test fixture), at 303 pc, a sightline average")
-    assert "unreddened, the earlier assumption, Teff" in plain and pack_text.value_text(star["teff"]) in plain
+    assert "unreddened (E(B-V) = 0), Teff" in plain and pack_text.value_text(star["teff"]) in plain
+    assert "earlier assumption" not in plain
     readme = render_readme(data, {})
     rows = {r[0]: r for r in _readme_table(readme)}
     assert rows["Bayestar19 (Green et al. 2019)"][-1] == "adopted"
     assert rows["Bayestar19 (Green et al. 2019)"][1] == "0.050 (0.030 to 0.070)"
-    assert rows["Unreddened"][-1] == "the earlier assumption"
+    assert rows["Unreddened"][-1] == "not adopted"
     assert rows["Full column (Schlafly and Finkbeiner 2011)"][-1] == "upper bound"
     prov = {r["parameter"]: r for r in pack_rows.provenance_rows(data)}
     assert {name for name, _key in pack_rows.EXTINCTION_ROWS} <= set(prov)
@@ -3270,10 +3313,10 @@ def test_with_neither_value_the_texts_say_not_available(env_with_dossier):
     data["star"]["extinction"] = {**data["star"]["extinction"], "column": column}
     assert pack_module.rp_bracket_text(data, True) is None
     flat = " ".join(render_note(data).split())
-    assert "(Bayestar19 not available at build time)" in flat and "between no reddening" not in flat
+    assert "(Bayestar19 not available at build time)" in flat and "from unreddened" not in flat
     assert pack_module.reddening_plain(data) == (
         "Reddening: not measured (Bayestar19 not available at build time, and the IRSA full-column value could not "
-        "be fetched), so the unreddened parameters are adopted.")
+        "be fetched), so the parameters are unreddened (E(B-V) = 0), adopted.")
     rows = {r[0]: r for r in _readme_table(render_readme(data, {}))}
     assert set(rows) == {"Unreddened", "GSP-Phot (Gaia DR3)"}
     assert pack_module.references(data)["schlafly2011"] is False

@@ -14,8 +14,8 @@ E(B-V) of Schlafly and Finkbeiner 2011 from the IRSA DUST service: one logged GE
 ``refPixelValueSandF`` (the value at the star, the one used: ``"used": "pixel"``) and ``meanValueSandF`` and
 ``stdSandF`` (within the service's 5-arcmin radius; the std is the spread the upper end is drawn with). The full column
 is the whole line of sight, dust beyond the star included, so it is an upper bound on the reddening at the star's
-distance; without a 3D value the dossier brackets the star between no reddening (adopted) and that bound. When IRSA
-cannot be reached or answers with an error, ``column`` records the reason instead. A 3D value obtained elsewhere is
+distance; without a 3D value the dossier brackets the star from unreddened (E(B-V) = 0), adopted, to that bound. When
+IRSA cannot be reached or answers with an error, ``column`` records the reason instead. A 3D value obtained elsewhere is
 stored by hand with ``--store`` for one target (``status: "manual"``), which keeps a stored column and says so; it is
 then adopted.
 
@@ -135,6 +135,10 @@ def argonaut_reason(error: Exception) -> str:
 def query_argonaut(ra_deg: float, dec_deg: float, distance_pc: float, *, fetch=None) -> dict:
     """{"ebv", "ebv_p16", "ebv_p84"} (E(B-V), rounded to 0.0001) from one Argonaut GET, or {"reason"} on any failure."""
     fetch = fetch or net.fetch
+    # a probe, not the documented API: Argonaut documents a JSON POST, and net.fetch is GET only, so a reachable
+    # service is likely to refuse this (stored as "not available", never as a value). Follow-up before any adopted
+    # value is claimed: the POST form, and the scale of BAYESTAR_TO_EBV checked against IRSA's SandF column so both
+    # ends of the bracket sit on one scale (the round 3 final review, M10)
     try:
         answer = fetch(ARGONAUT_URL, params=argonaut_params(ra_deg, dec_deg, distance_pc), service="argonaut",
                        store=_Log(), attempts=1, timeout=ARGONAUT_TIMEOUT)
