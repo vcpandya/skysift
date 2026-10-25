@@ -1379,7 +1379,7 @@ def test_note_has_software_facilities_and_the_model_clause_within_the_limits(env
     for data in (env_with_dossier.data, golden):
         tex = render_note(data)
         version = data["signal"]["detector_version"]
-        # the commit the dossier was generated at (the golden's f1266d9, not the checkout's HEAD), and triceratops
+        # the commit the dossier was generated at (the golden's 09ee6e3, not the checkout's HEAD), and triceratops
         # only with a stored cross-check (M10), which the golden has (fix round 4)
         commit = data["provenance"]["git_commit"]
         # Task 13 (spec 11.6): each package with its installed version
@@ -1387,7 +1387,7 @@ def test_note_has_software_facilities_and_the_model_clause_within_the_limits(env
             f", triceratops {data['cross_check']['tool_version']}" if data.get("cross_check") else "")
         assert (rf"\software{{SkySift {md.version('skysift')} (search version {tex_safe(version)}, commit "
                 rf"{tex_safe(commit)}), {tools}}}") in tex
-        assert (data is golden) == bool(data.get("cross_check")) and (data is not golden or commit == "f1266d9")
+        assert (data is golden) == bool(data.get("cross_check")) and (data is not golden or commit == "09ee6e3")
         crossed = render_note({**data, "cross_check": {"fpp": 0.01, "nfpp": 0.001, "current": False}})
         assert f"matplotlib {md.version('matplotlib')}, triceratops}}" in crossed
         assert r"\facilities{Kepler, Gaia, MAST, Exoplanet Archive}" in tex
@@ -2234,7 +2234,9 @@ def test_the_live_shape_stays_inside_the_word_limit_with_margin(cross, prior):
     the full-column E(B-V), the caveat title) took the longest to 1,508; its cut 1 (no GSP-Phot sentence in the note):
     1,335 and 1,363 without, 1,439 and 1,467 with one; abstracts unchanged. Task 15 fix round 2, M2 (the excluded
     set's dominant scenario in the own-evidence sentence, two words): 1,337 and 1,365 without, 1,441 and 1,469 with
-    one; abstracts 146 and 150."""
+    one; abstracts 146 and 150. The round 3 final review (the bracket with the Mann flag, I2's own-evidence sentence,
+    no second unit and no second "E(B-V) of" in the bracket), on the golden of 09ee6e3: 1,347 and 1,375 without, 1,451
+    and 1,479 with one; abstracts 146 and 150."""
     words = _check_live_shape(cross, prior)
     assert words["total"] <= LIVE_SHAPE_LIMIT, words
     assert words["abstract"] <= NOTE_LIMITS["abstract"], words
@@ -2972,10 +2974,10 @@ def test_the_readme_gives_the_shape_call_with_its_evidence_and_the_note_does_not
     golden = _golden()
     assert pack_module.b_set_by_prior(golden)
     readme = render_readme(golden, {})
-    assert "| impact parameter (with the density prior) | 0.468 +0.052/-0.058" in readme
+    assert "| impact parameter (with the density prior) | 0.455 +0.054/-0.061" in readme
     text = pack_module.shape_fit_text(golden)
-    assert text.startswith("Shape fit: with the density prior b is 0.468 +0.052/-0.058 and a/R* 77.9")
-    assert ("with a chi-square lower by only 0.27, within the rule of 2: the data do not constrain them; the quoted "
+    assert text.startswith("Shape fit: with the density prior b is 0.455 +0.054/-0.061 and a/R* 78.5")
+    assert ("with a chi-square lower by only 0.26, within the rule of 2: the data do not constrain them; the quoted "
             "values follow the host's density (Seager and Mallén-Ornelas 2003). The model is integrated over the "
             "29.4-minute exposure, which matters at this cadence (Kipping 2010).") in text
     assert text.count("Kipping") == 1 and text.index("Seager") < text.index("integrated") < text.index("Kipping")
