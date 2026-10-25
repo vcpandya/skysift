@@ -1378,7 +1378,7 @@ def test_note_has_software_facilities_and_the_model_clause_within_the_limits(env
     for data in (env_with_dossier.data, golden):
         tex = render_note(data)
         version = data["signal"]["detector_version"]
-        # the commit the dossier was generated at (the golden's 48840e5, not the checkout's HEAD), and triceratops
+        # the commit the dossier was generated at (the golden's 11d029e, not the checkout's HEAD), and triceratops
         # only with a stored cross-check (M10), which the golden has (fix round 4)
         commit = data["provenance"]["git_commit"]
         # Task 13 (spec 11.6): each package with its installed version
@@ -1386,7 +1386,7 @@ def test_note_has_software_facilities_and_the_model_clause_within_the_limits(env
             f", triceratops {data['cross_check']['tool_version']}" if data.get("cross_check") else "")
         assert (rf"\software{{SkySift {md.version('skysift')} (search version {tex_safe(version)}, commit "
                 rf"{tex_safe(commit)}), {tools}}}") in tex
-        assert (data is golden) == bool(data.get("cross_check")) and (data is not golden or commit == "48840e5")
+        assert (data is golden) == bool(data.get("cross_check")) and (data is not golden or commit == "11d029e")
         crossed = render_note({**data, "cross_check": {"fpp": 0.01, "nfpp": 0.001, "current": False}})
         assert f"matplotlib {md.version('matplotlib')}, triceratops}}" in crossed
         assert r"\facilities{Kepler, Gaia, MAST, Exoplanet Archive}" in tex
@@ -2229,7 +2229,9 @@ def test_the_live_shape_stays_inside_the_word_limit_with_margin(cross, prior):
     sweep-wide expectation and stays at or under 150 words on every shape (144 without a prior claim, 148 with).
     Task 15 (the pixel-excluded variant and addendum 2) took the shapes to 1,390 and 1,418 without a prior claim and
     1,494 and 1,522 with one, abstracts 156 and 160; its fix round 1 cuts (A1, B1 to B8): 1,344 and 1,372 without,
-    1,448 and 1,476 with one; abstracts 146 without a prior claim, 150 with."""
+    1,448 and 1,476 with one; abstracts 146 without a prior claim, 150 with. Task 16 (the planet-radius bracket up to
+    the full-column E(B-V), the caveat title) took the longest to 1,508; its cut 1 (no GSP-Phot sentence in the note):
+    1,335 and 1,363 without, 1,439 and 1,467 with one; abstracts unchanged."""
     words = _check_live_shape(cross, prior)
     assert words["total"] <= LIVE_SHAPE_LIMIT, words
     assert words["abstract"] <= NOTE_LIMITS["abstract"], words
