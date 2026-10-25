@@ -1,6 +1,6 @@
 {
  "dossier_version": "6",
- "generated": "2026-10-23T20:49:41.847513+00:00",
+ "generated": "2026-10-25T06:30:48.439466+00:00",
  "target": {
   "target_id": "kic-006146676",
   "source": "kbonus_bkg",
@@ -2202,6 +2202,120 @@
   "ruwe": 0.9448721,
   "non_single_star": 0,
   "ebpminrp_gspphot": 0.27,
+  "extinction": {
+   "target": "kic-006146676",
+   "status": "not available",
+   "reason": "Bayestar19 at the Gaia distance was not queried: the 728 MB map file (doi:10.7910/DVN/2EJ9TX) needs the owner's approval to download, not given, and the Argonaut web service (argonaut.skymaps.info) did not answer from the build machine on 23 October 2026",
+   "queried_utc": "2026-10-25T04:59:32+00:00",
+   "distance_pc": 303.0,
+   "column": {
+    "status": "ok",
+    "ebv": 0.6741,
+    "ebv_mean": 0.6518,
+    "ebv_std": 0.0344,
+    "stats_radius_arcmin": 5.0,
+    "source": "IRSA DUST, Schlafly and Finkbeiner 2011",
+    "queried_utc": "2026-10-25T04:59:32+00:00",
+    "ra": 297.86871,
+    "dec": 41.455567,
+    "url": "https://irsa.ipac.caltech.edu/cgi-bin/DUST/nph-dust?locstr=297.86871+41.455567+equ+j2000",
+    "bp_rp0": 1.3079,
+    "colour_held": false,
+    "a0": {
+     "median": 2.09,
+     "minus": 0.0,
+     "plus": 0.0,
+     "source": "the full-column E(B-V) through the Gaia (E)DR3 law"
+    },
+    "ebprp": {
+     "median": 0.789,
+     "minus": 0.0,
+     "plus": 0.0,
+     "source": "the full-column E(B-V) through the Gaia (E)DR3 law"
+    },
+    "a_g": {
+     "median": 1.597,
+     "minus": 0.0,
+     "plus": 0.0,
+     "source": "the full-column E(B-V) through the Gaia (E)DR3 law"
+    },
+    "a_ks": {
+     "median": 0.244,
+     "minus": 0.0,
+     "plus": 0.0,
+     "source": "the full-column E(B-V) through the Gaia (E)DR3 law"
+    },
+    "route": "mamajek",
+    "teff": {
+     "median": 4657.0,
+     "minus": 178.0,
+     "plus": 173.0,
+     "source": "Mamajek dwarf table at the dereddened BP-RP 1.308 +- 0.10 (Pecaut, M. J. and Mamajek, E. E. 2013, ApJS 208, 9), E(BP-RP) 0.789 from the full column (Schlafly and Finkbeiner 2011)"
+    },
+    "radius": {
+     "median": 0.723,
+     "minus": 0.02,
+     "plus": 0.032,
+     "source": "Mamajek dwarf table at the dereddened BP-RP 1.308 +- 0.10 (Pecaut, M. J. and Mamajek, E. E. 2013, ApJS 208, 9), E(BP-RP) 0.789 from the full column (Schlafly and Finkbeiner 2011)"
+    },
+    "mass": {
+     "median": 0.742,
+     "minus": 0.035,
+     "plus": 0.038,
+     "source": "Mamajek dwarf table at the dereddened BP-RP 1.308 +- 0.10 (Pecaut, M. J. and Mamajek, E. E. 2013, ApJS 208, 9), E(BP-RP) 0.789 from the full column (Schlafly and Finkbeiner 2011)"
+    },
+    "rp_rearth": {
+     "median": 3.59,
+     "minus": 0.14,
+     "plus": 0.18,
+     "source": "k 0.0455 from the transit fit x R*; radius-ratio error from the bootstrap"
+    },
+    "insolation_earth": {
+     "median": 5.11,
+     "minus": 0.84,
+     "plus": 1.13,
+     "source": "L* / a^2, L* = R*^2 (Teff / 5772 K)^4, Earth = 1"
+    }
+   },
+   "state": "not available",
+   "r_v": 3.1,
+   "law": "Gaia (E)DR3 extinction law, main-sequence fit (log g 4.5) in (BP-RP)_0 and A_0 on the Fitzpatrick et al. 2019 law (Riello et al. 2021 passbands): www.cosmos.esa.int/web/gaia/edr3-extinction-law, Fitz19_EDR3_MainSequence.csv",
+   "a_ks_over_a0": 0.117
+  },
+  "unreddened": {
+   "route": "mann",
+   "teff": {
+    "median": 3653.0,
+    "minus": 73.0,
+    "plus": 90.0,
+    "source": "Mamajek dwarf table at BP-RP 2.097 +- 0.10 (Pecaut, M. J. and Mamajek, E. E. 2013, ApJS 208, 9), E(BP-RP) <= 0.1 assumed"
+   },
+   "radius": {
+    "median": 0.505,
+    "minus": 0.016,
+    "plus": 0.016,
+    "source": "Mann et al. 2015 R(M_Ks) (Mann, A. W. et al. 2015, ApJ 804, 64), 2MASS Ks 13.055, A_Ks 0 to 0.07, Gaia parallax"
+   },
+   "mass": {
+    "median": 0.503,
+    "minus": 0.013,
+    "plus": 0.013,
+    "source": "Mann et al. 2019 M(M_Ks) (Mann, A. W. et al. 2019, ApJ 871, 63), 2MASS Ks 13.055, A_Ks 0 to 0.07, Gaia parallax"
+   },
+   "rp_rearth": {
+    "median": 2.51,
+    "minus": 0.1,
+    "plus": 0.1,
+    "source": "k 0.0455 from the transit fit x R*; radius-ratio error from the bootstrap"
+   },
+   "insolation_earth": {
+    "median": 1.22,
+    "minus": 0.12,
+    "plus": 0.14,
+    "source": "L* / a^2, L* = R*^2 (Teff / 5772 K)^4, Earth = 1"
+   },
+   "bp_rp0": 2.0971918
+  },
   "gaia_errors": [],
   "crowdsap": {
    "value": 0.85650748,
@@ -5005,6 +5119,6 @@
    "rung4_novelty": "4",
    "rung5_pixels": "4"
   },
-  "git_commit": "48840e5"
+  "git_commit": "11d029e"
  }
 }
