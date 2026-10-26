@@ -2684,9 +2684,14 @@ def test_the_author_block_comes_from_docs_author_json(env_with_dossier, tmp_path
     assert pack_module.author_problems(None) == ["no docs/author.json"]
 
 
-def test_the_repository_author_file_names_the_author_and_leaves_the_rest_to_fill():
-    """docs/author.json carries the name of CITATION.cff; the other three fields are Vikram's to fill in."""
-    assert pack_module.load_author() == {"name": "Vikram Pandya", "affiliation": "", "email": "", "orcid": ""}
+def test_the_repository_author_file_carries_the_author_block():
+    """docs/author.json carries the name of CITATION.cff, the affiliation and the email Vikram gave on 26 October
+    2026; the ORCID is still his to fill in."""
+    author = pack_module.load_author()
+    assert author["name"] == "Vikram Pandya"
+    assert author["affiliation"] == "SP Jain School of Global Management, Mumbai, India"
+    assert author["email"] and "@" in author["email"]
+    assert author["orcid"] == ""
 
 
 def test_final_refuses_without_the_live_draft_and_with_any_placeholder(env_with_dossier, fake_session, tmp_path,

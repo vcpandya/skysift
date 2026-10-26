@@ -6,12 +6,13 @@
 
 \title{\BLOCK{if n.prior_text}SkySift vetting of the\BLOCK{else}A\BLOCK{endif} \VAR{n.period_title} day transit candidate on \VAR{n.name}}
 
+((# AASTeX 7.0.1 stops at the first \section unless every author block ends with its own \email; its v6
+   \correspondingauthor command is gone, so the first author's email is the corresponding one. #))
 \BLOCK{for a in authors}
 \author\BLOCK{if a.orcid}[\VAR{a.orcid}]\BLOCK{endif}{\VAR{a.name}}
 \affiliation{\BLOCK{if a.affiliation}\VAR{a.affiliation}\BLOCK{else}AFFILIATION TO FILL IN\BLOCK{endif}}
+\email{\BLOCK{if a.email}\VAR{a.email}\BLOCK{else}EMAIL TO FILL IN\BLOCK{endif}}
 \BLOCK{endfor}
-\correspondingauthor{\VAR{authors[0].name}}
-\email{\BLOCK{if authors[0].email}\VAR{authors[0].email}\BLOCK{else}EMAIL TO FILL IN\BLOCK{endif}}
 
 \begin{abstract}
 \VAR{n.abstract}
