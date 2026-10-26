@@ -25,7 +25,8 @@ percentiles: in this interpreter when it holds h5py and astropy-healpix, otherwi
 ``SKYSIFT_DUSTMAPS_PYTHON`` or the first ``.venv-dustmaps`` above the tool. The record is the adopted block
 (``map_block``): the samples' median and percentiles at the median distance in E(B-V), the sample medians at the
 distance's percentiles, the source, the file's name, the MD5 from the sidecar ``<file>.md5`` the controller writes
-(``"unverified"`` without one; a digest other than the Dataverse record's stops the tool), the map version, the
+(without one the tool refuses to adopt the map's values, exit 2, fix wave round 4, M2; a digest other than
+the Dataverse record's stops it too), the map version, the
 pixel, the convergence and reliable-distance flags and the reliable range's ends as distances
 (``reliable_distance_min_pc`` and ``reliable_distance_max_pc``, null when not finite). A sightline outside the footprint, an unconverged pixel or no
 finite sample stores "not available" with that reason. A stored column is kept, so a run over the five live records
@@ -88,7 +89,8 @@ MAP_PYTHON_ENV = "SKYSIFT_DUSTMAPS_PYTHON"  # an interpreter with h5py and astro
 MAP_SOURCE = "Bayestar19 (Green et al. 2019), local file"
 MAP_LABEL = f"{bm.MAP_VERSION} (doi:{bm.MAP_DOI}), local file"
 MAP_FAILED = "Bayestar19 (Green et al. 2019) not available: {why}"
-MAP_UNVERIFIED = "unverified"               # the map_md5 of a map without its sidecar <file>.md5
+# fix wave round 4 (M2): no map value is adopted without its verified MD5, so "unverified" is no stored state
+NO_SIDECAR = "write {file}.md5 beside the map (the Dataverse record's MD5) before adopting its values"
 MAP_TIMEOUT = 900.0                         # seconds for the reader under the third venv (it reads pixel_info once)
 MAP_READER = Path(bm.__file__).resolve()
 DUSTMAPS_VENV = ".venv-dustmaps"
@@ -240,11 +242,11 @@ def query_column(ra_deg: float, dec_deg: float, *, fetch=None, now: str | None =
 
 def sidecar_md5(path: Path) -> str:
     """The MD5 the controller wrote beside the map, ``<file>.md5``: the first line whose first token, or whose
-    characters once the spaces go (an older ``certutil``), are 32 hex digits, lower-cased; ``MAP_UNVERIFIED`` without
-    the sidecar. ``MapError`` when the sidecar holds no digest. The file itself is not hashed here."""
+    characters once the spaces go (an older ``certutil``), are 32 hex digits, lower-cased. ``MapError`` without
+    the sidecar (``NO_SIDECAR``) or when it holds no digest. The file itself is not hashed here."""
     sidecar = Path(f"{path}.md5")
     if not sidecar.is_file():
-        return MAP_UNVERIFIED
+        raise MapError(NO_SIDECAR.format(file=Path(path).name))
     for line in sidecar.read_text(encoding="utf-8", errors="replace").splitlines():
         tokens = line.split()
         for candidate in (tokens[0] if tokens else "", "".join(tokens)):
@@ -430,22 +432,20 @@ def _run_map(args, target: str, path: Path, ra: float, dec: float, star: dict, s
              map_reader) -> int:
     """Spec 12.5: the 3D value from the local map at the Gaia distance and its percentiles; the column kept from a
     stored record (unless ``--force``), else one IRSA GET. Exit 0 adopted, 3 not available, 2 when the map cannot
-    be read (the stored file is left as it was)."""
+    be read or has no verified MD5 sidecar (the stored file is left as it was)."""
     distance = _distances(star)
     map_path = Path(args.map)
     try:
         if not map_path.is_file():
             raise MapError(f"{map_path} is not there")
         md5 = sidecar_md5(map_path)
-        if md5 not in (MAP_UNVERIFIED, bm.MAP_MD5):
+        if md5 != bm.MAP_MD5:
             raise MapError(f"the map's MD5 {md5} (from {map_path}.md5) is not the Dataverse record's {bm.MAP_MD5}")
         queries = (map_reader or read_map)(map_path, ra, dec, distance)
     except MapError as e:
         _say(f"{target}: {e}")
         _say(f"{target}: {_hint(target, distance[0])}")
         return 2
-    if md5 == MAP_UNVERIFIED:
-        _say(f"{target}: no {map_path.name}.md5 beside the map, so map_md5 is {MAP_UNVERIFIED!r}")
     old = (stored or {}).get("column")
     kept = not args.force and isinstance(old, dict) and old.get("status") == stars.COLUMN_OK
     column = old if kept else query_column(ra, dec, fetch=fetch)

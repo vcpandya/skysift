@@ -416,15 +416,27 @@ def test_an_unreliable_distance_is_adopted_with_its_flag_and_the_range(tmp_path,
 
 
 def test_the_map_md5_comes_from_the_sidecar_and_a_wrong_one_stops_the_tool(tmp_path, capsys):
+    """Fix wave round 4 (M2): no map value is adopted without its verified MD5. Without the sidecar the tool stops
+    before the map is read (exit 2, nothing written) and says to write it; with the Dataverse record's digest (here
+    in an older certutil's spaced form) the value is adopted with that MD5 stored; a wrong digest stops it too."""
     args, path = _map_setup(tmp_path, md5=None)
-    assert ex.sidecar_md5(path) == "unverified"
-    assert ex.main([*args, "--map", str(path)], fetch=routed_fetch(AssertionError(), IRSA_OK),
-                   map_reader=fake_reader()) == 0
-    assert _stored(tmp_path)["map_md5"] == "unverified" and "no bayestar2019.h5.md5 beside" in capsys.readouterr().err
+    words = "write bayestar2019.h5.md5 beside the map (the Dataverse record's MD5) before adopting its values"
+    assert ex.NO_SIDECAR.format(file="bayestar2019.h5") == words and not hasattr(ex, "MAP_UNVERIFIED")
+    with pytest.raises(ex.MapError, match=r"write bayestar2019\.h5\.md5 beside the map"):
+        ex.sidecar_md5(path)
+    reads = []
+    assert ex.main([*args, "--map", str(path)], fetch=routed_fetch(AssertionError(), AssertionError()),
+                   map_reader=fake_reader(reads)) == 2
+    assert f"{TARGET}: {words}" in capsys.readouterr().err
+    assert reads == [] and not ex.store_path(tmp_path / "c", TARGET).exists()
     sidecar = path.with_name("bayestar2019.h5.md5")
     sidecar.write_text("MD5 hash of bayestar2019.h5:\nab 81 5d 2f d3 06 8d 1b 81 a1 bd 61 fb 18 a7 22\nCertUtil: "
                        "-hashfile command completed successfully.\n", encoding="utf-8")       # older certutil
     assert ex.sidecar_md5(path) == bm.MAP_MD5
+    assert ex.main([*args, "--map", str(path)], fetch=routed_fetch(AssertionError(), IRSA_OK),
+                   map_reader=fake_reader()) == 0
+    assert _stored(tmp_path)["map_md5"] == bm.MAP_MD5 and _stored(tmp_path)["status"] == "adopted"
+    capsys.readouterr()
     sidecar.write_text("0" * 32 + "\n", encoding="utf-8")
     assert ex.main([*args, "--map", str(path), "--force"], fetch=routed_fetch(AssertionError(), AssertionError()),
                    map_reader=fake_reader()) == 2
