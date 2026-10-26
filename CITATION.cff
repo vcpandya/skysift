@@ -4,6 +4,8 @@ message: If you use this software, please cite it.
 authors:
   - family-names: Pandya
     given-names: Vikram
+    affiliation: SP Jain School of Global Management, Mumbai, India
+    email: vcpandya@gmail.com
 version: 0.1.0
 date-released: 2026-10-13
 license: MIT
