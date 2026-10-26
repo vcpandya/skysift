@@ -2315,8 +2315,10 @@ def bracket_span(data: dict) -> str | None:
     """"On the adopted route the reddening bracket spans Teff 3,653 to 4,657 K, radius 0.499 to 0.540 Rsun and planet
     radius 2.5 to 2.7 Earth radii." (fix wave round 4, I2): from the unreddened end to the full-column end the derived star
     stores, each at the adopted value's decimals (``_mid_at``), the smaller first; one value where the two print
-    alike. None outside the adopted state, where the map constrains the dust at the star's distance
-    (``stars.range_side`` None), or without the full column's derived values."""
+    alike; ", the full-column end beyond the Mann relations' range" when the full-column star's stored
+    ``outside_mann_range`` is true (the scoped re-review, N3). None outside the adopted state, where the map
+    constrains the dust at the star's distance (``stars.range_side`` None), or without the full column's derived
+    values."""
     if reddening_state(data) != RED_ADOPTED:
         return None
     star, planet = data.get("star") or {}, data.get("planet") or {}
@@ -2334,7 +2336,9 @@ def bracket_span(data: dict) -> str | None:
     if not parts:
         return None
     joined = ", ".join(parts[:-1]) + (" and " if len(parts) > 1 else "") + parts[-1]
-    return f"On the adopted route the reddening bracket spans {joined}."
+    # the scoped re-review (N3): the stored flag of the full-column star, as the key's "so indicative" clause reads it
+    mann = ", the full-column end beyond the Mann relations' range" if col.get("outside_mann_range") is True else ""
+    return f"On the adopted route the reddening bracket spans {joined}{mann}."
 
 
 def window_hours(data: dict) -> str | None:

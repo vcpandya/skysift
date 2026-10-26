@@ -3704,7 +3704,7 @@ def test_the_plain_texts_carry_the_height_clause_and_the_note_does_not(env_with_
 
 UNCONSTRAINED_NEAR = ", and the map does not constrain the reddening this near"
 BRACKET_SPAN = ("On the adopted route the reddening bracket spans Teff 3,653 to 4,657 K, radius 0.499 to 0.540 Rsun "
-                "and planet radius 2.5 to 2.7 Earth radii.")
+                "and planet radius 2.5 to 2.7 Earth radii, the full-column end beyond the Mann relations' range.")
 
 
 def test_the_flagged_stars_caveat_says_the_map_does_not_constrain_its_reddening():
@@ -3733,6 +3733,10 @@ def test_the_flagged_stars_caveat_says_the_map_does_not_constrain_its_reddening(
     assert [round(unred["teff"]["median"]), round(col["teff"]["median"])] == [3653, 4657]
     assert [unred["radius"]["median"], col["radius"]["median"]] == [0.499, 0.54]
     assert pack_module.bracket_span(data) == BRACKET_SPAN
+    # the scoped re-review (N3): the full-column star's stored flag (4,657 K, above 4,100 K) ends the span
+    assert col["outside_mann_range"] is True and col["teff"]["median"] > stars_module.MANN_TEFF_RANGE[1]
+    inside = {**data, "star": {**star, "extinction": {**star["extinction"], "column": {**col, "outside_mann_range": False}}}}
+    assert pack_module.bracket_span(inside) == BRACKET_SPAN.replace(", the full-column end beyond the Mann relations' range", "")
     bullet = next(line for line in render_readme(data, {}).splitlines() if line.startswith(f"- {title}"))
     assert bullet.startswith(f"- {title}{UNCONSTRAINED_NEAR}. The radius ratio comes from the light curve; ")
     assert bullet.endswith(f" {BRACKET_SPAN}")
@@ -3761,9 +3765,12 @@ def test_the_live_readme_key_names_the_tic_star_and_glosses_sfd98():
     short = "The FPP rests on the TIC's stellar parameters."
     assert cross_check.TIC_STAR == short
     after, page = cross_check.comparison_sentence(data, after_headline=True), cross_check.comparison_sentence(data)
-    assert ("the nearby false-positive probability is 0.0020 (0.0020 to 0.0020). The FPP rests on the TIC's stellar "
-            "parameters. Its full false-positive probability") in after
-    assert "which do not apply at 30-minute cadence. The FPP rests on the TIC's stellar parameters. Its full" in page
+    # the scoped re-review (N2): after the dominant sentence, so its "Its" refers to the FPP
+    dominant = cross_check.dominant_sentence(data["cross_check"])
+    assert dominant.startswith("Its full false-positive probability")
+    assert f"the nearby false-positive probability is 0.0020 (0.0020 to 0.0020). {dominant} {short} With the 6" in after
+    assert f"which do not apply at 30-minute cadence. {dominant} {short} With the 6" in page
+    assert f"{short} Its full" not in after and f"{short} Its full" not in page
     readme = render_readme(data, {})
     assert after in readme and key in readme
     for name in ("exofop_note.txt.j2", "archive_email.txt.j2"):

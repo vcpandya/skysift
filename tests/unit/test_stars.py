@@ -519,7 +519,7 @@ def test_the_adopted_height_clause_names_the_range_its_two_ends_span():
 def test_the_adopted_mann_route_caveat_says_the_ks_radius_barely_depends_on_reddening():
     """Fix wave round 4 (I3): on the Mann route the adopted star's reddening note ends as the unreddened one does,
     "The Ks radius barely depends on reddening.". Re-derived from KIC 6146676's stored record on the golden's Gaia
-    row, the note is the golden's stored one (36024e3, written before the clause) with the clause appended, and the
+    row, the note is the golden's stored one (0dca504, written with the clause), the clause in it once, and the
     stellar-radius caveat a rebuilt dossier stores carries it."""
     import json
     from pathlib import Path
@@ -532,7 +532,8 @@ def test_the_adopted_mann_route_caveat_says_the_ks_radius_barely_depends_on_redd
     block = stars.load_extinction("kic-006146676", root / "docs" / "candidates")
     star = derive(_stored_row(*row), period, k, 0.002, np.random.default_rng(20261021), block)[0]
     assert star.route == golden["star"]["route"] == "mann" and star.extinction["state"] == stars.EXT_ADOPTED
-    assert star.reddening_note == golden["star"]["reddening_note"] + clause
+    assert star.reddening_note == golden["star"]["reddening_note"]
+    assert star.reddening_note.endswith(clause) and star.reddening_note.count(clause.strip()) == 1
     assert star.reddening_note.startswith("Teff and spectral type use the BP-RP 2.10 dereddened by the Bayestar19 ")
     rebuilt = {**golden, "star": {**golden["star"], "reddening_note": star.reddening_note}}
     text = next(c for c in dossier.caveats(rebuilt) if c.get("key") == "no_spectrum")["text"]

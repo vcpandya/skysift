@@ -1134,8 +1134,9 @@ def comparison_sentence(data: dict, tex: bool = False, after_headline: bool = Fa
                 f"limb darkening and Gaia DR3 field stars (16th to 84th percentile {range_text(block, 'fpp')}, and "
                 f"{range_text(block, 'fpp_no_stp')} without STP, a scenario absent from SkySift's model); the nearby "
                 f"false-positive probability is {_p(block['nfpp'])} ({range_text(block, 'nfpp')}).")
-        text += f" {TIC_STAR}"                # fix wave round 4, polish (a)
         text += f" {dominant}" if dominant else ""
+        # fix wave round 4, polish (a); after the dominant sentence, so its "Its" keeps the FPP as antecedent (N2)
+        text += f" {TIC_STAR}"
         text += f" {excluded_text(block, True)}" if _variant(block) else ""
         own = own_evidence_sentence(data)
         text += f" {own}" if own else ""
@@ -1162,9 +1163,9 @@ def comparison_sentence(data: dict, tex: bool = False, after_headline: bool = Fa
             "planet transiting an unresolved bound companion (STP), absent from SkySift's model, and a nearby "
             f"false-positive probability of {_p(block['nfpp'])} ({range_text(block, 'nfpp')}) over {n} "
             f"runs{left_out}, {NO_CLASS_CLAUSE}.")
-    rest += f" {TIC_STAR}"                    # fix wave round 4, polish (a): the plain texts' few words
     if dominant:
         rest += f" {dominant}"
+    rest += f" {TIC_STAR}"                    # fix wave round 4, polish (a) and N2: after the dominant sentence
     rest += f" {excluded_text(block, True)}" if _variant(block) else ""
     if tex:
         return Raw(tex_escape(head) + r"\citep{giacalone2021}" + tex_escape(rest))
