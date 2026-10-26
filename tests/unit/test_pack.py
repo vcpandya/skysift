@@ -259,9 +259,10 @@ def test_dossier_html_is_the_standalone_export(env_with_dossier):
 
 
 def test_rebuilding_the_same_day_replaces_the_pack_and_a_foreign_folder_is_refused(env_with_dossier, tmp_path):
-    first = _build(env_with_dossier)
+    same = tmp_path / "same-day"                    # a fixed folder: the default one is named by the UTC date
+    first = _build(env_with_dossier, out_dir=same)
     (first.out_dir / "stray.txt").write_text("left over", encoding="utf-8")
-    second = _build(env_with_dossier)
+    second = _build(env_with_dossier, out_dir=same)
     assert second.out_dir == first.out_dir and "stray.txt" not in _files(second)
     foreign = tmp_path / "my documents"
     foreign.mkdir()
@@ -679,7 +680,8 @@ def test_a_failed_swap_keeps_the_earlier_pack_and_the_new_build(env_with_dossier
     """Step 2 of the swap fails (the new folder will not rename into place): the earlier pack is renamed back, the
     new build stays in its building folder, the dossiers row still points at the earlier pack."""
     env = env_with_dossier
-    first = _build(env)
+    out = env.settings.data_dir / "packs" / "swap"      # a fixed folder: the default one is named by the UTC date
+    first = _build(env, out_dir=out)
     before = (first.out_dir / "README.md").read_bytes()
     building = _aside(first.out_dir, "building")
     real_rename = Path.rename
@@ -690,13 +692,13 @@ def test_a_failed_swap_keeps_the_earlier_pack_and_the_new_build(env_with_dossier
         return real_rename(self, target)
     monkeypatch.setattr(Path, "rename", rename)
     with pytest.raises(PackError, match="the earlier pack is back in place") as e:
-        _build(env)
+        _build(env, out_dir=out)
     assert str(building) in str(e.value)
     assert (first.out_dir / "README.md").read_bytes() == before and first.zip_path.is_file()
     assert (building / "README.md").is_file() and not _aside(first.out_dir, "old").exists()
     assert env.store.dossier(STAGE2_TARGET)["pack_path"] == str(first.out_dir)
     monkeypatch.setattr(Path, "rename", real_rename)
-    again = _build(env)                                                             # the retry goes through
+    again = _build(env, out_dir=out)                                                # the retry goes through
     assert again.zip_path.is_file() and [p.name for p in again.out_dir.parent.iterdir()] == [again.out_dir.name]
 
 
@@ -705,22 +707,24 @@ def test_an_open_file_in_the_earlier_pack_stops_the_swap_before_anything_moves(e
     """The dashboard serving the zip holds it open: Windows then refuses to rename the earlier pack aside (step 1),
     so nothing moves, the error names the finished build, and the next run goes through."""
     env = env_with_dossier
-    first = _build(env)
+    out = env.settings.data_dir / "packs" / "held"        # a fixed folder, not the UTC-date one
+    first = _build(env, out_dir=out)
     before = first.zip_path.read_bytes()
     with first.zip_path.open("rb"):
         with pytest.raises(PackError, match="could not move the earlier pack") as e:
-            _build(env)
+            _build(env, out_dir=out)
         assert str(_aside(first.out_dir, "building")) in str(e.value)
     assert first.zip_path.read_bytes() == before and (first.out_dir / "README.md").is_file()
     assert (_aside(first.out_dir, "building") / "README.md").is_file()
-    assert _build(env).zip_path.is_file()
+    assert _build(env, out_dir=out).zip_path.is_file()
 
 
 def test_an_earlier_pack_that_cannot_be_deleted_is_left_behind_with_a_warning(env_with_dossier, monkeypatch):
     """Step 3 fails (a file of the earlier pack, set aside, is still held): the new pack is in place and recorded,
     the old folder stays as ``.<name>.old``, the log says so, and nothing is raised. The next run clears it."""
     env = env_with_dossier
-    first = _build(env)
+    out = env.settings.data_dir / "packs" / "left"        # a fixed folder, not the UTC-date one
+    first = _build(env, out_dir=out)
     old = _aside(first.out_dir, "old")
     real_rmtree = shutil.rmtree
 
@@ -730,12 +734,12 @@ def test_an_earlier_pack_that_cannot_be_deleted_is_left_behind_with_a_warning(en
         return real_rmtree(path, *a, **kw)
     monkeypatch.setattr(shutil, "rmtree", rmtree)
     lines = []
-    rep = _build(env, log=lines.append)
+    rep = _build(env, out_dir=out, log=lines.append)
     assert (rep.out_dir / "README.md").is_file() and rep.zip_path.is_file() and old.is_dir()
     assert env.store.dossier(STAGE2_TARGET)["pack_path"] == str(rep.out_dir)
     assert any(line.startswith("warning:") and str(old) in line for line in lines)
     monkeypatch.setattr(shutil, "rmtree", real_rmtree)
-    assert _build(env).zip_path.is_file() and not old.exists()
+    assert _build(env, out_dir=out).zip_path.is_file() and not old.exists()
 
 
 def test_build_pack_on_the_real_kic_6146676_dossier(env_with_dossier):
@@ -1605,7 +1609,7 @@ def test_the_note_names_its_methods_and_cites_them(env_with_dossier):
     assert "Pack (data and methods): " in " ".join(tex.split())
     assert pack_module.errors_pointer(data) == "methods in the Zenodo pack's README"
     assert "deeg2015" not in tex and "holczer2016" not in tex and "schmitt2014" not in tex
-    assert "It remains a candidate until follow-up confirms it." not in signal   # the abstract says it
+    assert "It remains a candidate pending follow-up." not in signal   # the abstract says it
     readme = render_readme(data, {})
     errors = readme.split("Ephemeris and transit-parameter errors (the note's signal section points here): ")[1]
     errors = errors.split("\n")[0]
@@ -1793,8 +1797,8 @@ def test_a_prior_claim_makes_every_text_a_vetting_and_never_a_blind_recovery(env
     assert "This note vets the transit candidate Kuber Mehta reported first on KIC 6146676" in abstract
     assert PRIOR_DOI not in abstract and "13 October" not in abstract
     assert body.count(PRIOR_DOI) == 1 and body.count("13 October 2026") == 1
-    assert "It remains a candidate until follow-up confirms it." in abstract
-    assert "It remains a candidate until follow-up confirms it." not in body
+    assert "It remains a candidate pending follow-up." in abstract
+    assert "It remains a candidate pending follow-up." not in body
     assert note.index("]{gaia2023}") < note.index("]{mann2019}") < note.index("]{mehta2026}")      # alphabetical
     assert note_problems(note_words(note), note) == []
     step2 = texts["README.md"].split("## Step 2.")[1].split("## Step 3.")[0]
@@ -2117,6 +2121,7 @@ def test_the_golden_note_with_a_tess_statement_stays_inside_the_word_limit():
 # the live shape's margin under the RNAAS 1,500 (fix round 2, N1): room for a caveat title, and for the 6 to 8 words
 # a word processor counts over ``_count`` on the citations (fix round 3 review, M-5)
 LIVE_SHAPE_LIMIT = 1480
+LIVE_ABSTRACT_LIMIT = 148          # round 3 polish: two under the RNAAS 150; the ruled cut saves two counted words
 
 
 def _live_shape(cross: str, prior: bool = True) -> dict:
@@ -2236,14 +2241,48 @@ def test_the_live_shape_stays_inside_the_word_limit_with_margin(cross, prior):
     set's dominant scenario in the own-evidence sentence, two words): 1,337 and 1,365 without, 1,441 and 1,469 with
     one; abstracts 146 and 150. The round 3 final review (the bracket with the Mann flag, I2's own-evidence sentence,
     no second unit and no second "E(B-V) of" in the bracket), on the golden of 09ee6e3: 1,347 and 1,375 without, 1,451
-    and 1,479 with one; abstracts 146 and 150."""
+    and 1,479 with one; abstracts 146 and 150.
+    Round 3 polish: the closing sentence "pending follow-up" (the live KIC 5689121 abstract was 151): 144 without a
+    prior claim, 148 with one, held at or under LIVE_ABSTRACT_LIMIT."""
     words = _check_live_shape(cross, prior)
     assert words["total"] <= LIVE_SHAPE_LIMIT, words
-    assert words["abstract"] <= NOTE_LIMITS["abstract"], words
+    assert words["abstract"] <= LIVE_ABSTRACT_LIMIT <= NOTE_LIMITS["abstract"] - 2, words
     abstract = " ".join(render_note(_live_shape(cross, prior)).split(r"\begin{abstract}")[1].split())
     assert ("Null searches give a false-alarm rate of 1 in 170 per star, about 9 such peaks expected across the "
             "1,579-star sweep;") in abstract
     assert not [p for p in pack_module.gate_problems(_live_shape(cross, prior)) if "words" in p]
+
+
+@pytest.mark.parametrize("cross", ["validated", "dominant"])
+def test_the_abstract_keeps_inside_150_words_with_the_kic_5689121_clauses(cross):
+    """Round 3 polish (P1): the live pack of KIC 5689121 rendered a 151-word abstract, which the four synthetic live
+    shapes (at most 150 before the closing sentence lost two counted words) did not catch. Its longer clauses, put on the
+    longest shape: three seasons that voted beside one that did not, a period of 13.769449 days over 65 transits,
+    and a false-alarm rate of 1 in 51 per star with about 31 such peaks across the sweep; two of the voting seasons
+    also carry the box-cut clause, so the abstract is the longest the clauses allow."""
+    data = _live_shape(cross, True)
+    data["ephemeris"].update({"period_days": 13.769449, "n_events": 65})
+    row = next(t for t in data["tests"] if t["rung"] == "rung5_pixels")
+    row["metrics"]["seasons"] = [
+        {"season": n, "n_events": 9, "dist_target_pix": 0.15, "dist_neighbour_pix": 2.8, "centroid_sigma_pix": 0.06,
+         "nearer": "target", "depth_target_ppm": [2800.0, 600.0], "depth_neighbour_ppm": [-20.0, 50.0],
+         "two_source": True, "voting": True, "non_voting_reason": None} for n in (0, 1, 2)
+    ] + [{"season": 3, "n_events": 9, "nearer": "unknown", "depth_target_ppm": [None, None],
+          "depth_neighbour_ppm": [None, None], "two_source": False, "voting": False,
+          "non_voting_reason": "box incomplete: target"}]
+    for s in row["metrics"]["seasons"][:2]:                 # the longest abstract clause, as the shapes carry it
+        s.update({"box_partial": True, "box_pixels_target": 6, "box_pixels_neighbour": 9, "edge_bias_pix": 0.1})
+    data["fap"].update({"words": "1 in 51", "fap": 1 / 51})
+    data["calibration"]["sweep_size"] = 1579
+    tex = render_note(data)
+    abstract = " ".join(tex.split(r"\begin{abstract}")[1].split(r"\end{abstract}")[0].split())
+    assert "3 of 3 seasons that voted" in abstract
+    assert "13.76945 days over 65 transits" in abstract            # 13.769449 at the abstract's five decimals
+    assert "1 in 51 per star, about 31 such peaks" in abstract
+    assert abstract.endswith("It remains a candidate pending follow-up.")
+    words = note_words(tex)
+    assert words["abstract"] <= NOTE_LIMITS["abstract"], (cross, words)
+    print(f"KIC 5689121 clauses, {cross}: abstract {words['abstract']} words")
 
 
 def test_the_body_does_not_repeat_the_abstract_and_keeps_every_number():

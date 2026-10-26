@@ -2185,7 +2185,7 @@ def abstract_text(data: dict) -> str:
     head = cc.headline(data, short=True)          # the note's short class clause (addendum cut 8)
     fpp_part = f"{head}; {in_house_text(data)}" if head else in_house_text(data)
     parts.append(f"{_capital(fap_rate_clause(data))}; {fpp_part}.")
-    parts.append("It remains a candidate until follow-up confirms it.")
+    parts.append("It remains a candidate pending follow-up.")
     return " ".join(parts)
 
 
