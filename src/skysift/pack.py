@@ -2313,7 +2313,7 @@ def _caveat_text(caveat: dict, data: dict) -> str:
 
 def bracket_span(data: dict) -> str | None:
     """"On the adopted route the reddening bracket spans Teff 3,653 to 4,657 K, radius 0.499 to 0.540 Rsun and planet
-    radius 2.5 to 2.7 R⊕." (fix wave round 4, I2): from the unreddened end to the full-column end the derived star
+    radius 2.5 to 2.7 Earth radii." (fix wave round 4, I2): from the unreddened end to the full-column end the derived star
     stores, each at the adopted value's decimals (``_mid_at``), the smaller first; one value where the two print
     alike. None outside the adopted state, where the map constrains the dust at the star's distance
     (``stars.range_side`` None), or without the full column's derived values."""
@@ -2325,7 +2325,7 @@ def bracket_span(data: dict) -> str | None:
         return None
     parts = []
     for name, key, unit, holder in (("Teff", "teff", " K", star), ("radius", "radius", " Rsun", star),
-                                    ("planet radius", "rp_rearth", " R⊕", planet)):
+                                    ("planet radius", "rp_rearth", " Earth radii", planet)):
         ends = [_mid_at(unred.get(key), holder.get(key)), _mid_at(col.get(key), holder.get(key))]
         if None in ends:
             continue

@@ -3704,7 +3704,7 @@ def test_the_plain_texts_carry_the_height_clause_and_the_note_does_not(env_with_
 
 UNCONSTRAINED_NEAR = ", and the map does not constrain the reddening this near"
 BRACKET_SPAN = ("On the adopted route the reddening bracket spans Teff 3,653 to 4,657 K, radius 0.499 to 0.540 Rsun "
-                "and planet radius 2.5 to 2.7 R⊕.")
+                "and planet radius 2.5 to 2.7 Earth radii.")
 
 
 def test_the_flagged_stars_caveat_says_the_map_does_not_constrain_its_reddening():
