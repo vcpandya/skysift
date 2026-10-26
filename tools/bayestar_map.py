@@ -15,11 +15,16 @@ against ``dustmaps/bayestar.py`` on GitHub master, read as text on 26 October 20
 - The distance: dm = 5 log10(d / 10 pc). Between two moduli the reddening is linear in dm. Below the first modulus it
   is the first bin times 10^(0.2 (dm - dm_0)), the ratio of the distances. Beyond the last modulus it is the last bin.
   The percentiles are ``np.nanpercentile`` over the samples, as the ``percentile`` mode gives them. The distance is
-  reliable when DM_reliable_min <= dm <= DM_reliable_max, both finite.
-- The units: E(B-V) = 0.884 times the map's value (Green et al. 2019).
+  reliable when DM_reliable_min <= dm <= DM_reliable_max, both finite. Each query carries the two ends as
+  ``dm_reliable_min`` and ``dm_reliable_max`` (None when not finite, since JSON has no NaN), so the record can say
+  which side of the range a star lies on. Below DM_reliable_min the value is still the samples interpolated in DM
+  between the grid's moduli; there the map's prior and its 0.01-unit quantisation set it, not the stars.
+- The units: E(B-V) = 0.884 times the map's value (the map's unit gives E(g-r) = 0.901, Schlafly and Finkbeiner
+  2011 Table 6; the 0.884 comes from the Schlafly et al. 2016 reddening vector, as the Bayestar usage notes of Green
+  et al. 2019 give it).
 
-numpy and astropy load at import, ``astropy_healpix`` inside ``pixel_index``, and ``h5py`` inside ``main``, so the
-engine's interpreter imports the pure functions. Reading the file needs the third venv:
+numpy loads at import, astropy inside ``galactic``, ``astropy_healpix`` inside ``pixel_index``, and ``h5py`` inside
+``main``, so the engine's interpreter imports the pure functions. Reading the file needs the third venv:
 
     uv venv C:/Research/skysift/.venv-dustmaps --python 3.12
     uv pip install --native-tls -p C:/Research/skysift/.venv-dustmaps/Scripts/python.exe h5py astropy \\
@@ -127,6 +132,10 @@ def _scaled(p: dict | None) -> dict | None:
     return None if p is None else {k: BAYESTAR_TO_EBV * v for k, v in p.items()}
 
 
+def _finite_or_none(value: float) -> float | None:
+    return value if math.isfinite(value) else None
+
+
 def query_many(h5, ra_deg: float, dec_deg: float, distances_pc) -> list[dict]:
     """``query`` at each distance on one sightline; the pixel is found once."""
     check_layout(h5)
@@ -138,7 +147,8 @@ def query_many(h5, ra_deg: float, dec_deg: float, distances_pc) -> list[dict]:
         for d in distances_pc:
             out.append({"l_deg": l_deg, "b_deg": b_deg, "distance_pc": float(d), "dm": distance_modulus(d),
                         "in_footprint": False, "row": None, "nside": None, "healpix_index": None, "converged": None,
-                        "reliable_distance": False, "n_samples": 0, "ebv_map_units": None, "ebv": None})
+                        "reliable_distance": False, "dm_reliable_min": None, "dm_reliable_max": None,
+                        "n_samples": 0, "ebv_map_units": None, "ebv": None})
         return out
     pixel = info[row]
     grid = np.asarray(info.attrs["DM_bin_edges"], dtype=float)
@@ -152,15 +162,17 @@ def query_many(h5, ra_deg: float, dec_deg: float, distances_pc) -> list[dict]:
                     "row": row, "nside": int(pixel["nside"]), "healpix_index": int(pixel["healpix_index"]),
                     "converged": bool(pixel["converged"]),
                     "reliable_distance": bool(math.isfinite(low) and math.isfinite(high) and low <= dm <= high),
+                    "dm_reliable_min": _finite_or_none(low), "dm_reliable_max": _finite_or_none(high),
                     "n_samples": int(np.isfinite(values).sum()), "ebv_map_units": p, "ebv": _scaled(p)})
     return out
 
 
 def query(h5, ra_deg: float, dec_deg: float, distance_pc: float) -> dict:
     """The map at one star: {"l_deg", "b_deg", "distance_pc", "dm", "in_footprint", "row", "nside",
-    "healpix_index", "converged", "reliable_distance", "n_samples", "ebv_map_units": {"median", "p16", "p84"},
-    "ebv": the same times 0.884}. Outside the footprint ``in_footprint`` is False and the pixel's keys are None; a
-    pixel without a finite sample at the distance gives ``n_samples`` 0 and None for both percentile blocks."""
+    "healpix_index", "converged", "reliable_distance", "dm_reliable_min", "dm_reliable_max" (the pixel's reliable
+    range, None when not finite), "n_samples", "ebv_map_units": {"median", "p16", "p84"}, "ebv": the same times
+    0.884}. Outside the footprint ``in_footprint`` is False and the pixel's keys are None; a pixel without a finite
+    sample at the distance gives ``n_samples`` 0 and None for both percentile blocks."""
     return query_many(h5, ra_deg, dec_deg, [distance_pc])[0]
 
 

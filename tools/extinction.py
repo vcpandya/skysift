@@ -26,7 +26,8 @@ percentiles: in this interpreter when it holds h5py and astropy-healpix, otherwi
 (``map_block``): the samples' median and percentiles at the median distance in E(B-V), the sample medians at the
 distance's percentiles, the source, the file's name, the MD5 from the sidecar ``<file>.md5`` the controller writes
 (``"unverified"`` without one; a digest other than the Dataverse record's stops the tool), the map version, the
-pixel and the convergence and reliable-distance flags. A sightline outside the footprint, an unconverged pixel or no
+pixel, the convergence and reliable-distance flags and the reliable range's ends as distances
+(``reliable_distance_min_pc`` and ``reliable_distance_max_pc``, null when not finite). A sightline outside the footprint, an unconverged pixel or no
 finite sample stores "not available" with that reason. A stored column is kept, so a run over the five live records
 makes no network call; without one (or with ``--force``) IRSA is asked once. A stored record without a 3D value is
 read again when a map is given; a stored 3D value needs ``--force``.
@@ -342,9 +343,9 @@ def map_block(target: str, queries: list[dict], *, distance: list[float], map_pa
               queried_utc: str) -> dict:
     """The stored record from the queries at ``distance`` (the median first, then the 16th and 84th percentiles when
     there): the adopted block of spec 12.5, E(B-V) the samples' median and percentiles at the median distance
-    rounded to 4 decimals, with the sample medians at the distance's percentiles beside it; or "not available" with
-    ``MAP_FAILED`` and the short reason (``map_reason``) outside the footprint, in an unconverged pixel or without
-    a finite sample. The column is added by the caller."""
+    rounded to 4 decimals, with the sample medians at the distance's percentiles beside it and the reliable range's
+    ends in pc (``_parsecs``); or "not available" with ``MAP_FAILED`` and the short reason (``map_reason``) outside
+    the footprint, in an unconverged pixel or without a finite sample. The column is added by the caller."""
     q = queries[0]
     file = {"map_file": Path(map_path).name, "map_md5": md5, "map_version": bm.MAP_VERSION}
     why = _map_why(q, distance[0])
@@ -364,8 +365,28 @@ def map_block(target: str, queries: list[dict], *, distance: list[float], map_pa
         block.update({"distance_pc_p16": distance[1], "distance_pc_p84": distance[2]})
     block.update({"l_deg": round(q["l_deg"], 4), "b_deg": round(q["b_deg"], 4), "nside": q["nside"],
                   "healpix_index": q["healpix_index"], "n_samples": q["n_samples"], "converged": True,
-                  "reliable_distance": bool(q["reliable_distance"])})
+                  "reliable_distance": bool(q["reliable_distance"]),
+                  "reliable_distance_min_pc": _parsecs(q.get("dm_reliable_min")),
+                  "reliable_distance_max_pc": _parsecs(q.get("dm_reliable_max"))})
     return block
+
+
+def _parsecs(dm) -> int | None:
+    """A distance modulus as a distance, 10^(DM/5 + 1) to the nearest pc; None when the modulus is not finite."""
+    return round(10 ** (dm / 5 + 1)) if stars._finite(dm) else None
+
+
+def range_words(block: dict) -> str:
+    """Which side of the map's reliable range a star lies on (fix round 1, M2), from the record's
+    ``reliable_distance_min_pc`` and ``reliable_distance_max_pc``: "nearer than the map's reliable range (from N
+    pc)", "beyond the map's reliable range (to N pc)", or "outside the map's reliable range" without the end."""
+    d = float(block["distance_pc"])
+    low, high = block.get("reliable_distance_min_pc"), block.get("reliable_distance_max_pc")
+    if low is not None and d < low:
+        return f"nearer than the map's reliable range (from {low:,} pc)"
+    if high is not None and d > high:
+        return f"beyond the map's reliable range (to {high:,} pc)"
+    return "outside the map's reliable range"
 
 
 def store_path(root: Path, target_id: str) -> Path:
@@ -456,7 +477,7 @@ def _run_map(args, target: str, path: Path, ra: float, dec: float, star: dict, s
     spread = (f", {block['ebv_at_distance_p16']:.3f} to {block['ebv_at_distance_p84']:.3f} at the distance's 16th "
               f"and 84th percentiles ({distance[1]:.1f} and {distance[2]:.1f} pc)"
               if "ebv_at_distance_p16" in block else "")
-    flag = "" if block["reliable_distance"] else ", beyond the pixel's reliable distance range"
+    flag = "" if block["reliable_distance"] else f", {range_words(block)}"
     _say(f"{target}: RA {ra} Dec {dec}, {distance[0]:.1f} pc: Bayestar19 E(B-V) {block['ebv']:.3f} "
          f"({block['ebv_p16']:.3f} to {block['ebv_p84']:.3f}) from the local map (nside {block['nside']}, pixel "
          f"{block['healpix_index']}){spread}{flag}, adopted; {shown}; wrote {path}")

@@ -2,9 +2,11 @@
 
 The map has the layout ``dustmaps.bayestar.BayestarQuery`` reads (verified against its source on 26 October 2026):
 ``/pixel_info`` with the fields nside, healpix_index, converged, DM_reliable_min and DM_reliable_max and the attribute
-``DM_bin_edges``, and ``/samples`` of shape (pixels, samples, distances). Two nsides, three pixels, 5 samples and 120
-distance moduli from 4 to 19, the shape of bayestar2019. The cumulative reddening is linear in DM, so every expected
-number can be worked by hand.
+``DM_bin_edges``, and ``/samples`` of shape (pixels, samples, distances). Three nsides, four pixels, 5 samples and
+bayestar2019's own grid, 120 distance moduli from 4.0 to 18.875 in steps of 0.125 (the real file's ``DM_bin_edges``
+as the task review read them on 26 October 2026). The cumulative reddening is linear in DM, so every expected number
+can be worked by hand. One pixel is reliable only from DM 8.04 (406 pc), above the query's DM 7.41 (302 pc), as KIC
+6146676's pixel is on the real map; one has a reliable range with no finite upper end.
 
 The h5py and HEALPix tests need the third venv, and skip under the engine's:
 
@@ -22,10 +24,12 @@ from tools import bayestar_map as bm
 KIC_6146676 = (297.86871, 41.455567)     # (l, b) = (76.0444, 7.4198); nested 23376 at nside 64, 93504 at 128
 SIBLING = (297.6085018, 41.8463527)      # the centre of nside-128 pixel 93505: inside 23376, not inside 93504
 OTHER = (291.0, 40.9)                    # nested 23411 at nside 64, the unconverged pixel
+NEAR = (297.6114774, 41.2431682)         # the centre of nside-256 pixel 374018, inside 93504 and 23376
 SOUTH = (0.0, -80.0)                     # no pixel of the synthetic map holds it
-DM_GRID = np.linspace(4.0, 19.0, 120)
+DM_GRID = np.arange(4.0, 19.0, 0.125)    # 120 edges, the last 18.875
 SCALE = np.array([0.01, 0.02, 0.03, 0.04, 0.05])
 D_DM8 = 10 ** (13 / 5)                   # 398.107 pc, distance modulus 8 exactly
+D_NEAR = 10 ** (12.41 / 5)               # 302.0 pc, distance modulus 7.41, between the edges 7.375 and 7.5
 
 
 def _samples(factor: float) -> np.ndarray:
@@ -38,7 +42,8 @@ def write_map(path, *, drop: str | None = None):
     h5py = pytest.importorskip("h5py")
     fields = [("nside", "<i4"), ("healpix_index", "<i8"), ("converged", "u1"), ("DM_reliable_min", "<f4"),
               ("DM_reliable_max", "<f4")]
-    rows = [(64, 23376, 1, 5.0, 7.5), (64, 23411, 0, 5.0, 12.0), (128, 93504, 1, 5.0, 12.0)]
+    rows = [(64, 23376, 1, 5.0, 7.5), (64, 23411, 0, 5.0, np.nan), (128, 93504, 1, 5.0, 12.0),
+            (256, 374018, 1, 8.04, 12.0)]
     keep = [i for i, (name, _type) in enumerate(fields) if name != drop]
     info = np.array([tuple(r[i] for i in keep) for r in rows], dtype=[fields[i] for i in keep])
     with h5py.File(path, "w") as f:
@@ -46,8 +51,10 @@ def write_map(path, *, drop: str | None = None):
         if drop != "DM_bin_edges":
             ds.attrs["DM_bin_edges"] = DM_GRID
         if drop != "samples":
-            f.create_dataset("samples", data=np.stack([_samples(2.0), _samples(2.0), _samples(1.0)]).astype("f4"))
-        f.create_dataset("best_fit", data=np.stack([_samples(2.0)[2], _samples(2.0)[2], _samples(1.0)[2]]))
+            f.create_dataset("samples", data=np.stack([_samples(2.0), _samples(2.0), _samples(1.0),
+                                                       _samples(3.0)]).astype("f4"))
+        f.create_dataset("best_fit", data=np.stack([_samples(2.0)[2], _samples(2.0)[2], _samples(1.0)[2],
+                                                    _samples(3.0)[2]]))
     return path
 
 
@@ -60,6 +67,11 @@ def h5(tmp_path):
 
 
 # ------------------------------------------------------------------------------------------- pure (any venv)
+
+def test_the_synthetic_grid_is_bayestar2019s():
+    assert DM_GRID.size == 120 and DM_GRID[0] == 4.0 and DM_GRID[-1] == 18.875
+    assert np.allclose(np.diff(DM_GRID), 0.125)
+
 
 def test_the_distance_modulus_is_five_log_d_over_ten_parsecs():
     assert bm.distance_modulus(10.0) == pytest.approx(0.0)
@@ -75,7 +87,9 @@ def test_the_reddening_at_a_distance_follows_dustmaps():
     # below the first modulus dustmaps scales the first bin by 10^(0.2 (dm - dm_0)), the ratio of the distances
     assert bm.reddening_at(row, DM_GRID, 10 ** (8 / 5)) == pytest.approx(SCALE * 10 ** -0.2)
     assert bm.reddening_at(row, DM_GRID, 10 ** (9 / 5)) == pytest.approx(SCALE * 1.0)   # dm 4.0: the first bin
-    assert bm.reddening_at(row, DM_GRID, 1e6) == pytest.approx(SCALE * 16.0)            # beyond the map: the last
+    assert bm.reddening_at(row, DM_GRID, 1e6) == pytest.approx(SCALE * 15.875)          # beyond the map: the last
+    # DM 7.41 between the edges 7.375 and 7.5: linear in DM, not the first bin scaled
+    assert bm.reddening_at(row, DM_GRID, D_NEAR) == pytest.approx(SCALE * 4.41)
     two = np.array([[0.1, 0.2, 0.3, 0.4], [0.2, 0.3, 0.5, 0.6]])
     edges = np.array([4.0, 5.0, 6.0, 7.0])
     assert bm.reddening_at(two, edges, 10 ** (10.5 / 5)) == pytest.approx([0.25, 0.4])
@@ -113,6 +127,7 @@ def test_query_gives_the_samples_percentiles_in_map_units_and_e_b_v(h5):
     q = bm.query(h5, *KIC_6146676, D_DM8)
     assert (q["in_footprint"], q["row"], q["nside"], q["healpix_index"]) == (True, 2, 128, 93504)
     assert q["converged"] is True and q["reliable_distance"] is True and q["n_samples"] == 5
+    assert (q["dm_reliable_min"], q["dm_reliable_max"]) == pytest.approx((5.0, 12.0))
     assert q["dm"] == pytest.approx(8.0) and q["distance_pc"] == pytest.approx(D_DM8)
     assert q["ebv_map_units"] == pytest.approx({"median": 0.15, "p16": 0.082, "p84": 0.218}, rel=1e-6)
     assert q["ebv"] == pytest.approx({"median": 0.1326, "p16": 0.072488, "p84": 0.192712}, rel=1e-6)
@@ -124,14 +139,31 @@ def test_query_flags_an_unconverged_pixel_an_unreliable_distance_and_a_sightline
     other = bm.query(h5, *OTHER, D_DM8)
     assert other["converged"] is False and other["row"] == 1 and other["ebv"]["median"] == pytest.approx(
         0.884 * 0.30, rel=1e-6)
+    # a reliable range with no finite upper end: no reliable distance, and None for the end (JSON has no NaN)
+    assert other["reliable_distance"] is False and other["dm_reliable_max"] is None
+    assert other["dm_reliable_min"] == pytest.approx(5.0)
     sibling = bm.query(h5, *SIBLING, D_DM8)                            # row 0 is reliable only to DM 7.5
     assert sibling["row"] == 0 and sibling["reliable_distance"] is False and sibling["converged"] is True
+    assert sibling["dm_reliable_max"] == pytest.approx(7.5) and sibling["dm"] > sibling["dm_reliable_max"]
     south = bm.query(h5, *SOUTH, D_DM8)
     assert south["in_footprint"] is False and south["ebv"] is None and south["converged"] is None
     assert south["row"] is None and south["n_samples"] == 0 and south["reliable_distance"] is False
+    assert south["dm_reliable_min"] is None and south["dm_reliable_max"] is None
     many = bm.query_many(h5, *KIC_6146676, [10 ** (8 / 5), D_DM8, 1e6])
-    assert [m["ebv_map_units"]["median"] for m in many] == pytest.approx([0.03 * 10 ** -0.2, 0.15, 0.48])
+    assert [m["ebv_map_units"]["median"] for m in many] == pytest.approx([0.03 * 10 ** -0.2, 0.15, 0.47625])
     assert [m["row"] for m in many] == [2, 2, 2]
+
+
+def test_a_star_nearer_than_its_pixels_reliable_range_is_flagged_with_the_range(h5):
+    """The live case (review M4): DM 7.41 on a pixel reliable only from DM 8.04, as KIC 6146676 is on the real map.
+    The value is the samples interpolated in DM between the edges 7.375 and 7.5, below the reliable minimum."""
+    q = bm.query(h5, *NEAR, D_NEAR)
+    assert (q["row"], q["nside"], q["healpix_index"]) == (3, 256, 374018)
+    assert q["dm"] == pytest.approx(7.41) and q["reliable_distance"] is False and q["converged"] is True
+    assert q["dm_reliable_min"] == pytest.approx(8.04, abs=1e-6) and q["dm"] < q["dm_reliable_min"]
+    assert q["dm_reliable_max"] == pytest.approx(12.0)
+    assert q["ebv_map_units"]["median"] == pytest.approx(3.0 * 0.03 * 4.41, rel=1e-6)
+    json.dumps(q)
 
 
 def test_check_layout_names_the_first_missing_dataset_field_or_attribute(tmp_path):
@@ -151,7 +183,7 @@ def test_main_prints_the_queries_as_json_and_refuses_a_missing_file(tmp_path, ca
     ra, dec = KIC_6146676
     assert bm.main(["--map", str(path), "--ra", str(ra), "--dec", str(dec), "--distance", str(D_DM8), "1e6"]) == 0
     out = json.loads(capsys.readouterr().out)
-    assert [q["ebv_map_units"]["median"] for q in out] == pytest.approx([0.15, 0.48])
+    assert [q["ebv_map_units"]["median"] for q in out] == pytest.approx([0.15, 0.47625])
     assert bm.main(["--map", str(tmp_path / "none.h5"), "--ra", "1", "--dec", "1", "--distance", "100"]) == 2
     assert "none.h5 is not there" in capsys.readouterr().err
     bad = write_map(tmp_path / "bad.h5", drop="samples")

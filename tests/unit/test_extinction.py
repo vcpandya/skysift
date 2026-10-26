@@ -269,6 +269,9 @@ def test_store_wants_one_target_and_a_stored_file_is_validated(tmp_path, capsys)
     assert json.loads(path.read_text(encoding="utf-8"))["column"]["ebv"] == 0.6741
 
 
+RERUN_KEYS = ("reliable_distance_min_pc", "reliable_distance_max_pc")
+
+
 def test_the_writer_keys_match_the_five_stored_records(tmp_path):
     """Minor 10: the keys the tool writes (with the Argonaut query failing or answering, whichever the live run met)
     are the keys of the five stored records, so a rename cannot drift from the records again. Task 17: a record the
@@ -288,7 +291,10 @@ def test_the_writer_keys_match_the_five_stored_records(tmp_path):
     for target in ex.LIVE_TARGETS:
         stored = json.loads(ex.store_path(root, target).read_text(encoding="utf-8"))
         written = by_state[(stored["status"], "map_version" in stored)]
-        assert list(stored) == list(written), target
+        # Task 17 fix round 1: the two range keys reach the live records when the controller reruns the tool on
+        # the real map; until then a record may lack them, and only them (drop this allowance after the rerun)
+        expected = [k for k in written if k in stored or k not in RERUN_KEYS]
+        assert list(stored) == expected, target
         assert list(stored["column"]) == list(written["column"]), target
         assert stars.load_extinction(target, root) == stored
         assert not [w for w in NEUTRAL_WORDS if w in json.dumps(stored).lower()], target
@@ -299,13 +305,17 @@ def test_the_writer_keys_match_the_five_stored_records(tmp_path):
 MAP_UNITS = {303.0: (0.15, 0.082, 0.218), 300.0: (0.14, 0.07, 0.2), 306.1: (0.16, 0.09, 0.23)}
 
 
-def map_query(distance, median, p16, p84, *, in_footprint=True, converged=True, reliable=True, finite=True):
-    """One query as ``tools.bayestar_map.query`` returns it, at KIC 6146676's sightline (nside 1024)."""
+def map_query(distance, median, p16, p84, *, in_footprint=True, converged=True, reliable=True, finite=True,
+              dm_range=(5.0, 12.0)):
+    """One query as ``tools.bayestar_map.query`` returns it, at KIC 6146676's sightline (nside 1024); ``dm_range``
+    the pixel's reliable range in distance modulus (None for an end that is not finite)."""
     units = {"median": median, "p16": p16, "p84": p84} if in_footprint and finite else None
     return {"l_deg": 76.0444, "b_deg": 7.4198, "distance_pc": distance, "dm": 5 * math.log10(distance) - 5,
             "in_footprint": in_footprint, "row": 7 if in_footprint else None,
             "nside": 1024 if in_footprint else None, "healpix_index": 5984274 if in_footprint else None,
             "converged": converged if in_footprint else None, "reliable_distance": reliable and in_footprint,
+            "dm_reliable_min": dm_range[0] if in_footprint else None,
+            "dm_reliable_max": dm_range[1] if in_footprint else None,
             "n_samples": 5 if units else 0, "ebv_map_units": units,
             "ebv": {k: 0.884 * v for k, v in units.items()} if units else None}
 
@@ -357,6 +367,9 @@ def test_a_local_map_is_read_first_and_stored_as_the_adopted_block(tmp_path, cap
     assert block["map"] == "bayestar2019 (doi:10.7910/DVN/2EJ9TX), local file"
     assert (block["nside"], block["healpix_index"], block["n_samples"]) == (1024, 5984274, 5)
     assert block["converged"] is True and block["reliable_distance"] is True
+    # the reliable range's ends as distances, 10^(DM/5 + 1) to the nearest pc: DM 5 and 12
+    assert (block["reliable_distance_min_pc"], block["reliable_distance_max_pc"]) == (100, 2512)
+    assert list(block).index("reliable_distance_max_pc") == list(block).index("reliable_distance") + 2
     assert (block["l_deg"], block["b_deg"]) == (76.0444, 7.4198) and block["queried_utc"]
     assert block["column"]["ebv"] == 0.6741 and list(block)[-1] == "column"
     assert stars.load_extinction(TARGET, tmp_path / "c") == block
@@ -389,11 +402,23 @@ def test_outside_the_footprint_or_in_an_unconverged_pixel_the_3d_value_is_not_av
     assert not [w for w in NEUTRAL_WORDS if w in json.dumps(block).lower()]
 
 
-def test_an_unreliable_distance_is_adopted_with_its_flag(tmp_path):
+@pytest.mark.parametrize(("dm_range", "ends", "words"), [
+    ((8.04, 12.0), (406, 2512), ", nearer than the map's reliable range (from 406 pc)"),     # the live case
+    ((5.0, 7.0), (100, 251), ", beyond the map's reliable range (to 251 pc)"),
+    ((None, None), (None, None), ", outside the map's reliable range"),
+], ids=["nearer", "beyond", "no-range"])
+def test_an_unreliable_distance_is_adopted_with_its_flag_and_the_range(tmp_path, capsys, dm_range, ends, words):
+    """Fix round 1 (C1, M2): the record stores the reliable range's ends as distances beside the bool, and the
+    tool's line says which side of the range the star (303 pc) is on."""
     args, path = _map_setup(tmp_path)
     assert ex.main([*args, "--map", str(path)], fetch=routed_fetch(AssertionError(), IRSA_OK),
-                   map_reader=fake_reader(reliable=False)) == 0
-    assert _stored(tmp_path)["reliable_distance"] is False and _stored(tmp_path)["status"] == "adopted"
+                   map_reader=fake_reader(reliable=False, dm_range=dm_range)) == 0
+    block = _stored(tmp_path)
+    assert block["reliable_distance"] is False and block["status"] == "adopted"
+    assert (block["reliable_distance_min_pc"], block["reliable_distance_max_pc"]) == ends
+    err = capsys.readouterr().err
+    assert f"pc){words}, adopted;" in err and "beyond the pixel's" not in err
+    assert stars.load_extinction(TARGET, tmp_path / "c") == block
 
 
 def test_the_map_md5_comes_from_the_sidecar_and_a_wrong_one_stops_the_tool(tmp_path, capsys):
