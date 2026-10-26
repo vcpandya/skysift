@@ -1,6 +1,6 @@
 {
  "dossier_version": "6",
- "generated": "2026-10-26T17:02:19.404859+00:00",
+ "generated": "2026-10-26T20:58:22.627714+00:00",
  "target": {
   "target_id": "kic-006146676",
   "source": "kbonus_bkg",
@@ -2191,7 +2191,7 @@
    "distance_bailer_jones_pc": 302.95593,
    "note": "Gaia DR3: GSP-Phot Teff 3855 K is 189 K hotter than the colour route; FLAME gives radius 0.539 Rsun (8 per cent above the route) and mass 0.560 Msun (12 per cent above the route); the Bailer-Jones geometric distance 303.0 pc is within 1 per cent of the inverted parallax. Gaia's values fold in its own extinction and model grids, so they are shown as a cross-check, not as the headline."
   },
-  "reddening_note": "Teff and spectral type use the BP-RP 2.10 dereddened by the Bayestar19 E(BP-RP) of 0.011 (E(B-V) 0.009 at 303 pc); if E(BP-RP) were 0.2 the dwarf-table radius would be 0.569 Rsun.",
+  "reddening_note": "Teff and spectral type use the BP-RP 2.10 dereddened by the Bayestar19 E(BP-RP) of 0.011 (E(B-V) 0.009 at 303 pc); if E(BP-RP) were 0.2 the dwarf-table radius would be 0.569 Rsun. The Ks radius barely depends on reddening.",
   "alt_radius_e02": {
    "median": 0.569,
    "minus": 0.034,
@@ -2336,7 +2336,7 @@
    },
    "outside_mann_range": false,
    "height_pc": 39,
-   "height_clause": "the star sits about 39 pc above the plane, inside the dust layer, so its true reddening lies well inside the bracket; the map does not constrain the dust this near on this sightline"
+   "height_clause": "the star sits about 39 pc above the plane, inside the dust layer, so its true reddening lies well inside the range from unreddened to the full column; the map does not constrain the dust this near on this sightline"
   },
   "unreddened": {
    "route": "mann",
@@ -5856,6 +5856,6 @@
    "rung4_novelty": "4",
    "rung5_pixels": "4"
   },
-  "git_commit": "36024e3"
+  "git_commit": "0dca504"
  }
 }
