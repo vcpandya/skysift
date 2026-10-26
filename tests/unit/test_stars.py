@@ -445,6 +445,26 @@ def test_the_height_clause_comes_in_three_bands():
         assert got["height_pc"] == z and got["height_clause"] == words.format(z=z), z
 
 
+def test_the_adopted_3d_value_settles_the_height_clause_and_carries_the_mann_range_flag():
+    """Task 17 (spec 12.5): with a 3D value adopted the height clause stays, as it describes the geometry, and ends
+    with ``HEIGHT_SETTLED``; the adopted star's ``outside_mann_range`` is recorded in the block, as the column end's
+    is, so the texts can print the "indicative" clause when the dereddened star leaves the relations' range."""
+    gaia = gaia_row_6146676()
+    star = derive(gaia, 40.29109, 0.048, 2165e-6, np.random.default_rng(1), extinction={**EXT, "column": COLUMN})[0]
+    e = star.extinction
+    assert stars.HEIGHT_SETTLED == "the 3D value settles it"
+    assert e["height_clause"] == (f"the star sits about {e['height_pc']} pc above the plane, inside the dust layer, "
+                                  "so its true reddening lies well inside the bracket; the 3D value settles it")
+    assert e["outside_mann_range"] is False and star.route == "mann"
+    assert e["outside_mann_range"] == stars.outside_mann_range(star)
+    assert stars.MANN_TEFF_RANGE == (2700.0, 4100.0)
+    manual = derive(gaia, 40.29109, 0.048, 2165e-6, np.random.default_rng(1),
+                    extinction={**EXT, "status": "manual", "map": "by hand"})[0].extinction
+    assert manual["height_clause"].endswith("; the 3D value settles it")
+    bare = derive(gaia, 40.29109, 0.048, 2165e-6, np.random.default_rng(1), extinction=NOT_AVAILABLE)[0].extinction
+    assert not bare["height_clause"].endswith(stars.HEIGHT_SETTLED) and "outside_mann_range" not in bare
+
+
 def _with_column(ebv: float, std: float) -> dict:
     return {**NOT_AVAILABLE, "column": {**COLUMN, "ebv": ebv, "ebv_std": std}}
 

@@ -1140,6 +1140,34 @@ def test_the_star_section_leads_with_the_reddening_paragraph(seeded_dossier):
     assert json.loads(blob)["page_texts"]["star"] == words
 
 
+def test_the_star_section_leads_with_the_adopted_3d_value_in_the_adopted_state(seeded_dossier):
+    """Task 17 (spec 12.5): with the 3D value adopted the served and the standalone page print the adopted paragraph:
+    the Bayestar19 E(B-V) with the distance check, each parameter beside its unreddened and full-column values, the
+    unreddened star as the earlier assumption and the full column as a consistent upper bound."""
+    import re
+    from pathlib import Path
+
+    from skysift import pack
+    from tests.unit.ui_seed import seed_adopted_extinction
+    client, app, _ids, data = seeded_dossier
+    extinction, unreddened = seed_adopted_extinction()
+    data = {**data, "star": {**data["star"], "extinction": extinction, "unreddened": unreddened}}
+    Path(app.state.store.dossier(STAGE2_TARGET)["data_path"]).write_text(json.dumps(data), encoding="utf-8")
+    words = pack.star_texts(data)
+    assert words.startswith("Reddening: E(B-V) 0.312 (16th to 84th percentile 0.254 to 0.371) from Bayestar19 "
+                            "(Green et al. 2019) at 303 pc (E(B-V) 0.305 to 0.318 across the distance's 16th to 84th "
+                            "percentiles, 300 to 306 pc)")
+    assert "is the earlier assumption" in words and "an upper bound, is consistent with the 3D value" in words
+    assert "(unreddened " in words and "; full column " in words and "the 3D value settles it" in words
+    assert "not measured" not in words
+    page = html_module.unescape(client.get(f"/dossiers/{STAGE2_TARGET}").text)
+    star = page.split('id="star"')[1].split('id="look"')[0] if 'id="look"' in page else page.split('id="star"')[1]
+    assert words in star and "<strong>Reddening.</strong>" not in star
+    export = client.get(f"/dossiers/{STAGE2_TARGET}/export.html").text
+    blob = re.search(r'<script id="dossier-data" type="application/json">(.*?)</script>', export, re.DOTALL).group(1)
+    assert json.loads(blob)["page_texts"]["star"] == words
+
+
 def test_the_crowding_metric_is_a_row_of_the_star_provenance_list(seeded_dossier):
     """Task 15 fix round 2, M7: the page gives the crowding metric as a row of the star's list (value, column,
     catalogue, per-quarter range and the most-crowded-quarter clause when it holds), not as a sentence, in the served

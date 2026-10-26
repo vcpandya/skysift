@@ -1478,10 +1478,17 @@ def gaia_flags_text(data: dict) -> str | None:
 
 
 REDDENING_BIAS = "a value biased for cool dwarfs"
-# spec 12.3: the note's clause with a 3D value adopted. Task 16 Step 13, cut 1: without "a sightline average, " and
-# the GSP-Phot half, which the README's paragraph and table keep
-REDDENING_CLAUSE = ("the reddening E(B-V) = {ebv} ({p16} to {p84}) comes from the Bayestar19 dust map at the Gaia "
-                    "distance{green}, in place of the unreddened colour assumed before")
+# spec 12.3 and 12.5: the note's sentence with a 3D value adopted (the controller's ruling of 26 October 2026): the
+# value with its error, the map, the distance, then the full column as the check in one parenthesis (``COLUMN_CHECK``:
+# "within" for a 3D value consistent with it, "above" otherwise, the note's short form of the plain texts' "consistent
+# (inconsistent) with the 3D value", which the word limit leaves no room for) and, when the dereddened star leaves the
+# Mann relations' range, ``MANN_ADOPTED``. "A sightline average" and the GSP-Phot half stay in the README's paragraph
+# and table (Task 16 Step 13, cut 1)
+REDDENING_CLAUSE = "the reddening is E(B-V) = {ebv} from Bayestar19{green} at {d} pc"
+COLUMN_CHECK = " ({where} the full column of {col}, an upper bound)"
+COLUMN_WHERE = {"consistent": "within", "inconsistent": "above"}
+MANN_ADOPTED = "; the dereddened parameters are " + stars_module.MANN_OUTSIDE
+EARLIER_ASSUMPTION = f"{stars_module.UNREDDENED} is the earlier assumption"
 # the three states the texts follow (spec 12.3 as amended by the controller's addenda of 23 October)
 RED_ADOPTED, RED_BRACKET, RED_NOT_AVAILABLE = "adopted", "bracket", "not available"
 FULL_COLUMN = "Full column (Schlafly and Finkbeiner 2011)"
@@ -1525,6 +1532,71 @@ def _height(data: dict) -> str:
     for the plain texts' full-column sentence; empty without one."""
     clause = ((data.get("star") or {}).get("extinction") or {}).get("height_clause")
     return f"; {clause}" if clause else ""
+
+
+def column_fit(data: dict) -> str | None:
+    """The full column as the adopted value's check (spec 12.5; the controller's ruling of 26 October 2026):
+    "consistent" when the 3D median sits at or below the column's E(B-V) plus its stored std, "inconsistent" above
+    it; None outside the adopted state or without a fetched column."""
+    if reddening_state(data) != RED_ADOPTED:
+        return None
+    e = data["star"]["extinction"]
+    col = e.get("column")
+    if not isinstance(col, dict) or col.get("status") != stars_module.COLUMN_OK or _num(col.get("ebv")) is None:
+        return None
+    top = _num(col["ebv"]) + (_num(col.get("ebv_std")) or 0.0)
+    return "consistent" if float(e["ebv"]) <= top + 1e-9 else "inconsistent"
+
+
+def _not_there(data: dict) -> str:
+    """Why no 3D value is adopted, for the plain texts: the local map's short reason when it was read (Task 17:
+    outside its footprint, an unconverged pixel, no finite sample), else the build-time words of Task 16."""
+    why = ((data.get("star") or {}).get("extinction") or {}).get("map_reason")
+    return f"Bayestar19 not available: {why}" if why else "Bayestar19 not available at build time"
+
+
+def _distance_check(e: dict) -> str:
+    """" (E(B-V) a to b across the distance's 16th to 84th percentiles, d1 to d2 pc)" from a local-map record (the
+    sample medians at the Gaia distance's percentiles, Task 17), so the texts say what the distance error does to the
+    reddening; empty without them."""
+    vals = [_num(e.get(k)) for k in ("ebv_at_distance_p16", "ebv_at_distance_p84", "distance_pc_p16",
+                                     "distance_pc_p84")]
+    if None in vals:
+        return ""
+    lo, hi = sorted(vals[:2])
+    return (f" (E(B-V) {lo:.3f} to {hi:.3f} across the distance's 16th to 84th percentiles, {vals[2]:.0f} to "
+            f"{vals[3]:.0f} pc)")
+
+
+def _mid_at(v, ref) -> str | None:
+    """A value's median alone at the decimals the adopted value's error gives (``pm_digits``), with thousands
+    commas: the unreddened and full-column values beside the adopted one. None without a median."""
+    if not isinstance(v, dict) or _num(v.get("median")) is None:
+        return None
+    d = pm_digits(ref.get("minus"), ref.get("plus")) if isinstance(ref, dict) else 2
+    return f"{_num(v['median']):,.{d}f}"
+
+
+def _adopted_mann(e: dict) -> str:
+    """", outside the Mann relations' range, so indicative" when the adopted, dereddened star leaves the relations'
+    calibration (``stars.outside_mann_range``, recorded by ``derive``); empty otherwise."""
+    return f", {stars_module.MANN_OUTSIDE}" if e.get("outside_mann_range") is True else ""
+
+
+def _adopted_trio(star: dict, planet: dict, unred: dict, col: dict | None) -> str:
+    """The adopted Teff, radius and planet radius, each as "<adopted> (unreddened <value>; full column <value>)"
+    (the ruling's form; the full column when it was fetched), the values beside at the adopted value's decimals."""
+    parts = []
+    for name, key, unit, holder in (("Teff", "teff", " K", star), ("radius", "radius", " Rsun", star),
+                                    ("planet radius", "rp_rearth", " Earth radii", planet)):
+        adopted = holder.get(key)
+        text = value_text(adopted)
+        if not text:
+            continue
+        beside = [f"unreddened {u}" for u in [_mid_at(unred.get(key), adopted)] if u]
+        beside += [f"full column {c}" for c in [_mid_at((col or {}).get(key), adopted)] if c and col is not None]
+        parts.append(f"{name} {text}{unit}" + (f" ({'; '.join(beside)})" if beside else ""))
+    return ", ".join(parts[:-1]) + (" and " if len(parts) > 1 else "") + parts[-1] if parts else ""
 
 
 def _gsp_row(data: dict) -> bool:
@@ -1617,9 +1689,13 @@ def reddening_plain(data: dict) -> str | None:
     """The reddening paragraph of the plain texts (README, ExoFOP note, archive email, Zenodo, the page), by
     ``reddening_state``; None without the block or a characterised star.
 
-    Adopted: "Reddening: E(B-V) E (16th to 84th percentile L to H) from Bayestar19 (Green et al. 2019) at D pc, a
-    sightline average, gives E(BP-RP) ..., A_G ... and A_Ks ...; unreddened (E(B-V) = 0), Teff ..., radius ... and
-    planet radius ... against the adopted ...[; the full column ...][; GSP-Phot ...]." Bracket: not measured at the
+    Adopted (Task 17, spec 12.5): "Reddening: E(B-V) E (16th to 84th percentile L to H) from Bayestar19 (Green et
+    al. 2019) at D pc[ (E(B-V) a to b across the distance's 16th to 84th percentiles, d1 to d2 pc)], a sightline
+    average, adopted; through the Gaia DR3 law it gives E(BP-RP) ..., A_G ... and A_Ks ..., and Teff T K (unreddened
+    U; full column C), radius ... and planet radius ...[, outside the Mann relations' range, so indicative];
+    unreddened (E(B-V) = 0) is the earlier assumption[; the full-column E(B-V) of F (Schlafly and Finkbeiner 2011),
+    an upper bound, is consistent (inconsistent) with the 3D value; <the height clause, settled by the 3D value>][;
+    GSP-Phot ...]." Bracket: not measured at the
     star's distance, the parameters unreddened (E(B-V) = 0), adopted, the full column as the upper bound with what the
     law makes of it (``_column_trio``: the adopted values' decimals and the Mann-range clause), GSP-Phot not adopted.
     Not available: the unreddened parameters adopted, neither value there."""
@@ -1635,16 +1711,20 @@ def reddening_plain(data: dict) -> str | None:
         flag = (", outside the map's reliable distance range on this sightline" if e.get("reliable_distance") is False
                 else "")
         law = [f"E(BP-RP) {_red(e.get('ebprp'))}", f"A_G {_red(e.get('a_g'))}", f"A_Ks {_red(e.get('a_ks'))}"]
+        # Task 17 (spec 12.5): each parameter beside its unreddened and full-column values, the unreddened star the
+        # earlier assumption, the full column a check the 3D value sits inside or not, in one clause
         text = (f"Reddening: E(B-V) {e['ebv']:.3f} (16th to 84th percentile {e['ebv_p16']:.3f} to "
-                f"{e['ebv_p84']:.3f}) from Bayestar19 (Green et al. 2019){how} at {e['distance_pc']:.0f} pc, a "
-                f"sightline average{flag}, gives {law[0]}, {law[1]} and {law[2]}; {stars_module.UNREDDENED}, "
-                f"{_trio(unred, unred.get('rp_rearth'))} against the adopted {_trio(star, planet.get('rp_rearth'))}")
-        if col is not None:
-            text += (f"; the full-column E(B-V) of {column_ebv_text(col)} (Schlafly and Finkbeiner 2011), an upper "
-                     f"bound, gives {_column_trio(col, star, planet)}{_height(data)}")
+                f"{e['ebv_p84']:.3f}) from Bayestar19 (Green et al. 2019){how} at {e['distance_pc']:.0f} pc"
+                f"{_distance_check(e)}, a sightline average{flag}, adopted; through the Gaia DR3 law it gives "
+                f"{law[0]}, {law[1]} and {law[2]}, and {_adopted_trio(star, planet, unred, col)}{_adopted_mann(e)}; "
+                f"{EARLIER_ASSUMPTION}")
+        fit = column_fit(data)
+        if fit is not None:
+            text += (f"; the full-column E(B-V) of {column_ebv_text(e['column'])} (Schlafly and Finkbeiner 2011), an "
+                     f"upper bound, is {fit} with the 3D value{_height(data)}")
         return text + (f"; {gsp}." if gsp else ".")
     if state == RED_BRACKET:
-        text = ("Reddening: not measured at the star's distance (Bayestar19 not available at build time), so the "
+        text = (f"Reddening: not measured at the star's distance ({_not_there(data)}), so the "
                 f"parameters are {stars_module.UNREDDENED}, adopted ({_trio(star, planet.get('rp_rearth'))}).")
         if col is not None:
             law = [f"E(BP-RP) {_red(col.get('ebprp'))}", f"A_G {_red(col.get('a_g'))}",
@@ -1653,7 +1733,7 @@ def reddening_plain(data: dict) -> str | None:
                      "bound, since it counts the dust beyond the star too: through the Gaia DR3 law it gives "
                      f"{law[0]}, {law[1]} and {law[2]}, and {_column_trio(col, star, planet)}{_height(data)}.")
         return text + (f" {_capital(gsp)}." if gsp else "")
-    text = ("Reddening: not measured (Bayestar19 not available at build time, and the IRSA full-column value could "
+    text = (f"Reddening: not measured ({_not_there(data)}, and the IRSA full-column value could "
             f"not be fetched), so the parameters are {stars_module.UNREDDENED}, adopted.")
     return text + (f" {_capital(gsp)}." if gsp else "")
 
@@ -1681,13 +1761,15 @@ def reddening_rows(data: dict) -> list[dict]:
                      "ebv": f"{e['ebv']:.3f} ({e['ebv_p16']:.3f} to {e['ebv_p84']:.3f})",
                      **{k: _red(e.get(k)) or na for k in ("ebprp", "a_g", "a_ks")},
                      "bp_rp0": _f(e.get("bp_rp0"), 3) or na,
-                     **physical(star, planet.get("rp_rearth"), planet.get("insolation_earth")), "status": "adopted"})
+                     **physical(star, planet.get("rp_rearth"), planet.get("insolation_earth")),
+                     "status": f"adopted{_adopted_mann(e)}"})
     rows.append({"estimate": "Unreddened", **{k: "0" for k in ("ebv", "ebprp", "a_g", "a_ks")},
                  "bp_rp0": _f(unred.get("bp_rp0"), 3) or na,
                  **physical(unred, unred.get("rp_rearth"), unred.get("insolation_earth")),
-                 "status": "not adopted" if state == RED_ADOPTED else "adopted"})
+                 "status": "the earlier assumption, not adopted" if state == RED_ADOPTED else "adopted"})
     col = _column_derived(data)
     if col is not None:
+        fit = f", {column_fit(data)} with the 3D value" if column_fit(data) else ""     # Task 17: the check
         at = {"teff": _at_adopted(col.get("teff"), star.get("teff")),
               "radius": _at_adopted(col.get("radius"), star.get("radius")),
               "mass": _at_adopted(col.get("mass"), star.get("mass")),
@@ -1696,7 +1778,7 @@ def reddening_rows(data: dict) -> list[dict]:
         rows.append({"estimate": FULL_COLUMN, "ebv": column_ebv_text(col),
                      **{k: _red(col.get(k)) or na for k in ("ebprp", "a_g", "a_ks")},
                      "bp_rp0": _f(col.get("bp_rp0"), 3) or na, **{k: v or na for k, v in at.items()},
-                     "status": f"upper bound{_mann_flag(col)}"})
+                     "status": f"upper bound{fit}{_mann_flag(col)}"})
     red = _num(star.get("ebpminrp_gspphot"))
     teff = _num((star.get("gaia_cross_check") or {}).get("teff_gspphot"))
     if _gsp_row(data):
@@ -1714,19 +1796,22 @@ def reddening_key(data: dict) -> str | None:
         return None
     parts = []
     if state == RED_ADOPTED:
+        # Task 17 (spec 12.5): the unreddened star is the earlier assumption, the full column the 3D value's check
+        mann = (" The dereddened parameters are " + stars_module.MANN_OUTSIDE + "." if
+                data["star"]["extinction"].get("outside_mann_range") is True else "")
         parts.append("Bayestar19: a dust-map sightline average at the Gaia distance with its 16th to 84th percentile "
-                     "range, adopted.")
-        parts.append("Unreddened (E(B-V) = 0), not adopted.")
+                     f"range, adopted.{mann}")
+        parts.append("Unreddened (E(B-V) = 0): the earlier assumption, not adopted.")
     else:
-        why = ("Bayestar19 not available at build time" if state == RED_BRACKET else
-               "Bayestar19 not available at build time, and the full column could not be fetched")
+        why = _not_there(data) + ("" if state == RED_BRACKET else ", and the full column could not be fetched")
         parts.append(f"Unreddened (E(B-V) = 0), adopted while no 3D value at the star's distance is there ({why}).")
     col = _column_derived(data)
     if col is not None:
+        fit = f", {column_fit(data)} with the 3D value" if column_fit(data) else ""
         route = (", on the adopted route (the Mann relations with Ks dereddened by A_Ks), "
                  f"{stars_module.MANN_OUTSIDE}" if col.get("outside_mann_range") is True else "")
         parts.append("Full column: the IRSA DUST value at the star, the whole line of sight with the dust beyond the "
-                     f"star, so an upper bound{route}.")
+                     f"star, so an upper bound{fit}{route}.")
     if _gsp_row(data):
         parts.append("GSP-Phot: Gaia's own fit, biased for cool dwarfs (Andrae et al. 2023), not adopted.")
     if state == RED_ADOPTED or _column_derived(data) is not None:
@@ -1743,7 +1828,9 @@ def reddening_text(data: dict, tex: bool = False) -> str | None:
     ``andrae2023``.
 
     With a 3D extinction adopted (spec 12.3, ``reddening_state`` "adopted") the clause is ``REDDENING_CLAUSE``
-    instead, capitalised, citing ``green2019``. In the bracket state the note's planet sentence carries
+    instead, capitalised, citing ``green2019``, with its E(B-V) error by the precision rule, then ``COLUMN_CHECK``
+    when the full column was fetched (``column_fit``) and ``MANN_ADOPTED`` when the dereddened star leaves the Mann
+    relations' range (Task 17, spec 12.5). In the bracket state the note's planet sentence carries
     ``rp_bracket_text`` and no GSP-Phot sentence: None (Task 16 Step 13, cut 1; the README's paragraph and table keep
     GSP-Phot, as not adopted). With neither value, or for a dossier before version 6, the GSP-Phot sentence stands."""
     star = data.get("star") or {}
@@ -1752,9 +1839,17 @@ def reddening_text(data: dict, tex: bool = False) -> str | None:
     if state == RED_ADOPTED:
         e = star["extinction"]
         green = Raw(r" \citep{green2019}") if tex else " (Green et al. 2019)"
+        ebv = value_text({"median": float(e["ebv"]), "minus": round(float(e["ebv"]) - float(e["ebv_p16"]), 6),
+                          "plus": round(float(e["ebv_p84"]) - float(e["ebv"]), 6)}, tex)
         head, rest = REDDENING_CLAUSE.split("{green}")
-        head = head.format(ebv=f"{e['ebv']:.3f}", p16=f"{e['ebv_p16']:.3f}", p84=f"{e['ebv_p84']:.3f}")
-        return _joined(tex, _capital(head), green, rest)
+        before, after = head.split("{ebv}")
+        parts = [_capital(before), ebv, after, green, rest.format(d=f"{float(e['distance_pc']):.0f}")]
+        fit = column_fit(data)
+        if fit is not None:                       # Task 17: the full column as the check, in one parenthesis
+            parts.append(COLUMN_CHECK.format(col=f"{_num(e['column']['ebv']):.3f}", where=COLUMN_WHERE[fit]))
+        if e.get("outside_mann_range") is True:
+            parts.append(MANN_ADOPTED)
+        return _joined(tex, *parts)
     if state == RED_BRACKET or red is None or not star_characterized(data):
         return None
     cite = Raw(r" \citep{andrae2023}") if tex else " (Andrae et al. 2023)"

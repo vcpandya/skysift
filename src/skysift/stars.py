@@ -105,6 +105,8 @@ HEIGHT_UPPER = ("the star sits about {z} pc {side} the plane, within the upper d
                 "lie anywhere in the bracket")
 HEIGHT_ABOVE = ("the star sits about {z} pc {side} the plane, above most of the dust, so the full-column value is "
                 "probably close to its true reddening")
+# Task 17 (spec 12.5): with a 3D value adopted the clause stays, as it describes the geometry, and this ends it
+HEIGHT_SETTLED = "the 3D value settles it"
 COLUMN_LABEL = "the full column (Schlafly and Finkbeiner 2011)"
 KOPPARAPU_TEFF = (2600.0, 7200.0)
 # Kopparapu et al. 2013, erratum 2013 ApJ 770 82: effective-flux coefficients, t = Teff - 5780. The hand-built template
@@ -656,7 +658,8 @@ def derive(gaia: GaiaRow | None, period: float, fit_k: float | None, depth: floa
     Ks dereddened by A_Ks whatever the dereddened colour, ``outside_mann_range`` recording when that colour leaves
     their calibration): the upper end of the bracket, under ``extinction["column"]``. The
     block also carries the star's height above the plane (``height_fields``: ``b_deg``, ``height_pc``,
-    ``height_clause``) from the Gaia distance."""
+    ``height_clause``) from the Gaia distance. With a 3D value (Task 17, spec 12.5) the height clause ends with
+    ``HEIGHT_SETTLED`` and the block records the adopted star's ``outside_mann_range``."""
     if extinction is None:
         return _derive(gaia, period, fit_k, depth, rng)
     plain_rng, column_rng = copy.deepcopy(rng), copy.deepcopy(rng)
@@ -673,10 +676,13 @@ def derive(gaia: GaiaRow | None, period: float, fit_k: float | None, depth: floa
         star, planet = _derive(gaia, period, fit_k, depth, rng, e, BAYESTAR_LABEL, tail)
         block.update({"bp_rp0": round(float(np.median(e["bp_rp0"])), 4), "colour_held": bool(np.any(e["colour_held"])),
                       **_values(e, source=f"{BAYESTAR_LABEL} E(B-V) through the Gaia (E)DR3 law")})
+        block["outside_mann_range"] = outside_mann_range(star)     # Task 17: the "indicative" clause of the texts
     else:
         star, planet = _derive(gaia, period, fit_k, depth, rng)
     if plain.distance_pc is not None:
         block.update(height_fields(gaia.ra, gaia.dec, plain.distance_pc.median))
+        if state in (EXT_ADOPTED, EXT_MANUAL):
+            block["height_clause"] += f"; {HEIGHT_SETTLED}"
     ebv_col = column_ebv(extinction)
     if ebv_col is not None:
         # minor 8: the stored spread inside the 5 arcmin circle, a normal held at 0 and above on a generator of its own

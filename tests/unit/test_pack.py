@@ -22,6 +22,7 @@ from skysift import crosscheck as cross_check
 from skysift import dossier as dossier_module
 from skysift import ephemeris, exofop, net, pack_rows, pack_text, zenodo
 from skysift import pack as pack_module
+from skysift import stars as stars_module
 from skysift.cli import app
 from skysift.dossier import LightCurveReleased, generate, whitened
 from skysift.lc.transit_model import UNCONSTRAINED
@@ -2124,7 +2125,30 @@ LIVE_SHAPE_LIMIT = 1480
 LIVE_ABSTRACT_LIMIT = 148          # round 3 polish: two under the RNAAS 150; the ruled cut saves two counted words
 
 
-def _live_shape(cross: str, prior: bool = True) -> dict:
+def _adopted_live(ext: dict) -> dict:
+    """Task 17: the golden's extinction block as the local map will leave it (KIC 6146676's sightline; the round
+    numbers of a 3D E(B-V) well under its full column of 0.674). The adopted star is not flagged outside the Mann
+    range: for this star the flag cannot arise in the adopted state, since dereddening only makes it hotter and above
+    4,000 K ``derive`` leaves the Mann relations for the colour table, so the live note has no "indicative" clause
+    (its wording is pinned by ``test_an_adopted_value_above_the_column_or_outside_the_mann_range_says_so_in_one_clause``)."""
+    def v(m, lo, hi):
+        return {"median": m, "minus": lo, "plus": hi, "source": "test"}
+    block = {k: val for k, val in ext.items() if k != "reason"}
+    block.update({"status": "adopted", "state": "adopted", "ebv": 0.312, "ebv_p16": 0.254, "ebv_p84": 0.371,
+                  "ebv_at_distance_p16": 0.305, "ebv_at_distance_p84": 0.318,
+                  "source": "Bayestar19 (Green et al. 2019), local file",
+                  "map": "bayestar2019 (doi:10.7910/DVN/2EJ9TX), local file", "map_file": "bayestar2019.h5",
+                  "map_md5": "ab815d2fd3068d1b81a1bd61fb18a722", "map_version": "bayestar2019",
+                  "distance_pc_p16": round(ext["distance_pc"] - 3.0, 1),
+                  "distance_pc_p84": round(ext["distance_pc"] + 3.1, 1), "nside": 1024, "healpix_index": 5984274,
+                  "n_samples": 5, "converged": True, "reliable_distance": True, "a0": v(0.967, 0.18, 0.18),
+                  "ebprp": v(0.381, 0.071, 0.07), "a_g": v(0.768, 0.14, 0.14), "a_ks": v(0.113, 0.021, 0.021),
+                  "bp_rp0": 1.716, "colour_held": False, "outside_mann_range": False,
+                  "height_clause": f"{ext['height_clause']}; {stars_module.HEIGHT_SETTLED}"})
+    return block
+
+
+def _live_shape(cross: str, prior: bool = True, state: str = "bracket") -> dict:
     """The version 4 golden as a live draft has it (fix round 4, I-1): its own ``timing``, ``shape``, ``parity``,
     ``secondary``, ``centroid_offset`` (the star's own direct-image centroid, so the Bryson sentence and bibitem) and
     ``hand_built_localisation`` blocks; a prior claim unless ``prior`` is False; the worst TESS block, a skipped
@@ -2164,6 +2188,8 @@ def _live_shape(cross: str, prior: bool = True) -> dict:
     data["tests"] = [*data["tests"], {"rung": "rung1_events", "status": "pass", "reason": "",
                                       "metrics": {"n_covered": 63, "n_events_with_data": 79,
                                                   "ses_max_over_mes": 0.33}}]
+    if state == "adopted":                        # Task 17: the golden as the local map will leave it
+        data["star"] = {**data["star"], "extinction": _adopted_live(data["star"]["extinction"])}
     data["caveats"] = [*dossier_module.caveats(data), SHAPE_OFFSET_CAVEAT]
     data["pixels"] = [{"season": s} for s in range(4)]
     return data
@@ -2174,10 +2200,10 @@ SHAPE_OFFSET_CAVEAT = {"key": "shape_offset", "title": "The shape fit sits off i
                                "more than its 1-sigma spread; quote the full-data value beside it."}
 
 
-def _check_live_shape(cross: str, prior: bool) -> dict:
+def _check_live_shape(cross: str, prior: bool, state: str = "bracket") -> dict:
     """Render ``_live_shape`` and check it carries every long form it should; its ``note_words``."""
     from skysift import tess
-    data = _live_shape(cross, prior)
+    data = _live_shape(cross, prior, state)
     block = data["tess"]
     assert block["sectors_skipped"] == [109] and block["uncertain"] and block["n_transits"] > 0
     tex = render_note(data)
@@ -2211,14 +2237,20 @@ def _check_live_shape(cross: str, prior: bool) -> dict:
     assert (PRIOR_DOI in flat) == prior
     assert "largest single-event statistic is 0.33" in flat and "(d) per-season difference images" in flat
     assert "The shape fit sits off its bootstrap" in flat and "No spectrum" in flat
+    if state == "adopted":       # Task 17: the reddening sentence with the column check and the Mann clause
+        assert str(pack_module.reddening_text(data, True)) in flat and "from unreddened" not in flat
+        assert "(within the full column of 0.674, an upper bound). " in flat and "indicative. " not in flat
+    else:
+        assert str(pack_module.rp_bracket_text(data, True)) in flat
     words = note_words(tex)
     assert note_problems(words, tex) == [] or words["total"] > NOTE_LIMITS["total"]
     return words
 
 
+@pytest.mark.parametrize("state", ["bracket", "adopted"])
 @pytest.mark.parametrize("prior", [False, True], ids=["no-prior-claim", "prior-claim"])
 @pytest.mark.parametrize("cross", ["validated", "dominant"])
-def test_the_live_shape_stays_inside_the_word_limit_with_margin(cross, prior):
+def test_the_live_shape_stays_inside_the_word_limit_with_margin(cross, prior, state):
     """Fix rounds 2 to 4, N1 and I-1: the note as a live draft of the golden renders it (its own timing,
     shape, parity, secondary, pixel-offset and hand-built blocks, the longest cross-check forms, a TESS sentence with
     a skipped sector and an uncertain count, with and without a prior claim) stays at or under 1,480 words, 20 under
@@ -2243,14 +2275,19 @@ def test_the_live_shape_stays_inside_the_word_limit_with_margin(cross, prior):
     no second unit and no second "E(B-V) of" in the bracket), on the golden of 09ee6e3: 1,347 and 1,375 without, 1,451
     and 1,479 with one; abstracts 146 and 150.
     Round 3 polish: the closing sentence "pending follow-up" (the live KIC 5689121 abstract was 151): 144 without a
-    prior claim, 148 with one, held at or under LIVE_ABSTRACT_LIMIT."""
-    words = _check_live_shape(cross, prior)
+    prior claim, 148 with one, held at or under LIVE_ABSTRACT_LIMIT.
+    Task 17 (spec 12.5) measures both states (validated, dominant): the bracket, as the golden stands, 1,345 and 1,373
+    without a prior claim and 1,449 and 1,477 with one; the adopted state (``_adopted_live``: the reddening sentence
+    with the full column as its check in place of the bracket clause and the caveat title's reddening words, Green et
+    al. 2019 in place of Schlafly and Finkbeiner 2011) 1,347 and 1,375 without and 1,451 and 1,479 with one; abstracts
+    144 and 148 in both."""
+    words = _check_live_shape(cross, prior, state)
     assert words["total"] <= LIVE_SHAPE_LIMIT, words
     assert words["abstract"] <= LIVE_ABSTRACT_LIMIT <= NOTE_LIMITS["abstract"] - 2, words
-    abstract = " ".join(render_note(_live_shape(cross, prior)).split(r"\begin{abstract}")[1].split())
+    abstract = " ".join(render_note(_live_shape(cross, prior, state)).split(r"\begin{abstract}")[1].split())
     assert ("Null searches give a false-alarm rate of 1 in 170 per star, about 9 such peaks expected across the "
             "1,579-star sweep;") in abstract
-    assert not [p for p in pack_module.gate_problems(_live_shape(cross, prior)) if "words" in p]
+    assert not [p for p in pack_module.gate_problems(_live_shape(cross, prior, state)) if "words" in p]
 
 
 @pytest.mark.parametrize("cross", ["validated", "dominant"])
@@ -3212,10 +3249,11 @@ def test_the_crowding_metric_says_when_it_is_the_most_crowded_quarters():
 
 # ---------------------------------------------------------------------------------------------------- Task 16 (spec 12.3)
 
-def _with_adopted_extinction(env) -> dict:
-    """The fixture dossier again with a 3D value stored by hand (adopted, the full column kept as a check)."""
+def _with_adopted_extinction(env, block: dict | None = None) -> dict:
+    """The fixture dossier again with a 3D value (``block``, by default one stored by hand) adopted, the full column
+    kept as a check."""
     from tests.unit.test_dossier import EXTINCTION_ADOPTED, write_extinction
-    write_extinction(STAGE2_TARGET, EXTINCTION_ADOPTED)
+    write_extinction(STAGE2_TARGET, block or EXTINCTION_ADOPTED)
     generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch)
     return _stored(env)
 
@@ -3317,36 +3355,134 @@ def test_the_bracket_flags_the_mann_range_and_prints_the_upper_end_at_the_adopte
     assert flag not in pack_module.reddening_key(inside)
 
 
-def test_a_3d_value_is_adopted_with_the_unreddened_star_and_gsp_phot_beside_it(env_with_dossier):
-    data = _with_adopted_extinction(env_with_dossier)
-    star = data["star"]
-    assert star["extinction"]["state"] == "manual"
-    tex = render_note(data)
-    flat = " ".join(tex.split())
+# Task 17 (spec 12.5): a record the local map wrote, KIC 6146676's sightline, with the fixture's column beside it
+EXTINCTION_MAP = {"status": "adopted", "ebv": 0.05, "ebv_p16": 0.03, "ebv_p84": 0.07,
+                  "ebv_map_units": {"median": 0.05656, "p16": 0.03394, "p84": 0.07919},
+                  "ebv_at_distance_p16": 0.048, "ebv_at_distance_p84": 0.052,
+                  "source": "Bayestar19 (Green et al. 2019), local file",
+                  "map": "bayestar2019 (doi:10.7910/DVN/2EJ9TX), local file", "map_file": "bayestar2019.h5",
+                  "map_md5": "ab815d2fd3068d1b81a1bd61fb18a722", "map_version": "bayestar2019",
+                  "queried_utc": "2026-10-26T12:00:00+00:00", "distance_pc": 303.0, "distance_pc_p16": 300.0,
+                  "distance_pc_p84": 306.1, "l_deg": 76.0444, "b_deg": 7.4198, "nside": 1024,
+                  "healpix_index": 5984274, "n_samples": 5, "converged": True, "reliable_distance": True}
+MANN_FLAG = "outside the Mann relations' range, so indicative"
+
+
+def test_the_adopted_3d_value_leads_every_text_and_the_full_column_is_a_check(env_with_dossier):
+    """Task 17 (spec 12.5; the controller's ruling of 26 October 2026): the note gives the adopted E(B-V) with its
+    error, the map, the distance and the full column as an upper bound the 3D value sits inside; the planet sentence
+    the adopted radius with no bracket. The plain texts give each parameter as "<adopted> (unreddened <value>; full
+    column <value>)", the distance check, the unreddened star as the earlier assumption, the column as consistent,
+    the height clause settled by the 3D value and GSP-Phot not adopted; the README a row per estimate with its
+    status; the provenance the map's version, MD5, file and pixel, which the fingerprint does not hash."""
+    from tests.unit.test_dossier import EXTINCTION_FIXTURE
+    data = _with_adopted_extinction(env_with_dossier, {**EXTINCTION_MAP, "column": EXTINCTION_FIXTURE["column"]})
+    star, planet = data["star"], data["planet"]
+    e = star["extinction"]
+    assert e["state"] == "adopted" and e["height_clause"].endswith("; the 3D value settles it")
+    rep = _build(env_with_dossier)
+    texts = _texts(rep)
+    flat = " ".join(texts["note/note.tex"].split())
+    ebv = pack_text.value_text({"median": 0.05, "minus": 0.02, "plus": 0.02}, True)
     sentence = str(pack_module.reddening_text(data, True))
-    assert sentence in flat and r"\citep{green2019}" in sentence and "E(B-V) = 0.050 (0.030 to 0.070)" in sentence
-    assert pack_text.value_text(star["unreddened"]["teff"], True) not in flat     # the note's one clause only
-    assert "from unreddened" not in flat and "schlafly2011" not in flat
-    cited, items = _cites(tex)
-    assert cited == items and "green2019" in items
-    assert r"Green, G.~M., Schlafly, E., Zucker, C., Speagle, J.~S., \& Finkbeiner, D. 2019, ApJ, 887, 93" in flat
+    assert sentence == (rf"The reddening is E(B-V) = {ebv} from Bayestar19 \citep{{green2019}} at 303 pc (within "
+                        "the full column of 0.100, an upper bound)")
+    assert f"{sentence}. " in flat
+    assert pack_module.rp_bracket_text(data, True) is None and "from unreddened" not in flat
+    assert f"{pack_text.value_text(planet['rp_rearth'], True)} $R_\\oplus$, on an orbit of" in flat
+    assert pack_text.value_text(star["unreddened"]["teff"], True) not in flat
+    cited, items = _cites(texts["note/note.tex"])
+    assert cited == items and "green2019" in items and "schlafly2011" not in items
     plain = pack_module.reddening_plain(data)
     assert plain.startswith("Reddening: E(B-V) 0.050 (16th to 84th percentile 0.030 to 0.070) from Bayestar19 "
-                            "(Green et al. 2019), stored by hand (test fixture), at 303 pc, a sightline average")
-    assert "unreddened (E(B-V) = 0), Teff" in plain and pack_text.value_text(star["teff"]) in plain
-    assert "earlier assumption" not in plain
-    readme = render_readme(data, {})
+                            "(Green et al. 2019) at 303 pc (E(B-V) 0.048 to 0.052 across the distance's 16th to 84th "
+                            "percentiles, 300 to 306 pc), a sightline average, adopted; through the Gaia DR3 law it "
+                            "gives E(BP-RP) ")
+    col = e["column"]
+    for name, key, unit, where in (("Teff", "teff", " K", star), ("radius", "radius", " Rsun", star),
+                                   ("planet radius", "rp_rearth", " Earth radii", planet)):
+        adopted = where[key]
+        unred = pack_module._mid_at(star["unreddened"][key], adopted)
+        full = pack_module._mid_at(col[key], adopted)
+        assert f"{name} {pack_text.value_text(adopted)}{unit} (unreddened {unred}; full column {full})" in plain, name
+    assert "; unreddened (E(B-V) = 0) is the earlier assumption; " in plain
+    assert plain.endswith("; the full-column E(B-V) of 0.100 ± 0.010 (Schlafly and Finkbeiner 2011), an upper bound, "
+                          f"is consistent with the 3D value; {e['height_clause']}.")       # no GSP-Phot E(BP-RP) here
+    assert MANN_FLAG not in plain
+    for name in ("exofop/note.txt", "archive_email.txt"):
+        assert plain in " ".join(texts[name].split()), name
+    readme = texts["README.md"]
     rows = {r[0]: r for r in _readme_table(readme)}
-    assert rows["Bayestar19 (Green et al. 2019)"][-1] == "adopted"
+    assert set(rows) == {"Bayestar19 (Green et al. 2019)", "Unreddened", "Full column (Schlafly and Finkbeiner 2011)",
+                         "GSP-Phot (Gaia DR3)"}
     assert rows["Bayestar19 (Green et al. 2019)"][1] == "0.050 (0.030 to 0.070)"
-    assert rows["Unreddened"][-1] == "not adopted"
-    assert rows["Full column (Schlafly and Finkbeiner 2011)"][-1] == "upper bound"
-    prov = {r["parameter"]: r for r in pack_rows.provenance_rows(data)}
-    assert {name for name, _key in pack_rows.EXTINCTION_ROWS} <= set(prov)
-    ebv = prov["E(B-V) (Bayestar19)"]
-    assert (ebv["value"], ebv["minus"], ebv["plus"]) == (0.05, 0.02, 0.02)
-    assert ebv["reference"] == "Green et al. 2019; Gaia (E)DR3 extinction law; Cardelli et al. 1989"
+    assert rows["Bayestar19 (Green et al. 2019)"][-1] == "adopted"
+    assert rows["Unreddened"][-1] == "the earlier assumption, not adopted"
+    assert rows["Full column (Schlafly and Finkbeiner 2011)"][-1] == "upper bound, consistent with the 3D value"
+    assert rows["GSP-Phot (Gaia DR3)"][-1] == "not adopted"
+    key = pack_module.reddening_key(data)
+    assert key in readme and "Unreddened (E(B-V) = 0): the earlier assumption, not adopted." in key
+    assert "so an upper bound, consistent with the 3D value." in key
+    prov = {r["parameter"]: r for r in _rows(rep, "data/stellar_provenance.csv")}
+    assert prov["E(B-V) (Bayestar19)"]["inputs"] == (
+        "bayestar2019 (doi:10.7910/DVN/2EJ9TX), local file; map version bayestar2019, MD5 "
+        "ab815d2fd3068d1b81a1bd61fb18a722, file bayestar2019.h5, nside 1024 pixel 5984274, 5 samples; queried "
+        "2026-10-26T12:00:00+00:00; 303.0 pc (16th to 84th percentile 300.0 to 306.1 pc)")
+    assert set(dossier_module.extinction_args(e)) == {"extinction_ebv", "column_ebv", "column_ebv_std"}
+    assert pack_module.star_texts(data).startswith(plain)
     assert dossier_module.no_spectrum_title(star) == dossier_module.NO_SPECTRUM
+    for text in texts.values():
+        assert EM_DASH not in text and not IZE.search(text) and "discover" not in text.lower()
+
+
+def test_an_adopted_value_above_the_column_or_outside_the_mann_range_says_so_in_one_clause(env_with_dossier):
+    """Task 17: the 3D median above the column's E(B-V) plus its std is "inconsistent" (at it, "consistent"); a
+    dereddened star outside the Mann relations' range takes the "indicative" clause in every text; a value stored by
+    hand says so; without a fetched column the note's parenthesis and the plain texts' column parts go."""
+    data = _with_adopted_extinction(env_with_dossier)
+    e = data["star"]["extinction"]
+    assert e["state"] == "manual"
+    data["star"]["extinction"] = {**e, "ebv": 0.2, "ebv_p16": 0.18, "ebv_p84": 0.22, "outside_mann_range": True}
+    sentence = str(pack_module.reddening_text(data, True))
+    assert sentence.endswith("at 303 pc (above the full column of 0.100, an upper bound); the dereddened "
+                             f"parameters are {MANN_FLAG}")
+    assert sentence in " ".join(render_note(data).split())
+    plain = pack_module.reddening_plain(data)
+    assert "from Bayestar19 (Green et al. 2019), stored by hand (test fixture), at 303 pc, a sightline average" in plain
+    assert " Earth radii (unreddened " in plain and f"), {MANN_FLAG}; unreddened (E(B-V) = 0) is the earlier" in plain
+    assert "an upper bound, is inconsistent with the 3D value" in plain
+    rows = {r[0]: r for r in _readme_table(render_readme(data, {}))}
+    assert rows["Bayestar19 (Green et al. 2019)"][-1] == f"adopted, {MANN_FLAG}"
+    assert rows["Full column (Schlafly and Finkbeiner 2011)"][-1] == "upper bound, inconsistent with the 3D value"
+    key = pack_module.reddening_key(data)
+    assert "inconsistent with the 3D value" in key and MANN_FLAG in key
+    edge = {**data, "star": {**data["star"], "extinction": {**e, "ebv": 0.11, "ebv_p16": 0.1, "ebv_p84": 0.12}}}
+    assert "(within the full column of 0.100, an upper bound)" in str(pack_module.reddening_text(edge, True))
+    assert pack_module.column_fit(edge) == "consistent" and pack_module.column_fit(data) == "inconsistent"
+    gone = {"status": "not available", "reason": "irsa-dust timed out", "queried_utc": "2026-10-23T20:00:00+00:00"}
+    bare = {**data, "star": {**data["star"], "extinction": {**e, "column": gone}}}
+    assert str(pack_module.reddening_text(bare, True)).endswith(r"\citep{green2019} at 303 pc")
+    bare_plain = pack_module.reddening_plain(bare)
+    assert "full column" not in bare_plain and "(unreddened " in bare_plain and pack_module.column_fit(bare) is None
+    assert {r[0] for r in _readme_table(render_readme(bare, {}))} == {"Bayestar19 (Green et al. 2019)", "Unreddened",
+                                                                       "GSP-Phot (Gaia DR3)"}
+
+
+def test_a_map_that_gives_no_value_names_its_reason_in_the_texts(env_with_dossier):
+    """Task 17: a sightline the local map cannot answer (outside its footprint, an unconverged pixel, no finite
+    sample) keeps "not available", and the texts give the map's short reason in place of "at build time"."""
+    data = _stored(env_with_dossier)
+    data["star"]["extinction"] = {**data["star"]["extinction"], "map_reason": "an unconverged map pixel"}
+    assert pack_module.reddening_plain(data).startswith(
+        "Reddening: not measured at the star's distance (Bayestar19 not available: an unconverged map pixel), so the "
+        "parameters are unreddened (E(B-V) = 0), adopted (")
+    assert "(Bayestar19 not available: an unconverged map pixel)." in pack_module.reddening_key(data)
+    gone = {"status": "not available", "reason": "irsa-dust timed out", "queried_utc": "2026-10-23T20:00:00+00:00"}
+    data["star"]["extinction"] = {**data["star"]["extinction"], "column": gone}
+    assert pack_module.reddening_plain(data).startswith(
+        "Reddening: not measured (Bayestar19 not available: an unconverged map pixel, and the IRSA full-column value "
+        "could not be fetched), so")
+    assert "at build time" not in pack_module.reddening_plain(data)
 
 
 def test_with_neither_value_the_texts_say_not_available(env_with_dossier):

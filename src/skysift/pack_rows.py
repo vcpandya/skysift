@@ -407,6 +407,25 @@ COLUMN_ROWS = (("E(B-V) full column (Schlafly and Finkbeiner 2011), an upper bou
 LAW_REFERENCE = "Gaia (E)DR3 extinction law; Cardelli et al. 1989"
 
 
+def map_inputs(e: dict) -> str:
+    """The inputs of the 3D E(B-V) row: the map, then for a record the local map wrote (Task 17, spec 12.5) its
+    version, MD5, file, pixel and sample count, the query date and the distance with its 16th to 84th percentile
+    range. The fingerprint hashes the E(B-V) only; the map's version and MD5 live here, in the provenance."""
+    parts = [str(e.get("map"))]
+    if e.get("map_version"):
+        local = f"map version {e['map_version']}, MD5 {e.get('map_md5')}, file {e.get('map_file')}"
+        if e.get("nside") is not None:
+            local += f", nside {e['nside']} pixel {e.get('healpix_index')}"
+        if e.get("n_samples") is not None:
+            local += f", {e['n_samples']} samples"
+        parts.append(local)
+    parts.append(f"queried {e.get('queried_utc')}")
+    low, high = _num(e.get("distance_pc_p16")), _num(e.get("distance_pc_p84"))
+    span = f" (16th to 84th percentile {low} to {high} pc)" if low is not None and high is not None else ""
+    parts.append(f"{e.get('distance_pc')} pc{span}")
+    return "; ".join(parts)
+
+
 def extinction_rows(star: dict, gaia_inputs: str) -> list[dict]:
     """The stored extinction as provenance rows (spec 12.3): ``EXTINCTION_ROWS`` for a 3D value (adopted or stored by
     hand: E(B-V) with its stored percentiles, the rest the medians of the draws with their spread), and
@@ -426,8 +445,7 @@ def extinction_rows(star: dict, gaia_inputs: str) -> list[dict]:
         ebv = _num(e["ebv"])
         rows.append({"parameter": EXTINCTION_ROWS[0][0], "value": ebv,
                      "minus": round(ebv - _num(e.get("ebv_p16")), 6), "plus": round(_num(e.get("ebv_p84")) - ebv, 6),
-                     "unit": "mag", "method": str(e.get("source") or ""),
-                     "inputs": f"{e.get('map')}; queried {e.get('queried_utc')}; {e.get('distance_pc')} pc",
+                     "unit": "mag", "method": str(e.get("source") or ""), "inputs": map_inputs(e),
                      "reference": f"Green et al. 2019; {LAW_REFERENCE}"})
         rows += [r for name, key in EXTINCTION_ROWS[1:] if (r := law_row(
             name, e.get(key), "the stored E(B-V) through the Gaia (E)DR3 law, R_V 3.1, A_Ks = 0.117 A_0",
