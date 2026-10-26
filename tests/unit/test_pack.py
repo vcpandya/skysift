@@ -1384,7 +1384,7 @@ def test_note_has_software_facilities_and_the_model_clause_within_the_limits(env
     for data in (env_with_dossier.data, golden):
         tex = render_note(data)
         version = data["signal"]["detector_version"]
-        # the commit the dossier was generated at (the golden's 36024e3, not the checkout's HEAD), and triceratops
+        # the commit the dossier was generated at (the golden's 0dca504, not the checkout's HEAD), and triceratops
         # only with a stored cross-check (M10), which the golden has (fix round 4)
         commit = data["provenance"]["git_commit"]
         # Task 13 (spec 11.6): each package with its installed version
@@ -1392,7 +1392,7 @@ def test_note_has_software_facilities_and_the_model_clause_within_the_limits(env
             f", triceratops {data['cross_check']['tool_version']}" if data.get("cross_check") else "")
         assert (rf"\software{{SkySift {md.version('skysift')} (search version {tex_safe(version)}, commit "
                 rf"{tex_safe(commit)}), {tools}}}") in tex
-        assert (data is golden) == bool(data.get("cross_check")) and (data is not golden or commit == "36024e3")
+        assert (data is golden) == bool(data.get("cross_check")) and (data is not golden or commit == "0dca504")
         crossed = render_note({**data, "cross_check": {"fpp": 0.01, "nfpp": 0.001, "current": False}})
         assert f"matplotlib {md.version('matplotlib')}, triceratops}}" in crossed
         assert r"\facilities{Kepler, Gaia, MAST, Exoplanet Archive}" in tex
@@ -2133,7 +2133,7 @@ BRACKET_REASON = ("Bayestar19 (Green et al. 2019) not available: the Argonaut we
 
 
 def _check_adopted_golden(data: dict) -> None:
-    """The regenerated golden (36024e3) carries KIC 6146676's adopted block as the local map left it, the stored
+    """The regenerated golden (0dca504) carries KIC 6146676's adopted block as the local map left it, the stored
     record's values: E(B-V) 0.0088 (0.0088 to 0.0142) at 303 pc (299.5 to 306.6 pc), ``reliable_distance`` false, the
     pixel reliable from 405 pc to 6,685 pc (the end is not printed for a star nearer than the range), and the star
     derived through it. The adopted star is not flagged outside the Mann range: dereddening only makes it hotter, so
@@ -2299,7 +2299,7 @@ def test_the_live_shape_stays_inside_the_word_limit_with_margin(cross, prior, st
     1,335 and 1,363 without, 1,439 and 1,467 with one; abstracts unchanged. Task 15 fix round 2, M2 (the excluded
     set's dominant scenario in the own-evidence sentence, two words): 1,337 and 1,365 without, 1,441 and 1,469 with
     one; abstracts 146 and 150. The round 3 final review (the bracket with the Mann flag, I2's own-evidence sentence,
-    no second unit and no second "E(B-V) of" in the bracket), on the golden of 36024e3: 1,347 and 1,375 without, 1,451
+    no second unit and no second "E(B-V) of" in the bracket), on the golden of 0dca504: 1,347 and 1,375 without, 1,451
     and 1,479 with one; abstracts 146 and 150.
     Round 3 polish: the closing sentence "pending follow-up" (the live KIC 5689121 abstract was 151): 144 without a
     prior claim, 148 with one, held at or under LIVE_ABSTRACT_LIMIT.
@@ -2311,7 +2311,7 @@ def test_the_live_shape_stays_inside_the_word_limit_with_margin(cross, prior, st
     nearer than the map's reliable range from 405 pc): the flag, the range form and the column's citation with its
     bibitem took the longest to 1,499; its fifteen cuts elsewhere (the fix-round report lists each): the bracket
     1,328 and 1,356 without a prior claim and 1,430 and 1,458 with one; the adopted state 1,350 and 1,378 without and
-    1,452 and 1,480 with one; abstracts 144 and 148 in both. The golden regenerated at 36024e3 is the adopted state
+    1,452 and 1,480 with one; abstracts 144 and 148 in both. The golden regenerated at 0dca504 is the adopted state
     itself (``_check_adopted_golden`` holds it to the stored record) and the bracket is built from it
     (``_bracket_live``); the eight counts are unchanged."""
     words = _check_live_shape(cross, prior, state)
@@ -3040,7 +3040,7 @@ def test_the_mismatch_gate_also_fires_for_a_quantity_with_no_error_on_either_sid
 
 def test_a_stale_cross_check_is_refused_once():
     """Minor 1: a stale cross-check is refused by its own reason, not again for the FPP order of the abstract and
-    the Zenodo description. The golden's cross-check is current since its regeneration at 36024e3, so the stale
+    the Zenodo description. The golden's cross-check is current since its regeneration at 0dca504, so the stale
     path runs on a copy whose fingerprint no longer matches, and the golden itself is not refused for it."""
     current = _golden()
     assert current["cross_check"]["current"] is True
@@ -3089,7 +3089,7 @@ def test_the_readme_gives_the_shape_call_with_its_evidence_and_the_note_does_not
     golden = _golden()
     assert pack_module.b_set_by_prior(golden)
     readme = render_readme(golden, {})
-    # the golden regenerated at 36024e3: the adopted star's density moves b to 0.457 and a/R* to 78.4
+    # the golden regenerated at 0dca504: the adopted star's density moves b to 0.457 and a/R* to 78.4
     assert "| impact parameter (with the density prior) | 0.457 +0.054/-0.061" in readme
     text = pack_module.shape_fit_text(golden)
     assert text.startswith("Shape fit: with the density prior b is 0.457 +0.054/-0.061 and a/R* 78.4")
@@ -3570,7 +3570,7 @@ def test_a_value_whose_error_rounds_to_zero_prints_its_range():
     assert pack_text.value_text({"median": 2.61, "minus": 0.08, "plus": 0.08}) == "2.61 ± 0.08"
     data = _live_shape("dominant", True, "adopted")
     plain, rows = pack_module.reddening_plain(data), pack_module.reddening_rows(data)
-    e = data["star"]["extinction"]                   # the golden's own derived values (36024e3), no lower spread
+    e = data["star"]["extinction"]                   # the golden's own derived values (0dca504), no lower spread
     assert [(e[k]["median"], e[k]["minus"], e[k]["plus"]) for k in ("ebprp", "a_g", "a_ks")] == [
         (0.011, 0.0, 0.007), (0.02, 0.0, 0.012), (0.003, 0.0, 0.002)]
     assert "E(BP-RP) 0.011 (0.011 to 0.018), A_G 0.020 (0.020 to 0.032) and A_Ks 0.003 (0.003 to 0.005)" in plain
