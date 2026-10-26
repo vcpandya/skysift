@@ -1384,7 +1384,7 @@ def test_note_has_software_facilities_and_the_model_clause_within_the_limits(env
     for data in (env_with_dossier.data, golden):
         tex = render_note(data)
         version = data["signal"]["detector_version"]
-        # the commit the dossier was generated at (the golden's 09ee6e3, not the checkout's HEAD), and triceratops
+        # the commit the dossier was generated at (the golden's 36024e3, not the checkout's HEAD), and triceratops
         # only with a stored cross-check (M10), which the golden has (fix round 4)
         commit = data["provenance"]["git_commit"]
         # Task 13 (spec 11.6): each package with its installed version
@@ -1392,7 +1392,7 @@ def test_note_has_software_facilities_and_the_model_clause_within_the_limits(env
             f", triceratops {data['cross_check']['tool_version']}" if data.get("cross_check") else "")
         assert (rf"\software{{SkySift {md.version('skysift')} (search version {tex_safe(version)}, commit "
                 rf"{tex_safe(commit)}), {tools}}}") in tex
-        assert (data is golden) == bool(data.get("cross_check")) and (data is not golden or commit == "09ee6e3")
+        assert (data is golden) == bool(data.get("cross_check")) and (data is not golden or commit == "36024e3")
         crossed = render_note({**data, "cross_check": {"fpp": 0.01, "nfpp": 0.001, "current": False}})
         assert f"matplotlib {md.version('matplotlib')}, triceratops}}" in crossed
         assert r"\facilities{Kepler, Gaia, MAST, Exoplanet Archive}" in tex
@@ -2126,32 +2126,47 @@ LIVE_ABSTRACT_LIMIT = 148          # round 3 polish: two under the RNAAS 150; th
 
 
 LIVE_RECORD = Path(__file__).resolve().parents[2] / "docs" / "candidates" / "kic-006146676" / "extinction.json"
+# the keys of a "not available" block that the bracket keeps from the adopted one: the column and the geometry
+BRACKET_KEEPS = ("target", "queried_utc", "distance_pc", "column", "r_v", "law", "a_ks_over_a0", "b_deg", "height_pc")
+BRACKET_REASON = ("Bayestar19 (Green et al. 2019) not available: the Argonaut web query failed (ConnectTimeout); no "
+                  "local map file")
 
 
-def _adopted_live(ext: dict) -> dict:
-    """Task 17: the golden's extinction block as the local map left it, from KIC 6146676's stored record (fix round 1,
-    I4): E(B-V) 0.0088 (0.0088 to 0.0142) at 303 pc (299.5 to 306.6 pc), ``reliable_distance`` false, the pixel
-    reliable only from 405 pc to 6,685 pc, the ends the record carries since the controller's rerun on the real map
-    (the end is not printed for a star nearer than the range). The law's values
-    are E(B-V) times the 0.312 block's ratios, as ``derive`` gives them to the precision the README prints. The
-    adopted star is not flagged outside the Mann range: for this star the flag cannot arise in the adopted state,
-    since dereddening only makes it hotter and above 4,000 K ``derive`` leaves the Mann relations for the colour
-    table, so the live note has no "indicative" clause (its wording is pinned by
+def _check_adopted_golden(data: dict) -> None:
+    """The regenerated golden (36024e3) carries KIC 6146676's adopted block as the local map left it, the stored
+    record's values: E(B-V) 0.0088 (0.0088 to 0.0142) at 303 pc (299.5 to 306.6 pc), ``reliable_distance`` false, the
+    pixel reliable from 405 pc to 6,685 pc (the end is not printed for a star nearer than the range), and the star
+    derived through it. The adopted star is not flagged outside the Mann range: dereddening only makes it hotter, so
+    the live note has no "indicative" clause (its wording is pinned by
     ``test_an_adopted_value_above_the_column_or_outside_the_mann_range_says_so_in_one_clause``)."""
-    def v(m, lo, hi):
-        return {"median": m, "minus": lo, "plus": hi, "source": "test"}
     record = json.loads(LIVE_RECORD.read_text(encoding="utf-8"))
-    assert (record["ebv"], record["ebv_p16"], record["ebv_p84"]) == (0.0088, 0.0088, 0.0142)
-    assert record["reliable_distance"] is False and record["distance_pc"] == ext["distance_pc"] == 303.0
-    assert (record["reliable_distance_min_pc"], record["reliable_distance_max_pc"]) == (405, 6685)
-    block = {k: val for k, val in ext.items() if k not in ("reason", "column")}
-    block.update({k: val for k, val in record.items() if k not in ("target", "column")})
-    block.update({"state": "adopted", "column": ext["column"], "a0": v(0.027, 0.0, 0.017),
-                  "ebprp": v(0.011, 0.0, 0.007), "a_g": v(0.022, 0.0, 0.013), "a_ks": v(0.003, 0.0, 0.002),
-                  "bp_rp0": 2.086, "colour_held": False, "outside_mann_range": False,
-                  "height_clause": f"{ext['height_clause']}; {stars_module.HEIGHT_UNCONSTRAINED['nearer']}"})
-    assert stars_module.range_side(block) == ("nearer", 405)
-    return block
+    ext = data["star"]["extinction"]
+    assert ext["state"] == "adopted" and ext["map_version"] == "bayestar2019"
+    for key in ("ebv", "ebv_p16", "ebv_p84", "distance_pc", "distance_pc_p16", "distance_pc_p84", "reliable_distance",
+                "reliable_distance_min_pc", "reliable_distance_max_pc", "nside", "healpix_index"):
+        assert ext[key] == record[key], key
+    assert (ext["ebv"], ext["ebv_p16"], ext["ebv_p84"]) == (0.0088, 0.0088, 0.0142)
+    assert (ext["reliable_distance_min_pc"], ext["reliable_distance_max_pc"]) == (405, 6685)
+    assert stars_module.range_side(ext) == ("nearer", 405) and ext["outside_mann_range"] is False
+    assert ext["height_clause"].endswith(f"; {stars_module.HEIGHT_UNCONSTRAINED['nearer']}")
+
+
+def _bracket_live(data: dict) -> dict:
+    """The bracket state the golden carried natively before its regeneration: the adopted record put back into "not
+    available" (the Argonaut timeout's reason), keeping the IRSA column block and what the law made of it, the height
+    clause without the 3D value's ending, and the star's adopted values replaced by the unreddened ones the golden
+    stores (``star.unreddened``: route, Teff, radius, mass, planet radius and insolation). The orbit and the
+    equilibrium temperature keep the adopted star's values (each one number, so the count is the same)."""
+    star, planet = data["star"], data["planet"]
+    ext, unred = star["extinction"], star["unreddened"]
+    clause = ext["height_clause"].rsplit("; ", 1)[0]
+    block = {k: ext[k] for k in BRACKET_KEEPS if k in ext}
+    block.update({"status": stars_module.EXT_NOT_AVAILABLE, "state": stars_module.EXT_NOT_AVAILABLE,
+                  "reason": BRACKET_REASON, "height_clause": clause})
+    assert stars_module._block_problem({k: v for k, v in block.items() if k != "state"}) is None
+    star = {**star, **{k: unred[k] for k in ("route", "teff", "radius", "mass")}, "extinction": block}
+    planet = {**planet, **{k: unred[k] for k in ("rp_rearth", "insolation_earth")}}
+    return {**data, "star": star, "planet": planet}
 
 
 def _live_shape(cross: str, prior: bool = True, state: str = "bracket") -> dict:
@@ -2167,6 +2182,11 @@ def _live_shape(cross: str, prior: bool = True, state: str = "bracket") -> dict:
     from tests.unit.test_crosscheck import REMOVED, fake_result, fake_variant
     from tests.unit.ui_seed import SEED_TESS
     data = json.loads(GOLDEN.read_text(encoding="utf-8"))
+    # Task 17: the regenerated golden is the adopted state; the bracket is built from it, before the cross-check's
+    # fingerprint is taken
+    _check_adopted_golden(data)
+    if state == "bracket":
+        data = _bracket_live(data)
     # spec 12.2: the golden's own exclusion radius, so both long forms of the dominant-excluded sentence count
     assert data["centroid_offset"]["exclusion_radius_arcsec"] > 0
     assert data["dossier_version"] == dossier_module.DOSSIER_VERSION
@@ -2194,8 +2214,6 @@ def _live_shape(cross: str, prior: bool = True, state: str = "bracket") -> dict:
     data["tests"] = [*data["tests"], {"rung": "rung1_events", "status": "pass", "reason": "",
                                       "metrics": {"n_covered": 63, "n_events_with_data": 79,
                                                   "ses_max_over_mes": 0.33}}]
-    if state == "adopted":                        # Task 17: the golden as the local map will leave it
-        data["star"] = {**data["star"], "extinction": _adopted_live(data["star"]["extinction"])}
     data["caveats"] = [*dossier_module.caveats(data), SHAPE_OFFSET_CAVEAT]
     data["pixels"] = [{"season": s} for s in range(4)]
     return data
@@ -2280,19 +2298,21 @@ def test_the_live_shape_stays_inside_the_word_limit_with_margin(cross, prior, st
     1,335 and 1,363 without, 1,439 and 1,467 with one; abstracts unchanged. Task 15 fix round 2, M2 (the excluded
     set's dominant scenario in the own-evidence sentence, two words): 1,337 and 1,365 without, 1,441 and 1,469 with
     one; abstracts 146 and 150. The round 3 final review (the bracket with the Mann flag, I2's own-evidence sentence,
-    no second unit and no second "E(B-V) of" in the bracket), on the golden of 09ee6e3: 1,347 and 1,375 without, 1,451
+    no second unit and no second "E(B-V) of" in the bracket), on the golden of 36024e3: 1,347 and 1,375 without, 1,451
     and 1,479 with one; abstracts 146 and 150.
     Round 3 polish: the closing sentence "pending follow-up" (the live KIC 5689121 abstract was 151): 144 without a
     prior claim, 148 with one, held at or under LIVE_ABSTRACT_LIMIT.
     Task 17 (spec 12.5) measures both states (validated, dominant): the bracket, as the golden stands, 1,345 and 1,373
-    without a prior claim and 1,449 and 1,477 with one; the adopted state (``_adopted_live``: the reddening sentence
+    without a prior claim and 1,449 and 1,477 with one; the adopted state (then built on the golden: the reddening sentence
     with the full column as its check in place of the bracket clause and the caveat title's reddening words, Green et
     al. 2019 in place of Schlafly and Finkbeiner 2011) 1,347 and 1,375 without and 1,451 and 1,479 with one; abstracts
     144 and 148 in both. Task 17 fix round 1 builds the adopted state from KIC 6146676's stored record (E(B-V) 0.0088,
     nearer than the map's reliable range from 405 pc): the flag, the range form and the column's citation with its
     bibitem took the longest to 1,499; its fifteen cuts elsewhere (the fix-round report lists each): the bracket
     1,328 and 1,356 without a prior claim and 1,430 and 1,458 with one; the adopted state 1,350 and 1,378 without and
-    1,452 and 1,480 with one; abstracts 144 and 148 in both."""
+    1,452 and 1,480 with one; abstracts 144 and 148 in both. The golden regenerated at 36024e3 is the adopted state
+    itself (``_check_adopted_golden`` holds it to the stored record) and the bracket is built from it
+    (``_bracket_live``); the eight counts are unchanged."""
     words = _check_live_shape(cross, prior, state)
     assert words["total"] <= LIVE_SHAPE_LIMIT, words
     assert words["abstract"] <= LIVE_ABSTRACT_LIMIT <= NOTE_LIMITS["abstract"] - 2, words
@@ -3019,12 +3039,18 @@ def test_the_mismatch_gate_also_fires_for_a_quantity_with_no_error_on_either_sid
 
 def test_a_stale_cross_check_is_refused_once():
     """Minor 1: a stale cross-check is refused by its own reason, not again for the FPP order of the abstract and
-    the Zenodo description."""
-    golden = _golden()
+    the Zenodo description. The golden's cross-check is current since its regeneration at 36024e3, so the stale
+    path runs on a copy whose fingerprint no longer matches, and the golden itself is not refused for it."""
+    current = _golden()
+    assert current["cross_check"]["current"] is True
+    stale_block = cross_check.with_current({**current["cross_check"], "inputs_sha256": "0" * 64}, current)
+    golden = {**current, "cross_check": stale_block}
     assert golden["cross_check"]["current"] is False
     problems = pack_module.gate_problems(golden)
     assert not [p for p in problems if "in-house false-positive probability without" in p]
-    assert cross_check.verdict(golden["cross_check"])[1] in problems
+    reason = cross_check.verdict(golden["cross_check"])[1]
+    assert reason in problems and problems.count(reason) == 1
+    assert reason not in pack_module.gate_problems(current)
 
 
 def test_with_a_prior_claim_the_zenodo_record_is_titled_as_the_note_and_the_gate_reads_it(monkeypatch):
@@ -3062,9 +3088,10 @@ def test_the_readme_gives_the_shape_call_with_its_evidence_and_the_note_does_not
     golden = _golden()
     assert pack_module.b_set_by_prior(golden)
     readme = render_readme(golden, {})
-    assert "| impact parameter (with the density prior) | 0.455 +0.054/-0.061" in readme
+    # the golden regenerated at 36024e3: the adopted star's density moves b to 0.457 and a/R* to 78.4
+    assert "| impact parameter (with the density prior) | 0.457 +0.054/-0.061" in readme
     text = pack_module.shape_fit_text(golden)
-    assert text.startswith("Shape fit: with the density prior b is 0.455 +0.054/-0.061 and a/R* 78.5")
+    assert text.startswith("Shape fit: with the density prior b is 0.457 +0.054/-0.061 and a/R* 78.4")
     assert ("with a chi-square lower by only 0.26, within the rule of 2: the data do not constrain them; the quoted "
             "values follow the host's density (Seager and Mallén-Ornelas 2003). The model is integrated over the "
             "29.4-minute exposure, which matters at this cadence (Kipping 2010).") in text
@@ -3542,9 +3569,12 @@ def test_a_value_whose_error_rounds_to_zero_prints_its_range():
     assert pack_text.value_text({"median": 2.61, "minus": 0.08, "plus": 0.08}) == "2.61 ± 0.08"
     data = _live_shape("dominant", True, "adopted")
     plain, rows = pack_module.reddening_plain(data), pack_module.reddening_rows(data)
-    assert "E(BP-RP) 0.011 (0.011 to 0.018), A_G 0.022 (0.022 to 0.035) and A_Ks 0.003 (0.003 to 0.005)" in plain
+    e = data["star"]["extinction"]                   # the golden's own derived values (36024e3), no lower spread
+    assert [(e[k]["median"], e[k]["minus"], e[k]["plus"]) for k in ("ebprp", "a_g", "a_ks")] == [
+        (0.011, 0.0, 0.007), (0.02, 0.0, 0.012), (0.003, 0.0, 0.002)]
+    assert "E(BP-RP) 0.011 (0.011 to 0.018), A_G 0.020 (0.020 to 0.032) and A_Ks 0.003 (0.003 to 0.005)" in plain
     row = next(r for r in rows if r["estimate"] == "Bayestar19 (Green et al. 2019)")
-    assert (row["ebprp"], row["a_g"], row["a_ks"]) == ("0.011 (0.011 to 0.018)", "0.022 (0.022 to 0.035)",
+    assert (row["ebprp"], row["a_g"], row["a_ks"]) == ("0.011 (0.011 to 0.018)", "0.020 (0.020 to 0.032)",
                                                        "0.003 (0.003 to 0.005)")
     words = pack_module.star_texts(data)                                         # the dossier page's paragraph
     for text in (plain, words, " ".join(str(v) for r in rows for v in r.values())):
