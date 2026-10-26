@@ -1157,7 +1157,8 @@ def test_the_star_section_leads_with_the_adopted_3d_value_in_the_adopted_state(s
     assert words.startswith("Reddening: E(B-V) 0.312 (16th to 84th percentile 0.254 to 0.371) from Bayestar19 "
                             "(Green et al. 2019) at 303 pc (E(B-V) 0.305 to 0.318 across the distance's 16th to 84th "
                             "percentiles, 300 to 306 pc)")
-    assert "is the earlier assumption" in words and "an upper bound, is consistent with the 3D value" in words
+    assert "is the earlier assumption" in words and "; the 3D value is consistent with the full column (" in words
+    assert " on the Schlafly and Finkbeiner 2011 scale, is an upper bound)" in words
     assert "(unreddened " in words and "; full column " in words and "the 3D value settles it" in words
     assert "not measured" not in words
     page = html_module.unescape(client.get(f"/dossiers/{STAGE2_TARGET}").text)

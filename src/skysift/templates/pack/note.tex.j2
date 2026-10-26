@@ -21,11 +21,11 @@
 
 \section{The signal}
 
-In the KBonus Kepler Background light curve \citep{kbonus} of \VAR{n.name}\BLOCK{if n.gaia_id} (Gaia DR3 \VAR{n.gaia_id}\BLOCK{if n.gmag}, $G = \VAR{n.gmag}$\BLOCK{endif})\BLOCK{endif}, recorded by Kepler \citep{borucki2010} only in other targets' pixels, a dip of \VAR{n.depth_pm} ppm\VAR{n.depth_note} lasting \VAR{n.duration_pm} hours\VAR{n.duration_note} repeats every \VAR{n.period_pm} days\VAR{n.period_note}\BLOCK{if n.timed}, with the reference mid-transit at BJD$_{\rm TDB}$ \VAR{n.t_ref_bjd_pm} at epoch \VAR{n.epoch_ref}, the centre of the series. Timed one by one, \VAR{n.n_used} of \VAR{n.n_measured} transits fit this linear ephemeris with an rms of \VAR{n.rms_min} minutes\BLOCK{else}, with the first mid-transit at BJD$_{\rm TDB}$ \VAR{n.t0_bjd_pm} (BKJD \VAR{n.t0_bkjd})\BLOCK{endif}\VAR{n.fold_clause}.\BLOCK{if n.prior_text} \VAR{n.prior_text}\BLOCK{endif}\BLOCK{if n.comparison_text} \VAR{n.comparison_text}\BLOCK{endif}
+In the KBonus Kepler Background light curve \citep{kbonus} of \VAR{n.name}\BLOCK{if n.gaia_id} (Gaia DR3 \VAR{n.gaia_id}\BLOCK{if n.gmag}, $G = \VAR{n.gmag}$\BLOCK{endif})\BLOCK{endif}, recorded by Kepler \citep{borucki2010} only in other targets' pixels, a dip of \VAR{n.depth_pm} ppm\VAR{n.depth_note} lasting \VAR{n.duration_pm} hours\VAR{n.duration_note} repeats every \VAR{n.period_pm} days\VAR{n.period_note}\BLOCK{if n.timed}, with the reference mid-transit at BJD$_{\rm TDB}$ \VAR{n.t_ref_bjd_pm} at epoch \VAR{n.epoch_ref}, the centre of the series. Timed singly, \VAR{n.n_used} of \VAR{n.n_measured} transits fit this linear ephemeris with an rms of \VAR{n.rms_min} minutes\BLOCK{else}, with the first mid-transit at BJD$_{\rm TDB}$ \VAR{n.t0_bjd_pm} (BKJD \VAR{n.t0_bkjd})\BLOCK{endif}\VAR{n.fold_clause}.\BLOCK{if n.prior_text} \VAR{n.prior_text}\BLOCK{endif}\BLOCK{if n.comparison_text} \VAR{n.comparison_text}\BLOCK{endif}
 
 \section{Detection and vetting}
 
-The SkySift engine found the signal with a box search\BLOCK{if n.window} over periods of \VAR{n.window}\BLOCK{endif}, at a signal detection efficiency of \VAR{n.sde} and a signal-to-noise ratio of \VAR{n.snr} over \VAR{n.n_events} transits.
+SkySift found the signal with a box search\BLOCK{if n.window} over periods of \VAR{n.window}\BLOCK{endif}, at a signal detection efficiency of \VAR{n.sde} and a signal-to-noise ratio of \VAR{n.snr} over \VAR{n.n_events} transits.
 \BLOCK{for s in n.vetting}
 \VAR{s}
 \BLOCK{endfor}
@@ -35,12 +35,12 @@ The SkySift engine found the signal with a box search\BLOCK{if n.window} over pe
 \VAR{n.pixel_text}\BLOCK{if n.dilution_text} \VAR{n.dilution_text}\BLOCK{endif}
 
 
-\section{The star and the planet}
+\section{The star and planet}
 
 \BLOCK{if n.star_ok}
 No Kepler stellar catalogue covers a background star, so the parameters come from Gaia DR3 \citep{gaia2016,gaia2023} colour and parallax\BLOCK{if n.gaia_flags_text}; \VAR{n.gaia_flags_text}\BLOCK{endif}. \BLOCK{if n.reddening_text}\VAR{n.reddening_text}. \BLOCK{endif}\BLOCK{if n.teff}The colour gives \BLOCK{if n.spectral_type}a spectral type of \VAR{n.spectral_type} and \BLOCK{endif}an effective temperature of \VAR{n.teff} K\BLOCK{if n.distance}, and the zero-point-corrected parallax a distance of \VAR{n.distance} pc\BLOCK{endif}. \BLOCK{elif n.distance}The zero-point-corrected parallax gives a distance of \VAR{n.distance} pc. \BLOCK{endif}\BLOCK{if refs.mann2015}From the absolute $K_s$ magnitude the relations of \citet{mann2015}\BLOCK{if refs.mann2019} and \citet{mann2019}\BLOCK{endif} give \BLOCK{else}The star has \BLOCK{endif}a radius of \VAR{n.radius} $R_\odot$\BLOCK{if n.mass} and a mass of \VAR{n.mass} $M_\odot$\BLOCK{endif}.
 \BLOCK{if n.rp}
-\BLOCK{if n.fit_k}With the fitted radius ratio of \VAR{n.fit_k} the\BLOCK{else}The\BLOCK{endif} planet radius is \VAR{n.rp} $R_\oplus$\BLOCK{if n.rp_bracket}\VAR{n.rp_bracket}\BLOCK{endif}, on an orbit of \VAR{n.a} AU\BLOCK{if n.teq} with an equilibrium temperature of \VAR{n.teq} K at a Bond albedo of 0.3\BLOCK{endif}\BLOCK{if n.insolation} and \VAR{n.insolation} times the insolation of Earth\BLOCK{endif}.
+\BLOCK{if n.fit_k}With the radius ratio of \VAR{n.fit_k} the\BLOCK{else}The\BLOCK{endif} planet radius is \VAR{n.rp} $R_\oplus$\BLOCK{if n.rp_bracket}\VAR{n.rp_bracket}\BLOCK{endif}, on an orbit of \VAR{n.a} AU\BLOCK{if n.teq} with an equilibrium temperature of \VAR{n.teq} K at a Bond albedo of 0.3\BLOCK{endif}\BLOCK{if n.insolation} and \VAR{n.insolation} times Earth's insolation\BLOCK{endif}.
 \BLOCK{endif}
 \BLOCK{else}
 The star could not be characterised from Gaia photometry, so the planet radius, orbit and temperature are not given here.
@@ -56,7 +56,7 @@ The star could not be characterised from Gaia photometry, so the planet radius, 
 
 \begin{figure}[ht!]
 \includegraphics[width=\linewidth]{figure1}
-\caption{\BLOCK{if panels}(a) the light\BLOCK{else}The light\BLOCK{endif} curve folded on the \VAR{n.period} day \VAR{n.fold_words}, within \VAR{n.window_h} hours of mid-transit, in parts per million: bins of \VAR{n.bin_minutes} minutes with their standard errors (dots) and the \VAR{n.model_words} (line)\BLOCK{if panels}; (b) odd and (c) even transits on the same scale\BLOCK{if n.pixel_panels}; (d) per-season difference images: this star (circle), the neighbour (square), the centroid (cross)\BLOCK{endif}\BLOCK{endif}.}
+\caption{\BLOCK{if panels}(a) the light\BLOCK{else}The light\BLOCK{endif} curve folded on the \VAR{n.period} day \VAR{n.fold_words}, within \VAR{n.window_h} hours of mid-transit, in parts per million: bins of \VAR{n.bin_minutes} minutes with standard errors (dots) and the \VAR{n.model_words} (line)\BLOCK{if panels}; (b) odd and (c) even transits on the same scale\BLOCK{if n.pixel_panels}; (d) per-season difference images: this star (circle), the neighbour (square), the centroid (cross)\BLOCK{endif}\BLOCK{endif}.}
 \end{figure}
 
 \section{Data availability}

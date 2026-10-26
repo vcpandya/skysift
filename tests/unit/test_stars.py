@@ -465,6 +465,38 @@ def test_the_adopted_3d_value_settles_the_height_clause_and_carries_the_mann_ran
     assert not bare["height_clause"].endswith(stars.HEIGHT_SETTLED) and "outside_mann_range" not in bare
 
 
+def test_a_3d_value_outside_the_maps_reliable_range_does_not_settle_the_height_clause():
+    """Task 17 fix round 1 (C2, ruling 4): the height clause ends with ``HEIGHT_SETTLED`` only when the map
+    constrains the dust at the star's distance (``reliable_distance`` not False; a value stored by hand has no flag
+    and keeps it); otherwise it says the map does not constrain the dust this near (this far) on this sightline,
+    by the side of the stored range the star lies on (``range_side``, ``range_flag``)."""
+    gaia = gaia_row_6146676()
+    near = {**EXT, "reliable_distance": False, "reliable_distance_min_pc": 406, "reliable_distance_max_pc": 2512}
+    e = derive(gaia, 40.29109, 0.048, 2165e-6, np.random.default_rng(1), extinction={**near, "column": COLUMN})[0]
+    clause = e.extinction["height_clause"]
+    assert clause == (f"the star sits about {e.extinction['height_pc']} pc above the plane, inside the dust layer, "
+                      "so its true reddening lies well inside the bracket; the map does not constrain the dust this "
+                      "near on this sightline")
+    assert stars.HEIGHT_SETTLED not in clause
+    far = {**EXT, "reliable_distance": False, "reliable_distance_min_pc": 100, "reliable_distance_max_pc": 251}
+    clause = derive(gaia, 40.29109, 0.048, 2165e-6, np.random.default_rng(1), extinction=far)[0].extinction[
+        "height_clause"]
+    assert clause.endswith("; the map does not constrain the dust this far on this sightline")
+    reliable = {**EXT, "reliable_distance": True, "reliable_distance_min_pc": 100, "reliable_distance_max_pc": 2512}
+    assert derive(gaia, 40.29109, 0.048, 2165e-6, np.random.default_rng(1), extinction=reliable)[0].extinction[
+        "height_clause"].endswith("; the 3D value settles it")
+    # the side and the words every text prints, from the stored range
+    assert stars.range_side(near) == ("nearer", 406) and stars.range_side(far) == ("beyond", 251)
+    assert stars.range_side(reliable) is None and stars.range_side(EXT) is None
+    assert stars.range_side({**EXT, "reliable_distance": False}) == ("outside", None)
+    assert stars.range_flag(near) == "nearer than the map's reliable range (from 406 pc)"
+    assert stars.range_flag(near, end=False) == "nearer than the map's reliable range"
+    assert stars.range_flag({**far, "reliable_distance_max_pc": 2512, "distance_pc": 3000.0}) == (
+        "beyond the map's reliable range (to 2,512 pc)")
+    assert stars.range_flag({**EXT, "reliable_distance": False}) == "outside the map's reliable range"
+    assert stars.range_flag(reliable) is None
+
+
 def _with_column(ebv: float, std: float) -> dict:
     return {**NOT_AVAILABLE, "column": {**COLUMN, "ebv": ebv, "ebv_std": std}}
 

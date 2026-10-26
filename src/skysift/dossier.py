@@ -1415,15 +1415,18 @@ def prior_claims_unchecked(data: dict) -> bool:
 CANDIDATE_CAVEAT = "This is a candidate until follow-up confirms it"
 NO_SPECTRUM = "No spectrum: the planet radius depends on the stellar radius from Gaia colour and parallax"
 NO_REDDENING = ", and the reddening is not measured"
-# spec 12.3 as amended: no 3D value, the reddening bracketed by the full column; neither, the build-time clause
+# spec 12.3 as amended: no 3D value, the reddening bracketed by the full column; neither, the build-time clause, or
+# after a read of the local map its short reason (Task 17 fix round 1, M6)
 REDDENING_BRACKETED = ", and the reddening is only bracketed"
 NO_BAYESTAR = " (Bayestar19 not available at build time)"
+NO_BAYESTAR_MAP = " (Bayestar19 not available: {why})"
 
 
 def no_spectrum_title(star: dict | None) -> str:
     """The stellar-radius caveat's title (spec 11.6, 12.3): ``NO_SPECTRUM`` alone when the star carries a 3D
     extinction (adopted or stored by hand); with ``REDDENING_BRACKETED`` when it is not available and the full column
-    bounds it; with ``NO_REDDENING`` and ``NO_BAYESTAR`` when neither is there. A star block without an extinction (a
+    bounds it; with ``NO_REDDENING`` and ``NO_BAYESTAR`` when neither is there (``NO_BAYESTAR_MAP`` with the record's
+    ``map_reason`` after a read of the local map). A star block without an extinction (a
     dossier before version 6) keeps the earlier rule: ``NO_REDDENING`` when Gaia gives no GSP-Phot E(BP-RP). The pack
     reads the title from here, so it follows the star block it prints."""
     star = star or {}
@@ -1433,7 +1436,8 @@ def no_spectrum_title(star: dict | None) -> str:
             return NO_SPECTRUM
         if (ext.get("column") or {}).get("status") == stars.COLUMN_OK:
             return NO_SPECTRUM + REDDENING_BRACKETED
-        return NO_SPECTRUM + NO_REDDENING + NO_BAYESTAR
+        why = ext.get("map_reason")
+        return NO_SPECTRUM + NO_REDDENING + (NO_BAYESTAR_MAP.format(why=why) if why else NO_BAYESTAR)
     red = star.get("ebpminrp_gspphot")
     return NO_SPECTRUM + ("" if isinstance(red, (int, float)) and not isinstance(red, bool) else NO_REDDENING)
 

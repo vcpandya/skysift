@@ -410,7 +410,8 @@ LAW_REFERENCE = "Gaia (E)DR3 extinction law; Cardelli et al. 1989"
 def map_inputs(e: dict) -> str:
     """The inputs of the 3D E(B-V) row: the map, then for a record the local map wrote (Task 17, spec 12.5) its
     version, MD5, file, pixel and sample count, the query date and the distance with its 16th to 84th percentile
-    range. The fingerprint hashes the E(B-V) only; the map's version and MD5 live here, in the provenance."""
+    range, then the side of the map's reliable range for a star outside it (``stars.range_flag``). The fingerprint
+    hashes the E(B-V) and the column only; the map's version and MD5 live here, in the provenance."""
     parts = [str(e.get("map"))]
     if e.get("map_version"):
         local = f"map version {e['map_version']}, MD5 {e.get('map_md5')}, file {e.get('map_file')}"
@@ -422,7 +423,8 @@ def map_inputs(e: dict) -> str:
     parts.append(f"queried {e.get('queried_utc')}")
     low, high = _num(e.get("distance_pc_p16")), _num(e.get("distance_pc_p84"))
     span = f" (16th to 84th percentile {low} to {high} pc)" if low is not None and high is not None else ""
-    parts.append(f"{e.get('distance_pc')} pc{span}")
+    side = stars_module.range_flag(e)       # Task 17 fix round 1, ruling 1: the reliable-range flag in every text
+    parts.append(f"{e.get('distance_pc')} pc{span}" + (f", {side}" if side else ""))
     return "; ".join(parts)
 
 

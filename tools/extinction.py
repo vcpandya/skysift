@@ -376,19 +376,6 @@ def _parsecs(dm) -> int | None:
     return round(10 ** (dm / 5 + 1)) if stars._finite(dm) else None
 
 
-def range_words(block: dict) -> str:
-    """Which side of the map's reliable range a star lies on (fix round 1, M2), from the record's
-    ``reliable_distance_min_pc`` and ``reliable_distance_max_pc``: "nearer than the map's reliable range (from N
-    pc)", "beyond the map's reliable range (to N pc)", or "outside the map's reliable range" without the end."""
-    d = float(block["distance_pc"])
-    low, high = block.get("reliable_distance_min_pc"), block.get("reliable_distance_max_pc")
-    if low is not None and d < low:
-        return f"nearer than the map's reliable range (from {low:,} pc)"
-    if high is not None and d > high:
-        return f"beyond the map's reliable range (to {high:,} pc)"
-    return "outside the map's reliable range"
-
-
 def store_path(root: Path, target_id: str) -> Path:
     return Path(root) / target_id / EXTINCTION_FILE
 
@@ -477,7 +464,8 @@ def _run_map(args, target: str, path: Path, ra: float, dec: float, star: dict, s
     spread = (f", {block['ebv_at_distance_p16']:.3f} to {block['ebv_at_distance_p84']:.3f} at the distance's 16th "
               f"and 84th percentiles ({distance[1]:.1f} and {distance[2]:.1f} pc)"
               if "ebv_at_distance_p16" in block else "")
-    flag = "" if block["reliable_distance"] else f", {range_words(block)}"
+    side = stars.range_flag(block)              # fix round 1, M2: the side of the reliable range, as the texts say it
+    flag = f", {side}" if side else ""
     _say(f"{target}: RA {ra} Dec {dec}, {distance[0]:.1f} pc: Bayestar19 E(B-V) {block['ebv']:.3f} "
          f"({block['ebv_p16']:.3f} to {block['ebv_p84']:.3f}) from the local map (nside {block['nside']}, pixel "
          f"{block['healpix_index']}){spread}{flag}, adopted; {shown}; wrote {path}")
