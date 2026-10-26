@@ -2159,7 +2159,8 @@ def _bracket_live(data: dict) -> dict:
     equilibrium temperature keep the adopted star's values (each one number, so the count is the same)."""
     star, planet = data["star"], data["planet"]
     ext, unred = star["extinction"], star["unreddened"]
-    clause = ext["height_clause"].rsplit("; ", 1)[0]
+    # fix wave round 4 (I2): the bracket state names the bracket, the adopted one the range its ends span
+    clause = ext["height_clause"].rsplit("; ", 1)[0].replace(stars_module.HEIGHT_RANGE, stars_module.HEIGHT_BRACKET)
     block = {k: ext[k] for k in BRACKET_KEEPS if k in ext}
     block.update({"status": stars_module.EXT_NOT_AVAILABLE, "state": stars_module.EXT_NOT_AVAILABLE,
                   "reason": BRACKET_REASON, "height_clause": clause})
@@ -3695,3 +3696,48 @@ def test_the_plain_texts_carry_the_height_clause_and_the_note_does_not(env_with_
     assert "GSP-Phot (Gaia DR3)" not in {r["estimate"] for r in pack_module.reddening_rows(bare)}
     assert "GSP-Phot" not in pack_module.reddening_key(bare) and "andrae2023" not in pack_module.readme_works(bare)
     assert "GSP-Phot" in pack_module.reddening_key(data)
+
+
+# ------------------------------------------------------------------------------------------ fix wave round 4
+
+UNCONSTRAINED_NEAR = ", and the map does not constrain the reddening this near"
+BRACKET_SPAN = ("On the adopted route the reddening bracket spans Teff 3,653 to 4,657 K, radius 0.499 to 0.540 Rsun "
+                "and planet radius 2.5 to 2.7 R⊕.")
+
+
+def test_the_flagged_stars_caveat_says_the_map_does_not_constrain_its_reddening():
+    """Fix wave round 4 (I2): an adopted value outside the map's reliable range leaves the reddening unconstrained
+    at the star's distance, so the stellar-radius caveat's title says so on the side the star lies (this near, this
+    far), in the README, the plain texts and the page; the note keeps its title, its reddening sentence carrying the
+    flag (its dominant prior-claim adopted shape stands at the 1,480 limit). The README's bullet gives the range the
+    two ends span on the adopted route, from the derived star's own values (the live KIC 6146676 golden: 3,653 to
+    4,657 K, 0.499 to 0.540 Rsun, 2.5 to 2.7 Earth radii). A star the map constrains, and the bracket state, keep
+    the title and the bullet as they were."""
+    data = _live_shape("dominant", True, "adopted")
+    star, title = data["star"], dossier_module.NO_SPECTRUM
+    assert dossier_module.no_spectrum_title(star) == title + UNCONSTRAINED_NEAR
+    assert dossier_module.no_spectrum_title(star, flag=False) == title
+    far = {**star["extinction"], "distance_pc": 7000.0}
+    assert dossier_module.no_spectrum_title({**star, "extinction": far}) == (
+        f"{title}, and the map does not constrain the reddening this far")
+    reliable = {**star, "extinction": {**star["extinction"], "reliable_distance": True}}
+    assert dossier_module.no_spectrum_title(reliable) == title
+    assert dossier_module.no_spectrum_title(_bracket_live(data)["star"]) == title + dossier_module.REDDENING_BRACKETED
+    # the page's caveat, as a rebuilt dossier stores it
+    page = next(c for c in dossier_module.caveats(data) if c.get("key") == "no_spectrum")
+    assert page["title"] == title + UNCONSTRAINED_NEAR
+    # the README bullet: the flagged title, then the range from the derived star's two ends
+    unred, col = star["unreddened"], star["extinction"]["column"]
+    assert [round(unred["teff"]["median"]), round(col["teff"]["median"])] == [3653, 4657]
+    assert [unred["radius"]["median"], col["radius"]["median"]] == [0.499, 0.54]
+    assert pack_module.bracket_span(data) == BRACKET_SPAN
+    bullet = next(line for line in render_readme(data, {}).splitlines() if line.startswith(f"- {title}"))
+    assert bullet.startswith(f"- {title}{UNCONSTRAINED_NEAR}. The radius ratio comes from the light curve; ")
+    assert bullet.endswith(f" {BRACKET_SPAN}")
+    # the note keeps its title
+    assert pack_module.numbers(data)["caveat_text"].startswith(f"{title}. ")
+    # nothing changes where the map constrains the dust, or in the bracket state
+    for other in ({**data, "star": reliable}, _bracket_live(data)):
+        assert pack_module.bracket_span(other) is None
+        line = next(x for x in render_readme(other, {}).splitlines() if x.startswith(f"- {title}"))
+        assert UNCONSTRAINED_NEAR not in line and "the reddening bracket spans" not in line

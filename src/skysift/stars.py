@@ -108,6 +108,10 @@ HEIGHT_ABOVE = ("the star sits about {z} pc {side} the plane, above most of the 
 # Task 17 (spec 12.5): with a 3D value adopted the clause stays, as it describes the geometry, and this ends it
 # where the map constrains the dust at the star's distance (fix round 1, ruling 4)
 HEIGHT_SETTLED = "the 3D value settles it"
+# Task 17 fix wave round 4 (I2): with a 3D value the texts carry no bracket, so its height clause names the range the
+# two ends span in place of "the bracket"
+HEIGHT_BRACKET = "the bracket"
+HEIGHT_RANGE = "the range from unreddened to the full column"
 # Task 17 fix round 1 (C1, C2, rulings 1 and 4): a stored value with ``reliable_distance`` false is said to lie on
 # one side of the map's reliable range (``range_side``), and its height clause ends with the side's words in place
 # of ``HEIGHT_SETTLED``. The value there is the map's samples below (above) the range, interpolated in distance
@@ -671,7 +675,8 @@ def derive(gaia: GaiaRow | None, period: float, fit_k: float | None, depth: floa
     block also carries the star's height above the plane (``height_fields``: ``b_deg``, ``height_pc``,
     ``height_clause``) from the Gaia distance. With a 3D value (Task 17, spec 12.5) the height clause ends with
     ``HEIGHT_SETTLED`` where the map constrains the dust at the star's distance, else with the side's
-    ``HEIGHT_UNCONSTRAINED`` (``range_side``; fix round 1, ruling 4), and the block records the adopted star's
+    ``HEIGHT_UNCONSTRAINED`` (``range_side``; fix round 1, ruling 4), naming ``HEIGHT_RANGE`` in place of the bracket
+    (fix wave round 4, I2), and the block records the adopted star's
     ``outside_mann_range``."""
     if extinction is None:
         return _derive(gaia, period, fit_k, depth, rng)
@@ -696,6 +701,7 @@ def derive(gaia: GaiaRow | None, period: float, fit_k: float | None, depth: floa
         block.update(height_fields(gaia.ra, gaia.dec, plain.distance_pc.median))
         if state in (EXT_ADOPTED, EXT_MANUAL):
             side = range_side(extinction)
+            block["height_clause"] = block["height_clause"].replace(HEIGHT_BRACKET, HEIGHT_RANGE)
             block["height_clause"] += f"; {HEIGHT_SETTLED if side is None else HEIGHT_UNCONSTRAINED[side[0]]}"
     ebv_col = column_ebv(extinction)
     if ebv_col is not None:
@@ -894,6 +900,8 @@ def _derive(gaia: GaiaRow | None, period: float, fit_k: float | None, depth: flo
         reddening_note = (f"Teff and spectral type use the BP-RP {bp_rp:.2f} dereddened by the {label} E(BP-RP) of "
                           f"{emed:.3f} {tail}; if E(BP-RP) were {REDDENING_ALT} the dwarf-table radius would be "
                           f"{alt.median:.3f} Rsun.")
+        if route == "mann":     # fix wave round 4 (I3): the Ks radius on the adopted route as on the unreddened one
+            reddening_note += " The Ks radius barely depends on reddening."
     labels = mamajek_labels()
     spectral_type = labels[int(np.argmin(np.abs(tab[:, 0] - x0)))]
     star = StarParams(route=route, spectral_type=spectral_type, teff=teff, radius=radius, mass=mass,

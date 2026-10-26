@@ -1420,11 +1420,18 @@ NO_REDDENING = ", and the reddening is not measured"
 REDDENING_BRACKETED = ", and the reddening is only bracketed"
 NO_BAYESTAR = " (Bayestar19 not available at build time)"
 NO_BAYESTAR_MAP = " (Bayestar19 not available: {why})"
+# fix wave round 4 (I2): an adopted value outside the map's reliable range (``stars.range_side``) leaves the reddening
+# unconstrained at the star's distance, which the title says on the side the star lies
+UNCONSTRAINED_REDDENING = {"nearer": ", and the map does not constrain the reddening this near",
+                           "beyond": ", and the map does not constrain the reddening this far",
+                           "outside": ", and the map does not constrain the reddening at this distance"}
 
 
-def no_spectrum_title(star: dict | None) -> str:
+def no_spectrum_title(star: dict | None, flag: bool = True) -> str:
     """The stellar-radius caveat's title (spec 11.6, 12.3): ``NO_SPECTRUM`` alone when the star carries a 3D
-    extinction (adopted or stored by hand); with ``REDDENING_BRACKETED`` when it is not available and the full column
+    extinction (adopted or stored by hand), with the side's ``UNCONSTRAINED_REDDENING`` when ``flag`` and the value
+    lies outside the map's reliable range (fix wave round 4, I2; the note passes ``flag`` False, its reddening
+    sentence carrying the flag); with ``REDDENING_BRACKETED`` when it is not available and the full column
     bounds it; with ``NO_REDDENING`` and ``NO_BAYESTAR`` when neither is there (``NO_BAYESTAR_MAP`` with the record's
     ``map_reason`` after a read of the local map). A star block without an extinction (a
     dossier before version 6) keeps the earlier rule: ``NO_REDDENING`` when Gaia gives no GSP-Phot E(BP-RP). The pack
@@ -1433,7 +1440,8 @@ def no_spectrum_title(star: dict | None) -> str:
     ext = star.get("extinction")
     if isinstance(ext, dict):
         if ext.get("state") != stars.EXT_NOT_AVAILABLE:
-            return NO_SPECTRUM
+            side = stars.range_side(ext) if flag else None
+            return NO_SPECTRUM + (UNCONSTRAINED_REDDENING[side[0]] if side else "")
         if (ext.get("column") or {}).get("status") == stars.COLUMN_OK:
             return NO_SPECTRUM + REDDENING_BRACKETED
         why = ext.get("map_reason")

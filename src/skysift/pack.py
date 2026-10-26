@@ -2246,7 +2246,7 @@ def numbers(data: dict, tex: bool = False, after_bjd: float | None = None) -> di
         "rp_text": value_text(rp), "a_text": value_text(a), "teq_text": value_text(teq), "host_text": host or "no "
         "stellar parameters",
         "fap_text": fap_text, "fpp_text": fpp_text,
-        "caveats": [{**c, "title": _caveat_title(c, star)} for c in caveats],
+        "caveats": [{**c, "title": _caveat_title(c, star), "text": _caveat_text(c, data)} for c in caveats],
         "in_house_text": in_house_text(data), "in_house_capital": _capital(in_house_text(data)),
         "both_tools": both_tools(data, tex),
         "cross_check_sentence": cross_check_sentence(data, tex),
@@ -2262,7 +2262,7 @@ def numbers(data: dict, tex: bool = False, after_bjd: float | None = None) -> di
         "prior_text": prior_claim_sentence(data, tex), "prior_plain": prior_claim_sentence(data),
         "comparison_text": comparison_text(data, tex), "comparison_plain": comparison_text(data),
         "priority_text": priority_sentence(data),
-        "caveat_text": " ".join(f"{_caveat_title(c, star).rstrip('.')}." for c in caveats
+        "caveat_text": " ".join(f"{_caveat_title(c, star, flag=False).rstrip('.')}." for c in caveats
                                 if c.get("key") not in NOTE_STATED_CAVEATS
                                 and c.get("title") != ds.CANDIDATE_CAVEAT) or "No caveat is recorded.",
         "window_h": window_hours(data), "bin_minutes": bin_minutes(data),
@@ -2282,12 +2282,49 @@ def numbers(data: dict, tex: bool = False, after_bjd: float | None = None) -> di
 NOTE_STATED_CAVEATS = ("partial_box",)
 
 
-def _caveat_title(caveat: dict, star: dict) -> str:
+def _caveat_title(caveat: dict, star: dict, flag: bool = True) -> str:
     """A caveat's title as the texts print it: the stellar-radius caveat follows the star block it sits beside
-    (``dossier.no_spectrum_title``: the reddening named while Gaia gives no E(BP-RP)), every other its stored one."""
+    (``dossier.no_spectrum_title``: the reddening named while Gaia gives no E(BP-RP), and, unless ``flag`` is False
+    as in the note, the reddening the map does not constrain outside its reliable range), every other its stored
+    one."""
     if caveat.get("key") == "no_spectrum" or str(caveat.get("title") or "").startswith(ds.NO_SPECTRUM):
-        return ds.no_spectrum_title(star)
+        return ds.no_spectrum_title(star, flag)
     return caveat["title"]
+
+
+def _caveat_text(caveat: dict, data: dict) -> str:
+    """A caveat's text as the README prints it: the stored one, and for the stellar-radius caveat of a star whose
+    adopted value lies outside the map's reliable range the range its two ends span (``bracket_span``; fix wave
+    round 4, I2)."""
+    text = caveat.get("text") or ""
+    span = bracket_span(data) if caveat.get("key") == "no_spectrum" else None
+    return f"{text} {span}" if span else text
+
+
+def bracket_span(data: dict) -> str | None:
+    """"On the adopted route the reddening bracket spans Teff 3,653 to 4,657 K, radius 0.499 to 0.540 Rsun and planet
+    radius 2.5 to 2.7 R⊕." (fix wave round 4, I2): from the unreddened end to the full-column end the derived star
+    stores, each at the adopted value's decimals (``_mid_at``), the smaller first; one value where the two print
+    alike. None outside the adopted state, where the map constrains the dust at the star's distance
+    (``stars.range_side`` None), or without the full column's derived values."""
+    if reddening_state(data) != RED_ADOPTED:
+        return None
+    star, planet = data.get("star") or {}, data.get("planet") or {}
+    e, unred, col = star["extinction"], star.get("unreddened") or {}, _column_derived(data)
+    if stars_module.range_side(e) is None or col is None:
+        return None
+    parts = []
+    for name, key, unit, holder in (("Teff", "teff", " K", star), ("radius", "radius", " Rsun", star),
+                                    ("planet radius", "rp_rearth", " R⊕", planet)):
+        ends = [_mid_at(unred.get(key), holder.get(key)), _mid_at(col.get(key), holder.get(key))]
+        if None in ends:
+            continue
+        a, b = sorted(ends, key=lambda s: float(s.replace(",", "")))
+        parts.append(f"{name} {a}{unit}" if a == b else f"{name} {a} to {b}{unit}")
+    if not parts:
+        return None
+    joined = ", ".join(parts[:-1]) + (" and " if len(parts) > 1 else "") + parts[-1]
+    return f"On the adopted route the reddening bracket spans {joined}."
 
 
 def window_hours(data: dict) -> str | None:
