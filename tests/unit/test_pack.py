@@ -3497,6 +3497,58 @@ def test_an_adopted_value_above_the_column_or_outside_the_mann_range_says_so_in_
                                                                        "GSP-Phot (Gaia DR3)"}
 
 
+# Task 17 fix round 2: what the README key names, by the words it prints, and the start of its reference entry
+KEY_WORKS = {"Green et al. 2019": "Green, G. M.", "Schlafly and Finkbeiner 2011": "Schlafly, E. F., & Finkbeiner",
+             "Schlafly et al. 2016": "Schlafly, E. F., Meisner", "SFD98": "Schlegel, D. J., Finkbeiner",
+             "Andrae et al. 2023": "Andrae, R.", "Fitzpatrick et al. 2019": "Fitzpatrick, E. L.",
+             "Riello et al. 2021": "Riello, M.", "Cardelli et al. 1989": "Cardelli, J. A."}
+
+
+def test_the_live_readme_key_puts_the_route_before_the_scales_and_lists_every_work_it_names():
+    """Task 17 fix round 2 (N1, N2): on the live KIC 6146676 key (the adopted shape from its stored record, whose
+    full-column star leaves the Mann range) the route and its "so indicative" clause follow the column's values,
+    before the scale clause, so they do not read as part of "not a measurement on one"; and every work the key names
+    (Schlafly et al. 2016 and SFD98 among them) is in the README's References list."""
+    data = _live_shape("dominant", True, "adopted")
+    assert data["star"]["extinction"]["column"]["outside_mann_range"] is True
+    key = pack_module.reddening_key(data)
+    assert ("so an upper bound, consistent with the 3D value, on the adopted route (the Mann relations with Ks "
+            f"dereddened by A_Ks), {stars_module.MANN_OUTSIDE}, {KEY_COLUMN}") in key
+    assert "not a measurement on one, on the adopted route" not in key
+    refs = pack_module.readme_references(data)
+    named = [w for w in KEY_WORKS if w in key]
+    assert {"Schlafly et al. 2016", "SFD98", "Schlafly and Finkbeiner 2011"} <= set(named)
+    for words in named:
+        assert [r for r in refs if r.startswith(KEY_WORKS[words])], words
+    assert "Schlegel, D. J., Finkbeiner, D. P., & Davis, M. 1998, ApJ, 500, 525" in refs
+    assert [r for r in refs if r.startswith("Schlafly, E. F., Meisner") and r.endswith("2016, ApJ, 821, 78")]
+    # the note cites neither, so its bibliography (and its count) does not change
+    assert not pack_module.references(data).get("schlafly2016") and not pack_module.references(data).get(
+        "schlegel1998")
+
+
+def test_a_value_whose_error_rounds_to_zero_prints_its_range():
+    """Task 17 fix round 2 (N3): a value whose lower or upper error rounds to zero at the printed precision prints in
+    the range form "median (p16 to p84)", as the note's E(B-V) does; never "-0.000" or "+0.000". KIC 6146676's
+    record has p16 equal to the median (E(B-V) 0.0088, 0.0088 to 0.0142), so its derived extinctions have no lower
+    spread."""
+    # at the precision rule's decimals (two significant figures of 0.0054); the note's E(B-V) keeps three (ruling 2)
+    assert pack_text.value_text({"median": 0.0088, "minus": 0.0, "plus": 0.0054}) == "0.0088 (0.0088 to 0.0142)"
+    assert str(pack_text.value_text({"median": 0.0088, "minus": 0.0, "plus": 0.0054}, True)) == (
+        "0.0088 (0.0088 to 0.0142)")
+    assert pack_text.value_text({"median": 0.011, "minus": 0.0, "plus": 0.007}) == "0.011 (0.011 to 0.018)"
+    assert pack_text.value_text({"median": 0.5, "minus": 0.02, "plus": None}) == "0.50 (0.48 to 0.50)"
+    assert pack_text.value_text({"median": 0.509, "minus": 0.016, "plus": 0.017}) == "0.509 +0.017/-0.016"
+    assert pack_text.value_text({"median": 2.61, "minus": 0.08, "plus": 0.08}) == "2.61 ± 0.08"
+    data = _live_shape("dominant", True, "adopted")
+    plain, rows = pack_module.reddening_plain(data), pack_module.reddening_rows(data)
+    assert "E(BP-RP) 0.011 (0.011 to 0.018), A_G 0.022 (0.022 to 0.035) and A_Ks 0.003 (0.003 to 0.005)" in plain
+    row = next(r for r in rows if r["estimate"] == "Bayestar19 (Green et al. 2019)")
+    assert (row["ebprp"], row["a_g"], row["a_ks"]) == ("0.011 (0.011 to 0.018)", "0.022 (0.022 to 0.035)",
+                                                       "0.003 (0.003 to 0.005)")
+    words = pack_module.star_texts(data)                                         # the dossier page's paragraph
+    for text in (plain, words, " ".join(str(v) for r in rows for v in r.values())):
+        assert not re.search(r"[+-]0\.0+(?![0-9])", text), text                    # no "-0.000", no "+0.000"
 def test_a_value_outside_the_maps_reliable_range_says_the_side_in_every_text(env_with_dossier):
     """Task 17 fix round 1 (C1, C2, I1, I3, M1, M3; rulings 1, 2 and 4): a hand-written record with KIC 6146676's
     stored values (E(B-V) 0.0088, 0.0088 to 0.0142, the same at the distance's percentiles) on a pixel reliable only

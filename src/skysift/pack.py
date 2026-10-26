@@ -404,6 +404,10 @@ BIBLIOGRAPHY = (
     ("riello2021", r"{Riello} et~al.(2021)", r"Riello, M., De Angeli, F., Evans, D.~W., et~al. 2021, A\&A, 649, A3"),
     ("rogers2015", r"{Rogers}(2015)", r"Rogers, L.~A. 2015, ApJ, 801, 41"),
     ("schlafly2011", r"{Schlafly} \& {Finkbeiner}(2011)", r"Schlafly, E.~F., \& Finkbeiner, D.~P. 2011, ApJ, 737, 103"),
+    # Task 17 fix round 2 (N2): the README key's scale sentences name these two; the note cites neither
+    ("schlafly2016", r"{Schlafly} et~al.(2016)",
+     r"Schlafly, E.~F., Meisner, A.~M., Stutz, A.~M., et~al. 2016, ApJ, 821, 78"),
+    ("schlegel1998", r"{Schlegel} et~al.(1998)", r"Schlegel, D.~J., Finkbeiner, D.~P., \& Davis, M. 1998, ApJ, 500, 525"),
     ("schmitt2014", r"{Schmitt} et~al.(2014)", r"Schmitt, J.~R., et~al. 2014, AJ, 148, 28"),
     ("seager2003", r"{Seager} \& {Mall{\'e}n-Ornelas}(2003)",
      r"Seager, S., \& Mall{\'e}n-Ornelas, G. 2003, ApJ, 585, 1038"),
@@ -919,14 +923,21 @@ def readme_works(data: dict) -> list[str]:
 def _reddening_keys(data: dict) -> list[str]:
     """The works the README's reddening paragraph and table rest on (spec 12.3): the Gaia (E)DR3 law's Fitzpatrick et
     al. 2019 and Riello et al. 2021 and the A_Ks ratio's Cardelli et al. 1989 when the law was applied, Schlafly and
-    Finkbeiner 2011 for a full column the note does not cite, Green et al. 2019 for a 3D value, and Andrae et al. 2023
-    for the GSP-Phot caveat the table's key prints with a GSP-Phot row (minor 7)."""
+    Finkbeiner 2011 for a full column the note does not cite, Green et al. 2019 for a 3D value, Andrae et al. 2023
+    for the GSP-Phot caveat the table's key prints with a GSP-Phot row (minor 7), and, where the key prints its
+    scale sentences (Task 17 fix round 2, N2), Schlafly et al. 2016 and Schlegel et al. 1998 (SFD98)."""
     state, col = reddening_state(data), _column_derived(data)
     if state is None:
         return []
     keys = ((["andrae2023"] if _gsp_row(data) else [])
             + (["cardelli1989", "fitzpatrick2019", "riello2021"] if state == RED_ADOPTED or col is not None else []))
-    return keys + (["schlafly2011"] if col is not None else []) + (["green2019"] if state == RED_ADOPTED else [])
+    keys += ["schlafly2011"] if col is not None else []
+    keys += ["green2019"] if state == RED_ADOPTED else []
+    # fix round 2 (N2): the key's scale sentences name Schlafly et al. 2016 and SFD98 (Schlegel et al. 1998)
+    e = (data.get("star") or {}).get("extinction") or {}
+    if state == RED_ADOPTED and _map_value(e):
+        keys += ["schlafly2016"] + (["schlegel1998"] if col is not None and column_fit(data) else [])
+    return keys
 
 
 def _star_method_keys(data: dict) -> list[tuple[str, str]]:
@@ -1857,7 +1868,7 @@ def reddening_key(data: dict) -> str | None:
                  f"{stars_module.MANN_OUTSIDE}" if col.get("outside_mann_range") is True else "")
         scale = f", {KEY_COLUMN_SCALE}" if fit and _map_value(data["star"]["extinction"]) else ""     # ruling 3
         parts.append("Full column: the IRSA DUST value at the star, the whole line of sight with the dust beyond the "
-                     f"star, so an upper bound{fit}{scale}{route}.")
+                     f"star, so an upper bound{fit}{route}{scale}.")      # fix round 2, N1: the route first
     if _gsp_row(data):
         parts.append("GSP-Phot: Gaia's own fit, biased for cool dwarfs (Andrae et al. 2023), not adopted.")
     if state == RED_ADOPTED or _column_derived(data) is not None:
