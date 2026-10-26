@@ -269,9 +269,6 @@ def test_store_wants_one_target_and_a_stored_file_is_validated(tmp_path, capsys)
     assert json.loads(path.read_text(encoding="utf-8"))["column"]["ebv"] == 0.6741
 
 
-RERUN_KEYS = ("reliable_distance_min_pc", "reliable_distance_max_pc")
-
-
 def test_the_writer_keys_match_the_five_stored_records(tmp_path):
     """Minor 10: the keys the tool writes (with the Argonaut query failing or answering, whichever the live run met)
     are the keys of the five stored records, so a rename cannot drift from the records again. Task 17: a record the
@@ -291,10 +288,7 @@ def test_the_writer_keys_match_the_five_stored_records(tmp_path):
     for target in ex.LIVE_TARGETS:
         stored = json.loads(ex.store_path(root, target).read_text(encoding="utf-8"))
         written = by_state[(stored["status"], "map_version" in stored)]
-        # Task 17 fix round 1: the two range keys reach the live records when the controller reruns the tool on
-        # the real map; until then a record may lack them, and only them (drop this allowance after the rerun)
-        expected = [k for k in written if k in stored or k not in RERUN_KEYS]
-        assert list(stored) == expected, target
+        assert list(stored) == list(written), target
         assert list(stored["column"]) == list(written["column"]), target
         assert stars.load_extinction(target, root) == stored
         assert not [w for w in NEUTRAL_WORDS if w in json.dumps(stored).lower()], target

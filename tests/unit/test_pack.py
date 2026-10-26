@@ -2131,8 +2131,8 @@ LIVE_RECORD = Path(__file__).resolve().parents[2] / "docs" / "candidates" / "kic
 def _adopted_live(ext: dict) -> dict:
     """Task 17: the golden's extinction block as the local map left it, from KIC 6146676's stored record (fix round 1,
     I4): E(B-V) 0.0088 (0.0088 to 0.0142) at 303 pc (299.5 to 306.6 pc), ``reliable_distance`` false, the pixel
-    reliable only from 406 pc (the record carries the range's ends once the controller reruns the tool; until then
-    the ruled 406 pc and a stand-in end the texts do not print for a star nearer than the range). The law's values
+    reliable only from 405 pc to 6,685 pc, the ends the record carries since the controller's rerun on the real map
+    (the end is not printed for a star nearer than the range). The law's values
     are E(B-V) times the 0.312 block's ratios, as ``derive`` gives them to the precision the README prints. The
     adopted star is not flagged outside the Mann range: for this star the flag cannot arise in the adopted state,
     since dereddening only makes it hotter and above 4,000 K ``derive`` leaves the Mann relations for the colour
@@ -2143,15 +2143,14 @@ def _adopted_live(ext: dict) -> dict:
     record = json.loads(LIVE_RECORD.read_text(encoding="utf-8"))
     assert (record["ebv"], record["ebv_p16"], record["ebv_p84"]) == (0.0088, 0.0088, 0.0142)
     assert record["reliable_distance"] is False and record["distance_pc"] == ext["distance_pc"] == 303.0
+    assert (record["reliable_distance_min_pc"], record["reliable_distance_max_pc"]) == (405, 6685)
     block = {k: val for k, val in ext.items() if k not in ("reason", "column")}
     block.update({k: val for k, val in record.items() if k not in ("target", "column")})
-    block.setdefault("reliable_distance_min_pc", 406)
-    block.setdefault("reliable_distance_max_pc", 2512)                # a stand-in: not printed for a nearer star
     block.update({"state": "adopted", "column": ext["column"], "a0": v(0.027, 0.0, 0.017),
                   "ebprp": v(0.011, 0.0, 0.007), "a_g": v(0.022, 0.0, 0.013), "a_ks": v(0.003, 0.0, 0.002),
                   "bp_rp0": 2.086, "colour_held": False, "outside_mann_range": False,
                   "height_clause": f"{ext['height_clause']}; {stars_module.HEIGHT_UNCONSTRAINED['nearer']}"})
-    assert stars_module.range_side(block) == ("nearer", 406)
+    assert stars_module.range_side(block) == ("nearer", 405)
     return block
 
 
@@ -2247,8 +2246,8 @@ def _check_live_shape(cross: str, prior: bool, state: str = "bracket") -> dict:
     if state == "adopted":       # Task 17: the reddening sentence with the column check and the Mann clause
         assert str(pack_module.reddening_text(data, True)) in flat and "from unreddened" not in flat
         assert (r"E(B-V) = 0.009 (0.009 to 0.014) from Bayestar19 \citep{green2019} at 303 pc, nearer than the map's "
-                r"reliable range (from 406 pc; full column 0.674 \citep{schlafly2011}, an upper bound). ") in flat
-        assert "indicative. " not in flat and r"]{schlafly2011} Schlafly" in flat
+                r"reliable range (from 405 pc; full column 0.674 \citep{schlafly2011}, an upper bound). ") in flat
+        assert "indicative. " not in flat and "6,685" not in flat and r"]{schlafly2011} Schlafly" in flat
     else:
         assert str(pack_module.rp_bracket_text(data, True)) in flat
     words = note_words(tex)
@@ -2290,7 +2289,7 @@ def test_the_live_shape_stays_inside_the_word_limit_with_margin(cross, prior, st
     with the full column as its check in place of the bracket clause and the caveat title's reddening words, Green et
     al. 2019 in place of Schlafly and Finkbeiner 2011) 1,347 and 1,375 without and 1,451 and 1,479 with one; abstracts
     144 and 148 in both. Task 17 fix round 1 builds the adopted state from KIC 6146676's stored record (E(B-V) 0.0088,
-    nearer than the map's reliable range from 406 pc): the flag, the range form and the column's citation with its
+    nearer than the map's reliable range from 405 pc): the flag, the range form and the column's citation with its
     bibitem took the longest to 1,499; its fifteen cuts elsewhere (the fix-round report lists each): the bracket
     1,328 and 1,356 without a prior claim and 1,430 and 1,458 with one; the adopted state 1,350 and 1,378 without and
     1,452 and 1,480 with one; abstracts 144 and 148 in both."""
