@@ -865,16 +865,19 @@ def fap_method_text(data: dict) -> str | None:
     stars, inside = calib.get("null_stars"), calib.get("null_stars_in_sweep")
     if isinstance(stars, int) and stars:
         parts.append(f"the {stars:,} null stars come from the calibration pilot, a selection apart from the sweep"
-                     + (f" ({inside:,} of them are in it)" if isinstance(inside, int) else ""))
+                     + (f" ({inside:,} of them {'is' if inside == 1 else 'are'} in it)" if isinstance(inside, int) else ""))
     k, kinds = fap.get("k"), {kind: n for kind, n in (fap.get("k_by_kind") or {}).items() if n}
     if isinstance(k, int) and k and kinds:
         if len(kinds) == 1:
             kind = next(iter(kinds))
-            parts.append(f"all {k} null searches that reached the signal's SDE are {kind} light curves"
+            # fix wave round 4 (M1): one search is singular
+            parts.append((f"the 1 null search that reached the signal's SDE is {'an' if kind[:1] in 'aeiou' else 'a'} "
+                          f"{kind} light curve" if k == 1 else
+                          f"all {k} null searches that reached the signal's SDE are {kind} light curves")
                          + (", so systematics, not white noise, set the tail" if kind == "inverted" else ""))
         else:
             parts.append(f"of the {k} that reached the signal's SDE, "
-                         + _listed([f"{n} are {kind}" for kind, n in sorted(kinds.items())]))
+                         + _listed([f"{n} {'is' if n == 1 else 'are'} {kind}" for kind, n in sorted(kinds.items())]))
     return "; ".join(parts) + "."
 
 
@@ -1510,8 +1513,12 @@ MANN_ADOPTED = "; the dereddened parameters are " + stars_module.MANN_OUTSIDE
 KEY_SCALE = ("E(B-V) is 0.884 times the map's unit (E(g-r) = 0.901 per unit, Schlafly and Finkbeiner 2011 Table 6; "
              "the 0.884 from the Schlafly et al. 2016 reddening vector, as the Bayestar usage notes give it), from "
              "{samples} with their 16th to 84th percentiles")
-KEY_COLUMN_SCALE = ("on the Schlafly and Finkbeiner 2011 scale (0.86 times SFD98), so the comparison is a check across "
-                    "two scales, not a measurement on one")
+KEY_COLUMN_SCALE = ("on the Schlafly and Finkbeiner 2011 scale, 0.86 times SFD98 (Schlegel, Finkbeiner and Davis 1998), "
+                    "so the comparison is a check across two scales, not a measurement on one")
+# fix wave round 4, polish (a): the README key says which star the FPP rests on (the plain texts' few words are
+# ``crosscheck.TIC_STAR``; the note is unchanged)
+KEY_TIC_STAR = ("TRICERATOPS draws the target's Teff, radius and mass from the TIC (its own star list), so the dossier's "
+                "derived star does not enter the FPP.")
 COLUMN_SCALE = "on the Schlafly and Finkbeiner 2011 scale"
 EARLIER_ASSUMPTION = f"{stars_module.UNREDDENED} is the earlier assumption"
 # the three states the texts follow (spec 12.3 as amended by the controller's addenda of 23 October)
@@ -1835,7 +1842,8 @@ def reddening_key(data: dict) -> str | None:
     """The caveat line under the README's table: each estimate with its one-clause reason, and the law; the
     unreddened assumption stated once, as the round 3 final review's C1(ii) words it (M2). With the map's own value
     (Task 17 fix round 1, ruling 3) the Bayestar19 sentence carries the reliable-range flag with the range's end,
-    ``KEY_SCALE`` and the sample count, and the full-column sentence ``KEY_COLUMN_SCALE``. None without the
+    ``KEY_SCALE`` and the sample count, and the full-column sentence ``KEY_COLUMN_SCALE``. With a current cross-check it ends
+    on ``KEY_TIC_STAR`` (fix wave round 4, polish a). None without the
     block."""
     state = reddening_state(data)
     if state is None:
@@ -1873,6 +1881,8 @@ def reddening_key(data: dict) -> str | None:
         parts.append("GSP-Phot: Gaia's own fit, biased for cool dwarfs (Andrae et al. 2023), not adopted.")
     if state == RED_ADOPTED or _column_derived(data) is not None:
         parts.append(GAIA_LAW_WORDS)
+    if cc.is_current(data):                     # fix wave round 4, polish (a)
+        parts.append(KEY_TIC_STAR)
     return " ".join(parts)
 
 

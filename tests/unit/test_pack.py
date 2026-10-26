@@ -3411,8 +3411,8 @@ MANN_FLAG = "outside the Mann relations' range, so indicative"
 KEY_BAYESTAR = ("E(B-V) is 0.884 times the map's unit (E(g-r) = 0.901 per unit, Schlafly and Finkbeiner 2011 Table 6; "
                 "the 0.884 from the Schlafly et al. 2016 reddening vector, as the Bayestar usage notes give it), from "
                 "the median of 5 samples with their 16th to 84th percentiles.")
-KEY_COLUMN = ("on the Schlafly and Finkbeiner 2011 scale (0.86 times SFD98), so the comparison is a check across two "
-              "scales, not a measurement on one.")
+KEY_COLUMN = ("on the Schlafly and Finkbeiner 2011 scale, 0.86 times SFD98 (Schlegel, Finkbeiner and Davis 1998), so "
+              "the comparison is a check across two scales, not a measurement on one.")
 
 
 def test_the_adopted_3d_value_leads_every_text_and_the_full_column_is_a_check(env_with_dossier):
@@ -3580,6 +3580,8 @@ def test_a_value_whose_error_rounds_to_zero_prints_its_range():
     words = pack_module.star_texts(data)                                         # the dossier page's paragraph
     for text in (plain, words, " ".join(str(v) for r in rows for v in r.values())):
         assert not re.search(r"[+-]0\.0+(?![0-9])", text), text                    # no "-0.000", no "+0.000"
+
+
 def test_a_value_outside_the_maps_reliable_range_says_the_side_in_every_text(env_with_dossier):
     """Task 17 fix round 1 (C1, C2, I1, I3, M1, M3; rulings 1, 2 and 4): a hand-written record with KIC 6146676's
     stored values (E(B-V) 0.0088, 0.0088 to 0.0142, the same at the distance's percentiles) on a pixel reliable only
@@ -3741,3 +3743,55 @@ def test_the_flagged_stars_caveat_says_the_map_does_not_constrain_its_reddening(
         assert pack_module.bracket_span(other) is None
         line = next(x for x in render_readme(other, {}).splitlines() if x.startswith(f"- {title}"))
         assert UNCONSTRAINED_NEAR not in line and "the reddening bracket spans" not in line
+
+
+KEY_TIC = ("TRICERATOPS draws the target's Teff, radius and mass from the TIC (its own star list), so the dossier's "
+           "derived star does not enter the FPP.")
+
+
+def test_the_live_readme_key_names_the_tic_star_and_glosses_sfd98():
+    """Fix wave round 4, polish (a) and (b): TRICERATOPS takes the target star from the TIC, so the live README key
+    ends by saying the dossier's derived star does not enter the FPP, and the plain cross-check texts (the README's,
+    the ExoFOP note's and the archive email's after the headline, the page's in full) say the FPP rests on the TIC's
+    stellar parameters; the note is unchanged. Without a current cross-check neither is printed. The key glosses
+    SFD98 at its first use in the README."""
+    data = _live_shape("dominant", True, "adopted")
+    key = pack_module.reddening_key(data)
+    assert pack_module.KEY_TIC_STAR == KEY_TIC and key.endswith(f" {KEY_TIC}")
+    short = "The FPP rests on the TIC's stellar parameters."
+    assert cross_check.TIC_STAR == short
+    after, page = cross_check.comparison_sentence(data, after_headline=True), cross_check.comparison_sentence(data)
+    assert ("the nearby false-positive probability is 0.0020 (0.0020 to 0.0020). The FPP rests on the TIC's stellar "
+            "parameters. Its full false-positive probability") in after
+    assert "which do not apply at 30-minute cadence. The FPP rests on the TIC's stellar parameters. Its full" in page
+    readme = render_readme(data, {})
+    assert after in readme and key in readme
+    for name in ("exofop_note.txt.j2", "archive_email.txt.j2"):
+        assert short in " ".join(pack_module._render_plain(name, data, {}).split()), name
+    note = render_note(data)
+    assert "TIC's stellar" not in note and "own star list" not in note
+    stale = {**data, "cross_check": {**data["cross_check"], "current": False}}
+    assert KEY_TIC not in pack_module.reddening_key(stale) and not cross_check.is_current(stale)
+    # (b): SFD98 named with its authors where the README first prints it
+    gloss = "SFD98 (Schlegel, Finkbeiner and Davis 1998)"
+    assert readme.index("SFD98") == readme.index(gloss) and f"0.86 times {gloss}, so the comparison" in key
+
+
+def test_one_null_search_of_a_kind_is_singular():
+    """Fix wave round 4 (M1): "1 is scrambled", not "1 are scrambled", in either half of the sentence; one null
+    star in the sweep and one null search above the signal's SDE read the same way."""
+    golden = _golden()
+    fap = golden["fap"]
+    one_scrambled = "of the 38 that reached the signal's SDE, 37 are inverted and 1 is scrambled."
+    one_inverted = "of the 3 that reached the signal's SDE, 1 is inverted and 2 are scrambled."
+    for kinds, words in (({"inverted": 37, "scrambled": 1}, one_scrambled),
+                         ({"inverted": 1, "scrambled": 2}, one_inverted)):
+        text = pack_module.fap_method_text({**golden, "fap": {**fap, "k": sum(kinds.values()), "k_by_kind": kinds}})
+        assert text.endswith(words), text
+    one = pack_module.fap_method_text({**golden, "fap": {**fap, "k": 1, "k_by_kind": {"scrambled": 1}},
+                                       "calibration": {**golden["calibration"], "null_stars_in_sweep": 1}})
+    assert "(1 of them is in it)" in one
+    assert one.endswith("the 1 null search that reached the signal's SDE is a scrambled light curve.")
+    inverted = pack_module.fap_method_text({**golden, "fap": {**fap, "k": 1, "k_by_kind": {"inverted": 1}}})
+    assert inverted.endswith("the 1 null search that reached the signal's SDE is an inverted light curve, so "
+                             "systematics, not white noise, set the tail.")
