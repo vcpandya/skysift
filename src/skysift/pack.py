@@ -2772,7 +2772,7 @@ def gate_problems(raw: dict, others: list[dict] | None = None,
     datas = [raw, *(others or [])]
     for data in datas:
         out.extend(_named(data, others, _ephemeris_problems(data)))
-    note = render_note(raw, others=others, span=span)
+    note = render_note(raw, others=others, span=span) if others else render_note(raw)
     counts = note_words(note)
     if counts["total"] > NOTE_LIMITS["total"]:
         out.append(f"the Research Note has {counts['total']:,} words, over the RNAAS limit of "
@@ -2782,7 +2782,7 @@ def gate_problems(raw: dict, others: list[dict] | None = None,
                for limit, p in note_limit_problems(counts, note) if limit != "total")
     for data in datas:
         out.extend(_named(data, others, _prior_problems(data)))
-    abstract = abstract_text(raw, others=others)
+    abstract = abstract_text(raw, others=others) if others else abstract_text(raw)
     zenodo = metadata_from(raw, None, prior=zenodo_prior(raw))
     description = re.sub(r"<[^>]+>", " ", zenodo["description"])
     texts = (("Research Note", note), ("abstract", abstract),
