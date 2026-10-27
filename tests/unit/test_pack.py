@@ -44,6 +44,7 @@ from skysift.zenodo import ZenodoClient, ZenodoError
 from tests.unit.test_dossier import (
     DEVELOPMENT_NOTE,
     DEVELOPMENT_NOTE_SHORT,
+    PERIOD,
     PRIOR_CLAIM,
     _make_env,
     _pixels_npz,
@@ -1740,7 +1741,9 @@ def env_prior(settings, monkeypatch):
     env = _make_env(settings, monkeypatch)
     folder = dossier_module.CANDIDATES_DIR / STAGE2_TARGET
     (folder / "localisation").mkdir(parents=True)
-    (folder / "prior_claims.json").write_text(json.dumps([PRIOR_CLAIM]), encoding="utf-8")
+    # the target's own dossier keeps the claims at its period, so the declared claim names the stage 2 signal's
+    (folder / "prior_claims.json").write_text(json.dumps([{**PRIOR_CLAIM, "period_days": PERIOD}]),
+                                              encoding="utf-8")
     _store_pixels(env, _pixels_npz())
     env.report = generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch)
     env.data = json.loads(env.report.data_path.read_text(encoding="utf-8"))

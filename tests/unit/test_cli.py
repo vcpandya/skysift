@@ -486,3 +486,14 @@ def test_cli_dossier_refuses_a_characterised_star_without_a_stored_extinction(se
     write_extinction(STAGE2_TARGET, {"status": "not available"})
     r = runner.invoke(app, ["dossier", "--target", STAGE2_TARGET])
     assert r.exit_code == 2 and "reason is empty" in r.output and "Traceback" not in r.output
+
+
+def test_cli_dossier_further_needs_a_named_signal(settings, monkeypatch):
+    from skysift import net
+    from tests.unit.test_dossier import _make_env, fake_fetch
+    from tests.unit.ui_seed import STAGE2_TARGET
+    _make_env(settings, monkeypatch)
+    monkeypatch.setattr(net, "fetch", fake_fetch())
+    r = runner.invoke(app, ["dossier", "--target", STAGE2_TARGET, "--further"])
+    assert r.exit_code == 2 and "a further dossier is for one named signal" in r.output
+    assert "Traceback" not in r.output

@@ -27,14 +27,18 @@ from skysift.dossier import (
     DOSSIER_VERSION,
     STATUS_ORDER,
     SWEEP_QUERY,
+    FurtherRefused,
     LightCurveReleased,
     NoSignal,
+    alias_of,
     calibration_version_for,
     caveats,
     centroid_estimate,
+    claims_for,
     ephemeris_blocks,
     export_html,
     fingerprint,
+    further_path,
     gaia_refused,
     generate,
     page_texts,
@@ -1337,10 +1341,11 @@ def test_generate_stores_the_prior_claims(env):
                       .data_path.read_text(encoding="utf-8"))["prior_claims"] == []
     folder = dossier_module.CANDIDATES_DIR / STAGE2_TARGET
     folder.mkdir(parents=True)
-    (folder / "prior_claims.json").write_text(json.dumps([PRIOR_CLAIM]), encoding="utf-8")
+    claim = {**PRIOR_CLAIM, "period_days": PERIOD}      # the target's own dossier keeps the claims at its period
+    (folder / "prior_claims.json").write_text(json.dumps([claim]), encoding="utf-8")
     data = json.loads(generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch, force=True)
                       .data_path.read_text(encoding="utf-8"))
-    stored = {k: PRIOR_CLAIM[k] for k in dossier_module.PRIOR_CLAIM_PUBLIC}     # status and note stay in the file
+    stored = {k: claim[k] for k in dossier_module.PRIOR_CLAIM_PUBLIC}           # status and note stay in the file
     assert data["prior_claims"] == [stored] and data["dossier_version"] == DOSSIER_VERSION
     assert "prior_claims_unchecked" not in [c.get("key") for c in data["caveats"]]
 
@@ -1808,3 +1813,95 @@ def test_the_star_caveat_title_follows_the_extinction_state():
                                                       + " (Bayestar19 not available at build time)")
     assert dossier_module.no_spectrum_title({**star, "extinction": {"state": "adopted"}}) == dossier_module.NO_SPECTRUM
     assert dossier_module.no_spectrum_title({"ebpminrp_gspphot": 0.27}) == dossier_module.NO_SPECTRUM   # before v6
+
+
+# ---------------------------------------------------------------------------------------------------- further dossiers
+
+def _second_signal(env, period_factor: float = 3.156) -> int:
+    """A second stage 2 signal of ``STAGE2_TARGET`` at ``period_factor`` times the first signal's period, with the
+    first signal's latest test rows copied onto it; returns its id."""
+    first = env.ids["stage2"]
+    base = pick_signal(env.store, STAGE2_TARGET, first)
+    rid = env.store.start_run(make_job_key(STAGE2_TARGET, "box_dip", VERSION, "further"), STAGE2_TARGET, "box_dip",
+                              VERSION, "1")
+    sig = Signal(target_id=STAGE2_TARGET, detector="box_dip", detector_version=VERSION,
+                 period=base["period"] * period_factor, t0=base["t0"] + 1.1, duration=base["duration"],
+                 depth_ppm=500.0, snr=26.0, sde=20.0, n_events=28, extra={})
+    sid = env.store.add_signal(sig, rid)
+    env.store.set_signal_status(sid, "candidate_stage2")
+    for t in env.store.latest_tests(first):
+        env.store.add_test(sid, TestResult(rung=t["rung"], status=TestStatus(t["status"]), metrics=t["metrics"] or {},
+                                           artifacts=t["artifacts"] or [], reason=t["reason"] or ""), 0.01)
+    return sid
+
+
+def test_alias_of_names_the_ratio_within_two_percent():
+    assert alias_of(15.1137, 45.34) == 3.0 and alias_of(15.1137, 47.69) is None
+    assert alias_of(40.0, 20.3) == 0.5 and alias_of(40.0, 13.3) == pytest.approx(1 / 3) and alias_of(40.0, 40.5) == 1.0
+
+
+def test_a_further_dossier_is_written_beside_the_targets_own(env):
+    first = generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch)
+    second = _second_signal(env)
+    rep = generate(env.store, env.blob, env.settings, STAGE2_TARGET, signal_id=second, further=True, fetch=env.fetch)
+    assert rep.generated and rep.signal_id == second
+    assert rep.data_path == further_path(env.settings.data_dir, STAGE2_TARGET, second) and rep.data_path.is_file()
+    assert env.store.dossier(STAGE2_TARGET)["signal_id"] == first.signal_id          # the target's row untouched
+    row = env.store.further_dossier(second)
+    assert row["target_id"] == STAGE2_TARGET and row["dossier_version"] == DOSSIER_VERSION
+    assert json.loads(rep.data_path.read_text(encoding="utf-8"))["signal"]["id"] == second
+    again = generate(env.store, env.blob, env.settings, STAGE2_TARGET, signal_id=second, further=True, fetch=env.fetch)
+    assert again.generated is False                                                   # current: a no-op
+
+
+def test_claims_follow_the_candidate_whose_period_they_match():
+    claims = [{"doi": "a", "period_days": 15.12}, {"doi": "b", "period_days": 47.7}, {"doi": "c", "period_days": None}]
+    assert [c["doi"] for c in claims_for(claims, 15.1137, own=True)] == ["a", "c"]
+    assert [c["doi"] for c in claims_for(claims, 47.6905, own=False)] == ["b"]
+    assert claims_for(claims, 47.6905, own=True) == [claims[1], claims[2]]
+
+
+def test_a_further_dossier_stores_only_its_claims_and_no_hand_built_study(env):
+    first_period = pick_signal(env.store, STAGE2_TARGET, env.ids["stage2"])["period"]
+    folder = dossier_module.CANDIDATES_DIR / STAGE2_TARGET
+    folder.mkdir(parents=True, exist_ok=True)
+    claims = [{"doi": "10.1/own", "date": "2020-01-02", "author": "A", "title": "T1", "period_days": first_period},
+              {"doi": "10.1/further", "date": "2021-01-02", "author": "B", "title": "T2",
+               "period_days": first_period * 3.156}]
+    (folder / "prior_claims.json").write_text(json.dumps(claims), encoding="utf-8")
+    first = generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch)
+    second = _second_signal(env)
+    rep = generate(env.store, env.blob, env.settings, STAGE2_TARGET, signal_id=second, further=True, fetch=env.fetch)
+    assert [c["doi"] for c in _data(first)["prior_claims"]] == ["10.1/own"]
+    further = _data(rep)
+    assert [c["doi"] for c in further["prior_claims"]] == ["10.1/further"]
+    assert further["hand_built_localisation"] is None
+
+
+def test_a_further_dossier_carries_its_own_cross_check_over(env):
+    generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch)
+    second = _second_signal(env)
+    generate(env.store, env.blob, env.settings, STAGE2_TARGET, signal_id=second, further=True, fetch=env.fetch)
+    block = {"fpp": 0.02, "nfpp": 1e-4, "inputs_sha256": "0" * 64}
+    env.store.set_further_cross_check(second, block)
+    rep = generate(env.store, env.blob, env.settings, STAGE2_TARGET, signal_id=second, further=True, force=True,
+                   fetch=env.fetch)
+    assert rep.generated
+    carried = _data(rep)["cross_check"]
+    assert carried["fpp"] == 0.02 and carried["inputs_sha256"] == "0" * 64 and carried["current"] is False
+    assert env.store.dossier(STAGE2_TARGET)["cross_check"] is None
+
+
+def test_further_is_refused_for_the_best_signal_an_alias_and_a_target_without_a_dossier(env):
+    second = _second_signal(env)
+    with pytest.raises(FurtherRefused, match="generate the target's dossier first"):
+        generate(env.store, env.blob, env.settings, STAGE2_TARGET, signal_id=second, further=True, fetch=env.fetch)
+    generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch)
+    with pytest.raises(FurtherRefused, match="is the target's best signal"):
+        generate(env.store, env.blob, env.settings, STAGE2_TARGET, signal_id=env.ids["stage2"], further=True,
+                 fetch=env.fetch)
+    alias = _second_signal(env, period_factor=2.01)
+    with pytest.raises(FurtherRefused, match="within 2 percent of 2.0 times"):
+        generate(env.store, env.blob, env.settings, STAGE2_TARGET, signal_id=alias, further=True, fetch=env.fetch)
+    with pytest.raises(FurtherRefused, match="one named signal"):
+        generate(env.store, env.blob, env.settings, STAGE2_TARGET, further=True, fetch=env.fetch)

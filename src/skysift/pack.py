@@ -2779,13 +2779,12 @@ def zenodo_prior(data: dict) -> str | None:
 def independent_periods(period: float, others, tolerance: float = 0.02) -> list[float]:
     """The periods among ``others`` that are independent of ``period``: not within ``tolerance`` (relative) of it,
     nor of 2 or 3 times it, nor of a half or a third of it. Sorted, each once."""
-    ratios = (1.0, 2.0, 3.0, 1 / 2, 1 / 3)
     out: list[float] = []
     for p in others:
         p = _num(p)
         if p is None or p <= 0 or p in out:
             continue
-        if not any(abs(p - period * r) <= tolerance * period * r for r in ratios):
+        if ds.alias_of(period, p, tolerance) is None:
             out.append(p)
     return sorted(out)
 

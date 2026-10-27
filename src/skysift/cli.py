@@ -273,20 +273,26 @@ def dossier(target: str = typer.Option(..., "--target", help="The target id, e.g
             signal: int | None = typer.Option(None, "--signal", help="A signal id of the target (default: its best "
                                               "signal, stage 2 then approved then stage 1, then SDE)."),
             export: str | None = typer.Option(None, "--export", help="Also write the standalone HTML page here."),
-            force: bool = typer.Option(False, "--force", help="Regenerate even when the dossier is current.")):
+            force: bool = typer.Option(False, "--force", help="Regenerate even when the dossier is current."),
+            further: bool = typer.Option(False, "--further", help="Store this signal's dossier as the target's "
+                                         "second candidate, beside the target's own, not in its place (needs "
+                                         "--signal).")):
     """Generate the target's dossier_data.json and its dossiers row (a no-op when the tests, status and decision are
-    unchanged); with --export, the standalone page too. Prints the report: a table in a terminal, JSON when piped."""
+    unchanged); with --export, the standalone page too. With --further, the dossier of the target's second candidate
+    (a signal named by --signal) is written beside the target's own. Prints the report: a table in a terminal, JSON
+    when piped."""
     from skysift import dossier as ds
     from skysift import net
     console = _console(stderr=True)
     s, store, blob = _ctx()
     try:
         rep = ds.generate(store, blob, s, target, signal_id=signal, force=force, fetch=net.fetch,
-                          log=lambda text: _plain(console, text))
+                          log=lambda text: _plain(console, text), further=further)
     except ds.NoSignal as e:
         _plain(console, f"{e}: nothing to build a dossier from")
         raise typer.Exit(1) from None
-    except (ds.LightCurveReleased, ds.PriorClaimsError, ds.NoExtinction, ds.ExtinctionError) as e:
+    except (ds.LightCurveReleased, ds.PriorClaimsError, ds.NoExtinction, ds.ExtinctionError,
+            ds.FurtherRefused) as e:
         _plain(console, str(e))
         raise typer.Exit(2) from None
     report = rep.as_dict()
