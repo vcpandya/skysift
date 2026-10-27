@@ -273,20 +273,29 @@ def dossier(target: str = typer.Option(..., "--target", help="The target id, e.g
             signal: int | None = typer.Option(None, "--signal", help="A signal id of the target (default: its best "
                                               "signal, stage 2 then approved then stage 1, then SDE)."),
             export: str | None = typer.Option(None, "--export", help="Also write the standalone HTML page here."),
-            force: bool = typer.Option(False, "--force", help="Regenerate even when the dossier is current.")):
+            force: bool = typer.Option(False, "--force", help="Regenerate even when the dossier is current."),
+            further: bool = typer.Option(False, "--further", help="Store this signal's dossier as the target's "
+                                         "second candidate, beside the target's own, not in its place (needs "
+                                         "--signal).")):
     """Generate the target's dossier_data.json and its dossiers row (a no-op when the tests, status and decision are
-    unchanged); with --export, the standalone page too. Prints the report: a table in a terminal, JSON when piped."""
+    unchanged); with --export, the standalone page too. With --further, the dossier of the target's second candidate
+    (a signal named by --signal) is written beside the target's own. Prints the report: a table in a terminal, JSON
+    when piped."""
     from skysift import dossier as ds
     from skysift import net
     console = _console(stderr=True)
+    if further and export:
+        _plain(console, "--export writes the target's own page; a further dossier has none yet")
+        raise typer.Exit(2)
     s, store, blob = _ctx()
     try:
         rep = ds.generate(store, blob, s, target, signal_id=signal, force=force, fetch=net.fetch,
-                          log=lambda text: _plain(console, text))
+                          log=lambda text: _plain(console, text), further=further)
     except ds.NoSignal as e:
         _plain(console, f"{e}: nothing to build a dossier from")
         raise typer.Exit(1) from None
-    except (ds.LightCurveReleased, ds.PriorClaimsError, ds.NoExtinction, ds.ExtinctionError) as e:
+    except (ds.LightCurveReleased, ds.PriorClaimsError, ds.NoExtinction, ds.ExtinctionError,
+            ds.FurtherRefused) as e:
         _plain(console, str(e))
         raise typer.Exit(2) from None
     report = rep.as_dict()
@@ -381,10 +390,14 @@ def crosscheck_command(target: str = typer.Option(..., "--target", help="The tar
                        export: str | None = typer.Option(None, "--export", help="Write the TRICERATOPS inputs from "
                                                          "the stored dossier into this folder."),
                        result: str | None = typer.Option(None, "--import", help="Store this result file of "
-                                                         "tools/triceratops_check.py on the dossier.")):
+                                                         "tools/triceratops_check.py on the dossier."),
+                       signal: int | None = typer.Option(None, "--signal", help="The signal id of a further dossier "
+                                                         "(skysift dossier --further); default the target's own "
+                                                         "dossier.")):
     """The TRICERATOPS false-positive cross-check. --export writes inputs.json, lightcurve.csv and the pixel files
     for tools/triceratops_check.py, which runs under .venv-triceratops; --import checks its result file and stores it
-    on the dossier with whether it was made for the stored dossier's inputs. Prints JSON. Exits 1 without a dossier,
+    on the dossier with whether it was made for the stored dossier's inputs. --signal works on the further dossier of
+    that signal (skysift dossier --further) instead of the target's own. Prints JSON. Exits 1 without a dossier,
     2 for a bad result file, an export that found no pixel file or a dossier below the current version."""
     from skysift import crosscheck as cc
     from skysift import dossier as ds
@@ -395,17 +408,19 @@ def crosscheck_command(target: str = typer.Option(..., "--target", help="The tar
     s, store, blob = _ctx()
     try:
         if export is not None:
-            out = cc.export_inputs(store, blob, s, target, Path(export))
+            out = cc.export_inputs(store, blob, s, target, Path(export), signal_id=signal)
             inputs = json.loads((out / "inputs.json").read_text(encoding="utf-8"))
             report = {"target_id": target, "inputs": str(out), "fingerprint": inputs["fingerprint"],
                       "quarters": inputs["quarters"], "lightcurve_points": inputs["lightcurve"]["n"]}
         else:
-            block = cc.import_result(store, target, Path(result))
+            block = cc.import_result(store, target, Path(result), signal_id=signal)
             report = {"target_id": target,
                       **{k: block[k] for m in ("fpp", "fpp_no_stp", "nfpp") for k in (m, f"{m}_p16", f"{m}_p84")},
                       "n_runs": block["n_runs"], "n_degenerate": block["n_degenerate"], "class": block["class"],
                       "current": block["current"], "blocks_live_gate": cc.verdict(block)[0],
                       "live_gate_reason": cc.verdict(block)[1]}
+        if signal is not None:
+            report["signal_id"] = signal
     except cc.NoDossier as e:
         _plain(console, str(e))
         raise typer.Exit(1) from None

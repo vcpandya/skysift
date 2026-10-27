@@ -44,6 +44,7 @@ from pathlib import Path, PureWindowsPath
 
 import numpy as np
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 
 from skysift import calibrate as cal
 from skysift import crosscheck as cc
@@ -120,6 +121,10 @@ RSUN_AU = 0.00465047
 STATIC_DIR = Path(__file__).parent / "ui" / "static"
 DOSSIER_URL = "skysift://dossier/{target_id}"
 EXPORT_URL = "skysift://dossier-export/{target_id}"
+FURTHER_URL = "skysift://dossier/{target_id}/s{signal_id}"      # a further dossier: the target's second candidate
+# a period is an alias of another when it sits within ``ALIAS_TOLERANCE`` of one of these multiples of it
+ALIAS_RATIOS = (1.0, 2.0, 3.0, 0.5, 1 / 3)
+ALIAS_TOLERANCE = 0.02
 
 # printed under each number, verbatim from spec 4.1 and 4.2
 FAP_NOT_COVERED = "This is about noise. A real dip on a neighbouring star or an eclipsing binary passes this test."
@@ -144,6 +149,12 @@ class NoSignal(KeyError):
 class LightCurveReleased(RuntimeError):
     """The signal's raw light curve is no longer in the blob. A dossier is built offline except for the Gaia
     queries (spec 5.8), so it is not fetched again."""
+
+
+class FurtherRefused(ValueError):
+    """``generate(..., further=True)`` was asked for a dossier that is not a target's second candidate: no named
+    signal, no dossier of the target's own yet, the target's best signal, or an alias of the target's period. The
+    message says which and what to do."""
 
 
 @dataclass
@@ -305,6 +316,21 @@ def pick_signal(store: Store, target_id: str, signal_id: int | None = None) -> d
         rows = [{**{c.name: getattr(r, c.name) for c in SignalRow.__table__.columns},
                  "candidate_status": cand.get(r.id), "decision": latest.get(r.id)} for r in sigs]
     return min(rows, key=lambda r: rank_key(r, r["decision"]))
+
+
+def alias_of(period: float, other: float, tolerance: float = ALIAS_TOLERANCE) -> float | None:
+    """The ratio in ``ALIAS_RATIOS`` for which ``other`` lies within ``tolerance * ratio * period`` of
+    ``ratio * period`` (the first that fits), or None when ``other`` is not an alias of ``period``: the same signal
+    again (1), at twice, three times, half or a third of its period."""
+    for ratio in ALIAS_RATIOS:
+        if abs(other - period * ratio) <= tolerance * period * ratio:
+            return ratio
+    return None
+
+
+def further_path(data_dir, target_id: str, signal_id: int) -> Path:
+    """Where a further dossier's JSON is written: beside the target's own, in a folder named for its signal."""
+    return Path(data_dir) / "dossiers" / target_id / f"s{signal_id}" / "dossier_data.json"
 
 
 def fingerprint(latest_tests: list[dict], final_status: str, decision: str | None, calibration_rows: int = 0,
@@ -1800,6 +1826,31 @@ def public_claims(data: dict) -> dict:
     return {**data, "prior_claims": [{k: c.get(k) for k in PRIOR_CLAIM_PUBLIC} for c in claims if isinstance(c, dict)]}
 
 
+def claims_for(claims: list[dict], period: float, own: bool, other_periods: tuple[float, ...] = ()) -> list[dict]:
+    """The claims that belong to a candidate. A further dossier (``own`` False) keeps those whose ``period_days`` is
+    within 2 percent of its ``period`` (``alias_of`` names the ratio 1). The target's own dossier (``own`` True) keeps
+    every claim except those within 2 percent of one of ``other_periods``, the periods of the target's other
+    stage 2 signals, unless it also matches the target's own ``period`` (a recheck row can share it): a claim that
+    matches no signal stays, so the live gate still flags it as a prior mismatch."""
+    if not own:
+        return [c for c in claims if (p := _num(c, "period_days")) is not None and alias_of(period, p) == 1.0]
+    return [c for c in claims
+            if (p := _num(c, "period_days")) is None or alias_of(period, p) == 1.0
+            or not any(alias_of(q, p) == 1.0 for q in other_periods)]
+
+
+def _other_candidate_periods(store: Store, target_id: str, signal_id: int) -> tuple[float, ...]:
+    """The periods of the target's other stage 2 signals (``final_status`` ``candidate_stage2``); () when the signal
+    table cannot be read."""
+    try:
+        with store.session() as s:
+            return tuple(float(p) for p in s.scalars(select(SignalRow.period).where(
+                SignalRow.target_id == target_id, SignalRow.id != signal_id,
+                SignalRow.final_status == "candidate_stage2")))
+    except SQLAlchemyError:
+        return ()
+
+
 def hand_built_localisation(target_id: str, rung5_metrics: dict, root: Path | None = None) -> dict | None:
     """How far, season by season, the rung 5 centroid's distance from the star sits from the hand-built study's
     (``docs/candidates/<target>/localisation/results.json``, its S/N-box centroid distance to the candidate per
@@ -1912,17 +1963,53 @@ def calibration_block(store: Store, signal: dict, source: str, rows: list[dict],
             "expected_by_chance": size * fap.fap if size is not None and fap.fap is not None else None}
 
 
+def _refuse_unless_second_candidate(store: Store, target_id: str, signal: dict) -> None:
+    """Raise FurtherRefused unless ``signal`` can have a further dossier: the target has a dossier of its own, the
+    signal is not the target's best (that one is the target's own) and its period is not an alias of the period
+    the target's dossier holds."""
+    sid = signal["id"]
+    own = store.dossier(target_id)
+    if own is None:
+        raise FurtherRefused(f"generate the target's dossier first: skysift dossier --target {target_id}")
+    if pick_signal(store, target_id)["id"] == sid:
+        raise FurtherRefused(f"signal {sid} is the target's best signal; its dossier is the target's own "
+                             f"(skysift dossier --target {target_id})")
+    p0 = None
+    try:
+        p0 = _num(json.loads(Path(own["data_path"]).read_text(encoding="utf-8")).get("ephemeris") or {}, "period_days")
+    except (OSError, ValueError, AttributeError):
+        pass
+    if p0 is None:
+        p0 = float(pick_signal(store, target_id, own["signal_id"])["period"])
+    ratio = alias_of(p0, float(signal["period"]))
+    if ratio is not None:
+        said = {1.0: "1", 2.0: "2", 3.0: "3", 0.5: "1/2"}.get(ratio, "1/3")
+        raise FurtherRefused(f"signal {sid} at {float(signal['period']):.4f} d is within 2 percent of {said} times "
+                             f"the target's dossier period {p0:.4f} d, an alias, not a second candidate")
+
+
 def generate(store: Store, blob, settings, target_id: str, *, signal_id: int | None = None, force: bool = False,
-             fetch=net.fetch, log: Callable[[str], None] | None = None, n_boot: int | None = None) -> DossierReport:
+             fetch=net.fetch, log: Callable[[str], None] | None = None, n_boot: int | None = None,
+             further: bool = False) -> DossierReport:
     """Write ``<data_dir>/dossiers/<target_id>/dossier_data.json`` and its ``dossiers`` row (spec 5.4). A no-op
     (``generated=False``, the file untouched) when the stored fingerprint and dossier version match and ``force`` is
     False. Raises NoSignal when the target has no signal (or not ``signal_id``) and LightCurveReleased when the raw
     light curve is no longer stored (it is not downloaded again: offline except Gaia, spec 5.8). ``n_boot`` is the
-    shape bootstrap's resample count, ``N_BOOT_DEFAULT`` (read at call time) when None."""
+    shape bootstrap's resample count, ``N_BOOT_DEFAULT`` (read at call time) when None.
+
+    ``further`` writes the dossier of the target's second candidate, the named ``signal_id``, beside the target's own
+    (``further_path``, a ``further_dossiers`` row), never in its place; it keeps the claims that name the signal's
+    period and no hand-built study. Raises FurtherRefused for no named signal, a target without a dossier of its own,
+    the target's best signal and an alias of the target's period."""
     say = log or (lambda _text: None)
     n_boot = N_BOOT_DEFAULT if n_boot is None else n_boot
+    if further and signal_id is None:
+        raise FurtherRefused("a further dossier is for one named signal: skysift dossier --target "
+                             f"{target_id} --signal <id> --further")
     signal = pick_signal(store, target_id, signal_id)
     sid = signal["id"]
+    if further:
+        _refuse_unless_second_candidate(store, target_id, signal)
     tests = store.latest_tests(sid)
     decisions = store.decisions(sid)
     decision = decisions[0]["decision"] if decisions else None
@@ -1931,8 +2018,11 @@ def generate(store: Store, blob, settings, target_id: str, *, signal_id: int | N
     extinction = stars.load_extinction(target_id, EXTINCTION_DIR)
     fp = fingerprint(tests, signal["final_status"], decision, calibration_rows(settings.data_dir, source),
                      sweep_size_of(store, signal, source), **extinction_args(extinction))
-    data_path = Path(settings.data_dir) / "dossiers" / target_id / "dossier_data.json"
-    old = store.dossier(target_id)
+    if further:
+        data_path, old = further_path(settings.data_dir, target_id, sid), store.further_dossier(sid)
+    else:
+        data_path = Path(settings.data_dir) / "dossiers" / target_id / "dossier_data.json"
+        old = store.dossier(target_id)
     if (old is not None and not force and old["tests_fingerprint"] == fp and old["signal_id"] == sid
             and old["dossier_version"] == DOSSIER_VERSION and data_path.is_file()):
         say(f"dossier for {target_id} is current (signal {sid}); nothing to do")
@@ -1943,6 +2033,9 @@ def generate(store: Store, blob, settings, target_id: str, *, signal_id: int | N
     # The claim's status and note stay in the owner's file: the dossier JSON travels with the public pack.
     claims = (public_claims({"prior_claims": prior_claims(target_id)})["prior_claims"]
               if Path(CANDIDATES_DIR).is_dir() else None)
+    if claims is not None:      # the claims on this candidate's period; the target's own also keeps those without one
+        claims = claims_for(claims, float(signal["period"]), own=not further,
+                            other_periods=() if further else _other_candidate_periods(store, target_id, sid))
     target = _target_dict(store, target_id)
     say(f"signal {sid} ({signal['final_status']}, SDE {signal['sde']:.1f}); loading the light curve")
     lc = LightCurveLoader(store, blob, source_factory=_offline_factory(target_id, sid)).load(target, pin=True)
@@ -1986,7 +2079,8 @@ def generate(store: Store, blob, settings, target_id: str, *, signal_id: int | N
     data["predicted_leak"] = _section("predicted_leak", errors, lambda: predicted_leak(
         _kept_tpfs(store, blob, kic), target, rung5, data["ephemeris"].get("depth_ppm")))
     data["prior_claims"] = claims
-    data["hand_built_localisation"] = hand_built_localisation(target_id, _metrics(tests, "rung5_pixels"))
+    data["hand_built_localisation"] = (None if further else
+                                       hand_built_localisation(target_id, _metrics(tests, "rung5_pixels")))
     data["section_errors"] = errors
     data["caveats"] = caveats(data)
     data = _tidy(data)
@@ -1995,14 +2089,18 @@ def generate(store: Store, blob, settings, target_id: str, *, signal_id: int | N
     data["cross_check"] = cc.with_current((old or {}).get("cross_check"), data)
     text = jsonutil.dumps(data, separators=(",", ":"))
     _write_atomic(data_path, text)
-    _record_artifact(store, DOSSIER_URL.format(target_id=target_id), data_path, text, target_id)
-    # export_path and the pack link are cleared: an earlier export or pack was made from the earlier JSON
-    store.upsert_dossier(target_id=target_id, signal_id=sid, generated=utcnow().replace(tzinfo=None),
-                         data_path=str(data_path), search_version=signal["detector_version"],
-                         ladder_version=ladder_versions(store, signal, tests)[0], dossier_version=DOSSIER_VERSION,
-                         fap=fap.fap, fpp=fpp.reported_value, fap_detail=data["fap"], fpp_detail=data["fpp"],
-                         tests_fingerprint=fp, status_at_generation=signal["final_status"], export_path="",
-                         pack_path="", pack_built=None, pack_steps={})
+    fields = {"signal_id": sid, "generated": utcnow().replace(tzinfo=None), "data_path": str(data_path),
+              "search_version": signal["detector_version"], "ladder_version": ladder_versions(store, signal, tests)[0],
+              "dossier_version": DOSSIER_VERSION, "fap": fap.fap, "fpp": fpp.reported_value, "fap_detail": data["fap"],
+              "fpp_detail": data["fpp"], "tests_fingerprint": fp, "status_at_generation": signal["final_status"]}
+    if further:
+        _record_artifact(store, FURTHER_URL.format(target_id=target_id, signal_id=sid), data_path, text, target_id)
+        store.upsert_further_dossier(target_id=target_id, **fields)
+    else:
+        _record_artifact(store, DOSSIER_URL.format(target_id=target_id), data_path, text, target_id)
+        # export_path and the pack link are cleared: an earlier export or pack was made from the earlier JSON
+        store.upsert_dossier(target_id=target_id, **fields, export_path="", pack_path="", pack_built=None,
+                             pack_steps={})
     say(f"wrote {data_path}")
     return DossierReport(target_id, sid, data_path, True, fap, fpp, stale, gaia_errors=list(gaia_errors))
 

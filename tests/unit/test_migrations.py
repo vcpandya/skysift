@@ -37,12 +37,25 @@ def test_migrate_milestone1_database_in_place(tmp_path):
     with s.engine.connect() as c:
         assert c.execute(text("select kind from artifacts")).scalar() == "raw"       # existing rows get the default
         steps = [r[0] for r in c.execute(text("select step from schema_version"))]
-        assert steps == ["001_dashboard", "002_recheck", "003_dossiers", "004_cross_check"]
+        assert steps == ["001_dashboard", "002_recheck", "003_dossiers", "004_cross_check",
+                         "005_further_dossiers"]
 
 
 def test_migrate_is_idempotent(tmp_path):
     s = Store(f"sqlite:///{tmp_path.as_posix()}/t.db"); s.init_schema()
     assert migrations.migrate(s.engine) == []          # nothing left to apply on a fresh schema
+    assert migrations.migrate(s.engine) == []
+
+
+def test_migrate_adds_the_further_dossiers_table(tmp_path):
+    url = f"sqlite:///{tmp_path.as_posix()}/t.db"
+    s = Store(url); s.init_schema()
+    with s.engine.begin() as c:                  # as a database from before step 005: no table, step not recorded
+        c.execute(text("DROP TABLE further_dossiers"))
+        c.execute(text("DELETE FROM schema_version WHERE step = '005_further_dossiers'"))
+    assert "further_dossiers" not in inspect(s.engine).get_table_names()
+    assert migrations.migrate(s.engine) == ["005_further_dossiers"]        # the step itself creates the table
+    assert "further_dossiers" in inspect(s.engine).get_table_names()
     assert migrations.migrate(s.engine) == []
 
 
@@ -93,7 +106,8 @@ def test_step_002_adds_recheck_columns_to_an_old_database(old_schema_engine):
 
 
 def test_step_002_keeps_old_rows_indexes_the_parent_and_serves_the_store(old_schema_engine):
-    assert migrate(old_schema_engine) == ["002_recheck", "003_dossiers", "004_cross_check"]
+    assert migrate(old_schema_engine) == ["002_recheck", "003_dossiers", "004_cross_check",
+                                                  "005_further_dossiers"]
     assert migrate(old_schema_engine) == []
     insp = inspect(old_schema_engine)
     assert "ix_signals_parent_signal_id" in {i["name"] for i in insp.get_indexes("signals")}
@@ -148,7 +162,7 @@ def test_migration_004_adds_the_column(tmp_path):
         assert "004_cross_check" in {r[0] for r in c.execute(text("select step from schema_version"))}
     engine = _version3_engine(tmp_path)
     assert "cross_check" not in {c["name"] for c in inspect(engine).get_columns("dossiers")}
-    assert migrate(engine) == ["004_cross_check"] and migrate(engine) == []
+    assert migrate(engine) == ["004_cross_check", "005_further_dossiers"] and migrate(engine) == []
     col = next(c for c in inspect(engine).get_columns("dossiers") if c["name"] == "cross_check")
     assert col["nullable"]
     store = Store(str(engine.url)); store.init_schema()

@@ -463,6 +463,36 @@ def test_cli_crosscheck_export_and_import(settings, monkeypatch, tmp_path):
         assert r.exit_code == 2 and "one of --export or --import" in r.output
 
 
+def test_cli_crosscheck_signal_passes_through_to_export_and_import(settings, monkeypatch, tmp_path):
+    from skysift import crosscheck as cc
+    seen = {}
+
+    def fake_export(store, blob, s, target, out, *, fetch=None, signal_id=None):
+        seen["export"] = signal_id
+        out.mkdir(parents=True, exist_ok=True)
+        (out / "inputs.json").write_text(json.dumps({"fingerprint": "f", "quarters": [1],
+                                                     "lightcurve": {"n": 3}}), encoding="utf-8")
+        return out
+
+    def fake_import(store, target, path, signal_id=None):
+        seen["import"] = signal_id
+        keys = [k for m in ("fpp", "fpp_no_stp", "nfpp") for k in (m, f"{m}_p16", f"{m}_p84")]
+        return {**dict.fromkeys(keys, 0.1), "n_runs": 20, "n_degenerate": 0, "class": "candidate", "current": True,
+                **dict.fromkeys(cc.RESULT_KEYS, 1)}
+
+    monkeypatch.setattr(cc, "export_inputs", fake_export)
+    monkeypatch.setattr(cc, "import_result", fake_import)
+    monkeypatch.setattr(cc, "verdict", lambda block: (False, None))
+    r = runner.invoke(app, ["crosscheck", "--target", "kic-1", "--signal", "7", "--export", str(tmp_path / "cc")])
+    assert r.exit_code == 0, r.output
+    assert seen["export"] == 7 and json.loads(r.stdout)["signal_id"] == 7
+    r = runner.invoke(app, ["crosscheck", "--target", "kic-1", "--signal", "7", "--import", str(tmp_path / "x.json")])
+    assert r.exit_code == 0, r.output
+    assert seen["import"] == 7 and json.loads(r.stdout)["signal_id"] == 7
+    r = runner.invoke(app, ["crosscheck", "--target", "kic-1", "--import", str(tmp_path / "x.json")])
+    assert seen["import"] is None and "signal_id" not in json.loads(r.stdout)
+
+
 def test_pack_final_needs_zenodo_live():
     """Spec 11.6: --final refuses before anything is read when the draft is not a live one."""
     r = runner.invoke(app, ["pack", "--target", "kic-006146676", "--final"])
@@ -486,3 +516,27 @@ def test_cli_dossier_refuses_a_characterised_star_without_a_stored_extinction(se
     write_extinction(STAGE2_TARGET, {"status": "not available"})
     r = runner.invoke(app, ["dossier", "--target", STAGE2_TARGET])
     assert r.exit_code == 2 and "reason is empty" in r.output and "Traceback" not in r.output
+
+
+def test_cli_dossier_further_needs_a_named_signal(settings, monkeypatch):
+    from skysift import net
+    from tests.unit.test_dossier import _make_env, fake_fetch
+    from tests.unit.ui_seed import STAGE2_TARGET
+    _make_env(settings, monkeypatch)
+    monkeypatch.setattr(net, "fetch", fake_fetch())
+    r = runner.invoke(app, ["dossier", "--target", STAGE2_TARGET, "--further"])
+    assert r.exit_code == 2 and "a further dossier is for one named signal" in r.output
+    assert "Traceback" not in r.output
+
+
+def test_cli_dossier_further_refuses_export(settings, monkeypatch, tmp_path):
+    from skysift import net
+    from tests.unit.test_dossier import _make_env, fake_fetch
+    from tests.unit.ui_seed import STAGE2_TARGET
+    env = _make_env(settings, monkeypatch)
+    monkeypatch.setattr(net, "fetch", fake_fetch())
+    page = tmp_path / "page.html"
+    r = runner.invoke(app, ["dossier", "--target", STAGE2_TARGET, "--signal", str(env.ids["stage2"]), "--further",
+                            "--export", str(page)])
+    assert r.exit_code == 2 and "--export writes the target's own page; a further dossier has none yet" in r.output
+    assert not page.exists() and env.store.dossier(STAGE2_TARGET) is None

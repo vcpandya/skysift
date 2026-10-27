@@ -236,14 +236,24 @@ def probability_sentences(data: dict, short: bool = False) -> tuple[str, str]:
     return fap_text, f"False-positive probability{pixels}: {_capital(in_house_text(data))}."
 
 
-def metadata_from(data: dict, citation: dict | None, prior: str | None = None) -> dict:
+def metadata_from(data: dict, citation: dict | None, prior: str | None = None,
+                  others: list[dict] | None = None) -> dict:
     """The deposition metadata from a dossier's JSON and the parsed ``CITATION.cff`` (None when there is none):
     a dataset titled "SkySift candidate <name>: ..." (with a prior claim the note's title, "SkySift vetting of the
     <P> day transit candidate on <name>"), creators from the citation's authors, the summary, the prior
     claim when there is one (``prior``: the README's sentence, ``pack.prior_claim_sentence``, with the claim's DOI and
     date), the ephemeris with its errors (``pack_text.ephemeris_sentence``, the sentence the ExoFOP note and the archive
     email quote), both probabilities and the caveats as the description, keywords, open access under CC BY 4.0, and
-    the KBonus HLSP DOI as the data it is derived from."""
+    the KBonus HLSP DOI as the data it is derived from.
+
+    With ``others`` (the JSONs of the target's further candidates, spec 6.4) the record is of two transit candidates:
+    the title "SkySift candidates <name>: <P1> and <P2> d transit signals in Kepler photometry" (with a prior claim on
+    any, "SkySift vetting of two transit candidates on <name>"), the summary of ``pack_two.summary``, one prior-claim
+    paragraph for each distinct claim, one "Ephemeris, <P> d candidate: ..." paragraph and one pair of probability
+    sentences for each candidate, the reddening paragraph once, the record sentence ("two transit candidates") and the
+    union of the candidates' caveat titles."""
+    if others:
+        return _metadata_two([data, *others], citation, prior)
     target, eph = data.get("target") or {}, data.get("ephemeris") or {}
     name = target.get("name") or target.get("target_id") or "unknown target"
     period = eph.get("period_days")
@@ -272,6 +282,11 @@ def metadata_from(data: dict, citation: dict | None, prior: str | None = None) -
     caveats = [c.get("title") for c in data.get("caveats") or [] if isinstance(c, dict) and c.get("title")]
     if caveats:
         paragraphs.append("What is not yet known: " + "; ".join(caveats) + ".")
+    return _deposit(title, creators, paragraphs, name)
+
+
+def _deposit(title: str, creators: list[dict], paragraphs: list[str], name) -> dict:
+    """The deposition metadata around a description (``paragraphs``, each one HTML paragraph)."""
     description = "".join(f"<p>{_html(p)}</p>" for p in paragraphs if p)
     return {
         "upload_type": "dataset",
@@ -285,6 +300,53 @@ def metadata_from(data: dict, citation: dict | None, prior: str | None = None) -
                                  "resource_type": "dataset"}],
         "prereserve_doi": True,
     }
+
+
+def _metadata_two(datas: list[dict], citation: dict | None, prior: str | None) -> dict:
+    """``metadata_from`` for a target with a further candidate (spec 6.4); ``prior`` is the first candidate's
+    prior-claim paragraph."""
+    from skysift import pack_two
+    from skysift.pack import reddening_plain, zenodo_prior  # a cycle at import time
+    target = datas[0].get("target") or {}
+    name = target.get("name") or target.get("target_id") or "unknown target"
+    periods = [(d.get("ephemeris") or {}).get("period_days") for d in datas]
+    labels = [f"{p:.3f} d" if p else "unknown period" for p in periods]
+    priors = [prior if i == 0 else zenodo_prior(d) for i, d in enumerate(datas)]
+    claimed = any(priors)
+    if claimed:
+        title = f"SkySift vetting of two transit candidates on {name}"
+    elif all(periods):
+        title = (f"SkySift candidates {name}: {periods[0]:.3f} and {periods[1]:.3f} d transit signals in Kepler "
+                 "photometry")
+    else:
+        title = f"SkySift candidates {name}: two transit signals in Kepler photometry"
+    creators = [c for a in (citation or {}).get("authors") or [] if isinstance(a, dict) and (c := _creator(a))]
+    paragraphs = [pack_two.summary(datas)]
+    told: set[str] = set()
+    for label, text in zip(labels, priors, strict=True):
+        if text and text not in told:
+            told.add(text)
+            paragraphs.append(f"Prior claim, {label} candidate: {text}")
+    paragraphs += [f"Ephemeris, {label} candidate: {ephemeris_sentence(d)}." for label, d in
+                   zip(labels, datas, strict=True) if ephemeris_sentence(d)]
+    paragraphs.append(reddening_plain(datas[0]) or "")
+    for label, d in zip(labels, datas, strict=True):
+        fap_text, fpp_text = probability_sentences(d)
+        own = cc.own_evidence_sentence(d)
+        paragraphs.append(f"{label} candidate. {fap_text} {fpp_text}{(' ' + own) if own else ''}")
+    how = "vetted" if claimed else "found"
+    paragraphs.append(f"This record is the submission pack of two transit candidates {how} by the SkySift engine in "
+                      "the KBonus Kepler Background light curves: for each, the detrended light curve, the ephemeris "
+                      "and parameters with their errors, the per-event depths, the vetting metrics, the figures and "
+                      "the standalone dossier, and for both a Research Note draft and the provenance of every "
+                      "query.")
+    caveats: list[str] = []
+    for d in datas:
+        caveats += [c["title"] for c in d.get("caveats") or [] if isinstance(c, dict) and c.get("title")
+                    and c["title"] not in caveats]
+    if caveats:
+        paragraphs.append("What is not yet known: " + "; ".join(caveats) + f". {pack_two.VETTED_SINGLY}")
+    return _deposit(title, creators, paragraphs, name)
 
 
 def _html(text: str) -> str:

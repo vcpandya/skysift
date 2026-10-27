@@ -167,10 +167,20 @@ def inputs_fingerprint(data: dict) -> str:
     return hashlib.sha256(json.dumps(key, sort_keys=True).encode("utf-8")).hexdigest()
 
 
-def _stored(store, target_id: str) -> dict:
-    row = store.dossier(target_id)
+def _stored(store, target_id: str, signal_id: int | None = None) -> dict:
+    """The stored dossier's JSON: the target's own, or, with ``signal_id``, that signal's further dossier."""
+    if signal_id is None:
+        row = store.dossier(target_id)
+        missing = f"no dossier for {target_id}; run skysift dossier --target {target_id} first"
+    else:
+        row = store.further_dossier(signal_id)
+        missing = (f"no further dossier for signal {signal_id} of {target_id}; run skysift dossier --target "
+                   f"{target_id} --signal {signal_id} --further first")
     if row is None or not row.get("data_path") or not Path(row["data_path"]).is_file():
-        raise NoDossier(f"no dossier for {target_id}; run skysift dossier --target {target_id} first")
+        raise NoDossier(missing)
+    if signal_id is not None and row.get("target_id") != target_id:
+        raise NoDossier(f"signal {signal_id} belongs to target {row.get('target_id')}, not {target_id}; run skysift "
+                        f"crosscheck --target {row.get('target_id')} --signal {signal_id}")
     return json.loads(Path(row["data_path"]).read_text(encoding="utf-8"))
 
 
@@ -505,7 +515,8 @@ def _pixel_files(store, blob, kic: int | None, manifest: list[str], tpf_dir: Pat
     return quarters, files, fetched, missing
 
 
-def export_inputs(store, blob, settings, target_id: str, out_dir: Path, *, fetch=None) -> Path:
+def export_inputs(store, blob, settings, target_id: str, out_dir: Path, *, fetch=None,
+                  signal_id: int | None = None) -> Path:
     """Write ``inputs.json``, ``lightcurve.csv`` and ``tpf/`` for the tool into ``out_dir`` from the stored dossier
     and the loader's light curve, loaded with ``pin=True`` as the pack loads it (so the raw file stays out of budget
     retention; the light curve is never downloaded: a released one raises ``dossier.LightCurveReleased``). Through
@@ -515,12 +526,13 @@ def export_inputs(store, blob, settings, target_id: str, out_dir: Path, *, fetch
     ``tpf_kept`` and ``tpf_fetched`` name the quarters that were kept and fetched fresh). Returns
     ``out_dir``, the tool's ``--inputs``. Raises NoDossier, OldDossier for a dossier below the current version (before
     anything is written), and NoPixelFiles (naming the files it could not read) when no pixel file was copied; the
-    light curve is then written, ``inputs.json`` is not."""
+    light curve is then written, ``inputs.json`` is not. With ``signal_id`` the inputs are those of that signal's
+    further dossier (``skysift dossier --further``), read the same way; NoDossier when it has none."""
     from skysift import dossier as ds
     from skysift import net
     from skysift.lc.loader import LightCurveLoader
     fetch = net.fetch if fetch is None else fetch
-    data = _stored(store, target_id)
+    data = _stored(store, target_id, signal_id)
     stored = str(data.get("dossier_version") or "1")
     if not stored.isdigit() or int(stored) < int(ds.DOSSIER_VERSION):
         raise OldDossier(f"dossier version {stored} is below {ds.DOSSIER_VERSION}; regenerate first (skysift dossier "
@@ -797,11 +809,11 @@ def with_current(block: dict | None, data: dict) -> dict | None:
             "class_excluded": cls_ex}
 
 
-def import_result(store, target_id: str, path: Path) -> dict:
+def import_result(store, target_id: str, path: Path, signal_id: int | None = None) -> dict:
     """Check the tool's result file and store it on the target's dossier row with ``current`` (made for the stored
-    dossier's inputs or not) and ``class``. Returns the stored block. Raises NoDossier and BadResult (nothing is
-    stored)."""
-    data = _stored(store, target_id)
+    dossier's inputs or not) and ``class``; with ``signal_id``, on that signal's further dossier row, ``current``
+    against the further dossier. Returns the stored block. Raises NoDossier and BadResult (nothing is stored)."""
+    data = _stored(store, target_id, signal_id)
     try:
         text = Path(path).read_text(encoding="utf-8")
     except OSError as e:
@@ -812,7 +824,10 @@ def import_result(store, target_id: str, path: Path) -> dict:
         raise BadResult("the result file is not a JSON file") from None
     validate_result(result)
     block = with_current({k: result[k] for k in RESULT_KEYS}, data)
-    store.set_cross_check(target_id, block)
+    if signal_id is None:
+        store.set_cross_check(target_id, block)
+    else:
+        store.set_further_cross_check(signal_id, block)
     return block
 
 

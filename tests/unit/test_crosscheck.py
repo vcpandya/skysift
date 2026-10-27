@@ -28,7 +28,7 @@ from tests.unit.synthetic_tpf import (
     tpf_name,
     tpf_quarters,
 )
-from tests.unit.test_dossier import RESPONSES, _make_env, fake_fetch
+from tests.unit.test_dossier import RESPONSES, _make_env, _second_signal, fake_fetch
 from tests.unit.test_pixels import _psf
 from tests.unit.ui_seed import STAGE2_TARGET
 
@@ -145,6 +145,51 @@ def _art(env, quarter: int) -> dict:
 
 def _stored(env) -> dict:
     return json.loads(Path(env.store.dossier(STAGE2_TARGET)["data_path"]).read_text(encoding="utf-8"))
+
+
+@pytest.fixture
+def env_two_dossiers(env):
+    """``env`` (the target's dossier) with a further dossier for a second stage 2 signal; returns (env, signal id)."""
+    second = _second_signal(env)
+    generate(env.store, env.blob, env.settings, STAGE2_TARGET, signal_id=second, further=True, fetch=env.fetch)
+    return env, second
+
+
+def test_export_and_import_with_a_signal_use_the_further_dossier(env_two_dossiers, tmp_path):
+    env, second = env_two_dossiers
+    out = cc.export_inputs(env.store, env.blob, env.settings, STAGE2_TARGET, tmp_path / "cc", fetch=env.xfetch,
+                           signal_id=second)
+    inputs = json.loads((out / "inputs.json").read_text(encoding="utf-8"))
+    further = json.loads(Path(env.store.further_dossier(second)["data_path"]).read_text(encoding="utf-8"))
+    assert inputs["fingerprint"] == cc.inputs_fingerprint(further)
+    assert inputs["fingerprint"] != cc.inputs_fingerprint(_stored(env))          # not the target's dossier
+    assert inputs["signal_id"] == second and inputs["ephemeris"] == further["ephemeris"]
+    block = cc.import_result(env.store, STAGE2_TARGET, _write(tmp_path / "r.json", fake_result(inputs["fingerprint"])),
+                             signal_id=second)
+    assert block["current"] is True
+    assert env.store.further_dossier(second)["cross_check"]["fpp"] == block["fpp"]
+    assert env.store.dossier(STAGE2_TARGET)["cross_check"] is None                  # the target's row untouched
+    own = cc.import_result(env.store, STAGE2_TARGET, _write(tmp_path / "o.json", fake_result(inputs["fingerprint"])))
+    assert own["current"] is False                                        # the further inputs are not the target's
+
+
+def test_a_signal_of_another_target_is_refused(env_two_dossiers, tmp_path):
+    env, second = env_two_dossiers
+    with pytest.raises(cc.NoDossier, match="belongs to target " + STAGE2_TARGET):
+        cc.export_inputs(env.store, env.blob, env.settings, "kic-000000001", tmp_path / "cc", fetch=env.xfetch,
+                         signal_id=second)
+    with pytest.raises(cc.NoDossier, match="belongs to"):
+        cc.import_result(env.store, "kic-000000001", _write(tmp_path / "r.json", fake_result("0" * 64)),
+                         signal_id=second)
+    assert env.store.further_dossier(second)["cross_check"] is None
+
+
+def test_a_signal_without_a_further_dossier_is_refused(env, tmp_path):
+    with pytest.raises(cc.NoDossier, match="--further"):
+        cc.export_inputs(env.store, env.blob, env.settings, STAGE2_TARGET, tmp_path / "cc", fetch=env.xfetch,
+                         signal_id=10**6)
+    with pytest.raises(cc.NoDossier, match="--further"):
+        cc.import_result(env.store, STAGE2_TARGET, tmp_path / "r.json", signal_id=10**6)
 
 
 def test_inputs_fingerprint_changes_with_the_period_and_the_neighbours():

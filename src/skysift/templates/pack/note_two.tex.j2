@@ -1,0 +1,94 @@
+((# The body of the two-candidate Research Note draft (spec 2026-10-27, 5.1), from the begin-document line on;
+   skysift.pack.render_note puts data/rnaas/aastex_template.tex in front of it and chooses this template when the
+   target has a second candidate. Delimiters as note.tex.j2: \VAR{...} prints (every string LaTeX-escaped unless
+   pack.Raw), \BLOCK{...} is a statement. n is the first candidate's numbers (the star is the same for both), cands the
+   numbers of each, s the sentences pack_two.shared builds from both. Inside the RNAAS limits (pack.NOTE_LIMITS:
+   1,500 words with the references, an abstract of up to 130 words here, one figure). #))
+\begin{document}
+
+\title{\VAR{s.title}}
+
+((# AASTeX 7.0.1 stops at the first \section unless every author block ends with its own \email; its v6
+   \correspondingauthor command is gone, so the first author's email is the corresponding one. #))
+\BLOCK{for a in authors}
+\author\BLOCK{if a.orcid}[\VAR{a.orcid}]\BLOCK{endif}{\VAR{a.name}}
+\affiliation{\BLOCK{if a.affiliation}\VAR{a.affiliation}\BLOCK{else}AFFILIATION TO FILL IN\BLOCK{endif}}
+\email{\BLOCK{if a.email}\VAR{a.email}\BLOCK{else}EMAIL TO FILL IN\BLOCK{endif}}
+\BLOCK{endfor}
+
+\begin{abstract}
+\VAR{s.abstract}
+\end{abstract}
+
+\keywords{\uat{Exoplanet detection methods}{489}, \uat{Exoplanets}{498}, \uat{Transit photometry}{1709}}
+
+\section{The signals}
+
+In the KBonus Kepler Background light curve \citep{kbonus} of \VAR{n.name}\BLOCK{if n.gaia_id} (Gaia DR3 \VAR{n.gaia_id}\BLOCK{if n.gmag}, $G = \VAR{n.gmag}$\BLOCK{endif})\BLOCK{endif}, recorded by Kepler \citep{borucki2010} only in other targets' pixels, SkySift's box search\BLOCK{if n.window} over \VAR{n.window|replace(' days', ' day')} periods\BLOCK{endif} found two independent signals. \VAR{s.ratio}\BLOCK{if s.coincidence} \VAR{s.coincidence}\BLOCK{endif}
+
+
+\BLOCK{for x in s.signals}
+\VAR{x}\BLOCK{if loop.last and s.fold_clause} \VAR{s.fold_clause}\BLOCK{endif}
+
+
+\BLOCK{endfor}
+
+\section{Vetting}
+
+\VAR{s.ladder}
+
+\BLOCK{for x in s.vettings}
+\VAR{x}
+
+\BLOCK{endfor}
+
+\section{Which star is dimming}
+
+\VAR{s.photometry}
+
+\BLOCK{for x in s.centroids}
+\VAR{x}
+
+\BLOCK{endfor}
+
+\section{The star and planets}
+
+\BLOCK{if n.star_ok}
+No Kepler stellar catalogue covers a background star, so the parameters come from Gaia DR3 \citep{gaia2016,gaia2023} colour and parallax\BLOCK{if n.gaia_flags_text}; \VAR{n.gaia_flags_text}\BLOCK{endif}. \BLOCK{if n.reddening_text}\VAR{n.reddening_text}. \BLOCK{endif}\BLOCK{if n.teff}The colour gives \BLOCK{if n.spectral_type}a spectral type of \VAR{n.spectral_type} and \BLOCK{endif}an effective temperature of \VAR{n.teff} K\BLOCK{if n.distance}, and the zero-point-corrected parallax a distance of \VAR{n.distance} pc\BLOCK{endif}. \BLOCK{elif n.distance}The zero-point-corrected parallax gives a distance of \VAR{n.distance} pc. \BLOCK{endif}\BLOCK{if refs.mann2015}From the absolute $K_s$ magnitude the relations of \citet{mann2015}\BLOCK{if refs.mann2019} and \citet{mann2019}\BLOCK{endif} give \BLOCK{else}The star has \BLOCK{endif}a radius of \VAR{n.radius} $R_\odot$\BLOCK{if n.mass} and a mass of \VAR{n.mass} $M_\odot$\BLOCK{endif}.
+
+\BLOCK{for x in s.planets}
+\VAR{x}
+
+\BLOCK{endfor}
+\BLOCK{else}
+The star could not be characterised from Gaia photometry, so the planet radius, orbit and temperature are not given here.
+\BLOCK{endif}
+
+\section{How likely is a false positive}
+
+\VAR{s.fap}\BLOCK{if s.triceratops} \VAR{s.triceratops}\BLOCK{endif} \VAR{s.in_house} \VAR{s.tess}
+
+\section{What is not yet known}
+
+\VAR{s.caveats}
+
+\begin{figure}[ht!]
+\includegraphics[width=\linewidth]{figure1}
+\caption{\VAR{s.caption}}
+\end{figure}
+
+\section{Data availability}
+
+Pack (data and methods): \dataset[doi:\VAR{doi}]{https://doi.org/\VAR{doi}}\VAR{doi_note}; light curves: the KBonus Kepler Background high-level science product at MAST \citep{kbonushlsp}; code: SkySift at commit \VAR{n.commit}, \VAR{code_doi}.
+
+\software{\VAR{n.software_line}}
+
+\facilities{\VAR{n.facilities}}
+
+\begin{thebibliography}{}
+\BLOCK{for key, label, text in bib}
+\bibitem[\VAR{label}]{\VAR{key}} \VAR{text}
+\BLOCK{endfor}
+\end{thebibliography}
+
+\end{document}

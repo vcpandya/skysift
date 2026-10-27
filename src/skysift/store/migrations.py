@@ -7,7 +7,7 @@ from __future__ import annotations
 from sqlalchemy import Column, DateTime, MetaData, String, Table, insert, inspect, text
 from sqlalchemy.engine import Connection, Engine
 
-from skysift.store.db import DossierRow, RecheckRow, utcnow
+from skysift.store.db import DossierRow, FurtherDossierRow, RecheckRow, utcnow
 
 
 def _columns(conn: Connection, table: str) -> set[str]:
@@ -49,13 +49,20 @@ def _step_004_cross_check(conn: Connection) -> None:
     _add_column(conn, "dossiers", "cross_check", "JSON")
 
 
+def _step_005_further_dossiers(conn: Connection) -> None:
+    # as step 003: create_all makes the table on a fresh schema; checkfirst lets migrate alone bring an old database
+    # up to date (two-candidate note spec 3.2)
+    FurtherDossierRow.__table__.create(conn, checkfirst=True)
+
+
 # a typed table so the driver gets a bound DateTime (sqlite3's default datetime adapter is deprecated); the stored
 # value is naive UTC, like every ORM DateTime column in db.py
 _SCHEMA_VERSION = Table("schema_version", MetaData(), Column("step", String(64), primary_key=True),
                         Column("applied", DateTime))
 
 STEPS = [("001_dashboard", _step_001_dashboard), ("002_recheck", _step_002_recheck),
-         ("003_dossiers", _step_003_dossiers), ("004_cross_check", _step_004_cross_check)]
+         ("003_dossiers", _step_003_dossiers), ("004_cross_check", _step_004_cross_check),
+         ("005_further_dossiers", _step_005_further_dossiers)]
 
 
 def migrate(engine: Engine) -> list[str]:

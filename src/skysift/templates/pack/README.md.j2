@@ -1,22 +1,55 @@
 {# The pack's README (dossiers spec 5.9): the five steps in order, each naming the account it needs, what to attach,
    what to write and what the engine did or cannot do. Plain text from skysift.pack.render_readme; n holds the numbers
-   as text, f the build's own fields. No em-dashes, -ise spellings, "candidate" never "discovery". #}
+   as text, f the build's own fields. With a second candidate (two is its numbers; cands holds both; s is the shared
+   sentences of pack_two in plain form; groups(key, ...) gives the paragraph once when the candidates' texts agree,
+   else once for each, labelled) the blocks inside "if two" take the place of the single candidate's; without one the
+   output is the single candidate's, unchanged. No em-dashes, -ise spellings, "candidate" never "discovery". #}
 {% if not f.approved %}
+{% if two and f.not_approved %}
+This pack is not yet approved by a reviewer: {{ f.not_approved | join(" and ") }} {{ "is" if f.not_approved | length == 1 else "are" }} not approved. Build the record, but do not freeze or upload it before the approval.
+{% else %}
 This candidate is not yet approved by a reviewer. Build the record, but do not freeze or upload it before the approval.
+{% endif %}
 
 {% endif %}
 # Submission pack for {{ n.name }}
 
 {% if f.stale_reason %}
-**The dossier behind this pack is stale** ({{ f.stale_reason }}). Run `skysift dossier --target {{ n.target_id }} --force`, then build the pack again, before step 1.
+**The dossier behind this pack is stale** ({{ f.stale_reason }}). Run {% for c in f.stale_commands %}{% if not loop.first %} and {% endif %}`{{ c }}`{% endfor %}, then build the pack again, before step 1.
 
 {% endif %}
-{{ n.summary }}
-{% if n.prior_plain %}
+{{ s.summary if two else n.summary }}
+{% if two %}
+{% for p in priors %}
+
+Prior claim, {{ p.label }}: {{ p.claim }}{{ (" " ~ p.comparison) if p.comparison else "" }}
+{% endfor %}
+{% elif n.prior_plain %}
 
 Prior claim: {{ n.prior_plain }}{{ (" " ~ n.comparison_plain) if n.comparison_plain else "" }}
 {% endif %}
 
+{% if two %}
+This pack was built on {{ f.built_words }} by SkySift (pack format {{ f.pack_version }}) from two dossiers: {% for c in cands %}{% if not loop.first %} and {% endif %}signal {{ c.signal_id }} ({{ c.name_label }}; generated on {{ c.generated_words }}, search version {{ c.search_version }}, ladder version {{ c.ladder_version }}){% endfor %}. Every number below comes from those dossiers.
+
+## The candidates in numbers
+
+| quantity |{% for c in cands %} {{ c.period_label }} |{% endfor %}{{ "" }}
+|---|{% for c in cands %}---|{% endfor %}{{ "" }}
+{% for label, cells in rows %}
+| {{ label }} |{% for cell in cells %} {{ cell }} |{% endfor %}{{ "" }}
+{% endfor %}
+
+## The star
+
+| quantity | value |
+|---|---|
+{% for row in star_rows %}
+| {{ row.parameter }} | {{ row.text }} |
+{% endfor %}
+
+{{ s.ratio }}{% if s.coincidence %} {{ s.coincidence }}{% endif %}{{ "" }}
+{% else %}
 This pack was built on {{ f.built_words }} by SkySift (pack format {{ f.pack_version }}) from the dossier generated on {{ n.generated_words }} for signal {{ n.signal_id }} (search version {{ n.search_version }}, ladder version {{ n.ladder_version }}). Every number below comes from that dossier.
 
 ## The candidate in numbers
@@ -50,6 +83,7 @@ This pack was built on {{ f.built_words }} by SkySift (pack format {{ f.pack_ver
 | {{ row.parameter }} | {{ row.text }} |
 {% endfor %}
 | TESS | {{ n.tess_row }} |
+{% endif %}
 {% if n.star_method_text or n.crowdsap_text or n.reddening_plain or n.reddening_sentence or n.flame_text or n.hz_text %}
 
 Star:{% if n.star_method_text %} {{ n.star_method_text }}{% endif %}{% if n.crowdsap_text %} {{ n.crowdsap_text }}{% endif %}{% if n.reddening_plain %} {{ n.reddening_plain }} The radius sensitivity is under "What is not yet known".{% elif n.reddening_sentence %} {{ n.reddening_sentence }}; the radius sensitivity is under "What is not yet known".{% endif %}{% if n.flame_text %} {{ n.flame_text }}{% endif %}{% if n.hz_text %} {{ n.hz_text }}{% endif %}{{ "" }}
@@ -64,63 +98,69 @@ Star:{% if n.star_method_text %} {{ n.star_method_text }}{% endif %}{% if n.crow
 
 {{ n.reddening_key }}
 {% endif %}
-{% if n.errors_methods %}
+{% for label, c in groups("errors_methods") %}
 
-Ephemeris and transit-parameter errors (the note's signal section points here): {{ n.errors_methods }}
-{% endif %}
-{% if n.shape_fit %}
+{{ label }}Ephemeris and transit-parameter errors (the note's signal section points here): {{ c.errors_methods }}
+{% endfor %}
+{% for label, c in groups("shape_fit") %}
 
-{{ n.shape_fit }}
-{% endif %}
+{{ label }}{{ c.shape_fit }}
+{% endfor %}
 
-{% if n.note_forms %}
+{% for label, c in groups("note_forms") %}
 
-Note wording: {{ n.note_forms }}
-{% endif %}
-{% if n.tess_methods %}
+{{ label }}Note wording: {{ c.note_forms }}
+{% endfor %}
+{% for label, c in groups("tess_methods") %}
 
-{% if n.tess_pointer %}TESS prediction (the note's TESS sentence points here){% else %}TESS coverage (how the windows were counted){% endif %}: {{ n.tess_methods }}
-{% endif %}
+{{ label }}{% if c.tess_pointer %}TESS prediction (the note's TESS sentence points here){% else %}TESS coverage (how the windows were counted){% endif %}: {{ c.tess_methods }}
+{% endfor %}
 {% if n.crowdsap or n.psffrac %}
 
 CROWDSAP and PSFFRAC are KBonus header keywords. CROWDSAP is {{ crowdsap_definition }}; PSFFRAC is {{ psffrac_definition }}.
 {% endif %}
-{% if n.secondary_plain or n.trend_plain %}
+{% for label, c in groups("secondary_plain", "trend_plain") %}
 
-Phase 0.5 and the red noise:{% if n.secondary_plain %} {{ n.secondary_plain }} The margins are rung 2's model-shift test (the largest positive excursion and the tertiary dip in the same fold).{% endif %}{% if n.trend_plain %} {{ n.trend_plain }}{% endif %}{{ "" }}
+{{ label }}Phase 0.5 and the red noise:{% if c.secondary_plain %} {{ c.secondary_plain }} The margins are rung 2's model-shift test (the largest positive excursion and the tertiary dip in the same fold).{% endif %}{% if c.trend_plain %} {{ c.trend_plain }}{% endif %}{{ "" }}
+{% endfor %}
+{% for label, c in groups("offset_text", "hand_built_text") %}
+
+{{ label }}Pixel offset:{% if c.offset_text %} {{ c.offset_text }}{% endif %}{% if c.hand_built_text %} {{ c.hand_built_text }}{% endif %}{{ "" }}
+{% endfor %}
+{% for label, c in groups("dilution_text") %}
+
+{{ label }}Photometry and dilution: {{ c.dilution_text }}
+{% endfor %}
+{% for label, c in groups("leak_method") %}
+
+{{ label }}{{ c.leak_method }}
+{% endfor %}
+{% for label, c in groups("fap_text", "fap_method") %}
+
+{{ label }}{{ c.fap_text }}{{ (" " ~ c.fap_method) if c.fap_method else "" }}
+{% endfor %}
+{% for label, c in groups("fpp_text", "in_house_method", "beb_radius_text") %}
+
+{{ label }}{{ c.fpp_text }} {{ c.in_house_method }}{{ (" " ~ c.beb_radius_text) if c.beb_radius_text else "" }}
+{% endfor %}
+{% for label, c in groups("cross_check_after") %}
+
+{{ label }}{{ c.cross_check_after }}
+{% endfor %}
+{% for label, c in groups("leakage_basis") %}
+
+{{ label }}{{ c.leakage_basis }}
+{% endfor %}
+{% for label, c in groups("cross_check_flag") %}
+
+{{ label }}For the owner: {{ c.cross_check_flag }}
+{% endfor %}
+{% for c in cands %}
+{% if c.cross_check_block %}
+
+{{ c.label if two else "" }}The live Zenodo draft waits on the cross-check: {{ c.cross_check_block }}. Run `skysift crosscheck --target {{ c.target_id }}{{ c.signal_arg if two else "" }} --export <folder>`, then `tools/triceratops_check.py` under `.venv-triceratops`, then `skysift crosscheck --target {{ c.target_id }}{{ c.signal_arg if two else "" }} --import <result.json>`.
 {% endif %}
-{% if n.offset_text or n.hand_built_text %}
-
-Pixel offset:{% if n.offset_text %} {{ n.offset_text }}{% endif %}{% if n.hand_built_text %} {{ n.hand_built_text }}{% endif %}{{ "" }}
-{% endif %}
-{% if n.dilution_text %}
-
-Photometry and dilution: {{ n.dilution_text }}
-{% endif %}
-{% if n.leak_method %}
-
-{{ n.leak_method }}
-{% endif %}
-
-{{ n.fap_text }}{{ (" " ~ n.fap_method) if n.fap_method else "" }}
-
-{{ n.fpp_text }} {{ n.in_house_method }}{{ (" " ~ n.beb_radius_text) if n.beb_radius_text else "" }}
-{% if n.cross_check_after %}
-
-{{ n.cross_check_after }}
-{% endif %}
-{% if n.leakage_basis %}
-
-{{ n.leakage_basis }}
-{% endif %}
-{% if n.cross_check_flag %}
-
-For the owner: {{ n.cross_check_flag }}
-{% endif %}
-{% if n.cross_check_block %}
-
-The live Zenodo draft waits on the cross-check: {{ n.cross_check_block }}. Run `skysift crosscheck --target {{ n.target_id }} --export <folder>`, then `tools/triceratops_check.py` under `.venv-triceratops`, then `skysift crosscheck --target {{ n.target_id }} --import <result.json>`.
-{% endif %}
+{% endfor %}
 
 ## Why there are five steps
 
@@ -154,16 +194,23 @@ Where: the Kepler, K2 and TESS sites of ExoFOP are merged, and a KIC id is accep
 
 Data Tag: every ExoFOP upload needs one, set on the upload form in the form `YYYYMMDD_username_description_nnnnn` (the description takes letters, numbers and hyphens). For this pack, something like `{{ f.data_tag }}`.
 
-Files: ExoFOP enforces no file name. The pack names its copies `<target>_<UTC date>_<content>.<ext>`, so each says what it is and which build it came from. Attach these:
+Files: ExoFOP enforces no file name. The pack names its copies `<target>_<UTC date>_<content>.<ext>`, so each says what it is and which build it came from.{% if two %} The second candidate's copies carry `-02` after the content.{% endif %} Attach these:
 
 {% for name, what in f.exofop %}
 - `exofop/{{ name }}`: {{ what }}
 {% endfor %}
 
-What ExoFOP takes now: any registered user can attach files, notes and stellar parameters to a KIC or TIC page, so the files above and the upload note go up now.{% if not f.exofop_stellar %} There is no stellar parameter file: the star could not be characterised from Gaia photometry, so there are no stellar parameters to upload.{% endif %} Planet parameters attach only to a TOI, a community TOI or a confirmed planet, and a community TOI needs a paper in a peer-reviewed journal (a Research Note qualifies only when the method it rests on was published before), so `exofop/{{ f.exofop_planet }}`, the planet parameters in ExoFOP's bulk template, waits until such a paper is accepted; do not upload it now. Its target reads `TIC{{ f.tic or "<TIC-TO-FILL>" }}.01`{% if not f.tic %} until the pack is built with `--tic`{% endif %}, and its {% if n.priority_text %}paper URL and notes name the prior claim's DOI{% else %}paper URL and notes are placeholders to fill in then{% endif %}.{% if f.other_signals %} {{ f.other_signals }}{% endif %}{{ "" }}
+What ExoFOP takes now: any registered user can attach files, notes and stellar parameters to a KIC or TIC page, so the files above and the upload note go up now.{% if not f.exofop_stellar %} There is no stellar parameter file: the star could not be characterised from Gaia photometry, so there are no stellar parameters to upload.{% endif %} Planet parameters attach only to a TOI, a community TOI or a confirmed planet, and a community TOI needs a paper in a peer-reviewed journal (a Research Note qualifies only when the method it rests on was published before), so {% if two %}`exofop/{{ f.exofop_planets[0] }}` and `exofop/{{ f.exofop_planets[1] }}`, the planet parameters in ExoFOP's bulk template (one file for each candidate), wait until such a paper is accepted; do not upload them now. Their targets read `TIC{{ f.tic or "<TIC-TO-FILL>" }}.01` and `TIC{{ f.tic or "<TIC-TO-FILL>" }}.02`{% if not f.tic %} until the pack is built with `--tic`{% endif %}, and their {% if cands | selectattr("priority_text") | list %}paper URLs and notes name a prior claim's DOI for the candidate that has one and are placeholders to fill in then for the other{% else %}paper URLs and notes are placeholders to fill in then{% endif %}.{% else %}`exofop/{{ f.exofop_planet }}`, the planet parameters in ExoFOP's bulk template, waits until such a paper is accepted; do not upload it now. Its target reads `TIC{{ f.tic or "<TIC-TO-FILL>" }}.01`{% if not f.tic %} until the pack is built with `--tic`{% endif %}, and its {% if n.priority_text %}paper URL and notes name the prior claim's DOI{% else %}paper URL and notes are placeholders to fill in then{% endif %}.{% endif %}{% if f.other_signals %} {{ f.other_signals }}{% endif %}{% for text in f.left_out %} {{ text }}.{% endfor %}{{ "" }}
 
-What to write: paste `exofop/note.txt` into the upload's description. It gives the ephemeris with its errors, both probabilities, the pixel result and the Zenodo DOI.
-{% if n.priority_text %}
+What to write: paste `exofop/note.txt` into the upload's description. It gives {% if two %}each candidate's ephemeris with its errors, both probabilities of each, the pixel result of each{% else %}the ephemeris with its errors, both probabilities, the pixel result{% endif %} and the Zenodo DOI.
+{% if two %}
+{% for c in cands %}
+{% if c.priority_text %}
+
+Priority, {{ c.name_label }}: {{ c.priority_text }}
+{% endif %}
+{% endfor %}
+{% elif n.priority_text %}
 
 Priority: {{ n.priority_text }}
 {% endif %}
@@ -174,15 +221,15 @@ Who sees it: uploads are public at once. ExoFOP offers a 12-month proprietary pe
 
 Accounts: an AAS journals account (the submission system of the Research Notes of the AAS) and an arXiv account. A first submission to astro-ph.EP may need an endorsement from someone who has already posted there; arXiv tells you when you submit, and the endorsement request goes by email to a colleague who can endorse. The engine cannot submit for you.
 
-The limits (AAS research note guidelines): at most {{ "{:,}".format(f.limits.total) }} words including the title, headings, caption and references, of which up to {{ f.limits.abstract }} are the required abstract, and one figure or one table, not both. The draft is `note/note.tex`, with one figure, `note/figure1`: {{ f.note_words.total }} words in all ({{ f.note_words.body }} of title, headings, text and caption, {{ f.note_words.abstract }} of abstract, {{ f.note_words.references }} of references; the author block, the keywords and the software line are not counted).
+The limits (AAS research note guidelines): at most {{ "{:,}".format(f.limits.total) }} words including the title, headings, caption and references, of which up to {{ f.limits.abstract }} are the required abstract, and one figure or one table, not both. The draft is `note/note.tex`, with one figure, `note/figure1`{% if two %} (the folds of both candidates as panels (a) and (b); `note/figure1.svg` and `note/figure1_02.svg` hold each fold alone){% endif %}: {{ f.note_words.total }} words in all ({{ f.note_words.body }} of title, headings, text and caption, {{ f.note_words.abstract }} of abstract, {{ f.note_words.references }} of references; the author block, the keywords and the software line are not counted).
 {% if f.note_problems %}
 **Over the limit:** {{ f.note_problems | join("; ") }}. Shorten it before you submit.
 {% endif %}
 
 1. The author block comes from `docs/author.json` (name, affiliation, email, ORCID): fill in any field it lacks there and build the pack again, then add co-authors.
 {% if f.zenodo and f.zenodo.doi and f.zenodo.sandbox %}2. Replace {{ f.zenodo.doi }} (a sandbox DOI) before submission: use the DOI of the record you publish on zenodo.org in step 1.{% elif f.zenodo and f.zenodo.doi %}2. Check that {{ f.zenodo.doi }}, the draft's reserved DOI, matches the published record.{% else %}2. Replace {{ f.doi_shown }} with the Zenodo DOI from step 1.{% endif %}{{ "" }}
-3. Read every sentence against `dossier.html`; the note is built from the stored numbers and says nothing the dossier does not.
-4. Compile it with AASTeX v7 (aastex7.cls) and pdflatex; Overleaf has the AAS template. The UAT keywords can be changed in the submission form. {% if f.png %}The figure is `note/figure1.pdf`.{% else %}matplotlib could not be imported when this pack was built, so there is no PDF figure: convert `note/figure1.svg` to PDF first (Inkscape: `inkscape figure1.svg --export-type=pdf`).{% endif %}
+3. Read every sentence against `dossier.html`{% if two %} and `dossier_02.html`{% endif %}; the note is built from the stored numbers and says nothing the dossier does not.
+4. Compile it with AASTeX v7 (aastex7.cls) and pdflatex; Overleaf has the AAS template. The UAT keywords can be changed in the submission form. {% if f.png %}The figure is `note/figure1.pdf`.{% else %}matplotlib could not be imported when this pack was built, so there is no PDF figure: convert `note/figure1.svg`{% if two %} and `note/figure1_02.svg`{% endif %} to PDF first (Inkscape: `inkscape figure1.svg --export-type=pdf`).{% endif %}
 
 5. Submit it as a Research Note of the AAS. The Note is moderated by an editor for fit, not refereed, and it gets a DOI when published.
 6. After acceptance, post the same text to arXiv in astro-ph.EP.
@@ -199,6 +246,28 @@ When: only once a refereed paper on this candidate is accepted. The archive take
 
 Account: whatever the person asks through (ExoFOP messages, email). The engine cannot reply for you.
 
+{% if two %}
+Observers who plan a transit ask for the ephemeris first. Send the files of the candidate they ask about (`data/ephemeris.csv` and `data/transit_times.csv` for {{ cands[0].name_label }}, `data/ephemeris_02.csv` and `data/transit_times_02.csv` for {{ cands[1].name_label }}) and say, for that candidate:
+{% for c in cands %}
+{% if c.timed %}
+
+{{ c.label_colon }}mid-transit times are T = {{ c.t_ref_bjd }} + (E - {{ c.epoch_ref }}) x {{ c.period }} (BJD_TDB, E a whole number of orbits, E = 0 at BJD_TDB {{ c.t0_bjd }}), with 1-sigma errors of {{ c.t_ref_err }} d on the reference time and {{ c.period_err }} d on the period, and the transit lasts {{ c.duration_pm }} h. The prediction error grows with the distance from epoch {{ c.epoch_ref }}: the reference error and the period error times the number of orbits, in quadrature. The next three transits after {{ f.after_words }}, each with its 1-sigma window:
+
+{% for t in c.next_transits %}
+- {{ t.text }}
+{% endfor %}
+{% if c.followup_text %}
+
+{{ c.followup_text }}
+{% endif %}
+{% else %}
+
+{{ c.label_colon }}mid-transit times are T = {{ c.t0_bjd }} + E x {{ c.period }} (BJD_TDB, E a whole number of orbits) and the transit lasts {{ c.duration_pm }} h. The dossier carries no formal error on the period or the first mid-transit (the transits could not be timed one by one), so a window of at least one transit duration either side of each predicted time is needed, more for times years after 2013.
+{% endif %}
+{% endfor %}
+
+Send `data/lightcurve.csv` and `data/events.csv` (and `data/lightcurve_02.csv` and `data/events_02.csv` for {{ cands[1].name_label }}) to anyone checking the depth, and `dossier.html` (`dossier_02.html`) to anyone who wants the full vetting. Point every request at the Zenodo DOI, so everyone works from the same frozen files.
+{% else %}
 {% if n.timed %}
 Observers who plan a transit ask for the ephemeris first. Send `data/ephemeris.csv` and `data/transit_times.csv` and say: mid-transit times are T = {{ n.t_ref_bjd }} + (E - {{ n.epoch_ref }}) x {{ n.period }} (BJD_TDB, E a whole number of orbits, E = 0 at BJD_TDB {{ n.t0_bjd }}), with 1-sigma errors of {{ n.t_ref_err }} d on the reference time and {{ n.period_err }} d on the period, and the transit lasts {{ n.duration_pm }} h. The prediction error grows with the distance from epoch {{ n.epoch_ref }}: the reference error and the period error times the number of orbits, in quadrature. The next three transits after {{ f.after_words }}, each with its 1-sigma window:
 
@@ -212,12 +281,16 @@ Observers who plan a transit ask for the ephemeris first. Send `data/ephemeris.c
 
 Send{% else %}
 Observers who plan a transit ask for the ephemeris first. Send `data/ephemeris.csv` and say: mid-transit times are T = {{ n.t0_bjd }} + E x {{ n.period }} (BJD_TDB, E a whole number of orbits) and the transit lasts {{ n.duration_pm }} h. The dossier carries no formal error on the period or the first mid-transit (the transits could not be timed one by one), so a window of at least one transit duration either side of each predicted time is needed, more for times years after 2013. Send{% endif %} `data/lightcurve.csv` and `data/events.csv` to anyone checking the depth, and `dossier.html` to anyone who wants the full vetting. Point every request at the Zenodo DOI, so everyone works from the same frozen files.
+{% endif %}
 
 ## What is not yet known
 
-{% for c in n.caveats %}
-- {{ c.title }}. {{ c.text }}
+{% for c in caveats %}
+- {{ c.title }}. {{ c.text }}{{ c.who }}
 {% endfor %}
+{% if two %}
+- {{ vetted }}
+{% endif %}
 
 ## What is in the pack
 
@@ -228,20 +301,39 @@ Observers who plan a transit ask for the ephemeris first. Send `data/ephemeris.c
 {% if not f.png %}
 matplotlib could not be imported when this pack was built, so there are no PNG files: the SVG files are the figures.
 {% endif %}
-{% if not f.pixels_figure %}
+{% if two %}
+{% for c in cands %}
+{% if not c.pixel_panels %}
+There is no centroid figure for {{ c.name_label }}: the pixel step has not run for this signal, or its stored pixel arrays could not be read, so `{{ sx("figures/centroids.svg", c.ordinal) }}` is missing. The dossier's section "Which star is dimming" says which.
+{% endif %}
+{% endfor %}
+{% elif not f.pixels_figure %}
 There is no centroid figure: the pixel step has not run for this signal, or its stored pixel arrays could not be read, so `figures/centroids.svg` is missing. The dossier's section "Which star is dimming" says which.
 {% endif %}
 
 ## Provenance
 
-`provenance/versions.json` names the pack format, the dossier format, the search and ladder versions and the git commit. Software: {{ n.software_line }}; {{ f.code_sentence }}. The note's authors and the Zenodo creators came from {{ f.creators_source }}. `provenance/queries.json` lists every catalogue and data request made for this target (URL, time, status, SHA-256). `provenance/calibration.json` holds the null-search counts behind the false-alarm probability. `provenance/hashes.json` holds the SHA-256 of every other file in the pack. To rebuild the dossier from the archive files:
+`provenance/versions.json` names the pack format, the dossier format, the search and ladder versions and the git commit{% if two %}, and for each candidate its signal, period and dossier{% endif %}. Software: {{ n.software_line }}; {{ f.code_sentence }}. The note's authors and the Zenodo creators came from {{ f.creators_source }}. `provenance/queries.json` lists every catalogue and data request made for this target (URL, time, status, SHA-256). `provenance/calibration.json` holds the null-search counts behind the false-alarm probability{% if two %} (`provenance/calibration_02.json` for {{ cands[1].name_label }}){% endif %}. `provenance/hashes.json` holds the SHA-256 of every other file in the pack. To rebuild the dossier{% if two %}s{% endif %} from the archive files:
 
+{% if two %}
+{% for c in cands %}
+{% if c.commands %}
+{{ c.label }}
+
+{% for line in c.commands %}
+    {{ line }}
+{% endfor %}
+
+{% endif %}
+{% endfor %}
+{% else %}
 {% for c in n.commands %}
     {{ c }}
 {% endfor %}
+{% endif %}
 
 ## References
 
-{% for r in n.references_plain %}
+{% for r in references %}
 - {{ r }}
 {% endfor %}

@@ -44,7 +44,7 @@ import zipfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import numpy as np
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
@@ -60,9 +60,9 @@ from skysift import stars as stars_module
 from skysift import tess as tess_module
 from skysift.ephemeris import BKJD_OFFSET, SES_MIN, SHAPE_PRIOR_DRAW, predict_from
 from skysift.exofop import (
-    EXOFOP_PLANET_TEMPLATE,
     EXOFOP_STELLAR_TEMPLATE,
     data_tag,
+    planet_file_name,
     render_exofop_planet,
     render_exofop_stellar,
 )
@@ -121,7 +121,9 @@ from skysift.zenodo import (
     probability_sentences,
 )
 
-PACK_VERSION = "5"      # 5: round 3 (spec 12): the pixel-excluded variant and the dust-map extinction
+# 5: round 3 (spec 12): the pixel-excluded variant and the dust-map extinction; 6: a second candidate in one pack
+# (the _02 files, the planet files _001 and _002, one README table per candidate, versions.json "candidates")
+PACK_VERSION = "6"
 # the five steps, in the README's order; the dashboard's step list (ui.routes.dossiers.PACK_STEPS) is built from these
 STEPS = (("1", "Freeze the record"), ("2", "Upload to ExoFOP-TESS"), ("3", "Write it up"),
          ("4", "Tell the archive"), ("5", "Answer follow-up questions"))
@@ -883,13 +885,14 @@ def fap_method_text(data: dict) -> str | None:
 
 # M-1 of the Task 13 review: where the note's wording is shorter than the specification's, the README says so; every
 # number and claim is in both
-def note_forms(data: dict) -> str | None:
+def note_forms(data: dict, nearest_in_note: bool = True) -> str | None:
     """The README's sentence on where the Research Note words a statement more briefly than this README, with the
     same numbers (Task 13 review M-1): the nearest Gaia source by distance and magnitude, a/R* without its label
     where the quoted values follow the host's density, the short class clause, the claim's short development
-    note; only the ones this note carries. None when it carries none."""
+    note; only the ones this note carries. None when it carries none. The two-candidate note leaves the nearest Gaia
+    source out (cut C14), so ``nearest_in_note`` is False there."""
     items = []
-    if offset_block(data) and (offset_block(data).get("nearest_beyond") or {}).get("source_id"):
+    if nearest_in_note and offset_block(data) and (offset_block(data).get("nearest_beyond") or {}).get("source_id"):
         items.append("it names the nearest Gaia source beyond the exclusion radius by its distance and G magnitude "
                      "(its Gaia DR3 id is in the pixel offset paragraph)")
     cmp = (data.get("shape") or {}).get("comparison") if isinstance(data.get("shape"), dict) else None
@@ -2363,9 +2366,14 @@ def bin_minutes(data: dict) -> str | None:
     return None if stored is None else f"{stored:.1f}".removesuffix(".0")
 
 
-def abstract_text(data: dict) -> str:
+def abstract_text(data: dict, others: list[dict] | None = None) -> str:
     """The note's abstract (RNAAS requires one, at most 150 words): the signal, where the pixels put it, the planet
-    when the star is characterised, both probabilities and the candidate status, each from the stored numbers."""
+    when the star is characterised, both probabilities and the candidate status, each from the stored numbers. With
+    ``others`` (the target's further candidates) it is the two-candidate abstract of ``pack_two.abstract``, at most
+    130 words."""
+    if others:
+        from skysift import pack_two
+        return pack_two.abstract([data, *others])
     target, eph = data.get("target") or {}, data.get("ephemeris") or {}
     name = target.get("name") or target.get("target_id")
     claims = prior_claims(data)
@@ -2402,7 +2410,57 @@ def abstract_text(data: dict) -> str:
     return " ".join(parts)
 
 
-def archive_paragraph(data: dict, doi: str, tic: str | None) -> str:
+def _archive_two(datas: list[dict], doi: str, tic: str | None) -> str:
+    """The archive paragraph for two candidates: both ephemerides, each candidate's false-alarm and false-positive
+    sentences, the prior claims (each told with its candidate) and the one sentence about what is frozen where."""
+    ns = [numbers(d) for d in datas]
+    n = ns[0]
+    names = [_candidate_name(d) for d in datas]
+    where = f" (Gaia DR3 {n['gaia_id']}, RA {n['ra']} deg, Dec {n['dec']} deg)" if n["gaia_id"] else ""
+    exofop = f"under TIC {tic}" if tic else f"on the {n['name']} page"
+    versions = list(dict.fromkeys(str(x["search_version"]) for x in ns))
+    search = f"search version{'s' if len(versions) > 1 else ''} {' and '.join(versions)}, commit {n['commit']}"
+    claimed = [(nm, c[0], x) for nm, d, x in zip(names, datas, ns, strict=True) if (c := prior_claims(d))]
+    if claimed:
+        reported = list(dict.fromkeys((c["author"], c["date"], c["doi"]) for _nm, c, _x in claimed))
+        if len(reported) == 1 and len(claimed) == len(datas):
+            author, day, doi_claim = reported[0]
+            told = f"Both were first reported by {author} on {date_words(day)} (doi:{doi_claim})."
+        else:
+            told = " ".join(f"{_capital(nm)} was first reported by {c['author']} on {date_words(c['date'])} "
+                            f"(doi:{c['doi']})." for nm, c, _x in claimed)
+        notes = list(dict.fromkeys(c["development_note"] for _nm, c, _x in claimed if c.get("development_note")))
+        note = f"; {'; '.join(notes)}" if notes else ""
+        compared = "".join(f" For {nm}: {x['comparison_plain'][:1].lower()}{x['comparison_plain'][1:]}"
+                           for nm, _c, x in claimed if x["comparison_plain"])
+        opening = (f"I write about two transit candidates on {n['name']}{where}. {told} SkySift's vetting of them is "
+                   f"now in an accepted refereed paper (doi:{PAPER_DOI_PLACEHOLDER}), since the archive takes "
+                   "parameters from such a paper and not from the Research Note of the AAS that reported the vetting "
+                   f"(doi:{RNAAS_DOI_PLACEHOLDER}). SkySift ({search}) searched the KBonus Kepler Background light "
+                   f"curves{note}.{compared} ")
+    else:
+        opening = (f"I write about two transit candidates on {n['name']}{where}, now in an accepted refereed paper "
+                   f"(doi:{PAPER_DOI_PLACEHOLDER}), since the archive takes parameters from such a paper and not "
+                   f"from the Research Note of the AAS that first reported them (doi:{RNAAS_DOI_PLACEHOLDER}). "
+                   f"SkySift ({search}) found them in the KBonus Kepler Background light curves. ")
+    ephemerides = "; ".join(
+        f"for {nm}, {x['ephemeris_text']}" + (f", which gives a planet radius of {x['rp_text']} Earth radii"
+                                              if x["rp_text"] else "") for nm, x in zip(names, ns, strict=True))
+    red = f" {n['reddening_plain']}" if n["reddening_plain"] else ""
+    odds = " ".join(f"{_capital(nm)}: {x['fap_text']} {x['fpp_text']}"
+                    + (f" {x['cross_check_after']}" if x["cross_check_after"] else "")
+                    for nm, x in zip(names, ns, strict=True))
+    return opening + (
+            f"The ephemerides are {ephemerides}.{red} {odds} The light curves, ephemerides, transit times, vetting "
+            f"metrics and figures of both are frozen on Zenodo (doi:{doi}) and uploaded to ExoFOP-TESS {exofop}. I "
+            "would be glad to see them considered for the archive's tables, and I can send anything else you need.")
+
+
+def archive_paragraph(data: dict, doi: str, tic: str | None, others: list[dict] | None = None) -> str:
+    """The one paragraph for the NASA Exoplanet Archive help desk (step 4 and ``archive_email.txt``); with ``others``
+    (the further candidates' JSONs) it names both candidates with both ephemerides."""
+    if others:
+        return _archive_two([data, *others], doi, tic)
     n = numbers(data)
     where = f" (Gaia DR3 {n['gaia_id']}, RA {n['ra']} deg, Dec {n['dec']} deg)" if n["gaia_id"] else ""
     rp = f", which gives a planet radius of {n['rp_text']} Earth radii" if n["rp_text"] else ""
@@ -2525,12 +2583,18 @@ def doi_shown(doi: str | None) -> str:
 
 
 def render_note(data: dict, doi_placeholder: str = DOI_PLACEHOLDER, *, citation: dict | None = None,
-                panels: bool = True) -> str:
+                panels: bool = True, others: list[dict] | None = None,
+                span: tuple[float, float] | None = None) -> str:
     """The Research Note draft: the AASTeX v7 frame in ``data/rnaas/aastex_template.tex`` and the body from
     ``note.tex.j2`` (title, abstract, sections, one figure, references), citing exactly the works the dossier used.
     A sandbox DOI is printed with the words that it must be replaced before submission. ``panels`` is whether the
     figure is matplotlib's panelled ``figure1`` (the caption names the panels) or the fold alone of ``figure1.svg``;
-    the code DOI comes from ``citation`` (``code_doi``)."""
+    the code DOI comes from ``citation`` (``code_doi``). With ``others`` (the target's further candidates, each
+    one's stored JSON) the body is ``note_two.tex.j2``: both candidates, the bibliography the union of the works
+    either one cites, and ``span`` (the light curve's first and last BKJD) is what the coincidence of their transits
+    is counted over; a note without ``others`` is the single candidate's, as before."""
+    if others:
+        return _render_note_two([data, *others], doi_placeholder, citation, panels, span)
     refs = references(data)
     bib = sorted([(key, Raw(label), Raw(text)) for key, label, text in BIBLIOGRAPHY if refs.get(key)]
                  + prior_bib(data), key=lambda item: item[0])
@@ -2539,6 +2603,26 @@ def render_note(data: dict, doi_placeholder: str = DOI_PLACEHOLDER, *, citation:
     body = _env(tex=True).get_template("note.tex.j2").render(
         n=numbers(data, tex=True), refs=refs, bib=bib, doi=doi, doi_note=note, authors=_authors(citation),
         code_doi=code_doi(citation), panels=panels)
+    return AASTEX_FRAME.read_text(encoding="utf-8") + "\n" + body
+
+
+def _render_note_two(datas: list[dict], doi_placeholder: str, citation: dict | None, panels: bool,
+                     span: tuple[float, float] | None) -> str:
+    """``render_note`` for a target with a second candidate: the frame, then ``note_two.tex.j2`` on the numbers of
+    each candidate and the sentences of ``pack_two.shared``. The references are the union of the works each cites; a
+    prior claim's record is listed once."""
+    from skysift import pack_two
+    each = [references(d) for d in datas]
+    refs = {key: any(r[key] for r in each) for key in each[0]}
+    items = [(key, Raw(label), Raw(text)) for key, label, text in BIBLIOGRAPHY if refs.get(key)]
+    for d in datas:
+        items += [item for item in prior_bib(d) if item[0] not in {key for key, _label, _text in items}]
+    doi = doi_placeholder or DOI_PLACEHOLDER
+    note = f", a {SANDBOX_DOI_NOTE}" if doi.startswith(SANDBOX_DOI_PREFIX) else ""
+    cands = [numbers(d, tex=True) for d in datas]
+    body = _env(tex=True).get_template("note_two.tex.j2").render(
+        n=cands[0], cands=cands, s=pack_two.shared(datas, True, span, panels), refs=refs, bib=sorted(items),
+        doi=doi, doi_note=note, authors=_authors(citation), code_doi=code_doi(citation))
     return AASTEX_FRAME.read_text(encoding="utf-8") + "\n" + body
 
 
@@ -2593,10 +2677,50 @@ FILE_NOTES = {
 }
 
 
-def file_notes(data: dict) -> dict[str, str]:
+# the files a pack holds once for each candidate; the second candidate's carry ``_02`` before the extension
+PER_CANDIDATE = ("data/lightcurve.csv", "data/ephemeris.csv", "data/ephemeris.json", "data/shape.csv",
+                 "data/stellar_provenance.csv", "note/figure1_data.csv", "data/periodogram.json",
+                 "data/rung_metrics.json", "data/cross_check.json", "data/events.csv", "data/transit_times.csv",
+                 "dossier.html", "provenance/calibration.json",
+                 *(f"figures/{stem}.{ext}" for stem in ("fold", "oddeven", "periodogram", "centroids")
+                   for ext in ("svg", "png")))
+
+
+def suffixed(name: str, ordinal: int) -> str:
+    """The pack's name for a file of the ``ordinal``-th candidate: ``name`` itself for the first, and for the second
+    ``_02`` before the extension (``data/ephemeris.csv`` gives ``data/ephemeris_02.csv``)."""
+    if ordinal <= 1:
+        return name
+    path = PurePosixPath(name)
+    return str(path.with_name(f"{path.stem}_{ordinal:02d}{path.suffix}"))
+
+
+def file_notes(data: dict, others: list[dict] | None = None) -> dict[str, str]:
     """``FILE_NOTES`` with the two entries that count the dossier's transits (spec 11.6, the row counts the README
     gives): ``data/events.csv`` (``event_rows``) and ``data/transit_times.csv`` (``timing_rows``), which list the same
-    epochs."""
+    epochs. With ``others`` (the further candidates' JSONs) every per-candidate file (``PER_CANDIDATE``) has a note for
+    each candidate, the suffixed names (``suffixed``) for the further ones, each ending in " (the <P> d candidate)",
+    and the note's figure files say which fold each holds (spec 6.1)."""
+    notes = _file_notes(data)
+    if not others:
+        return notes
+    datas = [data, *others]
+    for ordinal, d in enumerate(datas, start=1):
+        own, label = _file_notes(d), f" ({_candidate_name(d)})"
+        for name in PER_CANDIDATE:
+            what = own.get(name) or _figure_note(name)
+            notes[suffixed(name, ordinal)] = what + label
+        panel = "ab"[ordinal - 1] if ordinal <= 2 else str(ordinal)
+        notes[suffixed("note/figure1.svg", ordinal)] = (
+            f"the fold of {_candidate_name(d)}, panel ({panel}) of the note's figure, alone")
+    first, second = _candidate_name(data), _candidate_name(others[0])
+    notes["note/figure1.pdf"] = ("the note's figure as PDF, for pdflatex: (a) the fold of " + first + " and (b) the "
+                                 "fold of " + second)
+    notes["note/figure1.png"] = "the note's figure as PNG, the same panels"
+    return notes
+
+
+def _file_notes(data: dict) -> dict[str, str]:
     n, used = len(event_rows(data)), sum(1 for r in timing_rows(data) if r.get("used") is True)
     figure = ("the note's figure as PDF, for pdflatex: (a) the fold, (b) odd and (c) even transits"
               + (", (d) the per-season difference images" if data.get("pixels") else ""))
@@ -2643,36 +2767,36 @@ def check_tag(tag: str) -> str:
     return tag
 
 
-def _exofop_list(target_id, date, png: bool, pixels_figure: bool) -> list[tuple[str, str, str]]:
+def _exofop_list(target_id, date, png: bool, pixels_figure: bool,
+                 ordinal: int = 1) -> list[tuple[str, str, str]]:
     """(file name, pack source, what it is) for the files step 2 attaches: each figure once, as PNG when the PNGs
-    were drawn, else as SVG."""
+    were drawn, else as SVG. The second candidate's copies (``ordinal`` 2) come from its ``_02`` files and end their
+    content in ``-02`` (an upload name takes no underscore, ``_CONTENT``)."""
     out = []
     for content, source, what in EXOFOP_CONTENTS:
         if content == "centroids" and not pixels_figure:
             continue
         ext = ("png" if png else "svg") if "{ext}" in source else source.rsplit(".", 1)[1]
-        out.append((exofop_name(target_id, date, content, ext), source.format(ext=ext), what))
+        shown = content if ordinal <= 1 else f"{content}-{ordinal:02d}"
+        out.append((exofop_name(target_id, date, shown, ext), suffixed(source.format(ext=ext), ordinal), what))
     return out
 
 
-def gate_problems(raw: dict) -> list[str]:
-    """Why a live Zenodo draft is refused on the stored dossier JSON (with its stored cross-check merged in as
-    ``cross_check``), one sentence per problem: the ephemeris carries no error (no timing block, or its fit is not
-    ok), the transit shape carries no error (no shape block, or it is not ok), and ``crosscheck.verdict``'s reason
-    (no cross-check, one stored by an earlier version of the tool or one made for an earlier dossier; its numbers
-    never block, ruling t), and a stored
-    commit that is dirty or unknown (the software statement could not name archived code; ruling g), a pixel verdict
-    made under an older pixel rule (``dossier.pixel_rule_stale``), a pixel rerun that disagrees with the reviewer
-    (``dossier.pixel_verdict_disagrees``), prior claims that were not checked (``dossier.prior_claims_unchecked``)
-    and a rendered Research Note over the RNAAS limit of 1,500 words (``note_words``; the TESS statement itself never
-    blocks), or over another RNAAS limit (``note_limit_problems``); and, after spec 11.1 and 11.2, a prior claim
-    without a relationship, a prior claim whose period, epoch or depth sits more than ``PRIOR_MISMATCH_SIGMA`` from
-    ours (``PRIOR_MISMATCH``) or, with no error on either side, a period over 1 percent or an epoch over 0.1 d from
-    ours (``PRIOR_MISMATCH_NO_ERROR``), a ``FORBIDDEN_WORDS`` match in the Research Note, the abstract, the archive
-    email, the ExoFOP notes field or the Zenodo title and description (the README and the upload note print the same
-    sentence functions), and an abstract or a Zenodo description without the TRICERATOPS probability ahead of the in-house
-    one when a current cross-check is stored (a stale one is refused once, by ``crosscheck.verdict``). Empty when the
-    dossier may go to zenodo.org."""
+def _candidate_name(data: dict) -> str:
+    """"the 47.690 d candidate", a candidate named by its period (the project's word is candidate, never b and c)."""
+    period = _num((data.get("ephemeris") or {}).get("period_days")) or _num((data.get("signal") or {}).get("period"))
+    return f"the {period:.3f} d candidate" if period else "the candidate"
+
+
+def _named(data: dict, others, problems: list[str]) -> list[str]:
+    """``problems`` of one candidate's JSON, each prefixed with the candidate's name when the pack holds more than
+    one (``others``)."""
+    return [f"{_candidate_name(data)}: {p}" for p in problems] if others else problems
+
+
+def _ephemeris_problems(raw: dict) -> list[str]:
+    """The per-candidate checks of ``gate_problems`` that come before the note's: the ephemeris and shape errors, the
+    cross-check verdict, the stored commit, the pixel rule and the pixel verdict."""
     out = []
     for key, what in (("timing", "the ephemeris"), ("shape", "the transit shape")):
         block = raw.get(key)
@@ -2691,14 +2815,13 @@ def gate_problems(raw: dict) -> list[str]:
         out.append(f"{stale}; the recheck reruns the pixel step first")
     if ds.pixel_verdict_disagrees(raw):
         out.append("the pixel rerun disagrees with the reviewer's decision; a reviewer looks again first")
-    note = render_note(raw)
-    counts = note_words(note)
-    if counts["total"] > NOTE_LIMITS["total"]:
-        out.append(f"the Research Note has {counts['total']:,} words, over the RNAAS limit of "
-                   f"{NOTE_LIMITS['total']:,}; shorten it first")
-    # every other RNAAS limit (the abstract's 150 words, one figure or table), picked by limit, not by its words
-    out.extend(f"the Research Note breaks an RNAAS limit: {p}"
-               for limit, p in note_limit_problems(counts, note) if limit != "total")
+    return out
+
+
+def _prior_problems(raw: dict) -> list[str]:
+    """The per-candidate checks of ``gate_problems`` on its prior claims: not checked, no relationship, and numbers
+    that sit far from the candidate's."""
+    out = []
     if ds.prior_claims_unchecked(raw):
         out.append("prior claims on the signal were not checked (no docs/candidates folder)")
     # spec 11.1: every prior claim states how SkySift's result stands to it, and no text calls it blind
@@ -2713,11 +2836,54 @@ def gate_problems(raw: dict) -> list[str]:
     # polish round 2: a quantity neither side gives an error for has no sigma, so the rule is its plain difference
     if any(_unerred_mismatch(k, cmp.get(k)) for k in ("period", "epoch")):
         out.append(PRIOR_MISMATCH_NO_ERROR)
-    abstract = abstract_text(raw)
-    zenodo = metadata_from(raw, None, prior=zenodo_prior(raw))
+    return out
+
+
+def gate_problems(raw: dict, others: list[dict] | None = None,
+                  span: tuple[float, float] | None = None) -> list[str]:
+    """Why a live Zenodo draft is refused on the stored dossier JSON (with its stored cross-check merged in as
+    ``cross_check``), one sentence per problem: the ephemeris carries no error (no timing block, or its fit is not
+    ok), the transit shape carries no error (no shape block, or it is not ok), and ``crosscheck.verdict``'s reason
+    (no cross-check, one stored by an earlier version of the tool or one made for an earlier dossier; its numbers
+    never block, ruling t), and a stored
+    commit that is dirty or unknown (the software statement could not name archived code; ruling g), a pixel verdict
+    made under an older pixel rule (``dossier.pixel_rule_stale``), a pixel rerun that disagrees with the reviewer
+    (``dossier.pixel_verdict_disagrees``), prior claims that were not checked (``dossier.prior_claims_unchecked``)
+    and a rendered Research Note over the RNAAS limit of 1,500 words (``note_words``; the TESS statement itself never
+    blocks), or over another RNAAS limit (``note_limit_problems``); and, after spec 11.1 and 11.2, a prior claim
+    without a relationship, a prior claim whose period, epoch or depth sits more than ``PRIOR_MISMATCH_SIGMA`` from
+    ours (``PRIOR_MISMATCH``) or, with no error on either side, a period over 1 percent or an epoch over 0.1 d from
+    ours (``PRIOR_MISMATCH_NO_ERROR``), a ``FORBIDDEN_WORDS`` match in the Research Note, the abstract, the archive
+    email, the ExoFOP notes field or the Zenodo title and description (the README and the upload note print the same
+    sentence functions), and an abstract or a Zenodo description without the TRICERATOPS probability ahead of the in-house
+    one when a current cross-check is stored (a stale one is refused once, by ``crosscheck.verdict``). Empty when the
+    dossier may go to zenodo.org.
+
+    ``others`` are the stored JSONs of the target's further candidates (``load_candidate``): the per-candidate checks
+    (the ephemeris and shape errors, the cross-check, the commit, the pixel rule and verdict, the prior claims) run on
+    each of them too, every problem naming its candidate by period ("the 47.690 d candidate: ..."); the note-level
+    checks run once, on the two-candidate note and abstract (``span`` is the light curve's first and last BKJD, which
+    the note's coincidence sentence needs)."""
+    out: list[str] = []
+    datas = [raw, *(others or [])]
+    for data in datas:
+        out.extend(_named(data, others, _ephemeris_problems(data)))
+    note = render_note(raw, others=others, span=span) if others else render_note(raw)
+    counts = note_words(note)
+    if counts["total"] > NOTE_LIMITS["total"]:
+        out.append(f"the Research Note has {counts['total']:,} words, over the RNAAS limit of "
+                   f"{NOTE_LIMITS['total']:,}; shorten it first")
+    # every other RNAAS limit (the abstract's 150 words, one figure or table), picked by limit, not by its words
+    out.extend(f"the Research Note breaks an RNAAS limit: {p}"
+               for limit, p in note_limit_problems(counts, note) if limit != "total")
+    for data in datas:
+        out.extend(_named(data, others, _prior_problems(data)))
+    abstract = abstract_text(raw, others=others) if others else abstract_text(raw)
+    zenodo = (metadata_from(raw, None, prior=zenodo_prior(raw), others=others) if others
+              else metadata_from(raw, None, prior=zenodo_prior(raw)))
     description = re.sub(r"<[^>]+>", " ", zenodo["description"])
     texts = (("Research Note", note), ("abstract", abstract),
-             ("archive email", archive_paragraph(raw, DOI_PLACEHOLDER, None)),
+             ("archive email", archive_paragraph(raw, DOI_PLACEHOLDER, None, others or None)),
              ("ExoFOP notes field", exofop_prior_fields(raw).get("notes", "")),
              ("Zenodo title", zenodo["title"]), ("Zenodo description", description))
     for name, text in texts:
@@ -2779,40 +2945,178 @@ def zenodo_prior(data: dict) -> str | None:
 def independent_periods(period: float, others, tolerance: float = 0.02) -> list[float]:
     """The periods among ``others`` that are independent of ``period``: not within ``tolerance`` (relative) of it,
     nor of 2 or 3 times it, nor of a half or a third of it. Sorted, each once."""
-    ratios = (1.0, 2.0, 3.0, 1 / 2, 1 / 3)
     out: list[float] = []
     for p in others:
         p = _num(p)
         if p is None or p <= 0 or p in out:
             continue
-        if not any(abs(p - period * r) <= tolerance * period * r for r in ratios):
+        if ds.alias_of(period, p, tolerance) is None:
             out.append(p)
     return sorted(out)
 
 
-def other_signal_periods(store, target_id: str, signal_id: int) -> list[float]:
-    """The periods of the target's other stage 2 signals (store status ``candidate_stage2``); [] without a store or
-    when the signal table cannot be read."""
+def other_signals(store, target_id: str, reported_ids: set[int]) -> list[dict]:
+    """``{"id", "period"}`` of the target's stage 2 signals (store status ``candidate_stage2``) that the pack does not
+    report: not one of ``reported_ids`` and independent (``independent_periods``) of each period reported and of each
+    one listed before it, by period; [] without a store or when the signal table cannot be read."""
     if store is None:
         return []
     try:
         with store.session() as s:
-            return [float(p) for p in s.scalars(select(SignalRow.period).where(
-                SignalRow.target_id == target_id, SignalRow.id != signal_id,
-                SignalRow.final_status == "candidate_stage2"))]
+            rows = [(int(i), float(p), status) for i, p, status in s.execute(
+                select(SignalRow.id, SignalRow.period, SignalRow.final_status).where(
+                    SignalRow.target_id == target_id).order_by(SignalRow.period))]
     except SQLAlchemyError:
         return []
+    reported = [p for i, p, _ in rows if i in reported_ids]
+    out: list[dict] = []
+    for i, p, status in rows:
+        if i in reported_ids or status != "candidate_stage2":
+            continue
+        if all(independent_periods(q, [p]) for q in [*reported, *(o["period"] for o in out)]):
+            out.append({"id": i, "period": p})
+    return out
 
 
-def other_signals_sentence(periods: list[float]) -> str:
-    """The README's sentence for a star with another independent stage 2 signal; "" without one."""
-    if not periods:
+def other_signals_sentence(signals: list[dict], target_id: str, n_reported: int = 1) -> str:
+    """The README's sentence for a star with another independent stage 2 signal the pack does not report (spec 6.3);
+    "" without one. It names the signal and the command that gives it a dossier of its own, after which the next
+    pack reports both candidates. With a second candidate already reported (``n_reported`` 2) there is no such
+    command: the note holds two candidates."""
+    if not signals:
         return ""
-    listed = [f"{p:.3f}" for p in periods]
-    what = (f"another stage 2 signal at {listed[0]} days" if len(listed) == 1
-            else f"other stage 2 signals at {', '.join(listed[:-1])} and {listed[-1]} days")
-    return (f"This star also has {what}, at a period unrelated to this one; this pack covers one candidate only, so "
-            "that signal needs its own dossier and pack.")
+    listed = [f"{s['period']:.3f} days (signal {s['id']})" for s in signals]
+    what = (f"another stage 2 signal at {listed[0]}" if len(listed) == 1
+            else f"other stage 2 signals at {', '.join(listed[:-1])} and {listed[-1]}")
+    if n_reported >= 2:
+        return (f"This star also has {what}, at a period unrelated to these, which this pack does not report; the "
+                "note holds two candidates, so it stays out.")
+    which = signals[0]["id"] if len(signals) == 1 else "<id>"
+    lead = "run" if len(signals) == 1 else "choose one, run"
+    return (f"This star also has {what}, at a period unrelated to this one, which this pack does not report; "
+            f"{lead} `skysift dossier --target {target_id} --signal {which} --further`, then build the pack again, "
+            "and the note reports both candidates.")
+
+
+CANDIDATE_MAX = 2          # the note shape holds two candidates (spec section 2)
+
+
+def _out_reason(row: dict) -> str | None:
+    """Why a further dossier row cannot be a candidate whatever else is listed: its signal's status is now not a
+    candidate's, or its data file is gone; None when it can."""
+    rejected = row.get("decision") == "reject" or row.get("candidate_status") == "rejected"
+    alive = (row.get("final_status") == "candidate_stage2" or row.get("candidate_status") in ("approved", "published")
+             or row.get("decision") == "approve")
+    if rejected or not alive:
+        return f"its status is now {'rejected' if rejected else row.get('final_status')}"
+    path = row.get("data_path")
+    if not path or not Path(path).is_file():
+        shown = "/".join(Path(path).parts[-4:]) if path else "(none stored)"
+        return (f"its data file {shown} is missing; run `skysift dossier --target {row['target_id']} --signal "
+                f"{row['signal_id']} --further`")
+    return None
+
+
+def _stored_period(row: dict, fallback: float) -> float:
+    """The period the dossier's JSON gives (``ephemeris.period_days``, the one ``_candidate_name`` and the note print),
+    or ``fallback``, the signal row's, when the file is missing, unreadable or without one: the two can differ at the
+    fourth decimal, and a candidate must carry one name."""
+    try:
+        data = json.loads(Path(row["data_path"]).read_text(encoding="utf-8"))
+        period = _num((data.get("ephemeris") or {}).get("period_days"))
+    except (KeyError, TypeError, OSError, ValueError, AttributeError):
+        return fallback
+    return fallback if period is None or period <= 0 else float(period)
+
+
+def _scan(store, target_id: str) -> tuple[list[dict], list[dict], set[int]]:
+    """(the candidates, the texts for the further dossiers left out, the signal ids of every further dossier) in one
+    pass, so the list and the texts agree even when a file disappears while a pack is built."""
+    own = store.dossier(target_id)
+    if own is None:
+        return [], [], set()
+    first = ds.pick_signal(store, target_id, int(own["signal_id"]))
+    cands = [{"ordinal": 1, "signal_id": int(own["signal_id"]),
+              "period_days": _stored_period(own, float(first["period"])), "row": own, "further": False}]
+    out: list[dict] = []
+    rows = store.further_dossiers(target_id)
+    for row in rows:
+        sid = int(row["signal_id"])
+        why = _out_reason(row)
+        blocks = False
+        period = _stored_period(row, float(row["period"]))
+        if why is None:
+            for c in cands:
+                ratio = ds.alias_of(c["period_days"], period)
+                if ratio is not None:
+                    said = {1.0: "1", 2.0: "2", 3.0: "3", 0.5: "1/2"}.get(ratio, "1/3")
+                    why = f"its period is within 2 percent of {said} times the {c['period_days']:.3f} d candidate's"
+                    break
+        if why is None and len(cands) >= CANDIDATE_MAX:
+            why = "the note shape holds two candidates, and a third needs its own shape (spec section 2)"
+            blocks = True
+        if why is None:
+            cands.append({"ordinal": len(cands) + 1, "signal_id": sid, "period_days": period, "row": row,
+                          "further": True})
+        else:
+            out.append({"text": f"signal {sid}'s further dossier is left out: {why}", "blocks_live": blocks})
+    return cands, out, {int(r["signal_id"]) for r in rows}
+
+
+def candidates(store, target_id: str) -> list[dict]:
+    """The candidates the pack reports, at most two (spec 4.1): the target's own dossier first, then the target's
+    further dossiers in period order whose signal is still a candidate (stage 2, or approved, and not rejected), whose
+    file is on disk and whose period is independent of every candidate already listed. Each is ``{"ordinal",
+    "signal_id", "period_days", "row", "further"}``; empty without a dossier of the target's own."""
+    return _scan(store, target_id)[0]
+
+
+def left_out(store, target_id: str) -> list[dict]:
+    """One ``{"text", "blocks_live"}`` for each further dossier of the target that ``candidates`` leaves out, with its
+    reason. A third candidate has ``blocks_live`` True: the plain pack is still a correct two-candidate pack, and no
+    live draft is made of it."""
+    return _scan(store, target_id)[1]
+
+
+def load_candidate(cand: dict) -> dict:
+    """The stored dossier JSON of a candidate, with its row's cross-check merged in as ``cross_check``."""
+    row = cand["row"]
+    raw = json.loads(Path(row["data_path"]).read_text(encoding="utf-8"))
+    raw["cross_check"] = cc.with_current(row.get("cross_check"), raw)
+    return raw
+
+
+def candidate_approval(store: Store, target_id: str, cand: dict, data_dir) -> tuple[bool, str | None]:
+    """(approved, stale reason) of one candidate: for the target's own, ``_approval``; for a further one the same
+    fingerprint check against its further row, the reason naming the candidate and its signal."""
+    if not cand["further"]:
+        return _approval(store, target_id, cand["signal_id"], data_dir)
+    sig = ds.pick_signal(store, target_id, cand["signal_id"])
+    approved = sig.get("decision") == "approve" or sig.get("candidate_status") in ("approved", "published")
+    source = ds._target_dict(store, target_id).get("source")
+    fp = ds.fingerprint(store.latest_tests(cand["signal_id"]), sig["final_status"], sig.get("decision"),
+                        ds.calibration_rows(data_dir, source), ds.sweep_size_of(store, sig, source),
+                        **ds.extinction_keys(target_id))
+    if cand["row"].get("tests_fingerprint") != fp:
+        return approved, (f"the {cand['period_days']:.3f} d candidate's dossier (signal {cand['signal_id']}) is "
+                          "stale: the signal's tests, status or reviewer decision, the null calibration or the "
+                          "stored extinction changed since it was generated")
+    return approved, None
+
+
+def coincident_transits(eph_short: dict, eph_long: dict, t_start: float, t_end: float) -> tuple[int, int]:
+    """``(count, n_long)``: the predicted mid-times of the longer-period ephemeris within ``[t_start, t_end]`` (BKJD,
+    from ``t0_bkjd`` and ``period_days``), and how many of them fall within half the sum of the two durations
+    (``duration_h``) of a predicted mid-time of the shorter-period one. A coincidence can bias a depth (spec 4.2)."""
+    ps, ts = float(eph_short["period_days"]), float(eph_short["t0_bkjd"])
+    pl, tl = float(eph_long["period_days"]), float(eph_long["t0_bkjd"])
+    if ps <= 0 or pl <= 0 or t_end < t_start:
+        return 0, 0
+    tolerance = (float(eph_short["duration_h"]) + float(eph_long["duration_h"])) / 48.0
+    first, last = math.ceil((t_start - tl) / pl), math.floor((t_end - tl) / pl)
+    times = [tl + k * pl for k in range(first, last + 1)]
+    count = sum(1 for t in times if abs(t - (ts + round((t - ts) / ps) * ps)) <= tolerance + 1e-9)
+    return count, len(times)
 
 
 def zip_name(target_id: str, date: str) -> str:
@@ -2820,8 +3124,20 @@ def zip_name(target_id: str, date: str) -> str:
     return f"{_safe_target(target_id)}_{date}{ZIP_SUFFIX}"
 
 
-def _fields(data: dict, f: dict) -> dict:
+def _candidate_list(datas: list[dict]) -> list[dict]:
+    """``f.candidates``: one ``{ordinal, signal_id, period_days, generated_words}`` for each candidate of a pack of
+    more than one; empty for a pack of one, so no template line changes its output."""
+    if len(datas) < 2:
+        return []
+    return [{"ordinal": i, "signal_id": (d.get("signal") or {}).get("id"),
+             "period_days": _num((d.get("ephemeris") or {}).get("period_days"))
+             or _num((d.get("signal") or {}).get("period")),
+             "generated_words": date_words(d.get("generated") or "")} for i, d in enumerate(datas, start=1)]
+
+
+def _fields(data: dict, f: dict, others: list[dict] | None = None) -> dict:
     f = dict(f)
+    datas = [data, *(others or [])]
     target_id = (data.get("target") or {}).get("target_id") or "target"
     f.setdefault("approved", False)
     f.setdefault("stale_reason", None)
@@ -2839,8 +3155,11 @@ def _fields(data: dict, f: dict) -> dict:
     doi = (f.get("zenodo") or {}).get("doi")
     f.setdefault("doi", doi or DOI_PLACEHOLDER)
     f.setdefault("doi_shown", doi_shown(doi))
+    f.setdefault("candidates", _candidate_list(datas))
+    f.setdefault("not_approved", [])
+    f.setdefault("span", None)
     if "note_words" not in f:
-        tex = render_note(data, f["doi"])
+        tex = render_note(data, f["doi"], others=others or None, span=f["span"])
         f["note_words"], f["note_problems"] = note_words(tex), note_problems(note_words(tex), tex)
     f.setdefault("note_problems", note_problems(f["note_words"]))
     f.setdefault("limits", NOTE_LIMITS)
@@ -2850,13 +3169,20 @@ def _fields(data: dict, f: dict) -> dict:
     f.setdefault("after_bjd", julian_date(day))
     f.setdefault("after_words", date_words(day))
     f.setdefault("other_signals", "")
+    f.setdefault("left_out", [])
+    if not f.get("stale_commands"):
+        f["stale_commands"] = [f"skysift dossier --target {target_id} --force"]
     stellar = EXOFOP_STELLAR_TEMPLATE.format(date=f["date"]) if star_characterized(data) else None
     f.setdefault("exofop_stellar", stellar)
-    f.setdefault("exofop_planet", EXOFOP_PLANET_TEMPLATE.format(date=f["date"]))
-    f.setdefault("exofop", [(name, what) for name, _src, what in
-                            _exofop_list(target_id, f["date"], f["png"], f["pixels_figure"])]
-                 + ([(stellar, FILE_NOTES[f"exofop/{EXOFOP_STELLAR_TEMPLATE}"])] if stellar else []))
-    notes = file_notes(data)
+    f.setdefault("exofop_planet", planet_file_name(f["date"]))
+    f.setdefault("exofop_planets", [planet_file_name(f["date"], i) for i in range(1, len(datas) + 1)])
+    listed = []
+    for i, d in enumerate(datas, start=1):
+        shown = f["pixels_figure"] if i == 1 else bool(d.get("pixels"))
+        tail = f" ({_candidate_name(d)})" if others else ""
+        listed += [(name, what + tail) for name, _src, what in _exofop_list(target_id, f["date"], f["png"], shown, i)]
+    f.setdefault("exofop", listed + ([(stellar, FILE_NOTES[f"exofop/{EXOFOP_STELLAR_TEMPLATE}"])] if stellar else []))
+    notes = file_notes(data, others)
     f.setdefault("file_notes", [(name, notes.get(name) or _figure_note(name)) for name in sorted(f["files"])
                                 if not name.startswith("exofop/") or name == "exofop/note.txt"])
     f.setdefault("exofop_url", EXOFOP_URL)
@@ -2867,33 +3193,173 @@ def _fields(data: dict, f: dict) -> dict:
 
 
 def _figure_note(name: str) -> str:
-    stem = Path(name).stem
+    stem = re.sub(r"_\d\d$", "", Path(name).stem)
     what = {"fold": "the folded transit with the model", "oddeven": "the odd and even transits side by side",
             "periodogram": "the periodogram with the signal and its aliases marked",
             "centroids": "one difference image per season with the star, the neighbour and the centroid"}
     return what.get(stem, "a pack file")
 
 
-def render_readme(data: dict, report_fields: dict) -> str:
+# the README's table rows that belong to the star: printed once, in "The star" table, when there are two candidates
+STAR_ROWS = ("spectral type", "stellar effective temperature", "stellar radius", "stellar mass", "stellar density",
+             "distance", "habitable zone inner edge (runaway greenhouse)",
+             "habitable zone outer edge (maximum greenhouse)")
+STAR_DILUTION = ("crowdsap", "psffrac")
+NOT_AVAILABLE = "not available"
+ALBEDO_ASSUMPTION = " (at a Bond albedo of 0.3)"      # cut C26: the note leaves it out, the README's table says it
+
+
+def _catalogue_cell(data: dict) -> str:
+    """A candidate's catalogue result for the README table (cut C23): the hits, "none" when the four catalogues were
+    searched and held no match, or "not searched"."""
+    from skysift import pack_two
+    checked, hits = pack_two._catalogue(data)
+    if hits:
+        return ", ".join(hits)
+    return "none in the Kepler KOI, DR25 TCE, TESS TOI or Kepler eclipsing binary entries" if checked else \
+        "not searched"
+
+
+def _readme_rows(cands: list[dict]) -> list[tuple[str, list[str]]]:
+    """The README's table for two candidates, one ``(quantity, [one cell for each candidate])`` for each row any of
+    them has, in the single table's order; a candidate without the row reads ``NOT_AVAILABLE``."""
+    def row(label, make, when=lambda c: True):
+        if any(when(c) for c in cands):
+            rows.append((label, [make(c) if when(c) else NOT_AVAILABLE for c in cands]))
+    rows: list[tuple[str, list[str]]] = []
+    row("period", lambda c: f"{c['period_pm']} d{c['period_note']}")
+    row("first mid-transit (epoch 0)", lambda c: f"BJD_TDB {c['t0_bjd_pm']} (BKJD {c['t0_bkjd']})")
+    row("reference mid-transit (the centre of the series)",
+        lambda c: f"epoch {c['epoch_ref']}: BJD_TDB {c['t_ref_bjd_pm']}", lambda c: c["timed"])
+    row("transit times", lambda c: f"{c['n_used']} of {c['n_measured']} timed transits fit the linear ephemeris, "
+                                   f"rms {c['rms_min']} min", lambda c: c["timed"])
+    row("duration", lambda c: f"{c['duration_pm']} h{c['duration_note']}")
+    row("depth", lambda c: f"{c['depth_pm']} ppm{c['depth_note']}{c['depth_source_text']}")
+    row("transits", lambda c: str(c["n_events"]))
+    row("signal detection efficiency (SDE)", lambda c: str(c["sde"]))
+    row("signal-to-noise ratio", lambda c: str(c["snr"]))
+    row("odd and even depths", lambda c: f"{c['odd_text']} and {c['even_text']}" + (
+        f" ({c['parity_sigma_text']} sigma apart)" if c["parity_sigma_text"] else ""), lambda c: bool(c["odd_text"]))
+    row("odd and even depths, stacked folds", lambda c: c["stacked_parity_text"],
+        lambda c: bool(c["stacked_parity_text"]))
+    row("secondary eclipse (phase 0.5)", lambda c: f"{c['secondary_pm']} ppm" + (
+        f", 3-sigma upper limit {c['secondary_limit']} ppm" if c["secondary_limit"] else ""),
+        lambda c: bool(c["secondary_pm"]))
+    names = list(dict.fromkeys(r["parameter"] for c in cands for r in c["param_rows"]
+                               if r["parameter"] not in STAR_ROWS))
+    for name in names:
+        def text(c, name=name):
+            found = next(r["text"] for r in c["param_rows"] if r["parameter"] == name)
+            return found + (ALBEDO_ASSUMPTION if name == "equilibrium temperature" else "")
+        row(name, text, lambda c, name=name: any(r["parameter"] == name for r in c["param_rows"]))
+    row("dip in the neighbour's aperture (leak test)",
+        lambda c: next(r["text"] for r in c["dilution_rows"] if r["key"] == "leak"),
+        lambda c: any(r["key"] == "leak" for r in c["dilution_rows"]))
+    row("catalogue matches", lambda c: c["catalogue"])
+    row("TESS", lambda c: c["tess_row"])
+    return rows
+
+
+def _readme_caveats(cands: list[dict]) -> list[dict]:
+    """The caveats of every candidate, each once (``title`` and ``text`` alike), in the first's order and then the
+    further ones' new ones; one only some candidates have says whose it is in ``who``."""
+    rows: dict[tuple, dict] = {}
+    for c in cands:
+        for cv in c["caveats"]:
+            row = rows.setdefault((cv["title"], cv["text"]), {**cv, "owners": []})
+            row["owners"].append(c["name_label"])
+    return [{**{k: v for k, v in r.items() if k != "owners"},
+             "who": "" if len(r["owners"]) == len(cands) else f" ({' and '.join(r['owners'])} only)"}
+            for r in rows.values()]
+
+
+def _groups(cands: list[dict]):
+    """``groups(*keys)`` for the README's methods paragraphs: ``[("", numbers)]`` when the candidates' values for
+    ``keys`` are the same (one paragraph, the first candidate's), else ``[(label, numbers), ...]`` with the label of
+    each candidate that has a value; empty when none has."""
+    def groups(*keys):
+        if all(c[k] == cands[0][k] for c in cands for k in keys):
+            return [("", cands[0])] if any(cands[0][k] for k in keys) else []
+        return [(c["label"], c) for c in cands if any(c[k] for k in keys)]
+    return groups
+
+
+def _readme_prior(cands: list[dict]) -> list[dict]:
+    """The README's prior-claim paragraphs for two candidates: each candidate's claim (told in full once when both
+    carry the same one) and its comparison sentence, labelled."""
+    out, told = [], set()
+    for c in cands:
+        if not c["prior_plain"]:
+            continue
+        again = c["prior_plain"] in told
+        told.add(c["prior_plain"])
+        out.append({"label": c["name_label"], "claim": "the same claim as above." if again else c["prior_plain"],
+                    "comparison": c["comparison_plain"] or ""})
+    return out
+
+
+def _readme_context(data: dict, others: list[dict], f: dict, n: dict) -> dict:
+    """What ``README.md.j2`` reads besides ``n`` and ``f``: ``two`` (the second candidate's ``numbers``, None for a
+    pack of one), ``cands`` (each candidate's ``numbers``, in a pack of two with a ``label``, ``name_label``,
+    ``period_label``, ``ordinal`` and ``signal_arg`` added), ``s`` (``pack_two.shared`` in plain form, with the README's
+    ``summary`` and ``coincidence``), ``groups``, the two-candidate table and star rows, the caveats and the
+    references."""
+    if not others:
+        return {"two": None, "cands": [n], "s": None, "groups": _groups([n]),
+                "caveats": [{**c, "who": ""} for c in n["caveats"]], "references": n["references_plain"],
+                "sx": suffixed}
+    from skysift import pack_two
+    datas = [data, *others]
+    cands = [n, *(numbers(d, after_bjd=f["after_bjd"]) for d in others)]
+    for i, (c, d) in enumerate(zip(cands, datas, strict=True), start=1):
+        name = _candidate_name(d)
+        c.update(ordinal=i, name_label=name, label=f"**{_capital(name)}.** ", label_colon=f"**{_capital(name)}:** ",
+                 period_label=f"{c['period_title']} d", signal_arg="" if i == 1 else f" --signal {c['signal_id']}",
+                 catalogue=_catalogue_cell(d), note_forms=note_forms(d, nearest_in_note=False))
+    for c in cands[1:]:
+        c["hand_built_text"] = None            # a further dossier stores no hand-built localisation (spec 4.3)
+    span = f.get("span")
+    s = pack_two.shared(datas, False, span, bool(f["png"]))
+    s["summary"] = pack_two.summary(datas)
+    s["coincidence"] = pack_two._coincidence(datas, span, note=False)
+    star = [r for r in n["param_rows"] if r["parameter"] in STAR_ROWS]
+    star += [r for r in n["dilution_rows"] if r["key"] in STAR_DILUTION]
+    references = list(dict.fromkeys(r for c in cands for r in c["references_plain"]))
+    return {"two": cands[1], "cands": cands, "s": s, "groups": _groups(cands), "rows": _readme_rows(cands),
+            "star_rows": star, "caveats": _readme_caveats(cands), "references": references,
+            "priors": _readme_prior(cands), "sx": suffixed, "vetted": pack_two.VETTED_SINGLY}
+
+
+def render_readme(data: dict, report_fields: dict, others: list[dict] | None = None) -> str:
     """The README: the five steps in order (``STEPS``), each with its account, files, text and what the engine did
     or cannot do. ``report_fields`` carries the build's own values (approved, tic, date, tag, files, png, zenodo,
     stale_reason, zip_name, pixels_figure, note_words, creators_source, after_bjd for step 5's transits,
-    other_signals); missing ones take defaults."""
-    f = _fields(data, report_fields)
+    other_signals, not_approved, span); missing ones take defaults. ``others`` are the further candidates' JSONs: the
+    table gets a column for each candidate, the methods are printed once or per candidate, and step 2, step 5, the
+    caveats and the file list name both (spec 6.2). Without ``others`` the README is the single candidate's."""
+    f = _fields(data, report_fields, others)
     n = numbers(data, after_bjd=f["after_bjd"])
     if HAND_BUILT_FILE in f["files"]:       # Task 12 review M-6: the pack's copy, named only when the pack holds it
         n["hand_built_text"] = hand_built_sentence(data, source=HAND_BUILT_FILE)
+    context = _readme_context(data, others or [], f, n)
     return _env(tex=False).get_template("README.md.j2").render(
         n=n, f=f, titles=dict(STEPS), sandbox_note=SANDBOX_DOI_NOTE,
         crowdsap_definition=CROWDSAP_DEFINITION, psffrac_definition=PSFFRAC_DEFINITION,
-        archive_paragraph=archive_paragraph(data, f["doi_shown"], f["tic"]))
+        archive_paragraph=archive_paragraph(data, f["doi_shown"], f["tic"], others or None), **context)
 
 
-def _render_plain(name: str, data: dict, f: dict) -> str:
-    f = _fields(data, f)
-    return _env(tex=False).get_template(name).render(n=numbers(data), f=f,
-                                                     archive_paragraph=archive_paragraph(data, f["doi_shown"],
-                                                                                         f["tic"]))
+def _render_plain(name: str, data: dict, f: dict, others: list[dict] | None = None) -> str:
+    f = _fields(data, f, others)
+    n = numbers(data)
+    cands = [n]
+    if others:
+        cands += [numbers(d) for d in others]
+        for c, d in zip(cands, [data, *others], strict=True):
+            c.update(name_label=_candidate_name(d), period_label=f"{c['period_title']} d")
+    return _env(tex=False).get_template(name).render(
+        n=n, f=f, cands=cands, two=cands[1] if others else None,
+        any_prior=any(c["prior_plain"] for c in cands),
+        archive_paragraph=archive_paragraph(data, f["doi_shown"], f["tic"], others or None))
 
 
 # ---------------------------------------------------------------------------------------------------- SVG figures
@@ -3148,25 +3614,64 @@ def _arr(rows, cols) -> list[np.ndarray]:
     return [np.array([float(r[c]) for r in good]) for c in cols]
 
 
-def _png_figures(Figure, data: dict, figures: Path, note: Path) -> None:
+def _fold_axes(ax, plots: dict) -> tuple[float, float]:
+    """One fold panel on ``ax``: the points, the binned flux with its errors and the model, within the panel's own
+    window and scaled to the bins and the model (the scatter is clipped). Returns the y limits it set."""
+    w = _num(plots.get("window_h")) or 12.0
+    mx, my = _arr(plots.get("model"), (0, 1))
+    fx, fy = _arr(plots.get("fold_points"), (0, 1))
+    bx, by, be = _arr(plots.get("fold_bins"), (0, 1, 2))
+    ax.plot(fx, fy, ".", color=DOTS, ms=1.5, zorder=1)
+    ax.errorbar(bx, by, be, fmt="o", color=POINT, ms=3, lw=1, zorder=2, label="binned flux")
+    ax.plot(mx, my, color=MODEL, lw=1.6, zorder=3,
+            label="transit fit" if plots.get("model_kind") == "fit" else "box model")
+    vals = np.concatenate([by - be, by + be, my]) if by.size or my.size else np.array([-1.0, 1.0])
+    pad = 0.15 * (np.ptp(vals) or 1.0)
+    low, high = float(vals.min() - pad), float(vals.max() + pad)
+    ax.set_ylim(low, high)
+    ax.set_xlim(-w, w)
+    ax.set_xlabel("hours from mid-transit")
+    ax.set_ylabel("relative flux (ppm)")
+    ax.legend(loc="lower right", fontsize=8, frameon=False)
+    return low, high
+
+
+def _two_panel_figure(Figure, datas: list[dict], note: Path) -> None:
+    """The two-candidate note's one figure (spec 5.1, cut C10): (a) the first candidate's fold and (b) the second's in
+    one row, each on its own ephemeris, window and bins, with the same y scale when the depths are within a factor of
+    two; ``figure1.png`` and ``figure1.pdf``."""
+    depths = [_num((d.get("ephemeris") or {}).get("depth_ppm")) for d in datas]
+    shared = None not in depths and min(depths) > 0 and max(depths) / min(depths) <= 2
+    fig = Figure(figsize=(7, 3.6), dpi=150, layout="constrained")
+    axes = fig.subplots(1, len(datas), sharey=shared)
+    limits = []
+    for ax, d, label in zip(np.atleast_1d(axes), datas, "abcdefgh", strict=False):
+        limits.append(_fold_axes(ax, d.get("plots") or {}))
+        ax.set_title(f"({label})", loc="left", fontsize=10)
+    if shared:
+        np.atleast_1d(axes)[0].set_ylim(min(lo for lo, _hi in limits), max(hi for _lo, hi in limits))
+    fig.savefig(note / "figure1.png")
+    fig.savefig(note / "figure1.pdf")
+
+
+def _png_figures(Figure, data: dict, figures: Path, note: Path, others: list[dict] | None = None) -> None:
+    """The PNG figures: the note's ``figure1`` (the panelled single figure, or with ``others`` the two fold panels of
+    ``_two_panel_figure``) and, per candidate, the fold, odd and even, periodogram and centroid pictures in
+    ``figures``; a further candidate's names end in ``_02`` (``fold_02.png``, then ``_03``)."""
+    if others:
+        _two_panel_figure(Figure, [data, *others], note)
+    _candidate_pngs(Figure, data, figures, note, "", not others)
+    for i, other in enumerate(others or [], start=2):
+        _candidate_pngs(Figure, other, figures, note, f"_{i:02d}", False)
+
+
+def _candidate_pngs(Figure, data: dict, figures: Path, note: Path, suffix: str, note_figure: bool) -> None:
     plots, eph, sh = data.get("plots") or {}, data.get("ephemeris") or {}, _metrics(data, "rung2_shape")
     w = _num(plots.get("window_h")) or 12.0
     mx, my = _arr(plots.get("model"), (0, 1))
 
     def fold(ax):
-        fx, fy = _arr(plots.get("fold_points"), (0, 1))
-        bx, by, be = _arr(plots.get("fold_bins"), (0, 1, 2))
-        ax.plot(fx, fy, ".", color=DOTS, ms=1.5, zorder=1)
-        ax.errorbar(bx, by, be, fmt="o", color=POINT, ms=3, lw=1, zorder=2, label="binned flux")
-        ax.plot(mx, my, color=MODEL, lw=1.6, zorder=3,
-                label="transit fit" if plots.get("model_kind") == "fit" else "box model")
-        vals = np.concatenate([by - be, by + be, my]) if by.size or my.size else np.array([-1.0, 1.0])
-        pad = 0.15 * (np.ptp(vals) or 1.0)
-        ax.set_ylim(vals.min() - pad, vals.max() + pad)
-        ax.set_xlim(-w, w)
-        ax.set_xlabel("hours from mid-transit")
-        ax.set_ylabel("relative flux (ppm)")
-        ax.legend(loc="lower right", fontsize=8, frameon=False)
+        _fold_axes(ax, plots)
 
     def parity(ax, kind, colour):
         bx, by, be = _arr(plots.get(f"{kind}_bins"), (0, 1, 2))
@@ -3197,37 +3702,38 @@ def _png_figures(Figure, data: dict, figures: Path, note: Path) -> None:
 
     fig = Figure(figsize=(7, 3.6), dpi=150, layout="constrained")
     fold(fig.add_subplot())
-    fig.savefig(figures / "fold.png")
+    fig.savefig(figures / f"fold{suffix}.png")
 
-    # the note's one figure (spec 11.6): (a) the fold across the top, (b) odd and (c) even below it on one scale,
-    # (d) one difference image per season in the third row; each panel drawn by the code of its own figure
-    cols = max(2, len(pixels))
-    fig = Figure(figsize=(7, 8.4 if pixels else 6.4), dpi=150, layout="constrained")
-    grid = fig.add_gridspec(3 if pixels else 2, cols)
-    top = fig.add_subplot(grid[0, :])
-    fold(top)
-    top.set_title("(a)", loc="left", fontsize=10)
-    half = cols // 2
-    odd = fig.add_subplot(grid[1, :half])
-    even = fig.add_subplot(grid[1, half:], sharey=odd)
-    for ax, kind, colour, label in ((odd, "odd", POINT, "(b)"), (even, "even", EVEN, "(c)")):
-        parity(ax, kind, colour)
-        ax.set_title(label, loc="left", fontsize=10)
-    odd.set_ylabel("relative flux (ppm)")
-    for i, s in enumerate(pixels):
-        ax = fig.add_subplot(grid[2, i])
-        season(ax, s)
-        if i == 0:
-            ax.set_title("(d)", loc="left", fontsize=10)
-    fig.savefig(note / "figure1.png")
-    fig.savefig(note / "figure1.pdf")
+    if note_figure:
+        # the note's one figure (spec 11.6): (a) the fold across the top, (b) odd and (c) even below it on one scale,
+        # (d) one difference image per season in the third row; each panel drawn by the code of its own figure
+        cols = max(2, len(pixels))
+        fig = Figure(figsize=(7, 8.4 if pixels else 6.4), dpi=150, layout="constrained")
+        grid = fig.add_gridspec(3 if pixels else 2, cols)
+        top = fig.add_subplot(grid[0, :])
+        fold(top)
+        top.set_title("(a)", loc="left", fontsize=10)
+        half = cols // 2
+        odd = fig.add_subplot(grid[1, :half])
+        even = fig.add_subplot(grid[1, half:], sharey=odd)
+        for ax, kind, colour, label in ((odd, "odd", POINT, "(b)"), (even, "even", EVEN, "(c)")):
+            parity(ax, kind, colour)
+            ax.set_title(label, loc="left", fontsize=10)
+        odd.set_ylabel("relative flux (ppm)")
+        for i, s in enumerate(pixels):
+            ax = fig.add_subplot(grid[2, i])
+            season(ax, s)
+            if i == 0:
+                ax.set_title("(d)", loc="left", fontsize=10)
+        fig.savefig(note / "figure1.png")
+        fig.savefig(note / "figure1.pdf")
 
     fig = Figure(figsize=(8, 3.4), dpi=150, layout="constrained")
     axes = fig.subplots(1, 2, sharey=True)
     for ax, kind, colour in ((axes[0], "odd", POINT), (axes[1], "even", EVEN)):
         parity(ax, kind, colour)
     axes[0].set_ylabel("relative flux (ppm)")
-    fig.savefig(figures / "oddeven.png")
+    fig.savefig(figures / f"oddeven{suffix}.png")
 
     fig = Figure(figsize=(7, 3.2), dpi=150, layout="constrained")
     ax = fig.add_subplot()
@@ -3240,14 +3746,14 @@ def _png_figures(Figure, data: dict, figures: Path, note: Path) -> None:
     ax.set_xscale("log")
     ax.set_xlabel("period (days)")
     ax.set_ylabel("SDE")
-    fig.savefig(figures / "periodogram.png")
+    fig.savefig(figures / f"periodogram{suffix}.png")
 
     if pixels:
         fig = Figure(figsize=(2.6 * len(pixels), 3.0), dpi=150, layout="constrained")
         axes = np.atleast_1d(fig.subplots(1, len(pixels)))
         for ax, s in zip(axes, pixels, strict=True):
             season(ax, s)
-        fig.savefig(figures / "centroids.png")
+        fig.savefig(figures / f"centroids{suffix}.png")
 
 
 # ---------------------------------------------------------------------------------------------------- files
@@ -3443,18 +3949,21 @@ def _move_into_place(work: Path, out_dir: Path, say: Callable[[str], None]) -> N
                 "the next run deletes it, or delete that folder by hand")
 
 
-def _write_texts(out_dir: Path, zip_path: Path, data: dict, fields: dict, citation: dict | None) -> dict:
+def _write_texts(out_dir: Path, zip_path: Path, data: dict, fields: dict, citation: dict | None,
+                 others: list[dict] | None = None) -> dict:
     """The four texts, then the hashes and the zip, for the DOI in ``fields`` (written again once a Zenodo draft
-    reserved one). Returns the note's word counts."""
-    tex = render_note(data, fields["doi"], citation=citation, panels=bool(fields.get("png")))
+    reserved one). ``others`` are the further candidates' JSONs, which the note and the texts report beside
+    ``data`` (``fields["span"]`` is what the note's coincidence count runs over). Returns the note's word counts."""
+    tex = render_note(data, fields["doi"], citation=citation, panels=bool(fields.get("png")), others=others or None,
+                      span=fields.get("span"))
     _write(out_dir / "note" / "note.tex", tex)
     words = note_words(tex)
     fields = {**fields, "note_words": words, "note_problems": note_problems(words, tex),
               "code_sentence": code_sentence(citation)}
-    _write(out_dir / "exofop" / "note.txt", _render_plain("exofop_note.txt.j2", data, fields))
-    _write(out_dir / "archive_email.txt", _render_plain("archive_email.txt.j2", data, fields))
+    _write(out_dir / "exofop" / "note.txt", _render_plain("exofop_note.txt.j2", data, fields, others))
+    _write(out_dir / "archive_email.txt", _render_plain("archive_email.txt.j2", data, fields, others))
     files = sorted({*_rel(out_dir), "README.md", "provenance/hashes.json"})
-    _write(out_dir / "README.md", render_readme(data, {**fields, "files": files}))
+    _write(out_dir / "README.md", render_readme(data, {**fields, "files": files}, others))
     hashes = {name: _sha(out_dir / name) for name in _rel(out_dir) if name != "provenance/hashes.json"}
     _write(out_dir / "provenance" / "hashes.json", jsonutil.dumps(hashes, indent=1))
     _zip(out_dir, zip_path, zip_path.stem)
@@ -3473,9 +3982,12 @@ def build_pack(store, blob, settings, target_id: str, *, out_dir: Path | None = 
     uploaded. The draft is never published, and a live draft is refused for a candidate no reviewer has approved,
     while the FPP is provisional (``fpp.SIGNED_OFF`` False), for a stale dossier and for one whose ephemeris or
     shape carries no error or whose TRICERATOPS cross-check is missing, stored by an earlier version of the tool or
-    made for an earlier dossier (``gate_problems``), so a provisional number never reaches a live record. The README
-    names the target's other stage 2 signals whose periods are independent of this one (``independent_periods``).
-    Records the folder on the dossiers row and the candidate row.
+    made for an earlier dossier (``gate_problems``), so a provisional number never reaches a live record. The
+    candidates are the target's own and, from its further dossiers, a second (``candidates``); each is checked for a
+    reviewer's approval and for a stale dossier, and the README names the further dossiers left out
+    (``left_out``) and the target's other stage 2 signals whose periods are independent of these
+    (``other_signals``). A third further dossier blocks a live draft. Records the folder on the dossiers row and
+    on the candidate row of every candidate.
 
     Raises NoDossier, ``dossier.LightCurveReleased`` (nothing is downloaded), PackError (bad TIC id, tag or folder; a
     live draft before approval, before the FPP sign-off, for a stale dossier, or for one ``gate_problems`` refuses,
@@ -3505,7 +4017,14 @@ def build_pack(store, blob, settings, target_id: str, *, out_dir: Path | None = 
     date = now.strftime("%Y%m%d")
     out_dir = Path(out_dir if out_dir is not None else Path(settings.data_dir) / "packs" / target_id / date).resolve()
     _check_out(out_dir)
-    approved, stale = _approval(store, target_id, sid, settings.data_dir)
+    cands, out_texts, further_ids = _scan(store, target_id)
+    others = [load_candidate(c) for c in cands[1:]]
+    checks = [(c, *candidate_approval(store, target_id, c, settings.data_dir)) for c in cands]
+    approved = all(ok for _c, ok, _why in checks)
+    not_approved = [f"signal {c['signal_id']} ({c['period_days']:.3f} d)" for c, ok, _why in checks if not ok]
+    stale = "; ".join(why for _c, _ok, why in checks if why) or None
+    remedies = [f"skysift dossier --target {target_id} --signal {c['signal_id']} --further" if c["further"]
+                else f"skysift dossier --target {target_id} --force" for c, _ok, why in checks if why]
     if zenodo is not None and not zenodo.sandbox and not approved:
         raise PackError(f"{target_id} is not yet approved by a reviewer, so no draft is made on zenodo.org; use "
                         "--zenodo for a sandbox rehearsal")
@@ -3515,18 +4034,32 @@ def build_pack(store, blob, settings, target_id: str, *, out_dir: Path | None = 
     if zenodo is not None and not zenodo.sandbox and not (raw.get("fpp") or {}).get("signed_off"):
         raise PackError(f"the stored dossier of {target_id} was written before the false-positive sign-off, so no "
                         f"draft is made on zenodo.org; run skysift dossier --target {target_id} --force first")
+    if zenodo is not None and not zenodo.sandbox:
+        for cand, data in zip(cands[1:], others, strict=True):         # each further dossier needs the sign-off too
+            if not (data.get("fpp") or {}).get("signed_off"):
+                raise PackError(f"{_candidate_name(data)}: the stored dossier (signal {cand['signal_id']}) was "
+                                "written before the false-positive sign-off, so no draft is made on zenodo.org; run "
+                                f"skysift dossier --target {target_id} --signal {cand['signal_id']} --further first")
     if zenodo is not None and not zenodo.sandbox and stale:
+        remedy = " and ".join(remedies) if others else f"skysift dossier --target {target_id}"
         raise PackError(f"the stored dossier of {target_id} is stale ({stale}), so no draft is made on zenodo.org; "
-                        f"run skysift dossier --target {target_id} first")
-    problems = gate_problems(raw)
+                        f"run {remedy} first")
+    def load_light_curve():
+        say("loading the light curve")
+        target = ds._target_dict(store, target_id)
+        return LightCurveLoader(store, blob, source_factory=ds._offline_factory(target_id, sid)).load(target, pin=True)
+    # the two-candidate note counts the transits the candidates share over the light curve's span, so the gate that
+    # renders it needs the light curve first
+    lc = load_light_curve() if others else None
+    span = (float(np.nanmin(lc.time)), float(np.nanmax(lc.time))) if lc is not None else None
+    problems = [*gate_problems(raw, others, span), *(o["text"] for o in out_texts if o["blocks_live"])]
     if zenodo is not None and not zenodo.sandbox and problems:
         raise PackError(f"the stored dossier of {target_id} is not ready for zenodo.org: {'; '.join(problems)}. No "
                         "draft is made there; use --zenodo for a sandbox rehearsal")
-    period = _num((raw.get("ephemeris") or {}).get("period_days")) or _num((raw.get("signal") or {}).get("period"))
-    others = independent_periods(period, other_signal_periods(store, target_id, sid)) if period else []
-    say("loading the light curve")
-    target = ds._target_dict(store, target_id)
-    lc = LightCurveLoader(store, blob, source_factory=ds._offline_factory(target_id, sid)).load(target, pin=True)
+    # a signal with a further dossier of its own is named under "left out" or stale, not offered a second time
+    named = {c["signal_id"] for c in cands} | further_ids
+    signals = other_signals(store, target_id, named)
+    lc = lc if lc is not None else load_light_curve()
     fnorm = ds.whitened(lc, raw["signal"])
     citation, creators_source = load_citation()
     if load_author() is not None:          # Task 13 review M-5: the note's authors and the Zenodo creators agree
@@ -3534,20 +4067,24 @@ def build_pack(store, blob, settings, target_id: str, *, out_dir: Path | None = 
     elif citation is None:
         say("no CITATION.cff or package author found; the creators are placeholders")
     data = ds.public_claims(public_paths(raw, settings.data_dir))     # the pack embeds and uploads this JSON
+    shown = [ds.public_claims(public_paths(o, settings.data_dir)) for o in others]
     place = out_dir                    # the pack's folder (``final`` is the --final flag)
     out_dir = _building(place)
     try:
         zip_file, metadata, fields, words = _write_pack(
             out_dir, data, raw, row, lc, fnorm, target_id, date, now, settings, citation, creators_source,
             {"approved": approved, "stale_reason": stale, "tic": tic, "tag": observer_tag, "tag_seq": tag_seq,
-             "other_signals": other_signals_sentence(others)}, say)
+             "stale_commands": remedies or None, "left_out": [o["text"] for o in out_texts],
+             "other_signals": other_signals_sentence(signals, target_id, len(cands)),
+             "not_approved": not_approved, "span": span}, say, others=shown, others_raw=others, cands=cands)
     except BaseException:
         shutil.rmtree(out_dir, ignore_errors=True)
         raise
     _move_into_place(out_dir, place, say)
     out_dir, zip_path = place, place / zip_file
     store.set_pack(target_id, str(out_dir), now.replace(tzinfo=None))
-    store.set_candidate_pack(sid, str(out_dir))
+    for c in cands:
+        store.set_candidate_pack(c["signal_id"], str(out_dir))
     say(f"wrote {zip_path}")
     zinfo = None
     if zenodo is not None:
@@ -3559,7 +4096,7 @@ def build_pack(store, blob, settings, target_id: str, *, out_dir: Path | None = 
                      "sandbox": zenodo.sandbox, "doi": zenodo.reserved_doi(deposition)}
             doi = zinfo["doi"] or DOI_PLACEHOLDER
             words = _write_texts(out_dir, zip_path, data, {**fields, "zenodo": zinfo, "doi": doi,
-                                                           "doi_shown": doi_shown(zinfo["doi"])}, citation)
+                                                           "doi_shown": doi_shown(zinfo["doi"])}, citation, shown)
             left = final_problems(out_dir) if final else []
             if left:
                 raise ZenodoError(f"a final pack carries no placeholder, but {'; '.join(left)}")
@@ -3575,22 +4112,19 @@ def build_pack(store, blob, settings, target_id: str, *, out_dir: Path | None = 
     return PackReport(target_id, out_dir, zip_path, _rel(out_dir), approved, zinfo, stale, words)
 
 
-def _write_pack(out_dir: Path, data: dict, raw: dict, row: dict, lc, fnorm, target_id: str, date: str,
-                now: datetime, settings, citation: dict | None, creators_source: str, review: dict, say):
-    """Every file of the pack into ``out_dir`` (the building folder) and its zip there, with the DOI placeholder.
-    Returns (zip file name, Zenodo metadata, the text fields, the note's word counts)."""
-    zip_path = out_dir / zip_name(target_id, date)
-    say("writing the pack")
-    figures, note, d = out_dir / "figures", out_dir / "note", out_dir / "data"
-    for folder in (figures, note, d, out_dir / "provenance", out_dir / "exofop"):
-        folder.mkdir(parents=True, exist_ok=True)
-    # data
-    _lightcurve_csv(d / "lightcurve.csv", lc, fnorm)
+def _write_candidate(out_dir: Path, ordinal: int, data: dict, raw: dict, lc, fnorm, settings) -> None:
+    """The files one candidate has of its own (``PER_CANDIDATE``, the second's named with ``suffixed``) except the SVG
+    figures and the ExoFOP copies, which ``_write_pack`` makes after the folders are there: the whitened light curve,
+    the ephemeris and parameters, the transit times, shape, events, stellar provenance, periodogram, rung metrics, the
+    cross-check, the figure data, the dossier page and the calibration counts."""
+    def name(path: str) -> Path:
+        return out_dir / suffixed(path, ordinal)
+    _lightcurve_csv(name("data/lightcurve.csv"), lc, fnorm)
     # both a/R* here, named apart (spec 11.3); the texts quote one
     eph_rows = ephemeris_rows(data) + param_rows(data, both_a_over_r=True) + dilution_rows(data)
     cols = ["parameter", "value", "minus", "plus", "unit", "source"]
-    _csv(d / "ephemeris.csv", cols, [[r[c] for c in cols] for r in eph_rows])
-    for name, header, table in (
+    _csv(name("data/ephemeris.csv"), cols, [[r[c] for c in cols] for r in eph_rows])
+    for file, header, table in (
             ("transit_times.csv", ["epoch", "t_bkjd", "t_bjd", "err_days", "chi2_red", "used", "reason"],
              timing_rows(data)),
             ("shape.csv", ["parameter", "value", "minus", "plus", "unit", "point", "note"], shape_csv_rows(data)),
@@ -3598,55 +4132,89 @@ def _write_pack(out_dir: Path, data: dict, raw: dict, row: dict, lc, fnorm, targ
                             "timing_reason"], event_rows(data)),
             ("stellar_provenance.csv", ["parameter", "value", "minus", "plus", "unit", "method", "inputs",
                                         "reference"], provenance_rows(data))):
-        _csv(d / name, header, [[r[c] for c in header] for r in table])
-    _csv(note / "figure1_data.csv", ["phase_h", "flux_ppm", "err_ppm", "n", "model_ppm"], figure_data_rows(data))
+        _csv(name(f"data/{file}"), header, [[r[c] for c in header] for r in table])
+    _csv(name("note/figure1_data.csv"), ["phase_h", "flux_ppm", "err_ppm", "n", "model_ppm"], figure_data_rows(data))
     eph = data.get("ephemeris") or {}
     eph = {**eph, **{f"{k}_bjd": _bjd(eph, k) for k in ("t0", "t_ref") if f"{k}_bjd" in eph}}
-    _write(d / "ephemeris.json", jsonutil.dumps({"ephemeris": eph, "star": data.get("star"),
-                                                 "planet": data.get("planet"),
-                                                 "rows": [{c: r[c] for c in cols} for r in eph_rows]}, indent=1))
+    _write(name("data/ephemeris.json"), jsonutil.dumps({"ephemeris": eph, "star": data.get("star"),
+                                                        "planet": data.get("planet"),
+                                                        "rows": [{c: r[c] for c in cols} for r in eph_rows]},
+                                                       indent=1))
     plots = data.get("plots") or {}
-    _write(d / "periodogram.json", jsonutil.dumps({"sde": (data.get("ephemeris") or {}).get("sde"),
-                                                   "period_days": (data.get("ephemeris") or {}).get("period_days"),
-                                                   "spectrum": plots.get("spectrum"),
-                                                   "lines": plots.get("spectrum_lines"),
-                                                   "columns": ["period_days", "sde"]}, indent=1))
-    _write(d / "rung_metrics.json", jsonutil.dumps(data.get("tests") or [], indent=1))
+    _write(name("data/periodogram.json"), jsonutil.dumps({"sde": (data.get("ephemeris") or {}).get("sde"),
+                                                          "period_days": (data.get("ephemeris") or {}).get(
+                                                              "period_days"),
+                                                          "spectrum": plots.get("spectrum"),
+                                                          "lines": plots.get("spectrum_lines"),
+                                                          "columns": ["period_days", "sde"]}, indent=1))
+    _write(name("data/rung_metrics.json"), jsonutil.dumps(data.get("tests") or [], indent=1))
+    if data.get("cross_check"):
+        _write(name("data/cross_check.json"), jsonutil.dumps(data["cross_check"], indent=1))
+    _write(name("dossier.html"), ds.export_html(data))
+    _write(name("provenance/calibration.json"),
+           jsonutil.dumps(_calibration(raw, data, settings.data_dir), indent=1))
+
+
+def _write_pack(out_dir: Path, data: dict, raw: dict, row: dict, lc, fnorm, target_id: str, date: str,
+                now: datetime, settings, citation: dict | None, creators_source: str, review: dict, say,
+                others: list[dict] | None = None, others_raw: list[dict] | None = None,
+                cands: list[dict] | None = None):
+    """Every file of the pack into ``out_dir`` (the building folder) and its zip there, with the DOI placeholder.
+    ``others`` are the further candidates' JSONs as the pack embeds them and ``others_raw`` as stored (the whitened
+    flux and the calibration counts come from the stored signal); ``cands`` is ``candidates()`` (versions.json lists
+    them). Each further candidate's own files carry ``_02`` (``suffixed``), its ExoFOP copies ``-02`` and its planet
+    file ``_002``. Returns (zip file name, Zenodo metadata, the text fields, the note's word counts)."""
+    others, others_raw = others or [], others_raw or []
+    zip_path = out_dir / zip_name(target_id, date)
+    say("writing the pack")
+    figures, note, d = out_dir / "figures", out_dir / "note", out_dir / "data"
+    for folder in (figures, note, d, out_dir / "provenance", out_dir / "exofop"):
+        folder.mkdir(parents=True, exist_ok=True)
+    datas, raws = [data, *others], [raw, *others_raw]
+    fnorms = [fnorm, *(ds.whitened(lc, r["signal"]) for r in others_raw)]
+    # data and the dossier page, for each candidate
+    for ordinal, (one, one_raw, flux) in enumerate(zip(datas, raws, fnorms, strict=True), start=1):
+        _write_candidate(out_dir, ordinal, one, one_raw, lc, flux, settings)
     study = Path(ds.CANDIDATES_DIR) / target_id / "localisation" / "results.json"
     if study.is_file():             # the file the README's hand-built sentence compares with (spec 11.5)
         shutil.copyfile(study, out_dir / HAND_BUILT_FILE)
-    if data.get("cross_check"):
-        _write(d / "cross_check.json", jsonutil.dumps(data["cross_check"], indent=1))
-    # figures
-    _write(figures / "fold.svg", fold_svg(data))
-    _write(figures / "oddeven.svg", oddeven_svg(data))
-    _write(figures / "periodogram.svg", periodogram_svg(data))
-    pixels_figure = bool(data.get("pixels"))
-    if pixels_figure:
-        _write(figures / "centroids.svg", centroids_svg(data["pixels"]))
-    shutil.copyfile(figures / "fold.svg", note / "figure1.svg")
+    # figures: the SVGs of each candidate, and the note's figure1.svg (its fold) beside figure1_02.svg
+    shown = []
+    for ordinal, one in enumerate(datas, start=1):
+        _write(out_dir / suffixed("figures/fold.svg", ordinal), fold_svg(one))
+        _write(out_dir / suffixed("figures/oddeven.svg", ordinal), oddeven_svg(one))
+        _write(out_dir / suffixed("figures/periodogram.svg", ordinal), periodogram_svg(one))
+        shown.append(bool(one.get("pixels")))
+        if shown[-1]:
+            _write(out_dir / suffixed("figures/centroids.svg", ordinal), centroids_svg(one["pixels"]))
+        shutil.copyfile(out_dir / suffixed("figures/fold.svg", ordinal),
+                        out_dir / suffixed("note/figure1.svg", ordinal))
+    pixels_figure = shown[0]
     Figure = _matplotlib()
     png = Figure is not None
     if png:
         say("drawing the PNG figures")
-        _png_figures(Figure, data, figures, note)
-    # the standalone page, provenance, the ExoFOP copies
-    _write(out_dir / "dossier.html", ds.export_html(data))
+        _png_figures(Figure, data, figures, note, others or None)
+    # provenance, the ExoFOP copies
     prov = data.get("provenance") or {}
     _write(out_dir / "provenance" / "queries.json", jsonutil.dumps(prov.get("queries") or [], indent=1))
-    _write(out_dir / "provenance" / "calibration.json",
-           jsonutil.dumps(_calibration(raw, data, settings.data_dir), indent=1))
-    _write(out_dir / MARKER, jsonutil.dumps(_versions(data, row, now, Figure, zip_path.name, creators_source),
-                                            indent=1))
+    listing = [{"ordinal": c["ordinal"], "signal_id": c["signal_id"], "period_days": c["period_days"],
+                "dossier_generated": ds._iso(c["row"].get("generated")),
+                "dossier_path": public_paths(str(c["row"].get("data_path")), settings.data_dir)}
+               for c in cands or []] if others else []
+    _write(out_dir / MARKER, jsonutil.dumps(_versions(data, row, now, Figure, zip_path.name, creators_source,
+                                                      listing), indent=1))
     # spec 11.1: the relationship sentence and the comparison sentence, as the README prints them
     prior = zenodo_prior(data)
-    metadata = metadata_from(data, citation, prior=prior)
+    metadata = (metadata_from(data, citation, prior=prior, others=others) if others
+                else metadata_from(data, citation, prior=prior))
     _write(out_dir / "zenodo_metadata.json", jsonutil.dumps(metadata, indent=1))
-    for name, source, _what in _exofop_list(target_id, date, png, pixels_figure):
-        shutil.copyfile(out_dir / source, out_dir / "exofop" / name)
     tag = data_tag(date, review["tag"], _safe_target(target_id), review.get("tag_seq", 1))
-    _write(out_dir / "exofop" / EXOFOP_PLANET_TEMPLATE.format(date=date),
-           render_exofop_planet(data, date, review["tic"], tag))
+    for ordinal, (one, has_pixels) in enumerate(zip(datas, shown, strict=True), start=1):
+        for name, source, _what in _exofop_list(target_id, date, png, has_pixels, ordinal):
+            shutil.copyfile(out_dir / source, out_dir / "exofop" / name)
+        _write(out_dir / "exofop" / planet_file_name(date, ordinal),
+               render_exofop_planet(one, date, review["tic"], tag, ordinal))
     stellar = render_exofop_stellar(data, date, review["tic"], tag)
     if stellar is not None:
         _write(out_dir / "exofop" / EXOFOP_STELLAR_TEMPLATE.format(date=date), stellar)
@@ -3654,22 +4222,26 @@ def _write_pack(out_dir: Path, data: dict, raw: dict, row: dict, lc, fnorm, targ
               "after_bjd": julian_date(now), "after_words": date_words(now),
               "zip_name": zip_path.name, "built_words": date_words(now), "doi": DOI_PLACEHOLDER,
               "doi_shown": DOI_PLACEHOLDER, "creators_source": creators_source}
-    words = _write_texts(out_dir, zip_path, data, fields, citation)
+    words = _write_texts(out_dir, zip_path, data, fields, citation, others)
     return zip_path.name, metadata, fields, words
 
 
-def _versions(data: dict, row: dict, now: datetime, Figure, zip_file: str, creators_source: str) -> dict:
+def _versions(data: dict, row: dict, now: datetime, Figure, zip_file: str, creators_source: str,
+              cands: list[dict] | None = None) -> dict:
     version = skysift_version()
     mpl = None
     if Figure is not None:
         import matplotlib
         mpl = matplotlib.__version__
     prov, sig = data.get("provenance") or {}, data.get("signal") or {}
-    return {"pack_version": PACK_VERSION, "dossier_version": data.get("dossier_version"),
-            "target_id": (data.get("target") or {}).get("target_id"), "signal_id": sig.get("id"),
-            "search_version": sig.get("detector_version"), "ladder_version": prov.get("ladder_version"),
-            "git_commit": prov.get("git_commit"), "pack_git_commit": ds.git_commit(), "skysift_version": version,
-            "python": platform.python_version(), "numpy": np.__version__, "matplotlib": mpl,
-            "platform": sys.platform, "built_utc": now.isoformat(), "dossier_generated": data.get("generated"),
-            "dossier_row_generated": ds._iso(row.get("generated")), "kbonus_doi": KBONUS_DOI,
-            "zip_name": zip_file, "creators_source": creators_source, "software": software_versions()}
+    out = {"pack_version": PACK_VERSION, "dossier_version": data.get("dossier_version"),
+           "target_id": (data.get("target") or {}).get("target_id"), "signal_id": sig.get("id"),
+           "search_version": sig.get("detector_version"), "ladder_version": prov.get("ladder_version"),
+           "git_commit": prov.get("git_commit"), "pack_git_commit": ds.git_commit(), "skysift_version": version,
+           "python": platform.python_version(), "numpy": np.__version__, "matplotlib": mpl,
+           "platform": sys.platform, "built_utc": now.isoformat(), "dossier_generated": data.get("generated"),
+           "dossier_row_generated": ds._iso(row.get("generated")), "kbonus_doi": KBONUS_DOI,
+           "zip_name": zip_file, "creators_source": creators_source, "software": software_versions()}
+    if cands and len(cands) > 1:
+        out["candidates"] = cands            # [{ordinal, signal_id, period_days, dossier_generated, dossier_path}]
+    return out
