@@ -263,3 +263,5 @@ The ExoFOP planet files: `params_planet_<date>_001.txt` with target `TIC<tic>.01
 - A dashboard view of further dossiers (the Dossiers tile and the dossier page).
 - A three-candidate shape, or a per-signal pack, when a star needs one.
 - A joint fit or a stability check for two candidates on one star.
+- The margin has no room left: the prior-claim shape measures exactly 1,480 words (abstract 130). If a real star's prior-claim shape ever exceeds it, the next cut is the "no validation class applies at 30-minute cadence" clause of the body when the abstract carries it, then the ladder sentence's method clause; the spec is amended, never the margin.
+- Move the two-candidate README, archive and figure assembly from `pack.py` into `pack_two.py`, and promote the private helpers it reaches: `pack._pixel_votes`, `_timed`, `_geometry_words`, `_odd_even`, `_silent_sentence`, `_first`, `_caveat_title`, `_model_words`, `_capital`, `cc._current`, `cc._p`, `tess._short_sentence`, `_and`, `_s` and `ds._target_dict` (M3 of the whole-branch review).
