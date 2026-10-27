@@ -49,10 +49,12 @@ def test_migrate_is_idempotent(tmp_path):
 
 def test_migrate_adds_the_further_dossiers_table(tmp_path):
     url = f"sqlite:///{tmp_path.as_posix()}/t.db"
-    s = Store(url); Base.metadata.create_all(s.engine)
-    with s.engine.begin() as c:
+    s = Store(url); s.init_schema()
+    with s.engine.begin() as c:                  # as a database from before step 005: no table, step not recorded
         c.execute(text("DROP TABLE further_dossiers"))
-    s.init_schema()
+        c.execute(text("DELETE FROM schema_version WHERE step = '005_further_dossiers'"))
+    assert "further_dossiers" not in inspect(s.engine).get_table_names()
+    assert migrations.migrate(s.engine) == ["005_further_dossiers"]        # the step itself creates the table
     assert "further_dossiers" in inspect(s.engine).get_table_names()
     assert migrations.migrate(s.engine) == []
 
