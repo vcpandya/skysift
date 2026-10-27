@@ -3,6 +3,8 @@ gate checks, the period-ratio and coincidence sentences. The fixtures ``env_two`
 a second, independent stage 2 signal with its own further dossier) and ``two_live`` (the live-shape golden of KIC
 6146676 twice, the second at 3.156 times the period) are shared by the note, pack and CLI tests of the same work."""
 import json
+import re
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -487,6 +489,11 @@ def test_a_two_candidate_pack_writes_the_second_candidates_files_with_the_suffix
                for c in versions["candidates"])
     hashes = json.loads((rep.out_dir / "provenance" / "hashes.json").read_text(encoding="utf-8"))
     assert "data/ephemeris_02.csv" in hashes and "note/figure1_02.svg" in hashes
+    with zipfile.ZipFile(rep.zip_path) as z:                              # the zip carries the second's files too
+        zipped = set(z.namelist())
+    top = rep.zip_path.stem
+    assert {f"{top}/data/ephemeris_02.csv", f"{top}/note/figure1_02.svg", f"{top}/dossier_02.html",
+            f"{top}/exofop/params_planet_{date}_002.txt"} <= zipped
     with env_two.store.session() as s:                                  # the pack recorded on every candidate row
         assert s.scalars(select(CandidateRow.pack_path).where(CandidateRow.signal_id == env_two.second)).one() == str(
             rep.out_dir)
@@ -523,6 +530,7 @@ def test_the_two_candidate_readme_zenodo_and_plain_texts_name_both(env_two):
     assert meta["description"].count("Ephemeris, ") == 2
     note = (rep.out_dir / "exofop" / "note.txt").read_text(encoding="utf-8")
     assert note.count("Ephemeris") == 2 and "_002" not in note and "-02" in note     # the files line names the copies
+    assert f"({p1} and {p2})" in next(line for line in note.splitlines() if line.startswith("SkySift "))
     email = (rep.out_dir / "archive_email.txt").read_text(encoding="utf-8")
     assert email.count(" d,") >= 2 or "two transit candidates" in email
     for text in (readme, note, email, meta["description"]):
@@ -605,7 +613,14 @@ def test_the_readme_table_and_methods_for_two_candidates_come_from_each_json():
         assert n["fap_text"] in readme and n["fpp_text"] in readme
         assert n["cross_check_after"] in readme                                                # C25
         assert n["comparison_plain"] in readme
-    assert table.count("catalogue") >= 1                                                       # C23
+    cells = [pack._catalogue_cell(d) for d in (a, b)]                                          # C23
+    assert all(cells) and f"| catalogue matches | {cells[0]} | {cells[1]} |" in table
+    assert cells[0].startswith("none in the Kepler KOI")
+    hit = json.loads(json.dumps(b))
+    next(t for t in hit["tests"] if t["rung"] == "rung4_novelty")["metrics"]["cumulative"] = 1
+    assert pack._catalogue_cell(hit) == "1 in the Kepler cumulative KOI table"
+    assert f"| catalogue matches | {cells[0]} | 1 in the Kepler cumulative KOI table |" in pack.render_readme(
+        a, _fields_two(), [hit])
     assert pack_two.VETTED_SINGLY in readme.split("## What is not yet known")[1]
     assert "## The candidate in numbers" not in readme
 
@@ -646,6 +661,9 @@ def test_the_plain_texts_for_two_candidates_carry_each_ephemeris_and_both_probab
     note = pack._render_plain("exofop_note.txt.j2", a, f, [b])
     na, nb = numbers(a), numbers(b)
     assert note.count("Ephemeris") == 2 and na["ephemeris_text"] in note and nb["ephemeris_text"] in note
+    pa, pb = (f"{d['ephemeris']['period_days']:.3f} d" for d in (a, b))
+    assert note.splitlines()[0] == (f"SkySift transit candidates on KIC 6146676 ({pa} and {pb}) = Gaia DR3 "
+                                    f"{na['gaia_id']} = TIC 169822650")
     for n in (na, nb):
         assert n["fap_text"] in note and n["fpp_text"] in note and n["tess_exofop"] in note
         assert n["pixel_plain"] in note
@@ -679,3 +697,34 @@ def test_a_two_candidate_pack_with_matplotlib_draws_the_pngs_of_both(env_two, wi
     readme = (rep.out_dir / "README.md").read_text(encoding="utf-8")
     assert "the folds of both candidates as panels (a) and (b)" in readme
     assert f"`exofop/{STAGE2_TARGET}_{date}_fold-02.png`" in readme
+
+
+def test_a_single_candidate_pack_has_exactly_these_files_and_no_two_candidate_words(env_with_dossier):  # noqa: F811
+    """The guard of spec 5.5 on the golden-based fixture: the pack of a target without a further dossier holds this list
+    and no more (a stray ``_02`` or a missing file fails), and its README, ExoFOP note, archive email and Zenodo
+    description carry none of the two-candidate markers."""
+    rep = _build(env_with_dossier)
+    date = rep.zip_path.name.split("_")[1]
+    target = STAGE2_TARGET
+    assert _files(rep) == {
+        "README.md", "archive_email.txt", "dossier.html", "zenodo_metadata.json",
+        "data/ephemeris.csv", "data/ephemeris.json", "data/events.csv", "data/lightcurve.csv",
+        "data/periodogram.json", "data/rung_metrics.json", "data/shape.csv", "data/stellar_provenance.csv",
+        "data/transit_times.csv",
+        f"exofop/{target}_{date}_centroids.svg", f"exofop/{target}_{date}_dossier.html",
+        f"exofop/{target}_{date}_ephemeris.csv", f"exofop/{target}_{date}_fold.svg",
+        f"exofop/{target}_{date}_lightcurve.csv", f"exofop/{target}_{date}_oddeven.svg",
+        f"exofop/{target}_{date}_periodogram.svg", "exofop/note.txt", f"exofop/params_planet_{date}_001.txt",
+        f"exofop/params_stellar_{date}_001.txt",
+        "figures/centroids.svg", "figures/fold.svg", "figures/oddeven.svg", "figures/periodogram.svg",
+        "note/figure1.svg", "note/figure1_data.csv", "note/note.tex",
+        "provenance/calibration.json", "provenance/hashes.json", "provenance/queries.json",
+        "provenance/versions.json"}
+    meta = json.loads((rep.out_dir / "zenodo_metadata.json").read_text(encoding="utf-8"))
+    texts = {name: (rep.out_dir / name).read_text(encoding="utf-8")
+             for name in ("README.md", "exofop/note.txt", "archive_email.txt")}
+    texts["Zenodo description"] = meta["description"]
+    markers = ("Two dips", "_02", "-02", "_002", "both candidates", "two candidates")
+    for name, text in texts.items():
+        assert [m for m in markers if m in text] == [], name
+        assert not re.search(r"(?<!\d)\.02(?!\d)", text), name          # ExoFOP's target .02, not a number like 0.022

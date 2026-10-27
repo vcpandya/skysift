@@ -6,7 +6,7 @@
 NOT YET APPROVED BY A REVIEWER: do not upload this before the approval.
 
 {% endif %}
-SkySift {% if any_prior %}vetting of the {% endif %}transit candidate{{ "s" if two else "" }} on {{ n.name }}{% if n.gaia_id %} = Gaia DR3 {{ n.gaia_id }}{% endif %}{% if f.tic %} = TIC {{ f.tic }}{% endif %}{{ "" }}
+SkySift {% if any_prior %}vetting of the {% endif %}transit candidate{{ "s" if two else "" }} on {{ n.name }}{% if two %} ({{ cands[0].period_label }} and {{ cands[1].period_label }}){% endif %}{% if n.gaia_id %} = Gaia DR3 {{ n.gaia_id }}{% endif %}{% if f.tic %} = TIC {{ f.tic }}{% endif %}{{ "" }}
 
 Found in the KBonus Kepler Background light curve (Martinez-Palomera, Hedges and Dotson 2023, AJ 166, 265; data doi:10.17909/7jbr-w430); Kepler recorded this star only in other targets' pixels.
 {% if two %}
