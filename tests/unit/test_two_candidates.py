@@ -37,6 +37,8 @@ from tests.unit.ui_seed import STAGE2_TARGET
 SPAN = (120.0, 1590.0)      # the light curve's first and last BKJD, as the margin test measures
 
 RATIO = 3.156
+# ExoFOP's second target, "TIC169822650.02" or "TIC<TIC-TO-FILL>.02" (or a bare ".02"), never a decimal number
+TARGET_02 = re.compile(r"(?:TIC\s?\d*|(?<![\d.]))\.02(?!\d)")
 
 
 @pytest.fixture
@@ -727,4 +729,20 @@ def test_a_single_candidate_pack_has_exactly_these_files_and_no_two_candidate_wo
     markers = ("Two dips", "_02", "-02", "_002", "both candidates", "two candidates")
     for name, text in texts.items():
         assert [m for m in markers if m in text] == [], name
-        assert not re.search(r"(?<!\d)\.02(?!\d)", text), name          # ExoFOP's target .02, not a number like 0.022
+        assert not TARGET_02.search(text), name
+
+
+def test_the_second_target_marker_matches_the_target_forms_and_no_decimal():
+    assert TARGET_02.search("target TIC169822650.02 |") and TARGET_02.search("TIC<TIC-TO-FILL>.02")
+    assert not TARGET_02.search("A_G 0.226 +0.022/-0.023") and not TARGET_02.search("fpp 0.028")
+    assert not TARGET_02.search("depth 0.02 ppm")
+
+
+def test_the_single_candidate_exofop_heading_is_pinned():
+    f = {"files": [], "approved": True, "tic": "169822650", "date": "20261027"}
+    ids = "KIC 6146676 = Gaia DR3 2073896294004902272 = TIC 169822650"
+    headings = {False: f"SkySift transit candidate on {ids}", True: f"SkySift vetting of the transit candidate on {ids}"}
+    for prior, heading in headings.items():
+        a, _b = two_live(prior=prior)
+        assert pack._render_plain("exofop_note.txt.j2", a, f).splitlines()[0] == heading
+        assert pack._render_plain("exofop_note.txt.j2", a, f, []).splitlines()[0] == heading
