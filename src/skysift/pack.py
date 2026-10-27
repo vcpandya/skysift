@@ -2887,17 +2887,18 @@ def _out_reason(row: dict) -> str | None:
     return None
 
 
-def _scan(store, target_id: str) -> tuple[list[dict], list[dict]]:
-    """(the candidates, the texts for the further dossiers left out) in one pass, in the order of ``candidates`` and
-    ``left_out``."""
+def _scan(store, target_id: str) -> tuple[list[dict], list[dict], set[int]]:
+    """(the candidates, the texts for the further dossiers left out, the signal ids of every further dossier) in one
+    pass, so the list and the texts agree even when a file disappears while a pack is built."""
     own = store.dossier(target_id)
     if own is None:
-        return [], []
+        return [], [], set()
     first = ds.pick_signal(store, target_id, int(own["signal_id"]))
     cands = [{"ordinal": 1, "signal_id": int(own["signal_id"]), "period_days": float(first["period"]), "row": own,
               "further": False}]
     out: list[dict] = []
-    for row in store.further_dossiers(target_id):
+    rows = store.further_dossiers(target_id)
+    for row in rows:
         sid = int(row["signal_id"])
         why = _out_reason(row)
         blocks = False
@@ -2916,7 +2917,7 @@ def _scan(store, target_id: str) -> tuple[list[dict], list[dict]]:
                           "row": row, "further": True})
         else:
             out.append({"text": f"signal {sid}'s further dossier is left out: {why}", "blocks_live": blocks})
-    return cands, out
+    return cands, out, {int(r["signal_id"]) for r in rows}
 
 
 def candidates(store, target_id: str) -> list[dict]:
@@ -3671,14 +3672,13 @@ def build_pack(store, blob, settings, target_id: str, *, out_dir: Path | None = 
     date = now.strftime("%Y%m%d")
     out_dir = Path(out_dir if out_dir is not None else Path(settings.data_dir) / "packs" / target_id / date).resolve()
     _check_out(out_dir)
-    cands = candidates(store, target_id)
+    cands, out_texts, further_ids = _scan(store, target_id)
     others = [load_candidate(c) for c in cands[1:]]
     checks = [(c, *candidate_approval(store, target_id, c, settings.data_dir)) for c in cands]
     approved = all(ok for _c, ok, _why in checks)
     stale = "; ".join(why for _c, _ok, why in checks if why) or None
     remedies = [f"skysift dossier --target {target_id} --signal {c['signal_id']} --further" if c["further"]
                 else f"skysift dossier --target {target_id} --force" for c, _ok, why in checks if why]
-    out_texts = left_out(store, target_id)
     if zenodo is not None and not zenodo.sandbox and not approved:
         raise PackError(f"{target_id} is not yet approved by a reviewer, so no draft is made on zenodo.org; use "
                         "--zenodo for a sandbox rehearsal")
@@ -3688,15 +3688,22 @@ def build_pack(store, blob, settings, target_id: str, *, out_dir: Path | None = 
     if zenodo is not None and not zenodo.sandbox and not (raw.get("fpp") or {}).get("signed_off"):
         raise PackError(f"the stored dossier of {target_id} was written before the false-positive sign-off, so no "
                         f"draft is made on zenodo.org; run skysift dossier --target {target_id} --force first")
+    if zenodo is not None and not zenodo.sandbox:
+        for cand, data in zip(cands[1:], others, strict=True):         # each further dossier needs the sign-off too
+            if not (data.get("fpp") or {}).get("signed_off"):
+                raise PackError(f"{_candidate_name(data)}: the stored dossier (signal {cand['signal_id']}) was "
+                                "written before the false-positive sign-off, so no draft is made on zenodo.org; run "
+                                f"skysift dossier --target {target_id} --signal {cand['signal_id']} --further first")
     if zenodo is not None and not zenodo.sandbox and stale:
+        remedy = " and ".join(remedies) if others else f"skysift dossier --target {target_id}"
         raise PackError(f"the stored dossier of {target_id} is stale ({stale}), so no draft is made on zenodo.org; "
-                        f"run {' and '.join(remedies)} first")
+                        f"run {remedy} first")
     problems = [*gate_problems(raw, others), *(o["text"] for o in out_texts if o["blocks_live"])]
     if zenodo is not None and not zenodo.sandbox and problems:
         raise PackError(f"the stored dossier of {target_id} is not ready for zenodo.org: {'; '.join(problems)}. No "
                         "draft is made there; use --zenodo for a sandbox rehearsal")
     # a signal with a further dossier of its own is named under "left out" or stale, not offered a second time
-    named = {c["signal_id"] for c in cands} | {int(r["signal_id"]) for r in store.further_dossiers(target_id)}
+    named = {c["signal_id"] for c in cands} | further_ids
     signals = other_signals(store, target_id, named)
     say("loading the light curve")
     target = ds._target_dict(store, target_id)
