@@ -56,6 +56,18 @@ def _a_test_result(rung: str) -> TestResult:
     return TestResult(rung=rung, status=TestStatus.PASS)
 
 
+# what the golden's own blocks print (the first candidate) and what ``_own_vetting`` gives the second: the shape fit's
+# radius ratio and b, the odd and even depths, the secondary and the centroid sentence (TESS: 0.96 against 0.78)
+A_VALUES = ("0.0454$^{+0.0011}_{-0.0012}$ (full-data fit 0.0454)", "b is 0.457$^{+0.054}_{-0.061}$",
+            r"2,276 $\pm$ 177 and 2,156 $\pm$ 151 ppm (0.5 sigma apart)", r"95 $\pm$ 128 ppm (3-sigma limit 480 ppm)",
+            "a median 0.19 pixels from this star and 2.82 from", r"1.8 $\pm$ 1.0 arcsec (1.8 sigma)",
+            "median depth of 2,353 ppm on this star and -21")
+B_VALUES = ("0.0412$^{+0.0016}_{-0.0014}$ (full-data fit 0.0412)", "b is 0.381$^{+0.083}_{-0.077}$",
+            r"1,008 $\pm$ 133 and 842 $\pm$ 118 ppm (0.9 sigma apart)", r"41 $\pm$ 77 ppm (3-sigma limit 272 ppm)",
+            "a median 0.24 pixels from this star and 2.62 from", r"1.4 $\pm$ 0.9 arcsec (1.6 sigma)",
+            "gives 941 ppm on this star and -8")
+
+
 def two_live(prior: bool) -> tuple[dict, dict]:
     """The golden-based pair of the spec's section 5.3: the live shape of KIC 6146676 with the golden's 40.29 d signal
     first, and the same JSON as a 127.2 d second signal (signal 3480) with its own numbers."""
@@ -75,9 +87,35 @@ def two_live(prior: bool) -> tuple[dict, dict]:
     b["fpp"] = {**b["fpp"], "value": 0.108}
     b["planet"] = {**b["planet"], "rp_rearth": {**b["planet"]["rp_rearth"], "median": 2.27},
                    "teq_k": {**b["planet"]["teq_k"], "median": 366.0}}
+    _own_vetting(b)
     block = fake_result(cross_check.inputs_fingerprint(b), fpp=0.037, nfpp=0.012)
     b["cross_check"] = cross_check.with_current({**block, "current": True}, b)
     return a, b
+
+
+def _own_vetting(b: dict) -> None:
+    """The second signal's own shape, odd-even, secondary, centroid and TESS numbers (so a sentence that took the
+    wrong candidate's block could not pass): every one differs from the golden's, and the fold stays alike."""
+    def pair(block: dict, median: float, minus: float, plus: float) -> dict:
+        return {**block, "median": median, "minus": minus, "plus": plus, "point": median}
+    shape = b["shape"]
+    shape.update(k=pair(shape["k"], 0.0412, 0.0014, 0.0016), b=pair(shape["b"], 0.381, 0.077, 0.083),
+                 a_over_r=pair(shape["a_over_r"], 71.3, 3.1, 2.7))
+    b["parity"] = {**b["parity"], "odd": {**b["parity"]["odd"], "depth_ppm": 1008.0, "err_ppm": 133.0},
+                   "even": {**b["parity"]["even"], "depth_ppm": 842.0, "err_ppm": 118.0}, "difference_sigma": 0.93}
+    b["secondary"] = {**b["secondary"], "depth_ppm": 41.0, "err_ppm": 77.0, "limit_3sigma_ppm": 272.0}
+    b["centroid_offset"] = {**b["centroid_offset"], "self_referenced_arcsec": 1.4, "self_referenced_err_arcsec": 0.9,
+                            "sigma": 1.56}
+    for t in b["tests"]:
+        if t["rung"] == "rung5_pixels":
+            near = {1: (0.31, 2.41), 2: (0.28, 2.52)}              # the two middle distances, so the medians move
+            t["metrics"] = {**t["metrics"], "seasons": [
+                {**s, "depth_target_ppm": [0.4 * x for x in s["depth_target_ppm"]],
+                 "depth_neighbour_ppm": [0.4 * x for x in s["depth_neighbour_ppm"]],
+                 **({"dist_target_pix": near[s["season"]][0], "dist_neighbour_pix": near[s["season"]][1]}
+                    if s["season"] in near else {})} for s in t["metrics"]["seasons"]]}
+    significance = {**b["tess"]["significance"], "folded_nominal": 0.78}
+    b["tess"] = {**b["tess"], "significance": significance}
 
 
 def test_candidates_list_the_targets_own_first_then_further_by_period(env_two):
@@ -282,6 +320,19 @@ def test_the_two_candidate_note_prints_each_value_from_its_own_json():
                   na["rp"], nb["rp"], cc.probability_text(a["cross_check"]["fpp"]), "0.037", "1 in 170", "1 in 120",
                   cc.probability_text(a["fpp"]["value"]), "0.11"):
         assert body.count(str(value)) >= 1, value
+    flat = " ".join(body.split())
+    for mine in (A_VALUES + B_VALUES):                       # every per-candidate value is printed once, from its JSON
+        assert flat.count(mine) == 1, mine
+    pa, pb = pack_two.period_word(a), pack_two.period_word(b)
+    vetting = flat.split(r"\section{Vetting}")[1].split(r"\section{")[0]
+    centroid = flat.split(r"\section{Which star is dimming}")[1].split(r"\section{")[0]
+    vet_a, vet_b = vetting.split(f"{pb} d: ")
+    cen_a, cen_b = centroid.split(f"For the {pb} d candidate, ")
+    assert f"{pa} d: " in vet_a and "0.56 to 0.96 and 0.56 to 0.78 sigma" in flat       # the TESS ranges, per candidate
+    for mine in A_VALUES:
+        assert (mine in vet_a or mine in cen_a) and mine not in vet_b and mine not in cen_b, mine
+    for mine in B_VALUES:
+        assert (mine in vet_b or mine in cen_b) and mine not in vet_a and mine not in cen_a, mine
     assert body.count("TRICERATOPS 1.1.0") == 1 and body.count("Null searches") <= 1
     assert r"\title{Two transit candidates on KIC 6146676}" in body
     assert "so neither is an alias of the other" in body
