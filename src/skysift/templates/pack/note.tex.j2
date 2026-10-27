@@ -26,7 +26,7 @@ In the KBonus Kepler Background light curve \citep{kbonus} of \VAR{n.name}\BLOCK
 
 \section{Detection and vetting}
 
-SkySift, an open-source engine that searches KBonus background light curves and vets each signal through a fixed ladder of checks, found the signal with a box search\BLOCK{if n.window} over periods of \VAR{n.window}\BLOCK{endif}, at a signal detection efficiency of \VAR{n.sde} and a signal-to-noise ratio of \VAR{n.snr} over \VAR{n.n_events} transits.
+SkySift, which vets each signal through a fixed ladder of checks, found the signal by box search\BLOCK{if n.window} over \VAR{n.window} periods\BLOCK{endif}: signal detection efficiency \VAR{n.sde}, signal-to-noise ratio \VAR{n.snr}, \VAR{n.n_events} transits.
 \BLOCK{for s in n.vetting}
 \VAR{s}
 \BLOCK{endfor}

@@ -2820,7 +2820,7 @@ def test_the_single_event_sentence_compares_the_statistics():
     data = {"tests": [{"rung": "rung1_events", "status": "pass",
                        "metrics": {"n_covered": 31, "n_events_with_data": 33, "ses_max_over_mes": 0.28}}]}
     assert pack_module._vetting_sentences(data)[0] == (
-        "Of the 33 predicted transits with data, 31 are well covered; the largest single-event statistic is 0.28 "
+        "31 of 33 predicted transits with data are well covered; the largest single-event statistic is 0.28 "
         "of the multiple-event statistic.")
 
 
@@ -2833,7 +2833,7 @@ def test_season_means_the_roll_season_and_the_depth_test_speaks_of_quarter_group
     data = {"stability": {"metrics": {"season_depths": {"0": 1, "1": 2, "2": 3, "3": 4}, "chi2": 3.5, "dof": 3,
                                       "p_value": 0.32}}, "tests": []}
     text = " ".join(pack_module._vetting_sentences(data))
-    assert "The depth agrees across 4 quarter groups (quarters taken modulo 4;" in text and "seasons" not in text
+    assert "The depth agrees across 4 quarter groups (quarters modulo 4;" in text and "seasons" not in text
 
 
 def test_the_note_figure_carries_the_fold_the_parity_and_the_season_difference_images(env_with_dossier,
@@ -3260,7 +3260,8 @@ def test_the_round_3_cuts_leave_the_note_and_keep_every_number_in_the_readme():
             r"0.56 to 0.96 sigma means no detection is expected at the nominal noise; no TESS data were examined "
             r"\citep{christ2019}.") in body
     # B4, B5, B6 and B7
-    assert "SkySift found the signal with a box search" in body and "ladder version" not in body
+    assert ("SkySift, which vets each signal through a fixed ladder of checks, found the signal by box search"
+            in body and "ladder version" not in body)
     assert "False-alarm probability:" not in body
     assert ("11 of 1,998 null searches of other KBonus stars reached the signal's SDE (1 in 170); across the "
             "1,579-star sweep about 9 such peaks are expected by chance") in body

@@ -1224,7 +1224,7 @@ def trend_sentence(data: dict, tex: bool = False, clause: bool = False) -> str |
 
 def stability_sentence(data: dict) -> str | None:
     """Rung 3 on the fold (the stability block, Task 10), else rung 3's own row, in words: "The depth agrees across N
-    quarter groups (quarters taken modulo 4; chi-squared X for D degrees of freedom, p = P)."; the groups are quarters
+    quarter groups (quarters modulo 4; chi-squared X for D degrees of freedom, p = P)."; the groups are quarters
     modulo 4, "season" being the Kepler roll season of the pixel check (spec 11.6). None without the numbers."""
     stab = data.get("stability")
     st = (stab.get("metrics") or {}) if isinstance(stab, dict) and stab.get("metrics") else _metrics(
@@ -1235,7 +1235,7 @@ def stability_sentence(data: dict) -> str | None:
     chi2, dof, p = _f(st.get("chi2"), 1), st.get("dof"), _f(st.get("p_value"), 2)
     if not (n_groups and chi2 is not None and dof is not None):
         return None
-    return (f"The depth agrees across {n_groups} quarter groups (quarters taken modulo 4; chi-squared {chi2} for "
+    return (f"The depth agrees across {n_groups} quarter groups (quarters modulo 4; chi-squared {chi2} for "
             f"{dof} degrees of freedom" + (f", p = {p})." if p else ")."))
 
 
@@ -1276,7 +1276,7 @@ def _vetting_sentences(data: dict, tex: bool = False) -> list[str]:
     ev = _metrics(data, "rung1_events")
     n_cov, n_data = ev.get("n_covered"), ev.get("n_events_with_data")
     if n_cov is not None and n_data:
-        s = f"Of the {n_data} predicted transits with data, {n_cov} are well covered"
+        s = f"{n_cov} of {n_data} predicted transits with data are well covered"
         share = _num(ev.get("ses_max_over_mes"))
         s += (f"; the largest single-event statistic is {share:.2f} of the multiple-event statistic."
               if share is not None else ".")
