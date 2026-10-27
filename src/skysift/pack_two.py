@@ -700,9 +700,9 @@ def _tric_abstract(datas: list[dict]) -> str | None:
         both = " and ".join(cc._p(b["fpp"]) for _d, b in have)
         return f"{tool} gives false-positive probabilities of {both} ({cc.NO_CLASS_SHORT}; Giacalone et al. 2021)"
     d, b = have[0]
-    which, other = ("first", "other") if d is datas[0] else ("second", "other")
-    return (f"{tool} gives a false-positive probability of {cc._p(b['fpp'])} for the {which} and none for the "
-            f"{other} (no validation class applies; Giacalone et al. 2021)")
+    other = datas[1] if d is datas[0] else datas[0]
+    return (f"{tool} gives a false-positive probability of {cc._p(b['fpp'])} for the {period_word(d)} d candidate and "
+            f"none for the {period_word(other)} d one (Giacalone et al. 2021)")
 
 
 def abstract(datas: list[dict]) -> str:

@@ -391,6 +391,13 @@ def test_one_candidate_without_a_cross_check_is_named_not_guessed():
                for p in pack.gate_problems(a, others=[b]))
     abstract = pack.abstract_text(a, others=[b])
     assert "TRICERATOPS 1.1.0 gives" in abstract and len(abstract.split()) <= 130
+    assert (f"for the {pack_two.period_word(a)} d candidate and none for the {pack_two.period_word(b)} d one "
+            "(Giacalone et al. 2021)") in abstract
+    assert " for the first and none" not in abstract
+    b["cross_check"], a["cross_check"] = a["cross_check"], None                       # and the other way round
+    swapped = pack.abstract_text(a, others=[b])
+    assert (f"for the {pack_two.period_word(b)} d candidate and none for the {pack_two.period_word(a)} d one "
+            "(Giacalone et al. 2021)") in swapped and len(swapped.split()) <= 130
 
 
 def test_a_second_candidate_without_errors_prints_its_untimed_forms():
