@@ -526,3 +526,22 @@ def seed_extinction() -> tuple[dict, dict]:
     unreddened = {"route": "mann", "bp_rp0": 2.0971918, "teff": star["teff"], "radius": star["radius"],
                   "mass": star["mass"], "rp_rearth": planet["rp_rearth"], "insolation_earth": planet["insolation_earth"]}
     return extinction, unreddened
+
+
+def seed_adopted_extinction() -> tuple[dict, dict]:
+    """``seed_extinction`` as the local map leaves it (Task 17, spec 12.5): a 3D E(B-V) of 0.312 adopted, under the
+    full column of 0.674, which stays beside it as the check; the height clause settled by the 3D value."""
+    extinction, unreddened = seed_extinction()
+    adopted = {k: v for k, v in extinction.items() if k != "reason"}
+    adopted.update({"status": "adopted", "state": "adopted", "ebv": 0.312, "ebv_p16": 0.254, "ebv_p84": 0.371,
+                    "ebv_at_distance_p16": 0.305, "ebv_at_distance_p84": 0.318,
+                    "source": "Bayestar19 (Green et al. 2019), local file",
+                    "map": "bayestar2019 (doi:10.7910/DVN/2EJ9TX), local file", "map_file": "bayestar2019.h5",
+                    "map_md5": "ab815d2fd3068d1b81a1bd61fb18a722", "map_version": "bayestar2019",
+                    "distance_pc_p16": 300.0, "distance_pc_p84": 306.1, "reliable_distance": True,
+                    "a0": _v(0.967, 0.18, 0.18), "ebprp": _v(0.381, 0.071, 0.07), "a_g": _v(0.768, 0.14, 0.14),
+                    "a_ks": _v(0.113, 0.021, 0.021), "bp_rp0": 1.716, "colour_held": False,
+                    "outside_mann_range": False, "height_pc": 39,
+                    "height_clause": "the star sits about 39 pc above the plane, inside the dust layer, so its true "
+                                     "reddening lies well inside the bracket; the 3D value settles it"})
+    return adopted, unreddened

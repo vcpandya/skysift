@@ -22,6 +22,7 @@ from skysift import crosscheck as cross_check
 from skysift import dossier as dossier_module
 from skysift import ephemeris, exofop, net, pack_rows, pack_text, zenodo
 from skysift import pack as pack_module
+from skysift import stars as stars_module
 from skysift.cli import app
 from skysift.dossier import LightCurveReleased, generate, whitened
 from skysift.lc.transit_model import UNCONSTRAINED
@@ -446,11 +447,11 @@ def test_the_note_names_the_radius_ratio_the_planet_radius_came_from(env_with_do
     assert rows["t14_h"]["value"] == pytest.approx(t14_h) and rows["k"]["value"] == pytest.approx(k)
     flat = " ".join(render_note(data).split())
     rp = pack_text.value_text(data["planet"]["rp_rearth"], True)
-    assert f"With the fitted radius ratio of {k:.4f} the planet radius is {rp} $R_\\oplus$" in flat
+    assert f"With the radius ratio of {k:.4f} the planet radius is {rp} $R_\\oplus$" in flat
     legacy = json.loads(json.dumps(data))
     del legacy["shape"]["fits"], legacy["shape"]["comparison"]
     rung2 = next(t["metrics"] for t in legacy["tests"] if t["rung"] == "rung2_shape")
-    assert f"With the fitted radius ratio of {rung2['fit_k']:.4f} the" in " ".join(render_note(legacy).split())
+    assert f"With the radius ratio of {rung2['fit_k']:.4f} the" in " ".join(render_note(legacy).split())
 
 
 def test_note_for_a_star_without_parameters_or_pixels(env_with_dossier):
@@ -647,7 +648,7 @@ def test_pixel_sentence_without_box_keys_is_unchanged(env_with_dossier):
         "carries the WCS zero point and the registration, the difference-image centroid sits 0.54 ± 0.14 arcsec "
         "away, with an exclusion radius of 0.50 arcsec (max(3 sigma, 0.5 arcsec)) within which a background source "
         "is not excluded; the nearest Gaia source beyond it is Gaia DR3 2101234567890120001 at 6.6 arcsec from the "
-        "centroid (G = 19.8). A two-source fit gives a median depth of 2,213 ppm on this star and -21 ppm on the "
+        "centroid (G = 19.8). A two-source fit gives a median depth of 2,213 ppm on this star and -21 on the "
         "neighbour. Season 3 did not vote (box incomplete: target).")
 
 
@@ -775,9 +776,9 @@ def test_build_pack_on_the_real_kic_6146676_dossier(env_with_dossier):
             "Gaia position. Both errors are the larger of the seasons' combined error and their scatter.") in note
     assert "not stored for every season" not in note
     tex = (rep.out_dir / "note" / "note.tex").read_text(encoding="utf-8")
-    assert (r"Against the Gaia position the difference-image centroid sits 0.25 $\pm$ 0.28 arcsec away, with an "
+    assert (r"Against the Gaia position the centroid sits 0.25 $\pm$ 0.28 arcsec away, with an "
             r"exclusion radius of 0.83 arcsec (max(3 sigma, 0.5 arcsec)) within which a background source is not "
-            r"excluded; the nearest Gaia source beyond it lies at 6.9 arcsec (G = 19.8); against the star's own "
+            r"excluded; the nearest Gaia source beyond it lies at 6.9 arcsec (G = 19.8); against the star's "
             r"out-of-transit image the offset is 1.8 $\pm$ 1.0 arcsec (1.8 sigma), not an offset by the rule of "
             r"\citet{bryson2013} (over 3 sigma and 0.2 arcsec), its reference pulled by the neighbour up to 1.30 "
             r"px.") in (
@@ -1383,7 +1384,7 @@ def test_note_has_software_facilities_and_the_model_clause_within_the_limits(env
     for data in (env_with_dossier.data, golden):
         tex = render_note(data)
         version = data["signal"]["detector_version"]
-        # the commit the dossier was generated at (the golden's 09ee6e3, not the checkout's HEAD), and triceratops
+        # the commit the dossier was generated at (the golden's 0dca504, not the checkout's HEAD), and triceratops
         # only with a stored cross-check (M10), which the golden has (fix round 4)
         commit = data["provenance"]["git_commit"]
         # Task 13 (spec 11.6): each package with its installed version
@@ -1391,7 +1392,7 @@ def test_note_has_software_facilities_and_the_model_clause_within_the_limits(env
             f", triceratops {data['cross_check']['tool_version']}" if data.get("cross_check") else "")
         assert (rf"\software{{SkySift {md.version('skysift')} (search version {tex_safe(version)}, commit "
                 rf"{tex_safe(commit)}), {tools}}}") in tex
-        assert (data is golden) == bool(data.get("cross_check")) and (data is not golden or commit == "09ee6e3")
+        assert (data is golden) == bool(data.get("cross_check")) and (data is not golden or commit == "0dca504")
         crossed = render_note({**data, "cross_check": {"fpp": 0.01, "nfpp": 0.001, "current": False}})
         assert f"matplotlib {md.version('matplotlib')}, triceratops}}" in crossed
         assert r"\facilities{Kepler, Gaia, MAST, Exoplanet Archive}" in tex
@@ -1605,7 +1606,7 @@ def test_the_note_names_its_methods_and_cites_them(env_with_dossier):
     # Task 8 fix round 3: the note keeps a pointer without citations, the sentence and its works are in the README;
     # fix round 4, M-3: the note's first pointer says which README; round-2 word budget: a clause closing the
     # ephemeris sentence; Task 15 fix round 1, cut B6: the clause goes, the Data availability line names the methods
-    assert "on the linear-fit ephemeris." in " ".join(signal.split()) and "(methods in" not in signal
+    assert "use the linear-fit ephemeris." in " ".join(signal.split()) and "(methods in" not in signal
     assert "Pack (data and methods): " in " ".join(tex.split())
     assert pack_module.errors_pointer(data) == "methods in the Zenodo pack's README"
     assert "deeg2015" not in tex and "holczer2016" not in tex and "schmitt2014" not in tex
@@ -1701,7 +1702,7 @@ def test_a_dossier_without_timing_prints_no_empty_timing_numbers(env_with_dossie
     for text in (pack_module._render_plain("exofop_note.txt.j2", v2, {}), _unquoted(render_readme(v2, {})),
                  render_note(v2)):
         assert "timed transits" not in text and "rms of  " not in text and " of  " not in text
-        assert "Timed one by one" not in text
+        assert "Timed singly" not in text
     assert "Allow at least one duration either side of a predicted time." in pack_module._render_plain(
         "exofop_note.txt.j2", v2, {})
     assert note_problems(note_words(render_note(v2)), render_note(v2)) == []
@@ -2124,7 +2125,52 @@ LIVE_SHAPE_LIMIT = 1480
 LIVE_ABSTRACT_LIMIT = 148          # round 3 polish: two under the RNAAS 150; the ruled cut saves two counted words
 
 
-def _live_shape(cross: str, prior: bool = True) -> dict:
+LIVE_RECORD = Path(__file__).resolve().parents[2] / "docs" / "candidates" / "kic-006146676" / "extinction.json"
+# the keys of a "not available" block that the bracket keeps from the adopted one: the column and the geometry
+BRACKET_KEEPS = ("target", "queried_utc", "distance_pc", "column", "r_v", "law", "a_ks_over_a0", "b_deg", "height_pc")
+BRACKET_REASON = ("Bayestar19 (Green et al. 2019) not available: the Argonaut web query failed (ConnectTimeout); no "
+                  "local map file")
+
+
+def _check_adopted_golden(data: dict) -> None:
+    """The regenerated golden (0dca504) carries KIC 6146676's adopted block as the local map left it, the stored
+    record's values: E(B-V) 0.0088 (0.0088 to 0.0142) at 303 pc (299.5 to 306.6 pc), ``reliable_distance`` false, the
+    pixel reliable from 405 pc to 6,685 pc (the end is not printed for a star nearer than the range), and the star
+    derived through it. The adopted star is not flagged outside the Mann range: dereddening only makes it hotter, so
+    the live note has no "indicative" clause (its wording is pinned by
+    ``test_an_adopted_value_above_the_column_or_outside_the_mann_range_says_so_in_one_clause``)."""
+    record = json.loads(LIVE_RECORD.read_text(encoding="utf-8"))
+    ext = data["star"]["extinction"]
+    assert ext["state"] == "adopted" and ext["map_version"] == "bayestar2019"
+    for key in ("ebv", "ebv_p16", "ebv_p84", "distance_pc", "distance_pc_p16", "distance_pc_p84", "reliable_distance",
+                "reliable_distance_min_pc", "reliable_distance_max_pc", "nside", "healpix_index"):
+        assert ext[key] == record[key], key
+    assert (ext["ebv"], ext["ebv_p16"], ext["ebv_p84"]) == (0.0088, 0.0088, 0.0142)
+    assert (ext["reliable_distance_min_pc"], ext["reliable_distance_max_pc"]) == (405, 6685)
+    assert stars_module.range_side(ext) == ("nearer", 405) and ext["outside_mann_range"] is False
+    assert ext["height_clause"].endswith(f"; {stars_module.HEIGHT_UNCONSTRAINED['nearer']}")
+
+
+def _bracket_live(data: dict) -> dict:
+    """The bracket state the golden carried natively before its regeneration: the adopted record put back into "not
+    available" (the Argonaut timeout's reason), keeping the IRSA column block and what the law made of it, the height
+    clause without the 3D value's ending, and the star's adopted values replaced by the unreddened ones the golden
+    stores (``star.unreddened``: route, Teff, radius, mass, planet radius and insolation). The orbit and the
+    equilibrium temperature keep the adopted star's values (each one number, so the count is the same)."""
+    star, planet = data["star"], data["planet"]
+    ext, unred = star["extinction"], star["unreddened"]
+    # fix wave round 4 (I2): the bracket state names the bracket, the adopted one the range its ends span
+    clause = ext["height_clause"].rsplit("; ", 1)[0].replace(stars_module.HEIGHT_RANGE, stars_module.HEIGHT_BRACKET)
+    block = {k: ext[k] for k in BRACKET_KEEPS if k in ext}
+    block.update({"status": stars_module.EXT_NOT_AVAILABLE, "state": stars_module.EXT_NOT_AVAILABLE,
+                  "reason": BRACKET_REASON, "height_clause": clause})
+    assert stars_module._block_problem({k: v for k, v in block.items() if k != "state"}) is None
+    star = {**star, **{k: unred[k] for k in ("route", "teff", "radius", "mass")}, "extinction": block}
+    planet = {**planet, **{k: unred[k] for k in ("rp_rearth", "insolation_earth")}}
+    return {**data, "star": star, "planet": planet}
+
+
+def _live_shape(cross: str, prior: bool = True, state: str = "bracket") -> dict:
     """The version 4 golden as a live draft has it (fix round 4, I-1): its own ``timing``, ``shape``, ``parity``,
     ``secondary``, ``centroid_offset`` (the star's own direct-image centroid, so the Bryson sentence and bibitem) and
     ``hand_built_localisation`` blocks; a prior claim unless ``prior`` is False; the worst TESS block, a skipped
@@ -2137,6 +2183,11 @@ def _live_shape(cross: str, prior: bool = True) -> dict:
     from tests.unit.test_crosscheck import REMOVED, fake_result, fake_variant
     from tests.unit.ui_seed import SEED_TESS
     data = json.loads(GOLDEN.read_text(encoding="utf-8"))
+    # Task 17: the regenerated golden is the adopted state; the bracket is built from it, before the cross-check's
+    # fingerprint is taken
+    _check_adopted_golden(data)
+    if state == "bracket":
+        data = _bracket_live(data)
     # spec 12.2: the golden's own exclusion radius, so both long forms of the dominant-excluded sentence count
     assert data["centroid_offset"]["exclusion_radius_arcsec"] > 0
     assert data["dossier_version"] == dossier_module.DOSSIER_VERSION
@@ -2174,10 +2225,10 @@ SHAPE_OFFSET_CAVEAT = {"key": "shape_offset", "title": "The shape fit sits off i
                                "more than its 1-sigma spread; quote the full-data value beside it."}
 
 
-def _check_live_shape(cross: str, prior: bool) -> dict:
+def _check_live_shape(cross: str, prior: bool, state: str = "bracket") -> dict:
     """Render ``_live_shape`` and check it carries every long form it should; its ``note_words``."""
     from skysift import tess
-    data = _live_shape(cross, prior)
+    data = _live_shape(cross, prior, state)
     block = data["tess"]
     assert block["sectors_skipped"] == [109] and block["uncertain"] and block["n_transits"] > 0
     tex = render_note(data)
@@ -2211,14 +2262,22 @@ def _check_live_shape(cross: str, prior: bool) -> dict:
     assert (PRIOR_DOI in flat) == prior
     assert "largest single-event statistic is 0.33" in flat and "(d) per-season difference images" in flat
     assert "The shape fit sits off its bootstrap" in flat and "No spectrum" in flat
+    if state == "adopted":       # Task 17: the reddening sentence with the column check and the Mann clause
+        assert str(pack_module.reddening_text(data, True)) in flat and "from unreddened" not in flat
+        assert (r"E(B-V) = 0.009 (0.009 to 0.014) from Bayestar19 \citep{green2019} at 303 pc, nearer than the map's "
+                r"reliable range (from 405 pc; full column 0.674 \citep{schlafly2011}, an upper bound). ") in flat
+        assert "indicative. " not in flat and "6,685" not in flat and r"]{schlafly2011} Schlafly" in flat
+    else:
+        assert str(pack_module.rp_bracket_text(data, True)) in flat
     words = note_words(tex)
     assert note_problems(words, tex) == [] or words["total"] > NOTE_LIMITS["total"]
     return words
 
 
+@pytest.mark.parametrize("state", ["bracket", "adopted"])
 @pytest.mark.parametrize("prior", [False, True], ids=["no-prior-claim", "prior-claim"])
 @pytest.mark.parametrize("cross", ["validated", "dominant"])
-def test_the_live_shape_stays_inside_the_word_limit_with_margin(cross, prior):
+def test_the_live_shape_stays_inside_the_word_limit_with_margin(cross, prior, state):
     """Fix rounds 2 to 4, N1 and I-1: the note as a live draft of the golden renders it (its own timing,
     shape, parity, secondary, pixel-offset and hand-built blocks, the longest cross-check forms, a TESS sentence with
     a skipped sector and an uncertain count, with and without a prior claim) stays at or under 1,480 words, 20 under
@@ -2240,17 +2299,28 @@ def test_the_live_shape_stays_inside_the_word_limit_with_margin(cross, prior):
     1,335 and 1,363 without, 1,439 and 1,467 with one; abstracts unchanged. Task 15 fix round 2, M2 (the excluded
     set's dominant scenario in the own-evidence sentence, two words): 1,337 and 1,365 without, 1,441 and 1,469 with
     one; abstracts 146 and 150. The round 3 final review (the bracket with the Mann flag, I2's own-evidence sentence,
-    no second unit and no second "E(B-V) of" in the bracket), on the golden of 09ee6e3: 1,347 and 1,375 without, 1,451
+    no second unit and no second "E(B-V) of" in the bracket), on the golden of 0dca504: 1,347 and 1,375 without, 1,451
     and 1,479 with one; abstracts 146 and 150.
     Round 3 polish: the closing sentence "pending follow-up" (the live KIC 5689121 abstract was 151): 144 without a
-    prior claim, 148 with one, held at or under LIVE_ABSTRACT_LIMIT."""
-    words = _check_live_shape(cross, prior)
+    prior claim, 148 with one, held at or under LIVE_ABSTRACT_LIMIT.
+    Task 17 (spec 12.5) measures both states (validated, dominant): the bracket, as the golden stands, 1,345 and 1,373
+    without a prior claim and 1,449 and 1,477 with one; the adopted state (then built on the golden: the reddening sentence
+    with the full column as its check in place of the bracket clause and the caveat title's reddening words, Green et
+    al. 2019 in place of Schlafly and Finkbeiner 2011) 1,347 and 1,375 without and 1,451 and 1,479 with one; abstracts
+    144 and 148 in both. Task 17 fix round 1 builds the adopted state from KIC 6146676's stored record (E(B-V) 0.0088,
+    nearer than the map's reliable range from 405 pc): the flag, the range form and the column's citation with its
+    bibitem took the longest to 1,499; its fifteen cuts elsewhere (the fix-round report lists each): the bracket
+    1,328 and 1,356 without a prior claim and 1,430 and 1,458 with one; the adopted state 1,350 and 1,378 without and
+    1,452 and 1,480 with one; abstracts 144 and 148 in both. The golden regenerated at 0dca504 is the adopted state
+    itself (``_check_adopted_golden`` holds it to the stored record) and the bracket is built from it
+    (``_bracket_live``); the eight counts are unchanged."""
+    words = _check_live_shape(cross, prior, state)
     assert words["total"] <= LIVE_SHAPE_LIMIT, words
     assert words["abstract"] <= LIVE_ABSTRACT_LIMIT <= NOTE_LIMITS["abstract"] - 2, words
-    abstract = " ".join(render_note(_live_shape(cross, prior)).split(r"\begin{abstract}")[1].split())
+    abstract = " ".join(render_note(_live_shape(cross, prior, state)).split(r"\begin{abstract}")[1].split())
     assert ("Null searches give a false-alarm rate of 1 in 170 per star, about 9 such peaks expected across the "
             "1,579-star sweep;") in abstract
-    assert not [p for p in pack_module.gate_problems(_live_shape(cross, prior)) if "words" in p]
+    assert not [p for p in pack_module.gate_problems(_live_shape(cross, prior, state)) if "words" in p]
 
 
 @pytest.mark.parametrize("cross", ["validated", "dominant"])
@@ -2311,9 +2381,9 @@ def test_the_short_offset_sentence_keeps_both_offsets_and_the_verdict():
     short = pack_module.offset_sentence({"centroid_offset": own}, short=True)
     # spec 11.5: the Gaia offset and the exclusion radius (max(3 x 0.28, 0.5) arcsec) lead
     # Task 13: one clause on the star's own image, the error rule and the reference's carriage the README's
-    gaia = ("Against the Gaia position the difference-image centroid sits 0.25 ± 0.28 arcsec away, with an exclusion "
+    gaia = ("Against the Gaia position the centroid sits 0.25 ± 0.28 arcsec away, with an exclusion "
             "radius of 0.84 arcsec (max(3 sigma, 0.5 arcsec)) within which a background source is not excluded")
-    assert short == (gaia + "; against the star's own out-of-transit image the offset is 0.39 ± 0.15 arcsec (2.6 "
+    assert short == (gaia + "; against the star's out-of-transit image the offset is 0.39 ± 0.15 arcsec (2.6 "
                      "sigma), not an offset by the rule of Bryson et al. (2013) (over 3 sigma and 0.2 arcsec).")
     counted = pack_module.offset_sentence({"centroid_offset": {**own, "counts": True}}, tex=True, short=True)
     assert r"(2.6 sigma), an offset by the rule of \citet{bryson2013} (over 3 sigma and 0.2 arcsec)." in str(
@@ -2452,7 +2522,7 @@ def test_the_note_names_the_limb_darkening_and_the_exposure_integration(env_with
     assert "quadratic limb-darkened model" in flat and "integrated over the 29.4-minute exposure" in flat
     assert r"\citep{claret2011}" in flat and r"Claret, A., \& Bloemen, S. 2011, A\&A, 529, A75" in flat
     assert "uniform-disc" not in flat and "without limb darkening" not in flat
-    assert "on the linear-fit ephemeris" in flat                # the texts say which ephemeris folded
+    assert "use the linear-fit ephemeris" in flat               # the texts say which ephemeris folded
     readme = (_build(env).out_dir / "README.md").read_text(encoding="utf-8")
     k = _stored(env)["shape"]["k"]
     assert f"(full-data fit {k['point']:.4f})" in readme       # the point value beside the median
@@ -2750,7 +2820,7 @@ def test_the_single_event_sentence_compares_the_statistics():
     data = {"tests": [{"rung": "rung1_events", "status": "pass",
                        "metrics": {"n_covered": 31, "n_events_with_data": 33, "ses_max_over_mes": 0.28}}]}
     assert pack_module._vetting_sentences(data)[0] == (
-        "Of the 33 predicted transits with data, 31 are well covered, and the largest single-event statistic is 0.28 "
+        "Of the 33 predicted transits with data, 31 are well covered; the largest single-event statistic is 0.28 "
         "of the multiple-event statistic.")
 
 
@@ -2975,12 +3045,18 @@ def test_the_mismatch_gate_also_fires_for_a_quantity_with_no_error_on_either_sid
 
 def test_a_stale_cross_check_is_refused_once():
     """Minor 1: a stale cross-check is refused by its own reason, not again for the FPP order of the abstract and
-    the Zenodo description."""
-    golden = _golden()
+    the Zenodo description. The golden's cross-check is current since its regeneration at 0dca504, so the stale
+    path runs on a copy whose fingerprint no longer matches, and the golden itself is not refused for it."""
+    current = _golden()
+    assert current["cross_check"]["current"] is True
+    stale_block = cross_check.with_current({**current["cross_check"], "inputs_sha256": "0" * 64}, current)
+    golden = {**current, "cross_check": stale_block}
     assert golden["cross_check"]["current"] is False
     problems = pack_module.gate_problems(golden)
     assert not [p for p in problems if "in-house false-positive probability without" in p]
-    assert cross_check.verdict(golden["cross_check"])[1] in problems
+    reason = cross_check.verdict(golden["cross_check"])[1]
+    assert reason in problems and problems.count(reason) == 1
+    assert reason not in pack_module.gate_problems(current)
 
 
 def test_with_a_prior_claim_the_zenodo_record_is_titled_as_the_note_and_the_gate_reads_it(monkeypatch):
@@ -3018,9 +3094,10 @@ def test_the_readme_gives_the_shape_call_with_its_evidence_and_the_note_does_not
     golden = _golden()
     assert pack_module.b_set_by_prior(golden)
     readme = render_readme(golden, {})
-    assert "| impact parameter (with the density prior) | 0.455 +0.054/-0.061" in readme
+    # the golden regenerated at 0dca504: the adopted star's density moves b to 0.457 and a/R* to 78.4
+    assert "| impact parameter (with the density prior) | 0.457 +0.054/-0.061" in readme
     text = pack_module.shape_fit_text(golden)
-    assert text.startswith("Shape fit: with the density prior b is 0.455 +0.054/-0.061 and a/R* 78.5")
+    assert text.startswith("Shape fit: with the density prior b is 0.457 +0.054/-0.061 and a/R* 78.4")
     assert ("with a chi-square lower by only 0.26, within the rule of 2: the data do not constrain them; the quoted "
             "values follow the host's density (Seager and Mallén-Ornelas 2003). The model is integrated over the "
             "29.4-minute exposure, which matters at this cadence (Kipping 2010).") in text
@@ -3085,7 +3162,7 @@ def test_the_silent_seasons_and_the_secondary_read_without_nested_brackets():
     assert pack_text.reason_words("") == "no reason stored"
     assert pack_text.reason_words("box incomplete: target") == "box incomplete: target"      # one reason, not two
     short = str(pack_module.secondary_sentence(_golden(), True, short=True))
-    assert ", and positive excursions in the same fold reach 5.2 sigma" in short
+    assert "; positive excursions in the same fold reach 5.2 sigma" in short
 
 
 def test_the_exofop_planet_file_credits_the_first_finder():
@@ -3167,7 +3244,7 @@ def test_the_round_3_cuts_leave_the_note_and_keep_every_number_in_the_readme():
     # B1: the pixel section opens on one sentence
     pixels = body.split(r"\section{Which star is dimming}")[1].lstrip()
     assert pixels.startswith("In difference images the centroid sits a median 0.19 pixels from this star and 2.82 "
-                             "pixels from its brightest neighbour, nearer this star in 4 of 4 observing seasons, its "
+                             "from its brightest neighbour, nearer this star in 4 of 4 observing seasons, its "
                              "error carrying a pointing-jitter floor of 0.017 px. In seasons 0 and 3")
     # B2 and B8: the own-evidence sentence and the cross-check clause
     # B2, and fix round 2's M2: the excluded set's dominant scenario in two words
@@ -3183,7 +3260,7 @@ def test_the_round_3_cuts_leave_the_note_and_keep_every_number_in_the_readme():
             r"0.56 to 0.96 sigma means no detection is expected at the nominal noise; no TESS data were examined "
             r"\citep{christ2019}.") in body
     # B4, B5, B6 and B7
-    assert "The SkySift engine found the signal with a box search" in body and "ladder version" not in body
+    assert "SkySift found the signal with a box search" in body and "ladder version" not in body
     assert "False-alarm probability:" not in body
     assert ("11 of 1,998 null searches of other KBonus stars reached the signal's SDE (1 in 170); across the "
             "1,579-star sweep about 9 such peaks are expected by chance") in body
@@ -3217,10 +3294,11 @@ def test_the_crowding_metric_says_when_it_is_the_most_crowded_quarters():
 
 # ---------------------------------------------------------------------------------------------------- Task 16 (spec 12.3)
 
-def _with_adopted_extinction(env) -> dict:
-    """The fixture dossier again with a 3D value stored by hand (adopted, the full column kept as a check)."""
+def _with_adopted_extinction(env, block: dict | None = None) -> dict:
+    """The fixture dossier again with a 3D value (``block``, by default one stored by hand) adopted, the full column
+    kept as a check."""
     from tests.unit.test_dossier import EXTINCTION_ADOPTED, write_extinction
-    write_extinction(STAGE2_TARGET, EXTINCTION_ADOPTED)
+    write_extinction(STAGE2_TARGET, block or EXTINCTION_ADOPTED)
     generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch)
     return _stored(env)
 
@@ -3322,36 +3400,265 @@ def test_the_bracket_flags_the_mann_range_and_prints_the_upper_end_at_the_adopte
     assert flag not in pack_module.reddening_key(inside)
 
 
-def test_a_3d_value_is_adopted_with_the_unreddened_star_and_gsp_phot_beside_it(env_with_dossier):
-    data = _with_adopted_extinction(env_with_dossier)
-    star = data["star"]
-    assert star["extinction"]["state"] == "manual"
-    tex = render_note(data)
-    flat = " ".join(tex.split())
+# Task 17 (spec 12.5): a record the local map wrote, KIC 6146676's sightline, with the fixture's column beside it
+EXTINCTION_MAP = {"status": "adopted", "ebv": 0.05, "ebv_p16": 0.03, "ebv_p84": 0.07,
+                  "ebv_map_units": {"median": 0.05656, "p16": 0.03394, "p84": 0.07919},
+                  "ebv_at_distance_p16": 0.048, "ebv_at_distance_p84": 0.052,
+                  "source": "Bayestar19 (Green et al. 2019), local file",
+                  "map": "bayestar2019 (doi:10.7910/DVN/2EJ9TX), local file", "map_file": "bayestar2019.h5",
+                  "map_md5": "ab815d2fd3068d1b81a1bd61fb18a722", "map_version": "bayestar2019",
+                  "queried_utc": "2026-10-26T12:00:00+00:00", "distance_pc": 303.0, "distance_pc_p16": 300.0,
+                  "distance_pc_p84": 306.1, "l_deg": 76.0444, "b_deg": 7.4198, "nside": 1024,
+                  "healpix_index": 5984274, "n_samples": 5, "converged": True, "reliable_distance": True,
+                  "reliable_distance_min_pc": 100, "reliable_distance_max_pc": 2512}
+MANN_FLAG = "outside the Mann relations' range, so indicative"
+# Task 17 fix round 1, ruling 3: the README key's two sentences on the scales, in the map's adopted state
+KEY_BAYESTAR = ("E(B-V) is 0.884 times the map's unit (E(g-r) = 0.901 per unit, Schlafly and Finkbeiner 2011 Table 6; "
+                "the 0.884 from the Schlafly et al. 2016 reddening vector, as the Bayestar usage notes give it), from "
+                "the median of 5 samples with their 16th to 84th percentiles.")
+KEY_COLUMN = ("on the Schlafly and Finkbeiner 2011 scale, 0.86 times SFD98 (Schlegel, Finkbeiner and Davis 1998), so "
+              "the comparison is a check across two scales, not a measurement on one.")
+
+
+def test_the_adopted_3d_value_leads_every_text_and_the_full_column_is_a_check(env_with_dossier):
+    """Task 17 (spec 12.5; the controller's ruling of 26 October 2026): the note gives the adopted E(B-V) with its
+    error, the map, the distance and the full column as an upper bound the 3D value sits inside; the planet sentence
+    the adopted radius with no bracket. The plain texts give each parameter as "<adopted> (unreddened <value>; full
+    column <value>)", the distance check, the unreddened star as the earlier assumption, the column as consistent,
+    the height clause settled by the 3D value and GSP-Phot not adopted; the README a row per estimate with its
+    status; the provenance the map's version, MD5, file and pixel, which the fingerprint does not hash."""
+    from tests.unit.test_dossier import EXTINCTION_FIXTURE
+    data = _with_adopted_extinction(env_with_dossier, {**EXTINCTION_MAP, "column": EXTINCTION_FIXTURE["column"]})
+    star, planet = data["star"], data["planet"]
+    e = star["extinction"]
+    assert e["state"] == "adopted" and e["height_clause"].endswith("; the 3D value settles it")
+    rep = _build(env_with_dossier)
+    texts = _texts(rep)
+    flat = " ".join(texts["note/note.tex"].split())
     sentence = str(pack_module.reddening_text(data, True))
-    assert sentence in flat and r"\citep{green2019}" in sentence and "E(B-V) = 0.050 (0.030 to 0.070)" in sentence
-    assert pack_text.value_text(star["unreddened"]["teff"], True) not in flat     # the note's one clause only
-    assert "from unreddened" not in flat and "schlafly2011" not in flat
-    cited, items = _cites(tex)
-    assert cited == items and "green2019" in items
-    assert r"Green, G.~M., Schlafly, E., Zucker, C., Speagle, J.~S., \& Finkbeiner, D. 2019, ApJ, 887, 93" in flat
+    # fix round 1 (I3, ruling 2): the value and its range at three decimals, as the README prints them; the column
+    # with its source, no "within" or "above"
+    assert sentence == (r"The reddening is E(B-V) = 0.050 (0.030 to 0.070) from Bayestar19 \citep{green2019} at 303 "
+                        r"pc (full column 0.100 \citep{schlafly2011}, an upper bound)")
+    assert f"{sentence}. " in flat and "reliable range" not in flat
+    assert pack_module.rp_bracket_text(data, True) is None and "from unreddened" not in flat
+    assert f"{pack_text.value_text(planet['rp_rearth'], True)} $R_\\oplus$, on an orbit of" in flat
+    assert pack_text.value_text(star["unreddened"]["teff"], True) not in flat
+    cited, items = _cites(texts["note/note.tex"])
+    assert cited == items and "green2019" in items and "schlafly2011" in items
     plain = pack_module.reddening_plain(data)
     assert plain.startswith("Reddening: E(B-V) 0.050 (16th to 84th percentile 0.030 to 0.070) from Bayestar19 "
-                            "(Green et al. 2019), stored by hand (test fixture), at 303 pc, a sightline average")
-    assert "unreddened (E(B-V) = 0), Teff" in plain and pack_text.value_text(star["teff"]) in plain
-    assert "earlier assumption" not in plain
-    readme = render_readme(data, {})
+                            "(Green et al. 2019) at 303 pc (E(B-V) 0.048 to 0.052 across the distance's 16th to 84th "
+                            "percentiles, 300 to 306 pc), a sightline average, adopted; through the Gaia DR3 law it "
+                            "gives E(BP-RP) ")
+    col = e["column"]
+    for name, key, unit, where in (("Teff", "teff", " K", star), ("radius", "radius", " Rsun", star),
+                                   ("planet radius", "rp_rearth", " Earth radii", planet)):
+        adopted = where[key]
+        unred = pack_module._mid_at(star["unreddened"][key], adopted)
+        full = pack_module._mid_at(col[key], adopted)
+        assert f"{name} {pack_text.value_text(adopted)}{unit} (unreddened {unred}; full column {full})" in plain, name
+    assert "; unreddened (E(B-V) = 0) is the earlier assumption; " in plain
+    # ruling 3: the plain check clause names the column's scale
+    assert plain.endswith("; the 3D value is consistent with the full column (the full column, 0.100 ± 0.010 on the "
+                          f"Schlafly and Finkbeiner 2011 scale, is an upper bound); {e['height_clause']}.")
+    assert "reliable range" not in plain                                       # no GSP-Phot E(BP-RP) here
+    assert MANN_FLAG not in plain
+    for name in ("exofop/note.txt", "archive_email.txt"):
+        assert plain in " ".join(texts[name].split()), name
+    readme = texts["README.md"]
     rows = {r[0]: r for r in _readme_table(readme)}
-    assert rows["Bayestar19 (Green et al. 2019)"][-1] == "adopted"
+    assert set(rows) == {"Bayestar19 (Green et al. 2019)", "Unreddened", "Full column (Schlafly and Finkbeiner 2011)",
+                         "GSP-Phot (Gaia DR3)"}
     assert rows["Bayestar19 (Green et al. 2019)"][1] == "0.050 (0.030 to 0.070)"
-    assert rows["Unreddened"][-1] == "not adopted"
-    assert rows["Full column (Schlafly and Finkbeiner 2011)"][-1] == "upper bound"
-    prov = {r["parameter"]: r for r in pack_rows.provenance_rows(data)}
-    assert {name for name, _key in pack_rows.EXTINCTION_ROWS} <= set(prov)
-    ebv = prov["E(B-V) (Bayestar19)"]
-    assert (ebv["value"], ebv["minus"], ebv["plus"]) == (0.05, 0.02, 0.02)
-    assert ebv["reference"] == "Green et al. 2019; Gaia (E)DR3 extinction law; Cardelli et al. 1989"
+    assert rows["Bayestar19 (Green et al. 2019)"][-1] == "adopted"
+    assert rows["Unreddened"][-1] == "the earlier assumption, not adopted"
+    assert rows["Full column (Schlafly and Finkbeiner 2011)"][-1] == "upper bound, consistent with the 3D value"
+    assert rows["GSP-Phot (Gaia DR3)"][-1] == "not adopted"
+    key = pack_module.reddening_key(data)
+    assert key in readme and "Unreddened (E(B-V) = 0): the earlier assumption, not adopted." in key
+    # ruling 3 (I2, M8): the key's Bayestar19 and full-column sentences name the scales and the samples
+    assert f"Bayestar19: a dust-map sightline average at the Gaia distance, adopted; {KEY_BAYESTAR}" in key
+    assert ("Full column: the IRSA DUST value at the star, the whole line of sight with the dust beyond the star, so "
+            f"an upper bound, consistent with the 3D value, {KEY_COLUMN}") in key
+    prov = {r["parameter"]: r for r in _rows(rep, "data/stellar_provenance.csv")}
+    assert prov["E(B-V) (Bayestar19)"]["inputs"] == (
+        "bayestar2019 (doi:10.7910/DVN/2EJ9TX), local file; map version bayestar2019, MD5 "
+        "ab815d2fd3068d1b81a1bd61fb18a722, file bayestar2019.h5, nside 1024 pixel 5984274, 5 samples; queried "
+        "2026-10-26T12:00:00+00:00; 303.0 pc (16th to 84th percentile 300.0 to 306.1 pc)")
+    assert set(dossier_module.extinction_args(e)) == {"extinction_ebv", "column_ebv", "column_ebv_std"}
+    assert pack_module.star_texts(data).startswith(plain)
     assert dossier_module.no_spectrum_title(star) == dossier_module.NO_SPECTRUM
+    for text in texts.values():
+        assert EM_DASH not in text and not IZE.search(text) and "discover" not in text.lower()
+
+
+def test_an_adopted_value_above_the_column_or_outside_the_mann_range_says_so_in_one_clause(env_with_dossier):
+    """Task 17: the 3D median above the column's E(B-V) plus its std is "inconsistent" (at it, "consistent"); a
+    dereddened star outside the Mann relations' range takes the "indicative" clause in every text; a value stored by
+    hand says so; without a fetched column the note's parenthesis and the plain texts' column parts go."""
+    data = _with_adopted_extinction(env_with_dossier)
+    e = data["star"]["extinction"]
+    assert e["state"] == "manual"
+    data["star"]["extinction"] = {**e, "ebv": 0.2, "ebv_p16": 0.18, "ebv_p84": 0.22, "outside_mann_range": True}
+    sentence = str(pack_module.reddening_text(data, True))
+    assert sentence.endswith(r"E(B-V) = 0.200 (0.180 to 0.220) from Bayestar19 \citep{green2019} at 303 pc (full "
+                             r"column 0.100 \citep{schlafly2011}, an upper bound); the dereddened "
+                             f"parameters are {MANN_FLAG}")
+    assert sentence in " ".join(render_note(data).split())
+    plain = pack_module.reddening_plain(data)
+    assert "from Bayestar19 (Green et al. 2019), stored by hand (test fixture), at 303 pc, a sightline average" in plain
+    assert " Earth radii (unreddened " in plain and f"), {MANN_FLAG}; unreddened (E(B-V) = 0) is the earlier" in plain
+    assert "; the 3D value is inconsistent with the full column (the full column, 0.100 ± 0.010 on the " in plain
+    assert data["star"]["extinction"]["height_clause"].endswith("; the 3D value settles it")    # no flag by hand
+    rows = {r[0]: r for r in _readme_table(render_readme(data, {}))}
+    assert rows["Bayestar19 (Green et al. 2019)"][-1] == f"adopted, {MANN_FLAG}"
+    assert rows["Full column (Schlafly and Finkbeiner 2011)"][-1] == "upper bound, inconsistent with the 3D value"
+    key = pack_module.reddening_key(data)
+    assert "inconsistent with the 3D value" in key and MANN_FLAG in key
+    # a value stored by hand has no map unit and no samples: the key does not give the map's scales
+    assert "0.884" not in key and "SFD98" not in key
+    edge = {**data, "star": {**data["star"], "extinction": {**e, "ebv": 0.11, "ebv_p16": 0.1, "ebv_p84": 0.12}}}
+    assert r"(full column 0.100 \citep{schlafly2011}, an upper bound)" in str(pack_module.reddening_text(edge, True))
+    assert pack_module.column_fit(edge) == "consistent" and pack_module.column_fit(data) == "inconsistent"
+    gone = {"status": "not available", "reason": "irsa-dust timed out", "queried_utc": "2026-10-23T20:00:00+00:00"}
+    bare = {**data, "star": {**data["star"], "extinction": {**e, "column": gone}}}
+    assert str(pack_module.reddening_text(bare, True)).endswith(r"\citep{green2019} at 303 pc")
+    bare_plain = pack_module.reddening_plain(bare)
+    assert "full column" not in bare_plain and "(unreddened " in bare_plain and pack_module.column_fit(bare) is None
+    assert {r[0] for r in _readme_table(render_readme(bare, {}))} == {"Bayestar19 (Green et al. 2019)", "Unreddened",
+                                                                       "GSP-Phot (Gaia DR3)"}
+
+
+# Task 17 fix round 2: what the README key names, by the words it prints, and the start of its reference entry
+KEY_WORKS = {"Green et al. 2019": "Green, G. M.", "Schlafly and Finkbeiner 2011": "Schlafly, E. F., & Finkbeiner",
+             "Schlafly et al. 2016": "Schlafly, E. F., Meisner", "SFD98": "Schlegel, D. J., Finkbeiner",
+             "Andrae et al. 2023": "Andrae, R.", "Fitzpatrick et al. 2019": "Fitzpatrick, E. L.",
+             "Riello et al. 2021": "Riello, M.", "Cardelli et al. 1989": "Cardelli, J. A."}
+
+
+def test_the_live_readme_key_puts_the_route_before_the_scales_and_lists_every_work_it_names():
+    """Task 17 fix round 2 (N1, N2): on the live KIC 6146676 key (the adopted shape from its stored record, whose
+    full-column star leaves the Mann range) the route and its "so indicative" clause follow the column's values,
+    before the scale clause, so they do not read as part of "not a measurement on one"; and every work the key names
+    (Schlafly et al. 2016 and SFD98 among them) is in the README's References list."""
+    data = _live_shape("dominant", True, "adopted")
+    assert data["star"]["extinction"]["column"]["outside_mann_range"] is True
+    key = pack_module.reddening_key(data)
+    assert ("so an upper bound, consistent with the 3D value, on the adopted route (the Mann relations with Ks "
+            f"dereddened by A_Ks), {stars_module.MANN_OUTSIDE}, {KEY_COLUMN}") in key
+    assert "not a measurement on one, on the adopted route" not in key
+    refs = pack_module.readme_references(data)
+    named = [w for w in KEY_WORKS if w in key]
+    assert {"Schlafly et al. 2016", "SFD98", "Schlafly and Finkbeiner 2011"} <= set(named)
+    for words in named:
+        assert [r for r in refs if r.startswith(KEY_WORKS[words])], words
+    assert "Schlegel, D. J., Finkbeiner, D. P., & Davis, M. 1998, ApJ, 500, 525" in refs
+    assert [r for r in refs if r.startswith("Schlafly, E. F., Meisner") and r.endswith("2016, ApJ, 821, 78")]
+    # the note cites neither, so its bibliography (and its count) does not change
+    assert not pack_module.references(data).get("schlafly2016") and not pack_module.references(data).get(
+        "schlegel1998")
+
+
+def test_a_value_whose_error_rounds_to_zero_prints_its_range():
+    """Task 17 fix round 2 (N3): a value whose lower or upper error rounds to zero at the printed precision prints in
+    the range form "median (p16 to p84)", as the note's E(B-V) does; never "-0.000" or "+0.000". KIC 6146676's
+    record has p16 equal to the median (E(B-V) 0.0088, 0.0088 to 0.0142), so its derived extinctions have no lower
+    spread."""
+    # at the precision rule's decimals (two significant figures of 0.0054); the note's E(B-V) keeps three (ruling 2)
+    assert pack_text.value_text({"median": 0.0088, "minus": 0.0, "plus": 0.0054}) == "0.0088 (0.0088 to 0.0142)"
+    assert str(pack_text.value_text({"median": 0.0088, "minus": 0.0, "plus": 0.0054}, True)) == (
+        "0.0088 (0.0088 to 0.0142)")
+    assert pack_text.value_text({"median": 0.011, "minus": 0.0, "plus": 0.007}) == "0.011 (0.011 to 0.018)"
+    assert pack_text.value_text({"median": 0.5, "minus": 0.02, "plus": None}) == "0.50 (0.48 to 0.50)"
+    assert pack_text.value_text({"median": 0.509, "minus": 0.016, "plus": 0.017}) == "0.509 +0.017/-0.016"
+    assert pack_text.value_text({"median": 2.61, "minus": 0.08, "plus": 0.08}) == "2.61 ± 0.08"
+    data = _live_shape("dominant", True, "adopted")
+    plain, rows = pack_module.reddening_plain(data), pack_module.reddening_rows(data)
+    e = data["star"]["extinction"]                   # the golden's own derived values (0dca504), no lower spread
+    assert [(e[k]["median"], e[k]["minus"], e[k]["plus"]) for k in ("ebprp", "a_g", "a_ks")] == [
+        (0.011, 0.0, 0.007), (0.02, 0.0, 0.012), (0.003, 0.0, 0.002)]
+    assert "E(BP-RP) 0.011 (0.011 to 0.018), A_G 0.020 (0.020 to 0.032) and A_Ks 0.003 (0.003 to 0.005)" in plain
+    row = next(r for r in rows if r["estimate"] == "Bayestar19 (Green et al. 2019)")
+    assert (row["ebprp"], row["a_g"], row["a_ks"]) == ("0.011 (0.011 to 0.018)", "0.020 (0.020 to 0.032)",
+                                                       "0.003 (0.003 to 0.005)")
+    words = pack_module.star_texts(data)                                         # the dossier page's paragraph
+    for text in (plain, words, " ".join(str(v) for r in rows for v in r.values())):
+        assert not re.search(r"[+-]0\.0+(?![0-9])", text), text                    # no "-0.000", no "+0.000"
+
+
+def test_a_value_outside_the_maps_reliable_range_says_the_side_in_every_text(env_with_dossier):
+    """Task 17 fix round 1 (C1, C2, I1, I3, M1, M3; rulings 1, 2 and 4): a hand-written record with KIC 6146676's
+    stored values (E(B-V) 0.0088, 0.0088 to 0.0142, the same at the distance's percentiles) on a pixel reliable only
+    from 406 pc. The note says the star is nearer than the map's reliable range with the range's start, inside the
+    parenthesis with the column, and prints the value and its range at three decimals (no zero error); the plain
+    texts carry the flag with the distance, the distance check as unchanged at the printed precision, and the
+    height clause without "settles it"; the README row the flag; the key the flag with the distance; the provenance
+    the flag. No text calls the value a first-bin value."""
+    from tests.unit.test_dossier import EXTINCTION_FIXTURE
+    near = {**EXTINCTION_MAP, "ebv": 0.0088, "ebv_p16": 0.0088, "ebv_p84": 0.0142, "ebv_at_distance_p16": 0.0088,
+            "ebv_at_distance_p84": 0.0088, "reliable_distance": False, "reliable_distance_min_pc": 406,
+            "reliable_distance_max_pc": 2512}
+    data = _with_adopted_extinction(env_with_dossier, {**near, "column": EXTINCTION_FIXTURE["column"]})
+    e = data["star"]["extinction"]
+    assert e["height_clause"].endswith("; the map does not constrain the dust this near on this sightline")
+    assert stars_module.HEIGHT_SETTLED not in e["height_clause"]
+    rep = _build(env_with_dossier)
+    texts = _texts(rep)
+    sentence = str(pack_module.reddening_text(data, True))
+    assert sentence == (r"The reddening is E(B-V) = 0.009 (0.009 to 0.014) from Bayestar19 \citep{green2019} at 303 "
+                        r"pc, nearer than the map's reliable range (from 406 pc; full column 0.100 "
+                        r"\citep{schlafly2011}, an upper bound)")
+    assert f"{sentence}. " in " ".join(texts["note/note.tex"].split()) and "0.0000" not in sentence
+    plain = pack_module.reddening_plain(data)
+    assert ("from Bayestar19 (Green et al. 2019) at 303 pc (E(B-V) unchanged at the printed precision across the "
+            "distance's 16th to 84th percentiles, 300 to 306 pc), a sightline average, nearer than the map's reliable "
+            "range (from 406 pc), adopted; ") in plain
+    assert plain.endswith("; the map does not constrain the dust this near on this sightline.")
+    for name in ("exofop/note.txt", "archive_email.txt"):
+        assert plain in " ".join(texts[name].split()), name
+    rows = {r[0]: r for r in _readme_table(texts["README.md"])}
+    assert rows["Bayestar19 (Green et al. 2019)"][1] == "0.009 (0.009 to 0.014)"
+    assert rows["Bayestar19 (Green et al. 2019)"][-1] == "adopted, nearer than the map's reliable range"
+    key = pack_module.reddening_key(data)
+    assert ("Bayestar19: a dust-map sightline average at the Gaia distance, adopted, nearer than the map's reliable "
+            f"range (from 406 pc); {KEY_BAYESTAR}") in key
+    prov = {r["parameter"]: r for r in _rows(rep, "data/stellar_provenance.csv")}
+    assert prov["E(B-V) (Bayestar19)"]["inputs"].endswith(
+        "; 303.0 pc (16th to 84th percentile 300.0 to 306.1 pc), nearer than the map's reliable range (from 406 pc)")
+    for text in texts.values():
+        assert "first bin" not in text and "first-bin" not in text
+        assert EM_DASH not in text and not IZE.search(text) and "discover" not in text.lower()
+    # beyond the range, the range's end; without a fetched column, the flag alone in the parenthesis
+    far = {**data, "star": {**data["star"], "extinction": {**e, "distance_pc": 3000.0}}}
+    assert str(pack_module.reddening_text(far, True)).endswith(
+        r"at 3000 pc, beyond the map's reliable range (to 2,512 pc; full column 0.100 \citep{schlafly2011}, an upper "
+        "bound)")
+    gone = {"status": "not available", "reason": "irsa-dust timed out", "queried_utc": "2026-10-23T20:00:00+00:00"}
+    bare = {**data, "star": {**data["star"], "extinction": {**e, "column": gone}}}
+    assert str(pack_module.reddening_text(bare, True)).endswith(
+        r"\citep{green2019} at 303 pc, nearer than the map's reliable range (from 406 pc)")
+    assert pack_module.references(bare)["schlafly2011"] is False
+
+
+def test_a_map_that_gives_no_value_names_its_reason_in_the_texts(env_with_dossier):
+    """Task 17: a sightline the local map cannot answer (outside its footprint, an unconverged pixel, no finite
+    sample) keeps "not available", and the texts give the map's short reason in place of "at build time"."""
+    data = _stored(env_with_dossier)
+    data["star"]["extinction"] = {**data["star"]["extinction"], "map_reason": "an unconverged map pixel"}
+    assert pack_module.reddening_plain(data).startswith(
+        "Reddening: not measured at the star's distance (Bayestar19 not available: an unconverged map pixel), so the "
+        "parameters are unreddened (E(B-V) = 0), adopted (")
+    assert "(Bayestar19 not available: an unconverged map pixel)." in pack_module.reddening_key(data)
+    gone = {"status": "not available", "reason": "irsa-dust timed out", "queried_utc": "2026-10-23T20:00:00+00:00"}
+    data["star"]["extinction"] = {**data["star"]["extinction"], "column": gone}
+    assert pack_module.reddening_plain(data).startswith(
+        "Reddening: not measured (Bayestar19 not available: an unconverged map pixel, and the IRSA full-column value "
+        "could not be fetched), so")
+    assert "at build time" not in pack_module.reddening_plain(data)
+    # fix round 1, M6: the caveat title with neither value gives the map's reason too
+    assert dossier_module.no_spectrum_title(data["star"]) == (dossier_module.NO_SPECTRUM + dossier_module.NO_REDDENING
+                                                              + " (Bayestar19 not available: an unconverged map pixel)")
 
 
 def test_with_neither_value_the_texts_say_not_available(env_with_dossier):
@@ -3396,3 +3703,107 @@ def test_the_plain_texts_carry_the_height_clause_and_the_note_does_not(env_with_
     assert "GSP-Phot (Gaia DR3)" not in {r["estimate"] for r in pack_module.reddening_rows(bare)}
     assert "GSP-Phot" not in pack_module.reddening_key(bare) and "andrae2023" not in pack_module.readme_works(bare)
     assert "GSP-Phot" in pack_module.reddening_key(data)
+
+
+# ------------------------------------------------------------------------------------------ fix wave round 4
+
+UNCONSTRAINED_NEAR = ", and the map does not constrain the reddening this near"
+BRACKET_SPAN = ("On the adopted route the reddening bracket spans Teff 3,653 to 4,657 K, radius 0.499 to 0.540 Rsun "
+                "and planet radius 2.5 to 2.7 Earth radii, the full-column end beyond the Mann relations' range.")
+
+
+def test_the_flagged_stars_caveat_says_the_map_does_not_constrain_its_reddening():
+    """Fix wave round 4 (I2): an adopted value outside the map's reliable range leaves the reddening unconstrained
+    at the star's distance, so the stellar-radius caveat's title says so on the side the star lies (this near, this
+    far), in the README, the plain texts and the page; the note keeps its title, its reddening sentence carrying the
+    flag (its dominant prior-claim adopted shape stands at the 1,480 limit). The README's bullet gives the range the
+    two ends span on the adopted route, from the derived star's own values (the live KIC 6146676 golden: 3,653 to
+    4,657 K, 0.499 to 0.540 Rsun, 2.5 to 2.7 Earth radii). A star the map constrains, and the bracket state, keep
+    the title and the bullet as they were."""
+    data = _live_shape("dominant", True, "adopted")
+    star, title = data["star"], dossier_module.NO_SPECTRUM
+    assert dossier_module.no_spectrum_title(star) == title + UNCONSTRAINED_NEAR
+    assert dossier_module.no_spectrum_title(star, flag=False) == title
+    far = {**star["extinction"], "distance_pc": 7000.0}
+    assert dossier_module.no_spectrum_title({**star, "extinction": far}) == (
+        f"{title}, and the map does not constrain the reddening this far")
+    reliable = {**star, "extinction": {**star["extinction"], "reliable_distance": True}}
+    assert dossier_module.no_spectrum_title(reliable) == title
+    assert dossier_module.no_spectrum_title(_bracket_live(data)["star"]) == title + dossier_module.REDDENING_BRACKETED
+    # the page's caveat, as a rebuilt dossier stores it
+    page = next(c for c in dossier_module.caveats(data) if c.get("key") == "no_spectrum")
+    assert page["title"] == title + UNCONSTRAINED_NEAR
+    # the README bullet: the flagged title, then the range from the derived star's two ends
+    unred, col = star["unreddened"], star["extinction"]["column"]
+    assert [round(unred["teff"]["median"]), round(col["teff"]["median"])] == [3653, 4657]
+    assert [unred["radius"]["median"], col["radius"]["median"]] == [0.499, 0.54]
+    assert pack_module.bracket_span(data) == BRACKET_SPAN
+    # the scoped re-review (N3): the full-column star's stored flag (4,657 K, above 4,100 K) ends the span
+    assert col["outside_mann_range"] is True and col["teff"]["median"] > stars_module.MANN_TEFF_RANGE[1]
+    inside = {**data, "star": {**star, "extinction": {**star["extinction"], "column": {**col, "outside_mann_range": False}}}}
+    assert pack_module.bracket_span(inside) == BRACKET_SPAN.replace(", the full-column end beyond the Mann relations' range", "")
+    bullet = next(line for line in render_readme(data, {}).splitlines() if line.startswith(f"- {title}"))
+    assert bullet.startswith(f"- {title}{UNCONSTRAINED_NEAR}. The radius ratio comes from the light curve; ")
+    assert bullet.endswith(f" {BRACKET_SPAN}")
+    # the note keeps its title
+    assert pack_module.numbers(data)["caveat_text"].startswith(f"{title}. ")
+    # nothing changes where the map constrains the dust, or in the bracket state
+    for other in ({**data, "star": reliable}, _bracket_live(data)):
+        assert pack_module.bracket_span(other) is None
+        line = next(x for x in render_readme(other, {}).splitlines() if x.startswith(f"- {title}"))
+        assert UNCONSTRAINED_NEAR not in line and "the reddening bracket spans" not in line
+
+
+KEY_TIC = ("TRICERATOPS draws the target's Teff, radius and mass from the TIC (its own star list), so the dossier's "
+           "derived star does not enter the FPP.")
+
+
+def test_the_live_readme_key_names_the_tic_star_and_glosses_sfd98():
+    """Fix wave round 4, polish (a) and (b): TRICERATOPS takes the target star from the TIC, so the live README key
+    ends by saying the dossier's derived star does not enter the FPP, and the plain cross-check texts (the README's,
+    the ExoFOP note's and the archive email's after the headline, the page's in full) say the FPP rests on the TIC's
+    stellar parameters; the note is unchanged. Without a current cross-check neither is printed. The key glosses
+    SFD98 at its first use in the README."""
+    data = _live_shape("dominant", True, "adopted")
+    key = pack_module.reddening_key(data)
+    assert pack_module.KEY_TIC_STAR == KEY_TIC and key.endswith(f" {KEY_TIC}")
+    short = "The FPP rests on the TIC's stellar parameters."
+    assert cross_check.TIC_STAR == short
+    after, page = cross_check.comparison_sentence(data, after_headline=True), cross_check.comparison_sentence(data)
+    # the scoped re-review (N2): after the dominant sentence, so its "Its" refers to the FPP
+    dominant = cross_check.dominant_sentence(data["cross_check"])
+    assert dominant.startswith("Its full false-positive probability")
+    assert f"the nearby false-positive probability is 0.0020 (0.0020 to 0.0020). {dominant} {short} With the 6" in after
+    assert f"which do not apply at 30-minute cadence. {dominant} {short} With the 6" in page
+    assert f"{short} Its full" not in after and f"{short} Its full" not in page
+    readme = render_readme(data, {})
+    assert after in readme and key in readme
+    for name in ("exofop_note.txt.j2", "archive_email.txt.j2"):
+        assert short in " ".join(pack_module._render_plain(name, data, {}).split()), name
+    note = render_note(data)
+    assert "TIC's stellar" not in note and "own star list" not in note
+    stale = {**data, "cross_check": {**data["cross_check"], "current": False}}
+    assert KEY_TIC not in pack_module.reddening_key(stale) and not cross_check.is_current(stale)
+    # (b): SFD98 named with its authors where the README first prints it
+    gloss = "SFD98 (Schlegel, Finkbeiner and Davis 1998)"
+    assert readme.index("SFD98") == readme.index(gloss) and f"0.86 times {gloss}, so the comparison" in key
+
+
+def test_one_null_search_of_a_kind_is_singular():
+    """Fix wave round 4 (M1): "1 is scrambled", not "1 are scrambled", in either half of the sentence; one null
+    star in the sweep and one null search above the signal's SDE read the same way."""
+    golden = _golden()
+    fap = golden["fap"]
+    one_scrambled = "of the 38 that reached the signal's SDE, 37 are inverted and 1 is scrambled."
+    one_inverted = "of the 3 that reached the signal's SDE, 1 is inverted and 2 are scrambled."
+    for kinds, words in (({"inverted": 37, "scrambled": 1}, one_scrambled),
+                         ({"inverted": 1, "scrambled": 2}, one_inverted)):
+        text = pack_module.fap_method_text({**golden, "fap": {**fap, "k": sum(kinds.values()), "k_by_kind": kinds}})
+        assert text.endswith(words), text
+    one = pack_module.fap_method_text({**golden, "fap": {**fap, "k": 1, "k_by_kind": {"scrambled": 1}},
+                                       "calibration": {**golden["calibration"], "null_stars_in_sweep": 1}})
+    assert "(1 of them is in it)" in one
+    assert one.endswith("the 1 null search that reached the signal's SDE is a scrambled light curve.")
+    inverted = pack_module.fap_method_text({**golden, "fap": {**fap, "k": 1, "k_by_kind": {"inverted": 1}}})
+    assert inverted.endswith("the 1 null search that reached the signal's SDE is an inverted light curve, so "
+                             "systematics, not white noise, set the tail.")

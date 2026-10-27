@@ -84,6 +84,9 @@ CITATION = "(Giacalone et al. 2021)"
 NO_CLASS_CLAUSE = "in none of its validation classes, which do not apply at 30-minute cadence"
 # the Research Note's form (Task 13, the word limit; addendum cut 8); every other text keeps NO_CLASS_CLAUSE
 NO_CLASS_SHORT = "no validation class applies at 30-minute cadence"
+# fix wave round 4, polish (a): TRICERATOPS takes the target star from the TIC, so the plain texts say the FPP rests
+# on it (the README key gives the longer form, ``pack.KEY_TIC_STAR``; the note is unchanged)
+TIC_STAR = "The FPP rests on the TIC's stellar parameters."
 # the scenarios of the package's probability table in words, for the sentence on a dominant scenario
 SCENARIO_WORDS = {
     "TP": "a planet transiting the target", "EB": "an eclipsing binary on the target",
@@ -908,6 +911,11 @@ def _current(data: dict) -> dict | None:
     return block if complete(block) and block.get("current") is True else None
 
 
+def is_current(data: dict) -> bool:
+    """Whether the dossier carries a current cross-check of the present format (the texts print its numbers)."""
+    return _current(data) is not None
+
+
 def _variant(block: dict) -> dict | None:
     v = block.get("variant_excluded")
     return v if isinstance(v, dict) else None
@@ -1127,6 +1135,8 @@ def comparison_sentence(data: dict, tex: bool = False, after_headline: bool = Fa
                 f"{range_text(block, 'fpp_no_stp')} without STP, a scenario absent from SkySift's model); the nearby "
                 f"false-positive probability is {_p(block['nfpp'])} ({range_text(block, 'nfpp')}).")
         text += f" {dominant}" if dominant else ""
+        # fix wave round 4, polish (a); after the dominant sentence, so its "Its" keeps the FPP as antecedent (N2)
+        text += f" {TIC_STAR}"
         text += f" {excluded_text(block, True)}" if _variant(block) else ""
         own = own_evidence_sentence(data)
         text += f" {own}" if own else ""
@@ -1155,6 +1165,7 @@ def comparison_sentence(data: dict, tex: bool = False, after_headline: bool = Fa
             f"runs{left_out}, {NO_CLASS_CLAUSE}.")
     if dominant:
         rest += f" {dominant}"
+    rest += f" {TIC_STAR}"                    # fix wave round 4, polish (a) and N2: after the dominant sentence
     rest += f" {excluded_text(block, True)}" if _variant(block) else ""
     if tex:
         return Raw(tex_escape(head) + r"\citep{giacalone2021}" + tex_escape(rest))

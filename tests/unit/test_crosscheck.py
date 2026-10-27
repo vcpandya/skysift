@@ -464,7 +464,8 @@ def test_comparison_sentence_prints_both_fpps_with_their_ranges_and_no_class():
     # spec 11.2: no class on Giacalone et al.'s scale and no "different questions" tail; SkySift's own estimate is
     # the in-house sentence's, not this one's
     # spec 12.2: the variant with its ranges
-    assert (f"over 20 runs, {cc.NO_CLASS_CLAUSE}. With the one neighbour the difference images exclude removed "
+    # fix wave round 4, polish (a): the plain form says the FPP rests on the TIC's stellar parameters
+    assert (f"over 20 runs, {cc.NO_CLASS_CLAUSE}. {cc.TIC_STAR} With the one neighbour the difference images exclude removed "
             "(Gaia DR3 2073896190925687296 at 11.45 arcsec, smallest margin 12.7 sigma), 20 seeded runs give 0.0040 "
             "(16th to 84th percentile 0.0040 to 0.0040)") in text
     assert "the medians" not in text and "SkySift's own" not in text and "different questions" not in text

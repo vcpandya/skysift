@@ -1669,8 +1669,20 @@ def test_the_page_texts_carry_every_sentence_the_note_prints():
     assert texts["dilution"] == pack.dilution_sentence(golden) and texts["trend"] == pack.trend_sentence(golden)
     assert texts["fold"].startswith("Folded on the 40.29081 day linear-fit ephemeris, within ")
     assert texts["ephemeris"].startswith("Ephemeris: ") and texts["ephemeris"].endswith("; the star has G = 16.2.")
-    assert texts["cross_check"] is None                     # the golden's cross-check is not current
-    assert texts["excluded"] is None
+    # the golden's cross-check is current since its regeneration at 36024e3: the page carries the full TRICERATOPS
+    # sentence, and every number of the note's short form of it is in the page's
+    from skysift import crosscheck as cc
+    assert golden["cross_check"]["current"] is True
+    assert texts["cross_check"] is not None and texts["cross_check"] == cc.comparison_sentence(golden)
+    note = cc.comparison_sentence(golden, short=True)
+    numbers = re.findall(r"\d[\d,]*(?:\.\d+)?", note)
+    assert numbers and all(n in texts["cross_check"] for n in numbers), (numbers, texts["cross_check"])
+    assert texts["excluded"] == cc.dominant_excluded_sentence(golden)
+    # the stale path on a copy whose fingerprint no longer matches: no cross-check sentence, no excluded sentence
+    stale = {**golden, "cross_check": cc.with_current({**golden["cross_check"], "inputs_sha256": "0" * 64}, golden)}
+    assert stale["cross_check"]["current"] is False
+    stale_texts = page_texts(stale)
+    assert stale_texts["cross_check"] is None and stale_texts["excluded"] is None
 
 
 def test_the_page_texts_name_what_carries_the_pixel_excluded_weight():

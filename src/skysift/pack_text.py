@@ -90,12 +90,22 @@ def _pm_parts(value, minus=None, plus=None, nd: int = 2,
 
 def pm_text(value, minus=None, plus=None, *, nd: int = 2, comma: bool = False, tex: bool = False) -> str | None:
     """A value with its 1-sigma error: "40.28986 ± 0.00009", "4.16 +0.06/-0.05" when asymmetric, LaTeX
-    "4.16$^{+0.06}_{-0.05}$" (a ``Raw``) with ``tex``; the value alone without an error; None without a value."""
+    "4.16$^{+0.06}_{-0.05}$" (a ``Raw``) with ``tex``; the range form "0.011 (0.011 to 0.018)" when one side rounds
+    to zero at the printed precision (Task 17 fix round 2, N3); the value alone without an error; None without a
+    value."""
     parts = _pm_parts(value, minus, plus, nd, comma)
     if parts is None:
         return None
     mid, lo, hi = parts
-    if lo is None:
+    if lo is not None and (float(lo.replace(",", "")) == 0) != (float(hi.replace(",", "")) == 0):
+        # Task 17 fix round 2 (N3): one side rounds to zero at the printed precision (a lower percentile at the
+        # median, as KIC 6146676's E(B-V) has): "median (p16 to p84)", never "-0.000" or "+0.000"
+        d = len(mid.split(".")[1]) if "." in mid else 0
+        m = _num(value)
+        ends = [m - (_num(minus) or 0.0), m + (_num(plus) or 0.0)]
+        low, high = (f"{x:,.{d}f}" if comma else f"{x:.{d}f}" for x in ends)
+        text = f"{mid} ({low} to {high})"
+    elif lo is None:
         text = mid
     elif lo == hi:
         text = f"{mid} $\\pm$ {hi}" if tex else f"{mid} ± {hi}"

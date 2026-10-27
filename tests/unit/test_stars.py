@@ -445,6 +445,105 @@ def test_the_height_clause_comes_in_three_bands():
         assert got["height_pc"] == z and got["height_clause"] == words.format(z=z), z
 
 
+def test_the_adopted_3d_value_settles_the_height_clause_and_carries_the_mann_range_flag():
+    """Task 17 (spec 12.5): with a 3D value adopted the height clause stays, as it describes the geometry, and ends
+    with ``HEIGHT_SETTLED``; the adopted star's ``outside_mann_range`` is recorded in the block, as the column end's
+    is, so the texts can print the "indicative" clause when the dereddened star leaves the relations' range."""
+    gaia = gaia_row_6146676()
+    star = derive(gaia, 40.29109, 0.048, 2165e-6, np.random.default_rng(1), extinction={**EXT, "column": COLUMN})[0]
+    e = star.extinction
+    assert stars.HEIGHT_SETTLED == "the 3D value settles it"
+    assert e["height_clause"] == (f"the star sits about {e['height_pc']} pc above the plane, inside the dust layer, "
+                                  "so its true reddening lies well inside the range from unreddened to the full column; the 3D "
+                                  "value settles it")
+    assert e["outside_mann_range"] is False and star.route == "mann"
+    assert e["outside_mann_range"] == stars.outside_mann_range(star)
+    assert stars.MANN_TEFF_RANGE == (2700.0, 4100.0)
+    manual = derive(gaia, 40.29109, 0.048, 2165e-6, np.random.default_rng(1),
+                    extinction={**EXT, "status": "manual", "map": "by hand"})[0].extinction
+    assert manual["height_clause"].endswith("; the 3D value settles it")
+    bare = derive(gaia, 40.29109, 0.048, 2165e-6, np.random.default_rng(1), extinction=NOT_AVAILABLE)[0].extinction
+    assert not bare["height_clause"].endswith(stars.HEIGHT_SETTLED) and "outside_mann_range" not in bare
+    # fix wave round 4 (I2): the bracket state keeps "the bracket", which its texts define
+    assert bare["height_clause"].endswith("inside the bracket") and stars.HEIGHT_RANGE not in bare["height_clause"]
+
+
+def test_a_3d_value_outside_the_maps_reliable_range_does_not_settle_the_height_clause():
+    """Task 17 fix round 1 (C2, ruling 4): the height clause ends with ``HEIGHT_SETTLED`` only when the map
+    constrains the dust at the star's distance (``reliable_distance`` not False; a value stored by hand has no flag
+    and keeps it); otherwise it says the map does not constrain the dust this near (this far) on this sightline,
+    by the side of the stored range the star lies on (``range_side``, ``range_flag``)."""
+    gaia = gaia_row_6146676()
+    near = {**EXT, "reliable_distance": False, "reliable_distance_min_pc": 406, "reliable_distance_max_pc": 2512}
+    e = derive(gaia, 40.29109, 0.048, 2165e-6, np.random.default_rng(1), extinction={**near, "column": COLUMN})[0]
+    clause = e.extinction["height_clause"]
+    assert clause == (f"the star sits about {e.extinction['height_pc']} pc above the plane, inside the dust layer, "
+                      "so its true reddening lies well inside the range from unreddened to the full column; the map "
+                      "does not constrain the dust this near on this sightline")
+    assert stars.HEIGHT_SETTLED not in clause
+    far = {**EXT, "reliable_distance": False, "reliable_distance_min_pc": 100, "reliable_distance_max_pc": 251}
+    clause = derive(gaia, 40.29109, 0.048, 2165e-6, np.random.default_rng(1), extinction=far)[0].extinction[
+        "height_clause"]
+    assert clause.endswith("; the map does not constrain the dust this far on this sightline")
+    reliable = {**EXT, "reliable_distance": True, "reliable_distance_min_pc": 100, "reliable_distance_max_pc": 2512}
+    assert derive(gaia, 40.29109, 0.048, 2165e-6, np.random.default_rng(1), extinction=reliable)[0].extinction[
+        "height_clause"].endswith("; the 3D value settles it")
+    # the side and the words every text prints, from the stored range
+    assert stars.range_side(near) == ("nearer", 406) and stars.range_side(far) == ("beyond", 251)
+    assert stars.range_side(reliable) is None and stars.range_side(EXT) is None
+    assert stars.range_side({**EXT, "reliable_distance": False}) == ("outside", None)
+    assert stars.range_flag(near) == "nearer than the map's reliable range (from 406 pc)"
+    assert stars.range_flag(near, end=False) == "nearer than the map's reliable range"
+    assert stars.range_flag({**far, "reliable_distance_max_pc": 2512, "distance_pc": 3000.0}) == (
+        "beyond the map's reliable range (to 2,512 pc)")
+    assert stars.range_flag({**EXT, "reliable_distance": False}) == "outside the map's reliable range"
+    assert stars.range_flag(reliable) is None
+
+
+def test_the_adopted_height_clause_names_the_range_its_two_ends_span():
+    """Fix wave round 4 (I2): with a 3D value the texts carry no bracket, so the height clause of the adopted (or
+    stored by hand) state says the true reddening lies well inside the range from unreddened to the full column;
+    the bracket state, whose texts define the bracket, keeps "the bracket"."""
+    assert stars.HEIGHT_RANGE == "the range from unreddened to the full column"
+    assert stars.HEIGHT_BRACKET in stars.HEIGHT_INSIDE and stars.HEIGHT_BRACKET in stars.HEIGHT_UPPER
+    gaia = gaia_row_6146676()
+    for block in ({**EXT, "column": COLUMN}, {**EXT, "status": "manual", "map": "by hand"}):
+        clause = derive(gaia, 40.29109, 0.048, 2165e-6, np.random.default_rng(1), extinction=block)[0].extinction[
+            "height_clause"]
+        assert "so its true reddening lies well inside the range from unreddened to the full column; " in clause
+        assert stars.HEIGHT_BRACKET not in clause
+    bare = derive(gaia, 40.29109, 0.048, 2165e-6, np.random.default_rng(1), extinction=NOT_AVAILABLE)[0].extinction
+    assert bare["height_clause"].endswith("so its true reddening lies well inside the bracket")
+
+
+def test_the_adopted_mann_route_caveat_says_the_ks_radius_barely_depends_on_reddening():
+    """Fix wave round 4 (I3): on the Mann route the adopted star's reddening note ends as the unreddened one does,
+    "The Ks radius barely depends on reddening.". Re-derived from KIC 6146676's stored record on the golden's Gaia
+    row, the note is the golden's stored one (0dca504, written with the clause), the clause in it once, and the
+    stellar-radius caveat a rebuilt dossier stores carries it."""
+    import json
+    from pathlib import Path
+
+    from skysift import dossier
+    clause = " The Ks radius barely depends on reddening."
+    root = Path(__file__).resolve().parents[2]
+    golden = json.loads((root / "tests" / "golden" / "kic-006146676-generated.json").read_text(encoding="utf-8"))
+    *row, period, k = STORED_STARS["kic-006146676"]
+    block = stars.load_extinction("kic-006146676", root / "docs" / "candidates")
+    star = derive(_stored_row(*row), period, k, 0.002, np.random.default_rng(20261021), block)[0]
+    assert star.route == golden["star"]["route"] == "mann" and star.extinction["state"] == stars.EXT_ADOPTED
+    assert star.reddening_note == golden["star"]["reddening_note"]
+    assert star.reddening_note.endswith(clause) and star.reddening_note.count(clause.strip()) == 1
+    assert star.reddening_note.startswith("Teff and spectral type use the BP-RP 2.10 dereddened by the Bayestar19 ")
+    rebuilt = {**golden, "star": {**golden["star"], "reddening_note": star.reddening_note}}
+    text = next(c for c in dossier.caveats(rebuilt) if c.get("key") == "no_spectrum")["text"]
+    assert text.endswith(f"would be 0.569 Rsun.{clause}")
+    # off the Mann route the clause stays out
+    hot = replace(gaia_row_6146676(), bp_rp=0.82, parallax=10.0)
+    warm = derive(hot, 10.0, 0.05, 1000e-6, np.random.default_rng(1), extinction={**EXT, "column": COLUMN})[0]
+    assert warm.route == "mamajek" and clause.strip() not in warm.reddening_note
+
+
 def _with_column(ebv: float, std: float) -> dict:
     return {**NOT_AVAILABLE, "column": {**COLUMN, "ebv": ebv, "ebv_std": std}}
 

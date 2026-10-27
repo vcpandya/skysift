@@ -64,6 +64,7 @@
 | `tests/golden/regenerate.py` (new, round 2) | Task 10: rewrites the golden from a copy of the live store. No test imports it, since it reaches Gaia. |
 | `tools/triceratops_check.py`, `src/skysift/crosscheck.py`, `tools/leakage_note.py` (new) (round 3) | Tasks 14 and 15: the Kepler-pixel overlap shares under the budget cap, `rung5_psf_sigma`, `pixel_excluded`, the second run set with `remove_star`, export and result schema 3, the four numbers in every text. |
 | `src/skysift/stars.py`, `tools/extinction.py` (new), `docs/candidates/<target>/extinction.json` (new) (round 3) | Task 16: the Bayestar19 E(B-V) read from the map file under `.venv-triceratops`, stored per target, converted with the Gaia (E)DR3 law and propagated through the draws; `DOSSIER_VERSION = "6"` and `PACK_VERSION = "5"` from Task 15. |
+| `tools/bayestar_map.py` (new), `tools/extinction.py`, `src/skysift/stars.py`, `pack.py`, `pack_rows.py` (round 4 preparation) | Task 17: the Bayestar19 map read from a local file without healpy (under `.venv-dustmaps`), the tool's `--map` path, the adopted 3D reddening in every text with the full column as a check. |
 
 ---
 
@@ -3215,3 +3216,91 @@ The live run of spec 12.4 follows these three tasks, once the controller has rea
 5. Import the four results.
 6. Run `tools/leakage_note.py --after` on the KIC 6146676 result, so the note gains the NFPP after.
 7. Regenerate the dossiers, rebuild both packs and run the full gate on the tip. The parent merges on the report.
+
+---
+
+## Round 4 preparation (spec 12.5, after Vikram approved the map download)
+
+### Task 17: Bayestar19 from a local map file, adopted (spec 12.5)
+
+The map file `bayestar2019.h5` is downloaded by the controller, not by this task, into a folder outside the repository, with a sidecar `<file>.md5` holding the MD5 it verified against the Dataverse record. This task makes the map usable the moment the file is there: a reader that needs no `healpy`, the tool's local-map path, and the adopted state in every text. The live records stay "not available" until the controller runs the tool, so the golden does not change here.
+
+**The map's layout, verified on 26 October 2026 against `dustmaps/bayestar.py` (GitHub master, read as text; nothing installed from it):**
+- `/pixel_info`: a structured dataset, one row per pixel, sorted by (`nside`, `healpix_index`), with the fields `nside`, `healpix_index` (nested ordering), `DM_reliable_min`, `DM_reliable_max` and `converged`. `BayestarQuery.__init__` reads `f['/pixel_info'][:]` and `f['/pixel_info'].attrs['DM_bin_edges']`.
+- The distance grid is the attribute `DM_bin_edges` of `/pixel_info`, not a dataset. For bayestar2019, dustmaps' `REPACKED_DSETS` gives `samples` (4,214,070, 5, 120), `best_fit` (4,214,070, 120) and `pixel_info` (4,214,070,): 120 distance moduli and 5 samples. The 31-bin grid of 4.0 to 19.0 in 0.5 steps belongs to bayestar2015 and bayestar2017. The reader takes the edges from the file, never from a constant.
+- `/GRDiagnostic` is absent from bayestar2019 ("not every version of the map has it", `h5_repack`), and dustmaps never reads it. The convergence flag is `pixel_info['converged']`, as `query(..., return_flags=True)` returns it. No Gelman-Rubin threshold is applied.
+- The pixel search (`_find_data_idx`) tries every nside level, ascending, and a match at a finer level overwrites a coarser one. Searching from the largest nside down and taking the first match gives the same row.
+- `query` with a distance: dm = 5 (log10(d_kpc) + 2); the ceiling bin is `searchsorted(DM_bin_edges, dm)`. At bin 0 it returns 10^(0.2 (dm - DM_bin_edges[0])) times the first bin, which is linear in distance, not in DM. Beyond the last edge it returns the last bin. Otherwise it interpolates linearly in DM between the two edges. The percentile mode is `np.nanpercentile` over the samples. The reliable-distance flag is DM_reliable_min <= dm <= DM_reliable_max, with both finite.
+
+**Files:**
+- Create: `tools/bayestar_map.py`, the reader. numpy loads at import, astropy inside `galactic`, `astropy_healpix` inside `pixel_index`, and `h5py` inside `main`, so the engine venv imports it too. It runs as `C:\Research\skysift\.venv-dustmaps\Scripts\python.exe -I tools/bayestar_map.py --map <file> --ra <deg> --dec <deg> --distance <pc> [<pc> ...]` and prints its queries as JSON.
+- Create: the third venv `C:\Research\skysift\.venv-dustmaps` (`uv venv ... --python 3.12`; `uv pip install --native-tls -p ... h5py astropy astropy-healpix numpy`, plus pytest for the reader's tests). `.venv` and `.venv-triceratops` stay as they are.
+- Modify: `tools/extinction.py`.
+  - `--map <path>` (or `SKYSIFT_BAYESTAR_MAP`) reads the local file first, in-process when `h5py` and `astropy_healpix` import, otherwise through the reader under `.venv-dustmaps` (`SKYSIFT_DUSTMAPS_PYTHON`, or the first `.venv-dustmaps` above the tool).
+  - Argonaut is attempted only without a map path.
+  - IRSA stays as the column check: a stored column is kept, and one GET is made only when none is stored.
+  - A stored record without a 3D value is read again when a map is given; a stored 3D value needs `--force`.
+- Modify: `src/skysift/stars.py`. In the adopted state, `derive` records `outside_mann_range` for the adopted star, and the height clause gains "; the 3D value settles it" where the map constrains the dust at the star's distance, else "; the map does not constrain the dust this near (this far) on this sightline" (fix round 1, ruling 4).
+- Modify: `src/skysift/pack.py`, `src/skysift/pack_rows.py`. The adopted state's note sentence, plain paragraph, README table and key, and provenance rows follow the ruling below.
+- Not modified: `ui/explain.py`, `dossier.js` and `dossier.html` print no reddening wording of their own (the page prints `pack.star_texts`), and `pack_text.py` needs nothing.
+- Test: `tests/unit/test_bayestar_map.py` (new; a synthetic map written with h5py, run under `.venv-dustmaps` with `--noconftest`; the h5py and HEALPix tests skip under `.venv`), `test_extinction.py`, `test_stars.py`, `test_pack.py`, `test_ui_dossiers.py`. No test opens the real map or the network.
+
+**Interfaces:**
+- Consumes:
+  - The stored dossier's `target.ra`, `target.dec`, and `star.distance_pc` (`median`, `minus`, `plus`).
+  - `stars.derive`'s adopted path (Task 16), `stars.outside_mann_range`, `stars.height_fields`.
+  - `pack.value_text`, `pack_text.pm_digits`, and Task 16's `reddening_*` functions.
+- Produces:
+```python
+# tools/bayestar_map.py
+MAP_VERSION = "bayestar2019"
+MAP_DOI = "10.7910/DVN/2EJ9TX"
+MAP_MD5 = "ab815d2fd3068d1b81a1bd61fb18a722"     # the Dataverse record's
+BAYESTAR_TO_EBV = 0.884                           # E(B-V) = 0.884 x the map's units (Green et al. 2019)
+PIXEL_FIELDS = ("nside", "healpix_index", "converged", "DM_reliable_min", "DM_reliable_max")
+class MapLayoutError(ValueError): ...             # a required dataset, field or attribute is missing
+def galactic(ra_deg, dec_deg) -> tuple[float, float]           # astropy ICRS to Galactic (l, b), degrees
+def pixel_index(l_deg, b_deg, pixel_info) -> int | None
+    # the row whose (nside, healpix_index) holds (l, b), trying each nside present from the largest down
+    # (astropy_healpix.HEALPix(nside, order="nested").lonlat_to_healpix); None outside the footprint
+def distance_modulus(distance_pc) -> float                     # 5 log10(d / 10 pc)
+def reddening_at(samples_row, dm_grid, distance_pc) -> np.ndarray
+    # one value per sample, by dustmaps' rules above (linear in DM inside the grid, scaled by the distance ratio
+    # below it, the last bin beyond it)
+def check_layout(h5) -> None                                   # MapLayoutError naming the first missing name
+def query_many(h5, ra_deg, dec_deg, distances_pc) -> list[dict]
+def query(h5, ra_deg, dec_deg, distance_pc) -> dict
+    # {"l_deg", "b_deg", "distance_pc", "dm", "in_footprint", "row", "nside", "healpix_index", "converged",
+    #  "reliable_distance", "n_samples", "ebv_map_units": {"median", "p16", "p84"}, "ebv": the same x 0.884};
+    # outside the footprint in_footprint False and the rest None; no finite sample gives n_samples 0 and None values
+def main(argv=None) -> int                                     # 0 the JSON list on stdout; 2 a missing file or name
+
+# tools/extinction.py
+MAP_ENV, MAP_PYTHON_ENV = "SKYSIFT_BAYESTAR_MAP", "SKYSIFT_DUSTMAPS_PYTHON"
+MAP_SOURCE = "Bayestar19 (Green et al. 2019), local file"
+MAP_LABEL = "bayestar2019 (doi:10.7910/DVN/2EJ9TX), local file"
+MAP_FAILED = "Bayestar19 (Green et al. 2019) not available: {why}"
+class MapError(ValueError): ...
+def sidecar_md5(path) -> str            # <file>.md5's 32-hex digest, "unverified" without the file; MapError otherwise
+def dustmaps_python() -> Path           # SKYSIFT_DUSTMAPS_PYTHON, else the first .venv-dustmaps above the tool
+def read_map(path, ra_deg, dec_deg, distances_pc, *, run=None) -> list[dict]
+def map_block(target, queries, *, distance, map_path, md5, queried_utc) -> dict
+    # adopted: {"target", "status": "adopted", "ebv", "ebv_p16", "ebv_p84" (the samples at the median distance,
+    #  E(B-V), 4 decimals), "ebv_map_units", "ebv_at_distance_p16", "ebv_at_distance_p84" (sample medians at the
+    #  distance's percentiles), "source": MAP_SOURCE, "map": MAP_LABEL, "map_file" (the file's name),
+    #  "map_md5", "map_version", "queried_utc", "distance_pc", "distance_pc_p16", "distance_pc_p84", "l_deg",
+    #  "b_deg", "nside", "healpix_index", "n_samples", "converged": True, "reliable_distance"};
+    # outside the footprint, an unconverged pixel or no finite sample: {"status": "not available", "reason":
+    #  MAP_FAILED with the why, "map_reason": the why, the map's file, md5 and version, ...}
+```
+
+**The adopted state in the texts (the controller's ruling):**
+- The note's star sentence becomes "The reddening is E(B-V) = <value> (<p16> to <p84>) from Bayestar19 \citep{green2019} at <d> pc (full column <value> \citep{schlafly2011}, an upper bound)", the value and its range at three decimals as the README prints them (fix round 1, ruling 2); for a star outside the map's reliable range, "at <d> pc, nearer than the map's reliable range (from <N> pc; full column ...)" (or "beyond ... (to <N> pc; ..."). The plain texts and the README say whether the 3D value is consistent with the column: "consistent" means the 3D median is at or below the column's E(B-V) plus its std, and "inconsistent" otherwise. When the adopted star leaves the Mann range, "; the dereddened parameters are outside the Mann relations' range, so indicative" follows. The planet sentence prints the adopted radius with its error, with no bracket.
+- In the plain paragraph and the README, each parameter reads "<adopted> (unreddened <value>; full column <value>)". The distance check prints when the record has it: "E(B-V) a to b at the distance's 16th and 84th percentiles". The paragraph also says "unreddened (E(B-V) = 0) is the earlier assumption", and the full column is "an upper bound, consistent (inconsistent) with the 3D value". The height clause stays and ends "; the 3D value settles it" (or, outside the map's reliable range, "; the map does not constrain the dust this near on this sightline"). GSP-Phot is printed as not adopted.
+- The README table keeps four rows. The statuses are "adopted" (with the Mann clause when flagged), "the earlier assumption, not adopted", "upper bound, consistent (inconsistent) with the 3D value", and "not adopted".
+- The provenance's E(B-V) row names the map version, MD5, file and pixel. The fingerprint is unchanged: it hashes the adopted E(B-V) and the full column's E(B-V) and std (`extinction_ebv`, `column_ebv`, `column_ebv_std`).
+- The live shape is measured in both states: the golden's bracket and the same golden with an adopted block. Each stays at or under 1,480 words, and each abstract at or under 148.
+
+**Commits:** `docs(spec): 12.5, Bayestar19 from a local map file`; `feat(extinction): a Bayestar19 map reader without healpy, the tool's --map path, the adopted value's provenance`; `feat(stars): the adopted 3D reddening in every text, the full column as a check, the unreddened values as the earlier assumption` (with the live-shape counts). No golden change.
+
+**After this task (the controller):** download the map with Vikram's yes and write its sidecar MD5. Then run `PYTHONUTF8=1 PYTHONPATH=src C:\Research\skysift\.venv\Scripts\python.exe -m tools.extinction --all --data-dir C:\Research\skysift\.superpowers\sample-run --root docs/candidates --map <file>`, which keeps the stored columns and makes no IRSA call. Then regenerate the dossiers and the golden, and rebuild the packs.
