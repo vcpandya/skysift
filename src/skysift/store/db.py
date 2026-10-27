@@ -290,6 +290,29 @@ class DossierRow(Base):
 DOSSIER_FIELDS = tuple(c.name for c in DossierRow.__table__.columns)
 
 
+class FurtherDossierRow(Base):
+    """A further dossier (two-candidate note spec 3.2): the dossier of a target's second stage 2 signal, beside the
+    target's own; its ``cross_check`` is stored only by ``skysift crosscheck --import --signal``."""
+    __tablename__ = "further_dossiers"
+    signal_id: Mapped[int] = mapped_column(ForeignKey("signals.id"), primary_key=True)
+    target_id: Mapped[str] = mapped_column(String(64), index=True)
+    generated: Mapped[datetime] = mapped_column(DateTime)
+    data_path: Mapped[str] = mapped_column(Text)
+    search_version: Mapped[str] = mapped_column(String(32))
+    ladder_version: Mapped[str | None] = mapped_column(String(16))
+    dossier_version: Mapped[str] = mapped_column(String(16))
+    fap: Mapped[float | None] = mapped_column(Float)
+    fpp: Mapped[float | None] = mapped_column(Float)
+    fap_detail: Mapped[dict] = mapped_column(JSON, default=dict)      # counts and versions
+    fpp_detail: Mapped[dict] = mapped_column(JSON, default=dict)      # the factor table
+    tests_fingerprint: Mapped[str] = mapped_column(String(64))
+    status_at_generation: Mapped[str] = mapped_column(String(16))
+    cross_check: Mapped[dict | None] = mapped_column(JSON)         # crosscheck.import_result's block, or None
+
+
+FURTHER_FIELDS = tuple(c.name for c in FurtherDossierRow.__table__.columns)
+
+
 class Store:
     def __init__(self, database_url: str):
         if database_url.startswith("sqlite"):
@@ -804,6 +827,57 @@ class Store:
             if row is None:
                 raise KeyError(target_id)
             row.pack_steps = dict(steps)
+
+    def upsert_further_dossier(self, **fields) -> None:
+        """Insert or update the further dossier row of ``fields["signal_id"]``. Columns left out keep their value (a
+        new row takes the column defaults). Raises TypeError on a name that is not a column."""
+        unknown = sorted(set(fields) - set(FURTHER_FIELDS))
+        if unknown:
+            raise TypeError(f"not a further_dossiers column: {', '.join(unknown)}")
+        with self.session() as s:
+            row = s.get(FurtherDossierRow, fields["signal_id"])
+            if row is None:
+                s.add(FurtherDossierRow(**fields))
+                return
+            for key, value in fields.items():
+                setattr(row, key, value)
+
+    @staticmethod
+    def _further_dict(row: FurtherDossierRow) -> dict:
+        return {name: getattr(row, name) for name in FURTHER_FIELDS}
+
+    def further_dossier(self, signal_id: int) -> dict | None:
+        with self.session() as s:
+            row = s.get(FurtherDossierRow, signal_id)
+            return None if row is None else self._further_dict(row)
+
+    def further_dossiers(self, target_id: str) -> list[dict]:
+        """Every further dossier row of the target by signal period, with its signal's ``period`` and
+        ``final_status``, the latest reviewer ``decision`` on that signal (None when nobody has decided) and the
+        ``candidate_status`` of its candidate row (None without one)."""
+        newest = (select(DecisionRow.signal_id, func.max(DecisionRow.id).label("id"))
+                  .group_by(DecisionRow.signal_id).subquery())
+        q = (select(FurtherDossierRow, SignalRow.period, SignalRow.final_status, DecisionRow.decision,
+                    CandidateRow.status)
+             .join(SignalRow, SignalRow.id == FurtherDossierRow.signal_id)
+             .outerjoin(newest, newest.c.signal_id == FurtherDossierRow.signal_id)
+             .outerjoin(DecisionRow, DecisionRow.id == newest.c.id)
+             .outerjoin(CandidateRow, CandidateRow.signal_id == FurtherDossierRow.signal_id)
+             .where(FurtherDossierRow.target_id == target_id)
+             .order_by(SignalRow.period, FurtherDossierRow.signal_id))
+        with self.session() as s:
+            return [{**self._further_dict(row), "period": period, "final_status": status, "decision": decision,
+                     "candidate_status": candidate_status}
+                    for row, period, status, decision, candidate_status in s.execute(q)]
+
+    def set_further_cross_check(self, signal_id: int, block: dict | None) -> None:
+        """Store the cross-check block on the signal's further dossier row (None clears it). Raises KeyError without
+        a row."""
+        with self.session() as s:
+            row = s.get(FurtherDossierRow, signal_id)
+            if row is None:
+                raise KeyError(signal_id)
+            row.cross_check = None if block is None else dict(block)
 
     def counts(self) -> dict:
         with self.session() as s:

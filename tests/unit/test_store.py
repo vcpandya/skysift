@@ -450,6 +450,58 @@ def test_cross_check_is_set_apart_and_kept_by_a_dossier_update(store_with_signal
         store.set_cross_check("kic-9", block)
 
 
+def test_further_dossier_rows_round_trip_by_signal(store_with_signals):
+    from datetime import datetime
+    store, ids = store_with_signals
+    fields = {"target_id": "kic-4", "generated": datetime(2026, 10, 27), "data_path": "d/s9/dossier_data.json",
+              "search_version": "1+abc", "ladder_version": "4", "dossier_version": "6", "fap": 0.01, "fpp": 0.03,
+              "tests_fingerprint": "f" * 64, "status_at_generation": "candidate_stage2"}
+    store.upsert_further_dossier(signal_id=ids["approved"], **fields)
+    row = store.further_dossier(ids["approved"])
+    assert row["data_path"] == "d/s9/dossier_data.json" and row["cross_check"] is None
+    assert row["fap_detail"] == {} and row["fpp_detail"] == {}
+    store.upsert_further_dossier(signal_id=ids["approved"], fpp=0.04)        # a partial update keeps the rest
+    assert store.further_dossier(ids["approved"])["fap"] == 0.01
+    store.set_further_cross_check(ids["approved"], {"fpp": 0.2})
+    assert store.further_dossier(ids["approved"])["cross_check"] == {"fpp": 0.2}
+    store.upsert_further_dossier(signal_id=ids["approved"], fpp=0.05)        # a regeneration keeps the block
+    assert store.further_dossier(ids["approved"])["cross_check"] == {"fpp": 0.2}
+    store.set_further_cross_check(ids["approved"], None)
+    assert store.further_dossier(ids["approved"])["cross_check"] is None
+    assert store.further_dossier(10**6) is None
+    with pytest.raises(KeyError):
+        store.set_further_cross_check(10**6, None)
+    with pytest.raises(TypeError):
+        store.upsert_further_dossier(signal_id=ids["approved"], colour="red")
+
+
+def test_further_dossiers_of_a_target_join_the_signal_in_period_order(store_with_signals):
+    from datetime import datetime
+    store, ids = store_with_signals
+    # kic-4 has the fixture's approved signal (period 3.0) and a second, shorter one (period 1.5) with no decision
+    with store.session() as s:
+        run_id = s.get(SignalRow, ids["approved"]).run_id
+    second = store.add_signal(Signal(target_id="kic-4", detector="box_dip", detector_version=VERSION, period=1.5,
+                                     t0=1.0, duration=0.1, depth_ppm=500, snr=9, sde=8, n_events=18), run_id)
+    fields = {"generated": datetime(2026, 10, 27), "data_path": "d/dossier_data.json", "search_version": VERSION,
+              "ladder_version": "4", "dossier_version": "6", "fap": None, "fpp": 0.03,
+              "tests_fingerprint": "f" * 64, "status_at_generation": "candidate_stage2"}
+    assert store.further_dossiers("kic-4") == []
+    store.upsert_further_dossier(signal_id=ids["approved"], target_id="kic-4", **fields)     # the longer period first
+    store.upsert_further_dossier(signal_id=second, target_id="kic-4", **fields)
+    store.upsert_further_dossier(signal_id=ids["candidate"], target_id="kic-1", **fields)
+    rows = store.further_dossiers("kic-4")
+    assert [r["signal_id"] for r in rows] == [second, ids["approved"]]
+    assert [r["period"] for r in rows] == [1.5, 3.0]
+    assert [r["final_status"] for r in rows] == ["pending", "candidate_stage1"]
+    assert [r["decision"] for r in rows] == [None, "approve"]
+    assert [r["candidate_status"] for r in rows] == [None, "approved"]
+    store.decide(ids["approved"], "needs_data", "deeper pixels")                  # the latest decision is the one shown
+    assert store.further_dossiers("kic-4")[1]["decision"] == "needs_data"
+    assert [r["signal_id"] for r in store.further_dossiers("kic-1")] == [ids["candidate"]]
+    assert store.further_dossiers("kic-9") == []
+
+
 def test_kept_artifacts_name_the_latest_undeleted_file_per_url(tmp_path):
     s = make_store(tmp_path)
     base = "https://archive.stsci.edu/missions/kepler/target_pixel_files/0061/006146666/"
