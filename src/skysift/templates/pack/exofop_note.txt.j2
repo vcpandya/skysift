@@ -1,12 +1,53 @@
 {# The text for the description of the ExoFOP upload (pack README, step 2). Plain text, one block per topic. A blank
-   line after a closing tag is written as {{ "" }} so trim_blocks keeps it. #}
+   line after a closing tag is written as {{ "" }} so trim_blocks keeps it. With a second candidate (two is its
+   numbers, cands holds both) each candidate has its own ephemeris, planet, pixel and probability paragraphs and the
+   rest is printed once; without one the text is the single candidate's. #}
 {% if not f.approved %}
 NOT YET APPROVED BY A REVIEWER: do not upload this before the approval.
 
 {% endif %}
-SkySift {% if n.prior_plain %}vetting of the {% endif %}transit candidate on {{ n.name }}{% if n.gaia_id %} = Gaia DR3 {{ n.gaia_id }}{% endif %}{% if f.tic %} = TIC {{ f.tic }}{% endif %}{{ "" }}
+SkySift {% if any_prior %}vetting of the {% endif %}transit candidate{{ "s" if two else "" }} on {{ n.name }}{% if n.gaia_id %} = Gaia DR3 {{ n.gaia_id }}{% endif %}{% if f.tic %} = TIC {{ f.tic }}{% endif %}{{ "" }}
 
 Found in the KBonus Kepler Background light curve (Martinez-Palomera, Hedges and Dotson 2023, AJ 166, 265; data doi:10.17909/7jbr-w430); Kepler recorded this star only in other targets' pixels.
+{% if two %}
+{% for c in cands %}
+{% if c.prior_plain %}
+
+Prior claim, {{ c.name_label }}: {{ c.prior_plain }}{{ (" " ~ c.comparison_plain) if c.comparison_plain else "" }}
+{% endif %}
+{% endfor %}
+{% for c in cands %}
+
+Ephemeris, {{ c.period_label }} candidate: {{ c.ephemeris_text }}; {{ c.n_events }} transits, SDE {{ c.sde }}, S/N {{ c.snr }}.{% if c.timed %} {{ c.n_used }} of {{ c.n_measured }} timed transits fit the linear ephemeris with an rms of {{ c.rms_min }} min.{% else %} Allow at least one duration either side of a predicted time.{% endif %} Found by SkySift (search version {{ c.search_version }}, commit {{ c.commit }}).
+{% if c.rp_text %}
+Planet, {{ c.period_label }} candidate: radius {{ c.rp_text }} Earth radii on a {{ c.a_text }} AU orbit{% if c.teq_text %}, Teq {{ c.teq_text }} K{% endif %}; host {{ c.host_text }}.
+{% endif %}
+{% endfor %}
+{% if n.reddening_plain %}
+{{ n.reddening_plain }}
+{% endif %}
+{% for c in cands %}
+{% if c.trend_plain %}
+{{ c.period_label }} candidate: {{ c.trend_plain }}
+{% endif %}
+{% endfor %}
+{% for c in cands %}
+
+Pixels, {{ c.period_label }} candidate: {{ c.pixel_plain }}{{ (" " ~ c.dilution_text) if c.dilution_text else "" }}
+{% endfor %}
+{% for c in cands %}
+
+For the {{ c.period_label }} candidate:
+{{ c.fap_text }}
+{{ c.fpp_text }}
+{% if c.cross_check_after %}
+{{ c.cross_check_after }}
+{% endif %}
+{% if c.tess_exofop %}
+{{ c.period_label }} candidate, {{ c.tess_exofop }}
+{% endif %}
+{% endfor %}
+{% else %}
 {% if n.prior_plain %}
 
 Prior claim: {{ n.prior_plain }}{{ (" " ~ n.comparison_plain) if n.comparison_plain else "" }}
@@ -33,7 +74,8 @@ Pixels: {{ n.pixel_plain }}{{ (" " ~ n.dilution_text) if n.dilution_text else ""
 {% if n.tess_exofop %}
 {{ n.tess_exofop }}
 {% endif %}
+{% endif %}
 
-Files: the detrended light curve (CSV: time BKJD, relative flux and error in ppm, quarter), the ephemeris and parameters with errors (CSV), {% if f.exofop_stellar %}the stellar parameters in ExoFOP's template{% else %}no stellar parameter file (the star could not be characterised from Gaia photometry){% endif %}, the folded, odd and even, periodogram{% if f.pixels_figure %} and centroid{% endif %} figures, and the standalone dossier (HTML, all vetting numbers).
+Files: the detrended light curve (CSV: time BKJD, relative flux and error in ppm, quarter), the ephemeris and parameters with errors (CSV), {% if f.exofop_stellar %}the stellar parameters in ExoFOP's template{% else %}no stellar parameter file (the star could not be characterised from Gaia photometry){% endif %}, the folded, odd and even, periodogram{% if f.pixels_figure %} and centroid{% endif %} figures, and the standalone dossier (HTML, all vetting numbers).{% if two %} The second candidate's copies carry -02 after the content (the folded transit of that candidate is the one named fold-02).{% endif %}{{ "" }}
 
-Frozen record: doi:{{ f.doi_shown }}. This is a candidate until follow-up confirms it.
+Frozen record: doi:{{ f.doi_shown }}. {{ "These are candidates until follow-up confirms them." if two else "This is a candidate until follow-up confirms it." }}

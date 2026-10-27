@@ -227,7 +227,7 @@ def test_provenance_hashes_every_file_and_names_the_versions(env_with_dossier):
         data = (rep.out_dir / name).read_bytes()
         assert h == {"sha256": hashlib.sha256(data).hexdigest(), "nbytes": len(data)}
     versions = json.loads((rep.out_dir / "provenance" / "versions.json").read_text(encoding="utf-8"))
-    assert PACK_VERSION == "5"
+    assert PACK_VERSION == "6"
     assert versions["pack_version"] == PACK_VERSION and versions["search_version"] == env.data["signal"][
         "detector_version"]
     assert versions["ladder_version"] == env.data["provenance"]["ladder_version"] and versions["git_commit"]

@@ -8,7 +8,7 @@ from skysift.pack_rows import logg_value, provenance_rows, star_characterized
 from skysift.pack_text import RELATIONSHIP_WORDS, _bjd, _errors, _num, _pm_parts, prior_claims
 
 # ExoFOP's bulk templates (ExoFOP help, read 22 October 2026), pipe-delimited, one row per target
-EXOFOP_PLANET_TEMPLATE = "params_planet_{date}_001.txt"
+EXOFOP_PLANET_TEMPLATE = "params_planet_{date}_{ordinal:03d}.txt"
 EXOFOP_STELLAR_TEMPLATE = "params_stellar_{date}_001.txt"
 # (the referee checklist, section 4: the column lists of the live template files, 22 October 2026)
 EXOFOP_PLANET_COLUMNS = ("target", "flag", "disp", "discovery", "candname", "period", "period_unc", "epoch",
@@ -24,6 +24,12 @@ EXOFOP_STELLAR_COLUMNS = ("target", "tel", "telsize", "inst", "sp_type", "teff",
                           "dist_unc", "age", "age_unc", "snr", "fit", "tag", "group", "prop_period", "notes")
 EXOFOP_DISCOVERY = "SkySift (Kepler)"      # a blank discovery means TESS, so a Kepler candidate names its project
 EXOFOP_NOTES_MAX = 120
+
+
+def planet_file_name(date: str, ordinal: int = 1) -> str:
+    """The planet file of the ``ordinal``-th candidate of a pack: ``params_planet_<date>_001.txt`` for the first,
+    ``_002`` for the second (ExoFOP's target ``TIC<tic>.01`` and ``.02``)."""
+    return EXOFOP_PLANET_TEMPLATE.format(date=date, ordinal=ordinal)
 
 
 def discovery(data: dict) -> str:
@@ -102,9 +108,10 @@ def prior_fields(data: dict) -> dict:
     return {"paper": f"https://doi.org/{doi}", "notes": note[:EXOFOP_NOTES_MAX]}
 
 
-def render_exofop_planet(data: dict, date: str, tic: str | None, tag: str) -> str:
+def render_exofop_planet(data: dict, date: str, tic: str | None, tag: str, ordinal: int = 1) -> str:
     """``exofop/params_planet_<date>_001.txt``, ExoFOP's planet template (``EXOFOP_PLANET_COLUMNS``): the target
-    ``TIC<tic>.01`` (``TIC<TIC-TO-FILL>.01`` without a TIC id), flag ``newctoi`` with its discovery and candidate
+    ``TIC<tic>.01`` (``TIC<TIC-TO-FILL>.01`` without a TIC id; ``.02`` and file ``_002`` for the second candidate of
+    a pack, ``ordinal`` 2), flag ``newctoi`` with its discovery and candidate
     name, disposition ``PC``, the ephemeris with its errors (epoch in full BJD_TDB: the reference epoch at the centre
     of the series when the timing fit is ok, spec 11.6), Rp/R*, a/R* and b only when the
     bootstrap gives them errors (a/R* the quoted one: from the stellar parameters, with their errors, when the
@@ -121,7 +128,7 @@ def render_exofop_planet(data: dict, date: str, tic: str | None, tag: str) -> st
              else _plain(_bjd(eph, "t0"), e["t0"], e["t0"], 4))
     depth = _plain(eph.get("depth_ppm"), e["depth"], e["depth"], 0)
     duration = _plain(eph.get("duration_h"), e["duration_minus"], e["duration_plus"], 2)
-    values = {"target": f"TIC{tic or TIC_PLACEHOLDER}.01", "flag": "newctoi", "disp": "PC",
+    values = {"target": f"TIC{tic or TIC_PLACEHOLDER}.{ordinal:02d}", "flag": "newctoi", "disp": "PC",
               "discovery": discovery(data), "candname": _candname(data),
               "period": period[0], "period_unc": period[1], "epoch": epoch[0], "epoch_unc": epoch[1],
               "depth": depth[0], "depth_unc": depth[1], "duration": duration[0], "duration_unc": duration[1],

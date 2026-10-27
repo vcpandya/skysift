@@ -241,3 +241,27 @@ def test_the_description_carries_the_reddening_paragraph_after_the_ephemeris():
     assert paragraphs[where - 1].removeprefix("<p>").startswith("Ephemeris: ")
     assert zenodo._html(plain) in paragraphs[where]
     assert "Reddening:" not in metadata_from(DATA, None)["description"]
+
+
+def test_metadata_for_two_candidates_names_both_and_leaves_one_unchanged():
+    from skysift import pack, pack_two
+    from tests.unit.test_two_candidates import two_live
+    a, b = two_live(prior=False)
+    assert metadata_from(a, None, others=None) == metadata_from(a, None) == metadata_from(a, None, others=[])
+    m = metadata_from(a, None, others=[b])
+    pa, pb = (f"{d['ephemeris']['period_days']:.3f}" for d in (a, b))
+    assert m["title"] == f"SkySift candidates KIC 6146676: {pa} and {pb} d transit signals in Kepler photometry"
+    text = m["description"]
+    assert text.count("Ephemeris, ") == 2 and f"Ephemeris, {pa} d candidate: " in text
+    assert f"Ephemeris, {pb} d candidate: " in text
+    assert pack_two.summary([a, b]) in text
+    for d in (a, b):
+        fap, fpp = zenodo.probability_sentences(d)
+        assert fap in text and fpp in text
+    assert "two transit candidates" in text and pack_two.VETTED_SINGLY in text
+    assert chr(0x2014) not in str(m) and "discover" not in str(m).lower()
+    a2, b2 = two_live(prior=True)
+    claimed = metadata_from(a2, None, prior=pack.zenodo_prior(a2), others=[b2])
+    assert claimed["title"] == "SkySift vetting of two transit candidates on KIC 6146676"
+    assert "submission pack of two transit candidates vetted by the SkySift engine" in claimed["description"]
+    assert "Prior claim, " in claimed["description"] and "found by" not in claimed["description"]

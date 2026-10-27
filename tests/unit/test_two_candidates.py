@@ -6,13 +6,15 @@ import json
 from pathlib import Path
 
 import pytest
+from sqlalchemy import select
 
 from skysift import crosscheck as cc
 from skysift import crosscheck as cross_check
-from skysift import pack, pack_two
+from skysift import exofop, pack, pack_two
 from skysift.dossier import generate
 from skysift.models import TestResult, TestStatus
 from skysift.pack import note_words, numbers, render_note
+from skysift.store.db import CandidateRow
 from skysift.zenodo import ZenodoClient
 from tests.unit.test_crosscheck import fake_result
 from tests.unit.test_dossier import _second_signal
@@ -20,6 +22,7 @@ from tests.unit.test_pack import (  # noqa: F401  (fixtures used by name)
     EM_DASH,
     IZE,
     _approve,
+    _build,
     _files,
     _live_shape,
     _svg_only,
@@ -449,3 +452,230 @@ def test_a_false_alarm_rate_without_its_words_falls_back_to_the_uncalibrated_wor
     pair, abstract = pack_two.fap_pair([a, b], tex=False), pack_two._fap_abstract([a, b])
     assert "None" not in pair + abstract and "(not computed)" in pair
     assert "the false-alarm probability is not computed" in abstract
+
+
+# ---------------------------------------------------------------------------------------------------- the pack's files
+
+
+def _periods(env) -> tuple[str, str]:
+    p1, p2 = (f"{c['period_days']:.3f} d" for c in pack.candidates(env.store, STAGE2_TARGET))
+    return p1, p2
+
+
+def test_a_two_candidate_pack_writes_the_second_candidates_files_with_the_suffix(env_two):
+    rep = pack.build_pack(env_two.store, env_two.blob, env_two.settings, STAGE2_TARGET)
+    names = _files(rep)
+    for name in ("data/ephemeris_02.csv", "data/ephemeris_02.json", "data/transit_times_02.csv", "data/shape_02.csv",
+                 "data/events_02.csv", "data/stellar_provenance_02.csv", "data/periodogram_02.json",
+                 "data/rung_metrics_02.json", "data/lightcurve_02.csv", "note/figure1_data_02.csv",
+                 "figures/fold_02.svg", "figures/oddeven_02.svg", "figures/periodogram_02.svg", "dossier_02.html",
+                 "provenance/calibration_02.json", "note/figure1_02.svg"):
+        assert name in names, name
+    date = rep.zip_path.name.split("_")[1]
+    assert {n for n in names if n.startswith("exofop/params_planet")} == {
+        f"exofop/params_planet_{date}_001.txt", f"exofop/params_planet_{date}_002.txt"}
+    second = (rep.out_dir / "exofop" / f"params_planet_{date}_002.txt").read_text(encoding="utf-8")
+    assert "TIC<TIC-TO-FILL>.02" in second and f"-s{env_two.second}" in second
+    first = (rep.out_dir / "exofop" / f"params_planet_{date}_001.txt").read_text(encoding="utf-8")
+    assert "TIC<TIC-TO-FILL>.01" in first and f"-s{env_two.ids['stage2']}" in first
+    assert any(n.startswith("exofop/") and "fold-02" in n for n in names)
+    assert not any("_02" in n for n in names if n.startswith("exofop/"))        # an upload name takes no underscore
+    versions = json.loads((rep.out_dir / "provenance" / "versions.json").read_text(encoding="utf-8"))
+    assert [c["ordinal"] for c in versions["candidates"]] == [1, 2] and versions["pack_version"] == "6"
+    assert [c["signal_id"] for c in versions["candidates"]] == [env_two.ids["stage2"], env_two.second]
+    assert all(c["dossier_generated"] and c["dossier_path"] and not Path(c["dossier_path"]).is_absolute()
+               for c in versions["candidates"])
+    hashes = json.loads((rep.out_dir / "provenance" / "hashes.json").read_text(encoding="utf-8"))
+    assert "data/ephemeris_02.csv" in hashes and "note/figure1_02.svg" in hashes
+    with env_two.store.session() as s:                                  # the pack recorded on every candidate row
+        assert s.scalars(select(CandidateRow.pack_path).where(CandidateRow.signal_id == env_two.second)).one() == str(
+            rep.out_dir)
+
+
+def test_the_two_candidate_pack_reports_both_in_its_note_and_figures(env_two):
+    rep = pack.build_pack(env_two.store, env_two.blob, env_two.settings, STAGE2_TARGET)
+    tex = (rep.out_dir / "note" / "note.tex").read_text(encoding="utf-8")
+    assert "Two transit candidates on" in tex                    # the pack writes the two-candidate note
+    assert "figure1\\_02" in tex or "figure1_02" in tex           # no matplotlib here: the caption names both files
+    note, figures = rep.out_dir / "note", rep.out_dir / "figures"
+    fold, fold2 = (note / n for n in ("figure1.svg", "figure1_02.svg"))
+    assert fold.read_text(encoding="utf-8") != fold2.read_text(encoding="utf-8")
+    assert fold.read_text(encoding="utf-8") == (figures / "fold.svg").read_text(encoding="utf-8")
+    assert fold2.read_text(encoding="utf-8") == (figures / "fold_02.svg").read_text(encoding="utf-8")
+
+
+def test_the_two_candidate_readme_zenodo_and_plain_texts_name_both(env_two):
+    rep = pack.build_pack(env_two.store, env_two.blob, env_two.settings, STAGE2_TARGET)
+    readme = (rep.out_dir / "README.md").read_text(encoding="utf-8")
+    p1, p2 = _periods(env_two)
+    assert f"| quantity | {p1} | {p2} |" in readme and "## The star" in readme
+    assert readme.startswith("This pack is not yet approved by a reviewer")   # the first candidate has no approval
+    banner = readme.split("# Submission pack for")[0]
+    assert f"signal {env_two.ids['stage2']} ({p1})" in banner and f"signal {env_two.second}" not in banner
+    assert "Two dips, of" in readme                                       # pack_two.summary in place of n.summary
+    assert "so neither is an alias of the other" in readme and "within a duration" in readme
+    assert "needs its own dossier and pack" not in readme and "covers one candidate only" not in readme
+    assert readme.count("Observers who plan a transit ask for the ephemeris first") == 1
+    assert readme.split("## Step 5.")[1].count("mid-transit times are T =") == 2
+    assert "`data/ephemeris_02.csv`" in readme.split("## What is in the pack")[1]
+    meta = json.loads((rep.out_dir / "zenodo_metadata.json").read_text(encoding="utf-8"))
+    assert meta["title"].startswith("SkySift candidates KIC") and " and " in meta["title"]
+    assert meta["description"].count("Ephemeris, ") == 2
+    note = (rep.out_dir / "exofop" / "note.txt").read_text(encoding="utf-8")
+    assert note.count("Ephemeris") == 2 and "_002" not in note and "-02" in note     # the files line names the copies
+    email = (rep.out_dir / "archive_email.txt").read_text(encoding="utf-8")
+    assert email.count(" d,") >= 2 or "two transit candidates" in email
+    for text in (readme, note, email, meta["description"]):
+        assert EM_DASH not in text and not IZE.search(text) and "discover" not in text.lower()
+
+
+def test_a_single_candidate_pack_is_what_it_was(env_with_dossier):  # noqa: F811
+    """The guard of spec 5.5: a target without a further dossier builds exactly today's files, and its note, README
+    and plain texts carry none of the two-candidate words."""
+    rep = _build(env_with_dossier)
+    names = _files(rep)
+    assert not any("_02" in n or "-02" in n or "_002" in n for n in names)
+    versions = json.loads((rep.out_dir / "provenance" / "versions.json").read_text(encoding="utf-8"))
+    assert "candidates" not in versions and versions["pack_version"] == "6"
+    for name in ("note/note.tex", "README.md", "exofop/note.txt", "archive_email.txt"):
+        text = (rep.out_dir / name).read_text(encoding="utf-8")
+        assert "Two transit candidates" not in text and "## The star" not in text and "vetted singly" not in text
+    assert (rep.out_dir / "README.md").read_text(encoding="utf-8").count("TIC<TIC-TO-FILL>.01") == 1
+
+
+def test_suffixed_names_and_the_exofop_planet_file_per_ordinal():
+    assert pack.suffixed("data/ephemeris.csv", 1) == "data/ephemeris.csv"
+    assert pack.suffixed("data/ephemeris.csv", 2) == "data/ephemeris_02.csv"
+    assert pack.suffixed("dossier.html", 2) == "dossier_02.html"
+    assert exofop.planet_file_name("20261027") == "params_planet_20261027_001.txt"
+    assert exofop.planet_file_name("20261027", 2) == "params_planet_20261027_002.txt"
+    a, b = two_live(prior=False)
+    one = exofop.render_exofop_planet(a, "20261027", "169822650", "tag")
+    assert one == exofop.render_exofop_planet(a, "20261027", "169822650", "tag", 1)
+    two = exofop.render_exofop_planet(b, "20261027", "169822650", "tag", 2)
+    assert "TIC169822650.01" in one and "TIC169822650.02" in two and "TIC169822650.01" not in two
+    assert exofop.render_exofop_planet(b, "20261027", None, "tag", 2).count("TIC<TIC-TO-FILL>.02") == 1
+    listed = pack._exofop_list("kic-1", "20261027", True, True, 2)
+    assert [n for n, _s, _w in listed][:2] == ["kic-1_20261027_lightcurve-02.csv", "kic-1_20261027_ephemeris-02.csv"]
+    assert ("kic-1_20261027_fold-02.png", "figures/fold_02.png") in [(n, s) for n, s, _w in listed]
+    assert ("kic-1_20261027_dossier-02.html", "dossier_02.html") in [(n, s) for n, s, _w in listed]
+    assert pack._exofop_list("kic-1", "20261027", True, True) == pack._exofop_list("kic-1", "20261027", True, True, 1)
+
+
+def test_file_notes_name_the_candidate_of_a_suffixed_file_only_when_there_are_two():
+    a, b = two_live(prior=False)
+    single = pack.file_notes(a)
+    assert single["data/ephemeris.csv"] == pack.FILE_NOTES["data/ephemeris.csv"]
+    assert "data/ephemeris_02.csv" not in single
+    notes = pack.file_notes(a, [b])
+    pa, pb = pack._candidate_name(a), pack._candidate_name(b)
+    assert notes["data/ephemeris.csv"] == f"{pack.FILE_NOTES['data/ephemeris.csv']} ({pa})"
+    assert notes["data/ephemeris_02.csv"] == f"{pack.FILE_NOTES['data/ephemeris.csv']} ({pb})"
+    assert notes["data/events_02.csv"].endswith(f"({pb})") and notes["data/events.csv"].endswith(f"({pa})")
+    assert notes["figures/fold_02.svg"].endswith(f"({pb})") and notes["dossier_02.html"].endswith(f"({pb})")
+    assert pb in notes["note/figure1_02.svg"] and pa in notes["note/figure1.svg"]
+    assert notes["README.md"] == pack.FILE_NOTES["README.md"]                 # the shared files read as they do
+
+
+def _fields_two(**extra) -> dict:
+    return {"files": ["README.md", "data/ephemeris_02.csv"], "approved": True, "tic": "169822650", "date": "20261027",
+            "span": SPAN, **extra}
+
+
+def test_the_readme_table_and_methods_for_two_candidates_come_from_each_json():
+    a, b = two_live(prior=True)
+    readme = pack.render_readme(a, _fields_two(), [b])
+    na, nb = numbers(a), numbers(b)
+    pa, pb = (f"{d['ephemeris']['period_days']:.3f} d" for d in (a, b))
+    table = readme.split("## The candidates in numbers")[1].split("## The star")[0]
+    assert f"| quantity | {pa} | {pb} |" in table
+    assert f"| period | {na['period_pm']} d{na['period_note']} | {nb['period_pm']} d{nb['period_note']} |" in table
+    assert f"{na['depth_pm']} ppm{na['depth_note']}{na['depth_source_text']}" in table     # C27: the fold's source
+    assert f"{nb['depth_pm']} ppm{nb['depth_note']}{nb['depth_source_text']}" in table
+    star = readme.split("## The star")[1].split("\n\n")[1]
+    assert "spectral type" in star and "stellar radius" in star and "planet radius" not in star
+    assert "planet radius" in table and "target light fraction" in star
+    assert table.count("Bond albedo of 0.3") == 2                                              # C26
+    assert readme.count("Two dips, of") == 1
+    assert pack_two.ratio_sentence(a["ephemeris"]["period_days"], b["ephemeris"]["period_days"]) in readme
+    assert "within a duration" in readme                                                       # the coincidence count
+    for n in (na, nb):
+        assert n["trend_plain"] in readme                                                      # C22
+        assert n["prior_plain"] in readme                                                      # C24, the whole claim
+        assert n["fap_text"] in readme and n["fpp_text"] in readme
+        assert n["cross_check_after"] in readme                                                # C25
+        assert n["comparison_plain"] in readme
+    assert table.count("catalogue") >= 1                                                       # C23
+    assert pack_two.VETTED_SINGLY in readme.split("## What is not yet known")[1]
+    assert "## The candidate in numbers" not in readme
+
+
+def test_the_readme_prints_a_method_once_when_both_candidates_share_it_and_labelled_when_they_differ():
+    a, b = two_live(prior=False)
+    readme = pack.render_readme(a, _fields_two(), [b])
+    label_a, label_b = (f"**{pack._capital(pack._candidate_name(d))}.** " for d in (a, b))
+    assert numbers(a)["crowdsap"] == numbers(b)["crowdsap"]
+    assert readme.count("CROWDSAP and PSFFRAC are KBonus header keywords") == 1
+    assert numbers(a)["errors_methods"] == numbers(b)["errors_methods"]                       # shared, so printed once
+    assert readme.count("Ephemeris and transit-parameter errors") == 1
+    assert f"{label_a}False-alarm probability" in readme and f"{label_b}False-alarm probability" in readme
+
+
+def test_the_readme_step_2_names_both_planet_files_and_both_targets():
+    a, b = two_live(prior=False)
+    readme = pack.render_readme(a, _fields_two(), [b])
+    step2 = readme.split("## Step 2.")[1].split("## Step 3.")[0]
+    assert "params_planet_20261027_001.txt" in step2 and "params_planet_20261027_002.txt" in step2
+    assert "TIC169822650.01" in step2 and "TIC169822650.02" in step2
+    step5 = readme.split("## Step 5.")[1].split("## What is not yet known")[0]
+    assert step5.count("mid-transit times are T =") == 2
+    assert pack._candidate_name(a) in step5 and pack._candidate_name(b) in step5
+
+
+def test_a_one_candidate_readme_has_no_two_candidate_wording():
+    a, _b = two_live(prior=False)
+    readme = pack.render_readme(a, {"files": ["README.md"], "approved": True, "tic": "169822650", "date": "20261027"})
+    for words in ("## The star", "The candidates in numbers", "vetted singly", "_02", "-02", "_002", "Two dips"):
+        assert words not in readme
+    assert readme.count("## The candidate in numbers") == 1
+
+
+def test_the_plain_texts_for_two_candidates_carry_each_ephemeris_and_both_probability_pairs():
+    a, b = two_live(prior=False)
+    f = {"files": [], "approved": True, "tic": "169822650", "date": "20261027", "png": True, "pixels_figure": True}
+    note = pack._render_plain("exofop_note.txt.j2", a, f, [b])
+    na, nb = numbers(a), numbers(b)
+    assert note.count("Ephemeris") == 2 and na["ephemeris_text"] in note and nb["ephemeris_text"] in note
+    for n in (na, nb):
+        assert n["fap_text"] in note and n["fpp_text"] in note and n["tess_exofop"] in note
+        assert n["pixel_plain"] in note
+    assert "-02" in note and "_002" not in note
+    email = pack._render_plain("archive_email.txt.j2", a, f, [b])
+    assert email.startswith("Subject: Transit candidates on KIC 6146676") and "two transit candidates" in email
+    assert na["ephemeris_text"] in email and nb["ephemeris_text"] in email
+    for text in (note, email):
+        assert EM_DASH not in text and not IZE.search(text) and "discover" not in text.lower()
+
+
+def test_the_plain_texts_of_one_candidate_are_unchanged_by_the_others_argument():
+    a, _b = two_live(prior=False)
+    f = {"files": [], "approved": True, "tic": "169822650", "date": "20261027", "png": True, "pixels_figure": True}
+    for name in ("exofop_note.txt.j2", "archive_email.txt.j2"):
+        assert pack._render_plain(name, a, f) == pack._render_plain(name, a, f, None) == pack._render_plain(
+            name, a, f, [])
+
+
+def test_a_two_candidate_pack_with_matplotlib_draws_the_pngs_of_both(env_two, with_matplotlib):  # noqa: F811
+    rep = pack.build_pack(env_two.store, env_two.blob, env_two.settings, STAGE2_TARGET)
+    names = _files(rep)
+    for name in ("note/figure1.png", "note/figure1.pdf", "figures/fold.png", "figures/fold_02.png",
+                 "figures/oddeven_02.png", "figures/periodogram_02.png"):
+        assert name in names, name
+    date = rep.zip_path.name.split("_")[1]
+    prefix = f"exofop/{STAGE2_TARGET}_{date}_"
+    assert f"{prefix}fold.png" in names and f"{prefix}fold-02.png" in names
+    tex = (rep.out_dir / "note" / "note.tex").read_text(encoding="utf-8")
+    assert "figure1_02" not in tex                    # with the panelled figure the caption names panels (a) and (b)
+    readme = (rep.out_dir / "README.md").read_text(encoding="utf-8")
+    assert "the folds of both candidates as panels (a) and (b)" in readme
+    assert f"`exofop/{STAGE2_TARGET}_{date}_fold-02.png`" in readme

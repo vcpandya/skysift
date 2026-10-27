@@ -781,7 +781,9 @@ def summary(datas: list[dict]) -> str:
 # ---------------------------------------------------------------------------------------------------- shared
 
 
-def _coincidence(datas: list[dict], span: tuple[float, float] | None) -> str | None:
+def _coincidence(datas: list[dict], span: tuple[float, float] | None, note: bool = True) -> str | None:
+    """The coincidence sentence over the light curve's ``span``: the note's form (``note``), or the README's, which
+    always states the count; None without a span."""
     if span is None:
         return None
     short, long_ = sorted(datas[:2], key=lambda d: _period(d) or 0.0)
@@ -789,7 +791,7 @@ def _coincidence(datas: list[dict], span: tuple[float, float] | None) -> str | N
         count, n_long = pack.coincident_transits(short["ephemeris"], long_["ephemeris"], span[0], span[1])
     except (KeyError, TypeError, ValueError):
         return None
-    return coincidence_sentence(count, n_long, period_word(short), period_word(long_), note=True)
+    return coincidence_sentence(count, n_long, period_word(short), period_word(long_), note=note)
 
 
 def shared(datas: list[dict], tex: bool, span: tuple[float, float] | None, panels: bool = True) -> dict:
