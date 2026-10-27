@@ -136,7 +136,7 @@ The single note's sentences were measured on both live JSONs on 27 October (the 
 | body total | 1,166 |
 | with abstract 130 and references 151 | 1,447 |
 
-That leaves about 30 words of margin for the live star, which has no prior claim. A prior claim on one candidate adds about 25 words in the compact form of 5.1 (the claim sentence alone, the comparison in the README), so the shape with one claim is estimated near 1,472; the test holds both shapes at or under 1,480, and if the measurement shows the claim shape cannot, the plan lists the next cut (the catalogue sentence to the README, then the albedo clause) and the spec is amended, never the margin. Task 6's measurement on the margin test's pair needed those two and three more (C22 to C26 below).
+That leaves about 30 words of margin for the live star, which has no prior claim. A prior claim on one candidate adds about 25 words in the compact form of 5.1 (the claim sentence alone, the comparison in the README), so the shape with one claim is estimated near 1,472; the test holds both shapes at or under 1,480, and if the measurement shows the claim shape cannot, the plan lists the next cut (the catalogue sentence to the README, then the albedo clause) and the spec is amended, never the margin. Task 6's measurement on the margin test's pair needed those two and three more (C22 to C26 below). The first measurement left the coincidence sentence out (no span on the pair gives a coincidence); with it forced, a prior claim put the note at 1,491, and one more cut (C27) brought it to 1,480.
 
 ### 5.3 The margin test
 
@@ -171,8 +171,9 @@ Task 6 measured the real template on the margin test's pair (the golden's live s
 - C22 The vetting sentence leaves the per-event depth trend to the README (the single note ends the quarter-group clause with it).
 - C23 The catalogue sentence is the README's; a candidate that matches a catalogue entry still names it in its own vetting sentence, and says "It matches no ..." when the other one does match (spec 5.2's first fallback).
 - C24 A prior claim's sentence in the note is the claim, its DOI and date and the relationship; the development note is the README's. A claim that both candidates carry is told once, after the first.
-- C25 The TRICERATOPS pair leaves the dominant-scenario sentence (a median at or above 0.5, the README's owner flag) and the count of degenerate runs to the README.
+- C25 The TRICERATOPS pair leaves the dominant-scenario sentence (a median at or above 0.5, the README's owner flag) and the count of degenerate runs to the README; and the body names the TRICERATOPS version once, in the abstract and the `\software` line, when both runs share it (a differing version is named in the body).
 - C26 "at a Bond albedo of 0.3" after the second planet is the README's (spec 5.2's second fallback).
+- C27 "For both, the depth and shape below use the linear-fit ephemeris." (11 words) leaves the signals section when the candidates fold alike: the figure caption names the ephemeris of both panels and the README prints it per candidate beside the depth ("on the linear-fit ephemeris"). Candidates that fold differently still say so for each. Measured on the margin test's pair with the coincidence sentence present: 1,441 words without a prior claim, 1,480 with one (abstract 125 and 130).
 
 ### 5.5 Single-candidate identity
 

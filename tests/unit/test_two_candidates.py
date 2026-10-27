@@ -29,6 +29,8 @@ from tests.unit.test_pack import (  # noqa: F401  (fixtures used by name)
 )
 from tests.unit.ui_seed import STAGE2_TARGET
 
+SPAN = (120.0, 1590.0)      # the light curve's first and last BKJD, as the margin test measures
+
 RATIO = 3.156
 
 
@@ -266,7 +268,7 @@ def test_the_readmes_left_out_sentences_end_in_one_full_stop(env_two):
 
 def test_the_two_candidate_note_prints_each_value_from_its_own_json():
     a, b = two_live(prior=False)
-    tex = render_note(a, others=[b], span=(120.0, 1590.0))
+    tex = render_note(a, others=[b], span=SPAN)
     body = tex.split(r"\begin{document}")[1]
     na, nb = numbers(a, tex=True), numbers(b, tex=True)
     for value in (na["period"], nb["period"], na["depth_pm"], nb["depth_pm"], na["duration_pm"], nb["duration_pm"],
@@ -283,13 +285,29 @@ def test_the_two_candidate_note_prints_each_value_from_its_own_json():
     assert EM_DASH not in tex and not IZE.search(tex) and "discover" not in tex.lower()
 
 
-def test_the_two_candidate_live_shape_stays_inside_the_word_limit_with_margin():
+def _with_one_coincidence(monkeypatch):
+    """No span puts a 127.16 d transit within a duration of a 40.29 d one on ``two_live`` (the nearest, epoch 19,
+    misses by 0.35 d against a tolerance of 0.19), so the margin is measured with the clause forced: the count is one
+    and the number of predicted transits is the real one for the span."""
+    def forced(datas, span_):
+        short, long_ = sorted(datas[:2], key=lambda d: d["ephemeris"]["period_days"])
+        _count, n_long = pack.coincident_transits(short["ephemeris"], long_["ephemeris"], *span_)
+        return pack_two.coincidence_sentence(1, n_long, pack_two.period_word(short), pack_two.period_word(long_),
+                                             note=True)
+    monkeypatch.setattr(pack_two, "_coincidence", forced)
+
+
+def test_the_two_candidate_live_shape_stays_inside_the_word_limit_with_margin(monkeypatch):
+    a, b = two_live(prior=False)
+    assert pack_two._coincidence([a, b], SPAN) is None                      # why the clause is forced below
+    _with_one_coincidence(monkeypatch)
     for prior in (False, True):
         a, b = two_live(prior=prior)
-        tex = render_note(a, others=[b], span=(120.0, 1590.0))
+        tex = render_note(a, others=[b], span=SPAN)
+        assert "falls within a duration of a 40.29 d transit." in " ".join(tex.split())
         words = note_words(tex)
         assert words["total"] <= 1480 and words["abstract"] <= 130, (prior, words)
-        assert not [p for p in pack.gate_problems(a, others=[b]) if "words" in p]
+        assert not [p for p in pack.gate_problems(a, others=[b], span=SPAN) if "words" in p]
 
 
 def test_the_two_candidate_abstract_carries_its_pinned_clauses():
@@ -308,7 +326,7 @@ def test_the_two_candidate_abstract_carries_its_pinned_clauses():
 def test_one_candidate_without_a_cross_check_is_named_not_guessed():
     a, b = two_live(prior=False)
     b["cross_check"] = None
-    tex = render_note(a, others=[b], span=(120.0, 1590.0))
+    tex = render_note(a, others=[b], span=SPAN)
     assert f"no cross-check is stored for the {pack_two.period_word(b)} d candidate" in tex and "0.037" not in tex
     # the gate names the candidate as pack._candidate_name does, by its period at three decimals
     assert any(f"{b['ephemeris']['period_days']:.3f} d candidate: no TRICERATOPS cross-check" in p
@@ -321,7 +339,7 @@ def test_a_second_candidate_without_errors_prints_its_untimed_forms():
     a, b = two_live(prior=False)
     b["timing"] = {**b["timing"], "ok": False, "reason": "fewer than 3 transits timed"}
     b["shape"] = {**b["shape"], "ok": False, "reason": "the bootstrap did not converge"}
-    tex = render_note(a, others=[b], span=(120.0, 1590.0))
+    tex = render_note(a, others=[b], span=SPAN)
     assert "with the first mid-transit at" in tex and tex.count("the centre of the series") == 1
     assert tex.count("gives a radius ratio") == 1
 
@@ -364,7 +382,7 @@ def test_a_star_that_could_not_be_characterised_gets_one_sentence_and_no_planet_
     a, b = two_live(prior=False)
     a["star"] = {**a["star"], "route": "none"}
     assert pack_two.planet_sentence(a, True, False) is None
-    tex = render_note(a, others=[b], span=(120.0, 1590.0))
+    tex = render_note(a, others=[b], span=SPAN)
     assert tex.count("could not be characterised") == 1 and "candidate's radius is" not in tex
 
 
@@ -381,14 +399,14 @@ def test_the_planet_sentences_follow_the_pinned_form():
 
 def test_a_prior_claim_both_candidates_carry_is_told_once():
     a, b = two_live(prior=True)
-    tex = render_note(a, others=[b], span=(120.0, 1590.0))
+    tex = render_note(a, others=[b], span=SPAN)
     assert tex.count("reported this signal first") == 1 and tex.count(r"\bibitem[{Mehta}") == 1
     assert pack.abstract_text(a, others=[b]).split(":")[0].endswith("first reported by Kuber Mehta")
 
 
 def test_candidates_folded_differently_say_so_for_each():
     a, b = two_live(prior=False)
-    assert pack_two.fold_clause([a, b]) == "For both, the depth and shape below use the linear-fit ephemeris."
+    assert pack_two.fold_clause([a, b]) == ""                       # alike: the caption says it once (C27)
     b["ephemeris"] = {**b["ephemeris"], "fold_ephemeris": "search"}
     clause = pack_two.fold_clause([a, b])
     assert clause.startswith("The depth and shape below use the linear-fit ephemeris for the ")
@@ -414,10 +432,20 @@ def test_the_caveat_union_names_each_title_once():
 
 def test_a_note_without_others_is_the_single_candidates_note():
     a, _b = two_live(prior=False)
-    assert render_note(a, others=[]) == render_note(a) == render_note(a, others=None, span=(120.0, 1590.0))
+    assert render_note(a, others=[]) == render_note(a) == render_note(a, others=None, span=SPAN)
     assert pack.abstract_text(a, others=[]) == pack.abstract_text(a)
 
 
-def test_the_gate_checks_the_two_candidate_note_and_its_abstract():
+def test_the_gate_checks_the_two_candidate_note_and_its_abstract(monkeypatch):
+    _with_one_coincidence(monkeypatch)
+    for prior in (False, True):
+        a, b = two_live(prior=prior)
+        assert not [p for p in pack.gate_problems(a, others=[b], span=SPAN) if "words" in p or "abstract" in p]
+
+
+def test_a_false_alarm_rate_without_its_words_falls_back_to_the_uncalibrated_wording():
     a, b = two_live(prior=False)
-    assert not [p for p in pack.gate_problems(a, others=[b], span=(120.0, 1590.0)) if "words" in p or "abstract" in p]
+    b["fap"] = {k: v for k, v in b["fap"].items() if k != "words"}
+    pair, abstract = pack_two.fap_pair([a, b], tex=False), pack_two._fap_abstract([a, b])
+    assert "None" not in pair + abstract and "(not computed)" in pair
+    assert "the false-alarm probability is not computed" in abstract

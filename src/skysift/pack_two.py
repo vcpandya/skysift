@@ -177,15 +177,16 @@ def signal_sentence(data: dict, tex: bool, *, after: dict | None = None) -> str:
 
 
 def fold_clause(datas: list[dict]) -> str:
-    """The sentence saying which ephemeris the depth and shape below use, once for both candidates when they fold
-    alike ("For both, the depth and shape below use the linear-fit ephemeris."), else for each; "" for dossiers that
-    do not say (before version 5, as the single note leaves it out)."""
+    """The sentence saying which ephemeris the depth and shape below use, for each candidate when they fold
+    differently; "" when they fold alike (cut C27: the caption names the ephemeris of both panels and the README
+    prints it per candidate beside the depth) and for dossiers that do not say (before version 5, as the single note
+    leaves it out)."""
     told = [(d, pack.fold_words(d)) for d in datas if (d.get("ephemeris") or {}).get("fold_ephemeris")]
     if not told:
         return ""
     words = {w for _d, w in told}
     if len(told) == len(datas) and len(words) == 1:
-        return f"For both, the depth and shape below use the {told[0][1]}."
+        return ""
     return ("The depth and shape below use "
             + _and_list([f"the {w} for {_name(d)}" for d, w in told]) + ".")
 
@@ -465,7 +466,7 @@ def planet_sentence(data: dict, tex: bool, albedo: bool, *, bracket: bool = Fals
 
 def _fap_calibrated(data: dict) -> bool:
     fap = data.get("fap") or {}
-    return bool(fap.get("calibrated") and fap.get("n") is not None)
+    return bool(fap.get("calibrated") and fap.get("n") is not None and fap.get("words"))
 
 
 def _peaks(x: float) -> str:
