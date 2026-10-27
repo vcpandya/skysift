@@ -7,20 +7,25 @@ from pathlib import Path
 
 import pytest
 
+from skysift import crosscheck as cc
 from skysift import crosscheck as cross_check
 from skysift import pack, pack_two
 from skysift.dossier import generate
 from skysift.models import TestResult, TestStatus
+from skysift.pack import note_words, numbers, render_note
 from skysift.zenodo import ZenodoClient
 from tests.unit.test_crosscheck import fake_result
 from tests.unit.test_dossier import _second_signal
 from tests.unit.test_pack import (  # noqa: F401  (fixtures used by name)
+    EM_DASH,
+    IZE,
     _approve,
     _files,
     _live_shape,
     _svg_only,
     env_with_dossier,
     fake_session,
+    with_matplotlib,
 )
 from tests.unit.ui_seed import STAGE2_TARGET
 
@@ -257,3 +262,162 @@ def test_the_readmes_left_out_sentences_end_in_one_full_stop(env_two):
     rep = pack.build_pack(env_two.store, env_two.blob, env_two.settings, STAGE2_TARGET)
     step2 = (rep.out_dir / "README.md").read_text(encoding="utf-8").split("## Step 2.")[1].split("## Step 3.")[0]
     assert "its status is now rejected." in step2 and ".." not in step2
+
+
+def test_the_two_candidate_note_prints_each_value_from_its_own_json():
+    a, b = two_live(prior=False)
+    tex = render_note(a, others=[b], span=(120.0, 1590.0))
+    body = tex.split(r"\begin{document}")[1]
+    na, nb = numbers(a, tex=True), numbers(b, tex=True)
+    for value in (na["period"], nb["period"], na["depth_pm"], nb["depth_pm"], na["duration_pm"], nb["duration_pm"],
+                  na["rp"], nb["rp"], cc.probability_text(a["cross_check"]["fpp"]), "0.037", "1 in 170", "1 in 120",
+                  cc.probability_text(a["fpp"]["value"]), "0.11"):
+        assert body.count(str(value)) >= 1, value
+    assert body.count("TRICERATOPS 1.1.0") == 1 and body.count("Null searches") <= 1
+    assert r"\title{Two transit candidates on KIC 6146676}" in body
+    assert "so neither is an alias of the other" in body
+    assert body.count(r"\section{") == 7 and "quadratic limb-darkened model" in body
+    assert body.count("limb-darkened") == 1                      # the model clause once (C2)
+    assert "(d) per-season difference images" not in body and "(b) on the" in body       # C10
+    assert "The two candidates were vetted singly" in body
+    assert EM_DASH not in tex and not IZE.search(tex) and "discover" not in tex.lower()
+
+
+def test_the_two_candidate_live_shape_stays_inside_the_word_limit_with_margin():
+    for prior in (False, True):
+        a, b = two_live(prior=prior)
+        tex = render_note(a, others=[b], span=(120.0, 1590.0))
+        words = note_words(tex)
+        assert words["total"] <= 1480 and words["abstract"] <= 130, (prior, words)
+        assert not [p for p in pack.gate_problems(a, others=[b]) if "words" in p]
+
+
+def test_the_two_candidate_abstract_carries_its_pinned_clauses():
+    a, b = two_live(prior=False)
+    abstract = pack.abstract_text(a, others=[b])
+    assert abstract.startswith("This note reports two transit candidates on KIC 6146676, a star Kepler recorded only "
+                               "in other targets' pixels: a ")
+    assert "Null searches give false-alarm rates of 1 in 170 and 1 in 120 per star;" in abstract        # C20
+    head = cc.probability_text(a["cross_check"]["fpp"])
+    assert (f"TRICERATOPS 1.1.0 gives false-positive probabilities of {head} and 0.037 (no validation class applies "
+            "at 30-minute cadence; Giacalone et al. 2021)") in abstract                                  # C19
+    assert "box cut by the stamp edge" not in abstract                                                   # C21
+    assert abstract.endswith("Both remain candidates pending follow-up.") and len(abstract.split()) <= 130
+
+
+def test_one_candidate_without_a_cross_check_is_named_not_guessed():
+    a, b = two_live(prior=False)
+    b["cross_check"] = None
+    tex = render_note(a, others=[b], span=(120.0, 1590.0))
+    assert f"no cross-check is stored for the {pack_two.period_word(b)} d candidate" in tex and "0.037" not in tex
+    # the gate names the candidate as pack._candidate_name does, by its period at three decimals
+    assert any(f"{b['ephemeris']['period_days']:.3f} d candidate: no TRICERATOPS cross-check" in p
+               for p in pack.gate_problems(a, others=[b]))
+    abstract = pack.abstract_text(a, others=[b])
+    assert "TRICERATOPS 1.1.0 gives" in abstract and len(abstract.split()) <= 130
+
+
+def test_a_second_candidate_without_errors_prints_its_untimed_forms():
+    a, b = two_live(prior=False)
+    b["timing"] = {**b["timing"], "ok": False, "reason": "fewer than 3 transits timed"}
+    b["shape"] = {**b["shape"], "ok": False, "reason": "the bootstrap did not converge"}
+    tex = render_note(a, others=[b], span=(120.0, 1590.0))
+    assert "with the first mid-transit at" in tex and tex.count("the centre of the series") == 1
+    assert tex.count("gives a radius ratio") == 1
+
+
+def test_candidates_with_different_pixel_verdicts_get_one_abstract_sentence_each():
+    a, b = two_live(prior=False)
+    b["tests"] = [{**t, "status": "undetermined", "reason": "no voting season"} if t["rung"] == "rung5_pixels" else t
+                  for t in b["tests"]]
+    abstract = pack.abstract_text(a, others=[b])
+    assert "both dips" not in abstract and "gave no verdict" in abstract
+
+
+def test_the_two_panel_figure_is_drawn_when_matplotlib_is_present(tmp_path, with_matplotlib):  # noqa: F811
+    Figure = pack._matplotlib()
+    if Figure is None:
+        pytest.skip("no matplotlib")
+    a, b = two_live(prior=False)
+    (tmp_path / "f").mkdir()
+    (tmp_path / "n").mkdir()
+    pack._png_figures(Figure, a, tmp_path / "f", tmp_path / "n", others=[b])
+    assert (tmp_path / "n" / "figure1.pdf").is_file() and (tmp_path / "n" / "figure1.png").is_file()
+    for name in ("fold", "oddeven", "periodogram", "centroids"):
+        assert (tmp_path / "f" / f"{name}.png").is_file() == (name != "centroids" or bool(a.get("pixels")))
+        assert (tmp_path / "f" / f"{name}_02.png").is_file() == (name != "centroids" or bool(b.get("pixels")))
+
+
+def test_the_names_the_title_and_the_summary_of_two_candidates():
+    a, b = two_live(prior=False)
+    assert pack_two.period_word(a) == f"{a['ephemeris']['period_days']:.2f}"
+    assert pack_two.title([a, b]) == "Two transit candidates on KIC 6146676"
+    claimed, other = two_live(prior=True)
+    assert pack_two.title([claimed, other]) == "SkySift vetting of two transit candidates on KIC 6146676"
+    first = {"signal": {"depth_ppm": 1100.0, "period": 15.11}, "target": {"gmag": 16.2}}
+    second = {"signal": {"depth_ppm": 920.0, "period": 47.69}}
+    assert pack_two.summary([first, second]) == (
+        "Two dips, of 0.11 and 0.092 percent, repeat every 15.1 and 47.7 days on a star of magnitude 16.2.")
+
+
+def test_a_star_that_could_not_be_characterised_gets_one_sentence_and_no_planet_sentences():
+    a, b = two_live(prior=False)
+    a["star"] = {**a["star"], "route": "none"}
+    assert pack_two.planet_sentence(a, True, False) is None
+    tex = render_note(a, others=[b], span=(120.0, 1590.0))
+    assert tex.count("could not be characterised") == 1 and "candidate's radius is" not in tex
+
+
+def test_the_planet_sentences_follow_the_pinned_form():
+    a, _b = two_live(prior=False)
+    n = numbers(a, tex=True)
+    sentence = pack_two.planet_sentence(a, True, True)
+    earth = r"$R_\oplus$"
+    assert sentence == (f"The {pack_two.period_word(a)} d candidate's radius is {n['rp']} {earth} (ratio "
+                        f"{n['fit_k']}), on an orbit of {n['a']} AU at an equilibrium temperature of {n['teq']} K "
+                        f"and {n['insolation']} times Earth's insolation at a Bond albedo of 0.3.")
+    assert "Bond albedo" not in pack_two.planet_sentence(a, True, False)
+
+
+def test_a_prior_claim_both_candidates_carry_is_told_once():
+    a, b = two_live(prior=True)
+    tex = render_note(a, others=[b], span=(120.0, 1590.0))
+    assert tex.count("reported this signal first") == 1 and tex.count(r"\bibitem[{Mehta}") == 1
+    assert pack.abstract_text(a, others=[b]).split(":")[0].endswith("first reported by Kuber Mehta")
+
+
+def test_candidates_folded_differently_say_so_for_each():
+    a, b = two_live(prior=False)
+    assert pack_two.fold_clause([a, b]) == "For both, the depth and shape below use the linear-fit ephemeris."
+    b["ephemeris"] = {**b["ephemeris"], "fold_ephemeris": "search"}
+    clause = pack_two.fold_clause([a, b])
+    assert clause.startswith("The depth and shape below use the linear-fit ephemeris for the ")
+    assert clause.endswith(f"the search ephemeris for the {pack_two.period_word(b)} d candidate.")
+
+
+def test_the_caption_names_both_panels_and_the_svg_caption_points_to_the_second_file():
+    a, b = two_live(prior=False)
+    pa, pb = numbers(a)["period"], numbers(b)["period"]
+    assert pack_two.caption([a, b], True).startswith(
+        f"(a) the light curve folded on the {pa} day {pack.fold_words(a)} and (b) on the {pb} day one, within ")
+    plain = pack_two.caption([a, b], False)
+    assert plain.startswith(f"The light curve folded on the {pa} day") and plain.endswith("fold is in figure1_02.")
+
+
+def test_the_caveat_union_names_each_title_once():
+    a, b = two_live(prior=False)
+    b["caveats"] = [*b["caveats"], {"key": "extra", "title": "A second-candidate caveat", "text": "x"}]
+    text = pack_two.caveat_union([a, b])
+    assert text.count("The shape fit sits off its bootstrap.") == 1 and "A second-candidate caveat." in text
+    assert text.endswith("The two candidates were vetted singly; no joint fit was made.")
+
+
+def test_a_note_without_others_is_the_single_candidates_note():
+    a, _b = two_live(prior=False)
+    assert render_note(a, others=[]) == render_note(a) == render_note(a, others=None, span=(120.0, 1590.0))
+    assert pack.abstract_text(a, others=[]) == pack.abstract_text(a)
+
+
+def test_the_gate_checks_the_two_candidate_note_and_its_abstract():
+    a, b = two_live(prior=False)
+    assert not [p for p in pack.gate_problems(a, others=[b], span=(120.0, 1590.0)) if "words" in p or "abstract" in p]

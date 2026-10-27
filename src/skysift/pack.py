@@ -2363,9 +2363,14 @@ def bin_minutes(data: dict) -> str | None:
     return None if stored is None else f"{stored:.1f}".removesuffix(".0")
 
 
-def abstract_text(data: dict) -> str:
+def abstract_text(data: dict, others: list[dict] | None = None) -> str:
     """The note's abstract (RNAAS requires one, at most 150 words): the signal, where the pixels put it, the planet
-    when the star is characterised, both probabilities and the candidate status, each from the stored numbers."""
+    when the star is characterised, both probabilities and the candidate status, each from the stored numbers. With
+    ``others`` (the target's further candidates) it is the two-candidate abstract of ``pack_two.abstract``, at most
+    130 words."""
+    if others:
+        from skysift import pack_two
+        return pack_two.abstract([data, *others])
     target, eph = data.get("target") or {}, data.get("ephemeris") or {}
     name = target.get("name") or target.get("target_id")
     claims = prior_claims(data)
@@ -2525,12 +2530,18 @@ def doi_shown(doi: str | None) -> str:
 
 
 def render_note(data: dict, doi_placeholder: str = DOI_PLACEHOLDER, *, citation: dict | None = None,
-                panels: bool = True) -> str:
+                panels: bool = True, others: list[dict] | None = None,
+                span: tuple[float, float] | None = None) -> str:
     """The Research Note draft: the AASTeX v7 frame in ``data/rnaas/aastex_template.tex`` and the body from
     ``note.tex.j2`` (title, abstract, sections, one figure, references), citing exactly the works the dossier used.
     A sandbox DOI is printed with the words that it must be replaced before submission. ``panels`` is whether the
     figure is matplotlib's panelled ``figure1`` (the caption names the panels) or the fold alone of ``figure1.svg``;
-    the code DOI comes from ``citation`` (``code_doi``)."""
+    the code DOI comes from ``citation`` (``code_doi``). With ``others`` (the target's further candidates, each
+    one's stored JSON) the body is ``note_two.tex.j2``: both candidates, the bibliography the union of the works
+    either one cites, and ``span`` (the light curve's first and last BKJD) is what the coincidence of their transits
+    is counted over; a note without ``others`` is the single candidate's, as before."""
+    if others:
+        return _render_note_two([data, *others], doi_placeholder, citation, panels, span)
     refs = references(data)
     bib = sorted([(key, Raw(label), Raw(text)) for key, label, text in BIBLIOGRAPHY if refs.get(key)]
                  + prior_bib(data), key=lambda item: item[0])
@@ -2539,6 +2550,26 @@ def render_note(data: dict, doi_placeholder: str = DOI_PLACEHOLDER, *, citation:
     body = _env(tex=True).get_template("note.tex.j2").render(
         n=numbers(data, tex=True), refs=refs, bib=bib, doi=doi, doi_note=note, authors=_authors(citation),
         code_doi=code_doi(citation), panels=panels)
+    return AASTEX_FRAME.read_text(encoding="utf-8") + "\n" + body
+
+
+def _render_note_two(datas: list[dict], doi_placeholder: str, citation: dict | None, panels: bool,
+                     span: tuple[float, float] | None) -> str:
+    """``render_note`` for a target with a second candidate: the frame, then ``note_two.tex.j2`` on the numbers of
+    each candidate and the sentences of ``pack_two.shared``. The references are the union of the works each cites; a
+    prior claim's record is listed once."""
+    from skysift import pack_two
+    each = [references(d) for d in datas]
+    refs = {key: any(r[key] for r in each) for key in each[0]}
+    items = [(key, Raw(label), Raw(text)) for key, label, text in BIBLIOGRAPHY if refs.get(key)]
+    for d in datas:
+        items += [item for item in prior_bib(d) if item[0] not in {key for key, _label, _text in items}]
+    doi = doi_placeholder or DOI_PLACEHOLDER
+    note = f", a {SANDBOX_DOI_NOTE}" if doi.startswith(SANDBOX_DOI_PREFIX) else ""
+    cands = [numbers(d, tex=True) for d in datas]
+    body = _env(tex=True).get_template("note_two.tex.j2").render(
+        n=cands[0], cands=cands, s=pack_two.shared(datas, True, span, panels), refs=refs, bib=sorted(items),
+        doi=doi, doi_note=note, authors=_authors(citation), code_doi=code_doi(citation))
     return AASTEX_FRAME.read_text(encoding="utf-8") + "\n" + body
 
 
@@ -2712,7 +2743,8 @@ def _prior_problems(raw: dict) -> list[str]:
     return out
 
 
-def gate_problems(raw: dict, others: list[dict] | None = None) -> list[str]:
+def gate_problems(raw: dict, others: list[dict] | None = None,
+                  span: tuple[float, float] | None = None) -> list[str]:
     """Why a live Zenodo draft is refused on the stored dossier JSON (with its stored cross-check merged in as
     ``cross_check``), one sentence per problem: the ephemeris carries no error (no timing block, or its fit is not
     ok), the transit shape carries no error (no shape block, or it is not ok), and ``crosscheck.verdict``'s reason
@@ -2734,12 +2766,13 @@ def gate_problems(raw: dict, others: list[dict] | None = None) -> list[str]:
     ``others`` are the stored JSONs of the target's further candidates (``load_candidate``): the per-candidate checks
     (the ephemeris and shape errors, the cross-check, the commit, the pixel rule and verdict, the prior claims) run on
     each of them too, every problem naming its candidate by period ("the 47.690 d candidate: ..."); the note-level
-    checks run once, on the first candidate's texts until the two-candidate note exists."""
+    checks run once, on the two-candidate note and abstract (``span`` is the light curve's first and last BKJD, which
+    the note's coincidence sentence needs)."""
     out: list[str] = []
     datas = [raw, *(others or [])]
     for data in datas:
         out.extend(_named(data, others, _ephemeris_problems(data)))
-    note = render_note(raw)
+    note = render_note(raw, others=others, span=span)
     counts = note_words(note)
     if counts["total"] > NOTE_LIMITS["total"]:
         out.append(f"the Research Note has {counts['total']:,} words, over the RNAAS limit of "
@@ -2749,7 +2782,7 @@ def gate_problems(raw: dict, others: list[dict] | None = None) -> list[str]:
                for limit, p in note_limit_problems(counts, note) if limit != "total")
     for data in datas:
         out.extend(_named(data, others, _prior_problems(data)))
-    abstract = abstract_text(raw)
+    abstract = abstract_text(raw, others=others)
     zenodo = metadata_from(raw, None, prior=zenodo_prior(raw))
     description = re.sub(r"<[^>]+>", " ", zenodo["description"])
     texts = (("Research Note", note), ("abstract", abstract),
@@ -3312,25 +3345,64 @@ def _arr(rows, cols) -> list[np.ndarray]:
     return [np.array([float(r[c]) for r in good]) for c in cols]
 
 
-def _png_figures(Figure, data: dict, figures: Path, note: Path) -> None:
+def _fold_axes(ax, plots: dict) -> tuple[float, float]:
+    """One fold panel on ``ax``: the points, the binned flux with its errors and the model, within the panel's own
+    window and scaled to the bins and the model (the scatter is clipped). Returns the y limits it set."""
+    w = _num(plots.get("window_h")) or 12.0
+    mx, my = _arr(plots.get("model"), (0, 1))
+    fx, fy = _arr(plots.get("fold_points"), (0, 1))
+    bx, by, be = _arr(plots.get("fold_bins"), (0, 1, 2))
+    ax.plot(fx, fy, ".", color=DOTS, ms=1.5, zorder=1)
+    ax.errorbar(bx, by, be, fmt="o", color=POINT, ms=3, lw=1, zorder=2, label="binned flux")
+    ax.plot(mx, my, color=MODEL, lw=1.6, zorder=3,
+            label="transit fit" if plots.get("model_kind") == "fit" else "box model")
+    vals = np.concatenate([by - be, by + be, my]) if by.size or my.size else np.array([-1.0, 1.0])
+    pad = 0.15 * (np.ptp(vals) or 1.0)
+    low, high = float(vals.min() - pad), float(vals.max() + pad)
+    ax.set_ylim(low, high)
+    ax.set_xlim(-w, w)
+    ax.set_xlabel("hours from mid-transit")
+    ax.set_ylabel("relative flux (ppm)")
+    ax.legend(loc="lower right", fontsize=8, frameon=False)
+    return low, high
+
+
+def _two_panel_figure(Figure, datas: list[dict], note: Path) -> None:
+    """The two-candidate note's one figure (spec 5.1, cut C10): (a) the first candidate's fold and (b) the second's in
+    one row, each on its own ephemeris, window and bins, with the same y scale when the depths are within a factor of
+    two; ``figure1.png`` and ``figure1.pdf``."""
+    depths = [_num((d.get("ephemeris") or {}).get("depth_ppm")) for d in datas]
+    shared = None not in depths and min(depths) > 0 and max(depths) / min(depths) <= 2
+    fig = Figure(figsize=(7, 3.6), dpi=150, layout="constrained")
+    axes = fig.subplots(1, len(datas), sharey=shared)
+    limits = []
+    for ax, d, label in zip(np.atleast_1d(axes), datas, "abcdefgh", strict=False):
+        limits.append(_fold_axes(ax, d.get("plots") or {}))
+        ax.set_title(f"({label})", loc="left", fontsize=10)
+    if shared:
+        np.atleast_1d(axes)[0].set_ylim(min(lo for lo, _hi in limits), max(hi for _lo, hi in limits))
+    fig.savefig(note / "figure1.png")
+    fig.savefig(note / "figure1.pdf")
+
+
+def _png_figures(Figure, data: dict, figures: Path, note: Path, others: list[dict] | None = None) -> None:
+    """The PNG figures: the note's ``figure1`` (the panelled single figure, or with ``others`` the two fold panels of
+    ``_two_panel_figure``) and, per candidate, the fold, odd and even, periodogram and centroid pictures in
+    ``figures``; a further candidate's names end in ``_02`` (``fold_02.png``, then ``_03``)."""
+    if others:
+        _two_panel_figure(Figure, [data, *others], note)
+    _candidate_pngs(Figure, data, figures, note, "", not others)
+    for i, other in enumerate(others or [], start=2):
+        _candidate_pngs(Figure, other, figures, note, f"_{i:02d}", False)
+
+
+def _candidate_pngs(Figure, data: dict, figures: Path, note: Path, suffix: str, note_figure: bool) -> None:
     plots, eph, sh = data.get("plots") or {}, data.get("ephemeris") or {}, _metrics(data, "rung2_shape")
     w = _num(plots.get("window_h")) or 12.0
     mx, my = _arr(plots.get("model"), (0, 1))
 
     def fold(ax):
-        fx, fy = _arr(plots.get("fold_points"), (0, 1))
-        bx, by, be = _arr(plots.get("fold_bins"), (0, 1, 2))
-        ax.plot(fx, fy, ".", color=DOTS, ms=1.5, zorder=1)
-        ax.errorbar(bx, by, be, fmt="o", color=POINT, ms=3, lw=1, zorder=2, label="binned flux")
-        ax.plot(mx, my, color=MODEL, lw=1.6, zorder=3,
-                label="transit fit" if plots.get("model_kind") == "fit" else "box model")
-        vals = np.concatenate([by - be, by + be, my]) if by.size or my.size else np.array([-1.0, 1.0])
-        pad = 0.15 * (np.ptp(vals) or 1.0)
-        ax.set_ylim(vals.min() - pad, vals.max() + pad)
-        ax.set_xlim(-w, w)
-        ax.set_xlabel("hours from mid-transit")
-        ax.set_ylabel("relative flux (ppm)")
-        ax.legend(loc="lower right", fontsize=8, frameon=False)
+        _fold_axes(ax, plots)
 
     def parity(ax, kind, colour):
         bx, by, be = _arr(plots.get(f"{kind}_bins"), (0, 1, 2))
@@ -3361,37 +3433,38 @@ def _png_figures(Figure, data: dict, figures: Path, note: Path) -> None:
 
     fig = Figure(figsize=(7, 3.6), dpi=150, layout="constrained")
     fold(fig.add_subplot())
-    fig.savefig(figures / "fold.png")
+    fig.savefig(figures / f"fold{suffix}.png")
 
-    # the note's one figure (spec 11.6): (a) the fold across the top, (b) odd and (c) even below it on one scale,
-    # (d) one difference image per season in the third row; each panel drawn by the code of its own figure
-    cols = max(2, len(pixels))
-    fig = Figure(figsize=(7, 8.4 if pixels else 6.4), dpi=150, layout="constrained")
-    grid = fig.add_gridspec(3 if pixels else 2, cols)
-    top = fig.add_subplot(grid[0, :])
-    fold(top)
-    top.set_title("(a)", loc="left", fontsize=10)
-    half = cols // 2
-    odd = fig.add_subplot(grid[1, :half])
-    even = fig.add_subplot(grid[1, half:], sharey=odd)
-    for ax, kind, colour, label in ((odd, "odd", POINT, "(b)"), (even, "even", EVEN, "(c)")):
-        parity(ax, kind, colour)
-        ax.set_title(label, loc="left", fontsize=10)
-    odd.set_ylabel("relative flux (ppm)")
-    for i, s in enumerate(pixels):
-        ax = fig.add_subplot(grid[2, i])
-        season(ax, s)
-        if i == 0:
-            ax.set_title("(d)", loc="left", fontsize=10)
-    fig.savefig(note / "figure1.png")
-    fig.savefig(note / "figure1.pdf")
+    if note_figure:
+        # the note's one figure (spec 11.6): (a) the fold across the top, (b) odd and (c) even below it on one scale,
+        # (d) one difference image per season in the third row; each panel drawn by the code of its own figure
+        cols = max(2, len(pixels))
+        fig = Figure(figsize=(7, 8.4 if pixels else 6.4), dpi=150, layout="constrained")
+        grid = fig.add_gridspec(3 if pixels else 2, cols)
+        top = fig.add_subplot(grid[0, :])
+        fold(top)
+        top.set_title("(a)", loc="left", fontsize=10)
+        half = cols // 2
+        odd = fig.add_subplot(grid[1, :half])
+        even = fig.add_subplot(grid[1, half:], sharey=odd)
+        for ax, kind, colour, label in ((odd, "odd", POINT, "(b)"), (even, "even", EVEN, "(c)")):
+            parity(ax, kind, colour)
+            ax.set_title(label, loc="left", fontsize=10)
+        odd.set_ylabel("relative flux (ppm)")
+        for i, s in enumerate(pixels):
+            ax = fig.add_subplot(grid[2, i])
+            season(ax, s)
+            if i == 0:
+                ax.set_title("(d)", loc="left", fontsize=10)
+        fig.savefig(note / "figure1.png")
+        fig.savefig(note / "figure1.pdf")
 
     fig = Figure(figsize=(8, 3.4), dpi=150, layout="constrained")
     axes = fig.subplots(1, 2, sharey=True)
     for ax, kind, colour in ((axes[0], "odd", POINT), (axes[1], "even", EVEN)):
         parity(ax, kind, colour)
     axes[0].set_ylabel("relative flux (ppm)")
-    fig.savefig(figures / "oddeven.png")
+    fig.savefig(figures / f"oddeven{suffix}.png")
 
     fig = Figure(figsize=(7, 3.2), dpi=150, layout="constrained")
     ax = fig.add_subplot()
@@ -3404,14 +3477,14 @@ def _png_figures(Figure, data: dict, figures: Path, note: Path) -> None:
     ax.set_xscale("log")
     ax.set_xlabel("period (days)")
     ax.set_ylabel("SDE")
-    fig.savefig(figures / "periodogram.png")
+    fig.savefig(figures / f"periodogram{suffix}.png")
 
     if pixels:
         fig = Figure(figsize=(2.6 * len(pixels), 3.0), dpi=150, layout="constrained")
         axes = np.atleast_1d(fig.subplots(1, len(pixels)))
         for ax, s in zip(axes, pixels, strict=True):
             season(ax, s)
-        fig.savefig(figures / "centroids.png")
+        fig.savefig(figures / f"centroids{suffix}.png")
 
 
 # ---------------------------------------------------------------------------------------------------- files
@@ -3698,16 +3771,22 @@ def build_pack(store, blob, settings, target_id: str, *, out_dir: Path | None = 
         remedy = " and ".join(remedies) if others else f"skysift dossier --target {target_id}"
         raise PackError(f"the stored dossier of {target_id} is stale ({stale}), so no draft is made on zenodo.org; "
                         f"run {remedy} first")
-    problems = [*gate_problems(raw, others), *(o["text"] for o in out_texts if o["blocks_live"])]
+    def load_light_curve():
+        say("loading the light curve")
+        target = ds._target_dict(store, target_id)
+        return LightCurveLoader(store, blob, source_factory=ds._offline_factory(target_id, sid)).load(target, pin=True)
+    # the two-candidate note counts the transits the candidates share over the light curve's span, so the gate that
+    # renders it needs the light curve first
+    lc = load_light_curve() if others else None
+    span = (float(np.nanmin(lc.time)), float(np.nanmax(lc.time))) if lc is not None else None
+    problems = [*gate_problems(raw, others, span), *(o["text"] for o in out_texts if o["blocks_live"])]
     if zenodo is not None and not zenodo.sandbox and problems:
         raise PackError(f"the stored dossier of {target_id} is not ready for zenodo.org: {'; '.join(problems)}. No "
                         "draft is made there; use --zenodo for a sandbox rehearsal")
     # a signal with a further dossier of its own is named under "left out" or stale, not offered a second time
     named = {c["signal_id"] for c in cands} | further_ids
     signals = other_signals(store, target_id, named)
-    say("loading the light curve")
-    target = ds._target_dict(store, target_id)
-    lc = LightCurveLoader(store, blob, source_factory=ds._offline_factory(target_id, sid)).load(target, pin=True)
+    lc = lc if lc is not None else load_light_curve()
     fnorm = ds.whitened(lc, raw["signal"])
     citation, creators_source = load_citation()
     if load_author() is not None:          # Task 13 review M-5: the note's authors and the Zenodo creators agree
