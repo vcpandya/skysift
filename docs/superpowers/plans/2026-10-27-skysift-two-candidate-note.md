@@ -49,7 +49,7 @@
 | `tests/unit/test_pack.py` | The other-signals test updated (Task 5) and nothing else. |
 | `docs/superpowers/notes/2026-10-22-referee-checklist.md` | Row 27 covered. |
 
-The fixture shared by the two-candidate tests: `tests/unit/test_two_candidates.py::env_two` builds on `tests.unit.test_pack.env_with_dossier`, adds a second signal to `STAGE2_TARGET` at `period = 3.156 * first period` (t0 shifted by 1.1 d, depth 500 ppm, SDE 20, 28 events) through `env.store.start_run` and `env.store.add_signal`, sets it `candidate_stage2`, copies the first signal's latest test rows onto it (`env.store.add_test` with each row's `TestResult`), approves it (`env.store.decide`), then runs `generate(..., signal_id=second, further=True)`. A helper `two_live(prior: bool) -> tuple[dict, dict]` returns the golden-based pair of the spec's section 5.3: the first `tests.unit.test_pack._live_shape("dominant", prior, "adopted")`, the second the same JSON with `ephemeris.period_days *= 3.156`, `t0_bkjd += 1.1`, `depth_ppm = 920.0` with error 87, `duration_h = 5.47`, `n_events = 28`, `sde 33.2`, `snr 19.2`, the timing block's `n_used 19`, `n_measured 20`, `rms_min 24.2`, `epoch_ref 16`, `fap` `k 16`, `one_in 120`, `words "1 in 120"`, `fpp.value 0.108`, the planet `rp_rearth` median 2.27, `teq_k` 366, the cross-check `fpp 0.037`, `nfpp 0.012`, and `signal.id` 3480.
+The fixture shared by the two-candidate tests: `tests/unit/test_two_candidates.py::env_two` builds on `tests.unit.test_pack.env_with_dossier`, adds a second signal to `STAGE2_TARGET` at `period = 3.156 * first period` (t0 shifted by 1.1 d, depth 500 ppm, SDE 20, 28 events) through `env.store.start_run` and `env.store.add_signal`, sets it `candidate_stage2`, copies the first signal's latest test rows onto it (`env.store.add_test` with each row's `TestResult`), approves it (`env.store.decide`), then runs `generate(..., signal_id=second, further=True)`, and stores the second signal's id as `env.second` (the helper `_second_signal(env, period_factor)` is Task 3's, imported from `tests.unit.test_dossier`). A helper `two_live(prior: bool) -> tuple[dict, dict]` returns the golden-based pair of the spec's section 5.3: the first `tests.unit.test_pack._live_shape("dominant", prior, "adopted")`, the second the same JSON with `ephemeris.period_days *= 3.156`, `t0_bkjd += 1.1`, `depth_ppm = 920.0` with error 87, `duration_h = 5.47`, `n_events = 28`, `sde 33.2`, `snr 19.2`, the timing block's `n_used 19`, `n_measured 20`, `rms_min 24.2`, `epoch_ref 16`, `fap` `k 16`, `one_in 120`, `words "1 in 120"`, `fpp.value 0.108`, the planet `rp_rearth` median 2.27, `teq_k` 366, the cross-check `fpp 0.037`, `nfpp 0.012`, and `signal.id` 3480.
 
 ---
 
@@ -400,8 +400,8 @@ def test_a_further_row_without_its_file_is_left_out(env_two):
 def test_a_stale_further_dossier_names_its_signal_and_remedy(env_two, fake_session, monkeypatch):
     from skysift import fpp
     monkeypatch.setattr(fpp, "SIGNED_OFF", True)
-    env_two.store.add_test(env_two.second, TestResult(rung="rung4_novelty", status=TestStatus.pass_, reason="",
-                                                      metrics={"toi": 0}), 0.1)
+    env_two.store.add_test(env_two.second, _a_test_result("rung4_novelty"), 0.1)   # a TestResult built as
+                                                                                  # tests/unit/test_store.py builds one
     cands = pack.candidates(env_two.store, STAGE2_TARGET)
     approved, reason = pack.candidate_approval(env_two.store, STAGE2_TARGET, cands[1], env_two.settings.data_dir)
     assert reason.startswith(f"the {cands[1]['period_days']:.3f} d candidate's dossier (signal {env_two.second}) is stale")
@@ -493,8 +493,10 @@ def test_the_two_candidate_note_prints_each_value_from_its_own_json():
     a, b = two_live(prior=False)
     tex = render_note(a, others=[b], span=(120.0, 1590.0))
     body = tex.split(r"\begin{document}")[1]
-    for value in (numbers(a, tex=True)["period"], numbers(b, tex=True)["period"], "1,160", "920", "4.02", "5.47",
-                  "2.85", "2.27", "0.028", "0.037", "1 in 170", "1 in 120", "0.0078", "0.11"):
+    na, nb = numbers(a, tex=True), numbers(b, tex=True)
+    for value in (na["period"], nb["period"], na["depth_pm"], nb["depth_pm"], na["duration_pm"], nb["duration_pm"],
+                  na["rp"], nb["rp"], cc.probability_text(a["cross_check"]["fpp"]), "0.037", "1 in 170", "1 in 120",
+                  cc.probability_text(a["fpp"]["value"]), "0.11"):
         assert body.count(str(value)) >= 1, value
     assert body.count("TRICERATOPS 1.1.0") == 1 and body.count("Null searches") <= 1
     assert r"\title{Two transit candidates on KIC 6146676}" in body
@@ -521,8 +523,9 @@ def test_the_two_candidate_abstract_carries_its_pinned_clauses():
     assert abstract.startswith("This note reports two transit candidates on KIC 6146676, a star Kepler recorded only in "
                                "other targets' pixels: a ")
     assert "Null searches give false-alarm rates of 1 in 170 and 1 in 120 per star;" in abstract        # C20
-    assert ("TRICERATOPS 1.1.0 gives false-positive probabilities of 0.012 and 0.037 (no validation class applies at "
-            "30-minute cadence; Giacalone et al. 2021)") in abstract                                    # C19
+    head = cc.probability_text(a["cross_check"]["fpp"])
+    assert (f"TRICERATOPS 1.1.0 gives false-positive probabilities of {head} and 0.037 (no validation class applies "
+            "at 30-minute cadence; Giacalone et al. 2021)") in abstract                                  # C19
     assert "box cut by the stamp edge" not in abstract                                                   # C21
     assert abstract.endswith("Both remain candidates pending follow-up.") and len(abstract.split()) <= 130
 
@@ -615,16 +618,19 @@ def test_a_two_candidate_pack_writes_the_second_candidates_files_with_the_suffix
                  "figures/fold_02.svg", "figures/oddeven_02.svg", "figures/periodogram_02.svg", "dossier_02.html",
                  "provenance/calibration_02.json", "note/figure1_02.svg"):
         assert name in names, name
+    date = rep.zip_path.name.split("_")[1]
     assert {n for n in names if n.startswith("exofop/params_planet")} == {
-        f"exofop/params_planet_{rep.date}_001.txt", f"exofop/params_planet_{rep.date}_002.txt"}
-    second = (rep.out_dir / "exofop" / f"params_planet_{rep.date}_002.txt").read_text(encoding="utf-8")
+        f"exofop/params_planet_{date}_001.txt", f"exofop/params_planet_{date}_002.txt"}
+    second = (rep.out_dir / "exofop" / f"params_planet_{date}_002.txt").read_text(encoding="utf-8")
     assert "TIC<TIC-TO-FILL>.02" in second and f"-s{env_two.second}" in second
     assert any(n.startswith("exofop/") and "fold-02" in n for n in names)
     versions = json.loads((rep.out_dir / "provenance" / "versions.json").read_text(encoding="utf-8"))
     assert [c["ordinal"] for c in versions["candidates"]] == [1, 2] and versions["pack_version"] == "6"
     hashes = json.loads((rep.out_dir / "provenance" / "hashes.json").read_text(encoding="utf-8"))
     assert "data/ephemeris_02.csv" in hashes
-    assert env_two.store.candidate(env_two.second)["pack_path"] == str(rep.out_dir)   # or the store's accessor
+    with env_two.store.session() as s:                                  # the pack recorded on every candidate row
+        assert s.scalars(select(CandidateRow.pack_path).where(CandidateRow.signal_id == env_two.second)).one() == str(
+            rep.out_dir)
 
 
 def test_the_two_candidate_readme_zenodo_and_plain_texts_name_both(env_two):
@@ -632,6 +638,8 @@ def test_the_two_candidate_readme_zenodo_and_plain_texts_name_both(env_two):
     readme = (rep.out_dir / "README.md").read_text(encoding="utf-8")
     p1, p2 = (f"{c['period_days']:.3f} d" for c in pack.candidates(env_two.store, STAGE2_TARGET))
     assert f"| quantity | {p1} | {p2} |" in readme and "## The star" in readme
+    assert readme.startswith("# Submission pack for") or readme.startswith("This candidate")
+    assert "Two dips, of" in readme                                       # pack_two.summary in place of n.summary
     assert "so neither is an alias of the other" in readme and "within a duration" in readme
     assert "needs its own dossier and pack" not in readme and "covers one candidate only" not in readme
     assert readme.count("Observers who plan a transit ask for the ephemeris first") == 1
@@ -670,7 +678,7 @@ Expected: FAIL.
 
 - [ ] **Step 3: Implement**
 
-`_write_pack` loops over `[(1, data, raw, fnorm), (2, other_public, other_raw, ds.whitened(lc, other_raw["signal"]))...]` writing each per-candidate file through `suffixed(name, ordinal)`; the shared files (README, `note/note.tex`, `note/figure1.*`, `exofop/note.txt`, `archive_email.txt`, `zenodo_metadata.json`, `provenance/versions.json`, `queries.json`, `hashes.json`, the stellar file, the hand-built file) once. `note/figure1_02.svg` is the second candidate's `fold_svg`. `_exofop_list(target_id, date, png, pixels_figure, ordinal=1)` gives the content `fold-02` form. `file_notes` returns notes for suffixed names by stripping the suffix and appending " (the <P> d candidate)", and appends " (the <P> d candidate)" to the first candidate's per-candidate notes only when `f.candidates` has two entries. The README template: the table header and rows take the per-candidate values from `cands`, the per-target rows move to a "The star" table under it inside `{% if two %}`; the methods paragraphs print once when `cands[0][key] == cands[1][key]`, else labelled per candidate; step 2's planet-file sentence, step 5's loop, the caveats and the pack contents as spec 6.2. `exofop_note.txt.j2` and `archive_email.txt.j2` take `{% if two %}` blocks. `metadata_from` with `others` as spec 6.4.
+`_write_pack` loops over `[(1, data, raw, fnorm), (2, other_public, other_raw, ds.whitened(lc, other_raw["signal"]))...]` writing each per-candidate file through `suffixed(name, ordinal)`; the shared files (README, `note/note.tex`, `note/figure1.*`, `exofop/note.txt`, `archive_email.txt`, `zenodo_metadata.json`, `provenance/versions.json`, `queries.json`, `hashes.json`, the stellar file, the hand-built file) once. `note/figure1_02.svg` is the second candidate's `fold_svg`. `_exofop_list(target_id, date, png, pixels_figure, ordinal=1)` gives the content `fold-02` form. `file_notes` returns notes for suffixed names by stripping the suffix and appending " (the <P> d candidate)", and appends " (the <P> d candidate)" to the first candidate's per-candidate notes only when `f.candidates` has two entries. The README template: `s.summary` in place of `n.summary` when `two`; the "not yet approved" banner names the signals that are not approved (`f.not_approved`, a list of "signal N (<P> d)" strings, empty when all are); the table header and rows take the per-candidate values from `cands`, the per-target rows move to a "The star" table under it inside `{% if two %}`; the methods paragraphs print once when `cands[0][key] == cands[1][key]`, else labelled per candidate; step 2's planet-file sentence, step 5's loop, the caveats and the pack contents as spec 6.2. `exofop_note.txt.j2` and `archive_email.txt.j2` take `{% if two %}` blocks. `metadata_from` with `others` as spec 6.4.
 
 - [ ] **Step 4: Run the tests**
 
