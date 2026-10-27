@@ -180,7 +180,7 @@ git commit -m "feat(store): the further_dossiers table for a target's second can
 - Consumes: Task 2's store methods.
 - Produces in `dossier.py`: `ALIAS_RATIOS = (1.0, 2.0, 3.0, 0.5, 1 / 3)`, `ALIAS_TOLERANCE = 0.02`; `alias_of(period: float, other: float, tolerance: float = ALIAS_TOLERANCE) -> float | None` (the ratio in `ALIAS_RATIOS` that `other` is within `tolerance * ratio * period` of `ratio * period`, else None); `further_path(data_dir, target_id: str, signal_id: int) -> Path` = `<data_dir>/dossiers/<target_id>/s<signal_id>/dossier_data.json`; `FURTHER_URL = "skysift://dossier/{target_id}/s{signal_id}"`; `class FurtherRefused(ValueError)`; `generate(..., further: bool = False)`.
 - `pack.independent_periods(period, others, tolerance=0.02)` keeps its signature and returns the same values, through `ds.alias_of`.
-- `claims_for(claims: list[dict], period: float, own: bool) -> list[dict]` in `dossier.py` (spec 4.3): the claims whose `period_days` is within 2 percent of `period` (`alias_of(period, claim period) == 1.0`), plus, when `own`, the claims without a period. `generate` stores `claims_for(all, P, own=not further)` and, for a further dossier, `hand_built_localisation = None`.
+- `claims_for(claims: list[dict], period: float, own: bool, other_periods: tuple[float, ...] = ()) -> list[dict]` in `dossier.py` (spec 4.3): with `own` False, the claims whose `period_days` is within 2 percent of `period` (`alias_of(period, claim period) == 1.0`); with `own` True, every claim except those within 2 percent of one of `other_periods` (the target's other stage 2 signals' periods, from the store), so a claim that matches no signal stays on the target's own dossier for the gate to flag. `generate` stores `claims_for(all, P, own=not further, other_periods=...)` and, for a further dossier, `hand_built_localisation = None`.
 - `skysift dossier --further` (exit 2 with the `FurtherRefused` message).
 
 - [ ] **Step 1: Write the failing tests**
@@ -209,9 +209,9 @@ def test_a_further_dossier_is_written_beside_the_targets_own(env):
 
 def test_claims_follow_the_candidate_whose_period_they_match():
     claims = [{"doi": "a", "period_days": 15.12}, {"doi": "b", "period_days": 47.7}, {"doi": "c", "period_days": None}]
-    assert [c["doi"] for c in claims_for(claims, 15.1137, own=True)] == ["a", "c"]
+    assert [c["doi"] for c in claims_for(claims, 15.1137, own=True, other_periods=(47.6905,))] == ["a", "c"]
+    assert [c["doi"] for c in claims_for(claims, 15.1137, own=True)] == ["a", "b", "c"]      # no other signal
     assert [c["doi"] for c in claims_for(claims, 47.6905, own=False)] == ["b"]
-    assert claims_for(claims, 47.6905, own=True) == [claims[1], claims[2]]
 
 
 def test_a_further_dossier_stores_only_its_claims_and_no_hand_built_study(env):
