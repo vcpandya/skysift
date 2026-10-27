@@ -1858,6 +1858,8 @@ def test_claims_follow_the_candidate_whose_period_they_match():
     assert [c["doi"] for c in claims_for(claims, 15.1137, own=True, other_periods=(47.6905,))] == ["a", "c"]
     assert [c["doi"] for c in claims_for(claims, 15.1137, own=True)] == ["a", "b", "c"]      # no other signal
     assert [c["doi"] for c in claims_for(claims, 47.6905, own=False)] == ["b"]
+    # a recheck row of the own period among the other signals must not drop the own claim
+    assert [c["doi"] for c in claims_for(claims, 15.1137, own=True, other_periods=(15.1136, 47.6905))] == ["a", "c"]
 
 
 def test_a_further_dossier_stores_only_its_claims_and_no_hand_built_study(env):
@@ -1875,6 +1877,20 @@ def test_a_further_dossier_stores_only_its_claims_and_no_hand_built_study(env):
     further = _data(rep)
     assert [c["doi"] for c in further["prior_claims"]] == ["10.1/further"]
     assert further["hand_built_localisation"] is None
+
+
+def test_a_recheck_row_at_the_own_period_does_not_drop_the_own_claim(env):
+    first_period = pick_signal(env.store, STAGE2_TARGET, env.ids["stage2"])["period"]
+    folder = dossier_module.CANDIDATES_DIR / STAGE2_TARGET
+    folder.mkdir(parents=True, exist_ok=True)
+    claims = [{"doi": "10.1/own", "date": "2020-01-02", "author": "A", "title": "T1", "period_days": first_period},
+              {"doi": "10.1/further", "date": "2021-01-02", "author": "B", "title": "T2",
+               "period_days": first_period * 3.156}]
+    (folder / "prior_claims.json").write_text(json.dumps(claims), encoding="utf-8")
+    _second_signal(env, period_factor=1.00001)          # a recheck row of the own period, also candidate_stage2
+    _second_signal(env)                                  # and a further candidate at 3.156 times the period
+    first = generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch)
+    assert [c["doi"] for c in _data(first)["prior_claims"]] == ["10.1/own"]
 
 
 def test_a_further_dossier_carries_its_own_cross_check_over(env):

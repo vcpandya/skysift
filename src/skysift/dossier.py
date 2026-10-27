@@ -1830,11 +1830,13 @@ def claims_for(claims: list[dict], period: float, own: bool, other_periods: tupl
     """The claims that belong to a candidate. A further dossier (``own`` False) keeps those whose ``period_days`` is
     within 2 percent of its ``period`` (``alias_of`` names the ratio 1). The target's own dossier (``own`` True) keeps
     every claim except those within 2 percent of one of ``other_periods``, the periods of the target's other
-    candidates: a claim that matches no signal stays, so the live gate still flags it as a prior mismatch."""
+    stage 2 signals, unless it also matches the target's own ``period`` (a recheck row can share it): a claim that
+    matches no signal stays, so the live gate still flags it as a prior mismatch."""
     if not own:
         return [c for c in claims if (p := _num(c, "period_days")) is not None and alias_of(period, p) == 1.0]
     return [c for c in claims
-            if (p := _num(c, "period_days")) is None or not any(alias_of(q, p) == 1.0 for q in other_periods)]
+            if (p := _num(c, "period_days")) is None or alias_of(period, p) == 1.0
+            or not any(alias_of(q, p) == 1.0 for q in other_periods)]
 
 
 def _other_candidate_periods(store: Store, target_id: str, signal_id: int) -> tuple[float, ...]:
