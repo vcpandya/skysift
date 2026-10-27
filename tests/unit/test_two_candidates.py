@@ -191,6 +191,29 @@ def test_a_stale_further_dossier_names_its_signal_and_remedy(env_two, fake_sessi
                         zenodo=ZenodoClient("t", sandbox=False, session=fake_session))
 
 
+def test_a_candidate_is_named_by_its_json_period_not_its_signal_rows(env_two):
+    """The signal table's period and the dossier's ``ephemeris.period_days`` differ at the fourth decimal on the live
+    star (47.690 against 47.691): the candidate list, the stale text and the note's name must agree on the JSON's."""
+    row = env_two.store.further_dossier(env_two.second)
+    path = Path(row["data_path"])
+    data = json.loads(path.read_text(encoding="utf-8"))
+    sig_period = pack.candidates(env_two.store, STAGE2_TARGET)[1]["period_days"]
+    shown = f"{sig_period:.3f}"
+    json_period = round(sig_period, 3) + 0.0006                # the next third decimal, a fourth-decimal difference
+    assert f"{json_period:.3f}" != shown and abs(json_period - sig_period) < 0.001
+    data["ephemeris"]["period_days"] = json_period
+    path.write_text(json.dumps(data), encoding="utf-8")
+    cand = pack.candidates(env_two.store, STAGE2_TARGET)[1]
+    assert cand["period_days"] == pytest.approx(json_period) and f"{cand['period_days']:.3f}" == f"{json_period:.3f}"
+    assert pack._candidate_name(pack.load_candidate(cand)) == f"the {json_period:.3f} d candidate"
+    env_two.store.add_test(env_two.second, _a_test_result("rung4_novelty"), 0.1)         # now stale
+    _approved, reason = pack.candidate_approval(env_two.store, STAGE2_TARGET, cand, env_two.settings.data_dir)
+    assert reason.startswith(f"the {json_period:.3f} d candidate's dossier (signal {env_two.second}) is stale")
+    own = pack.candidates(env_two.store, STAGE2_TARGET)[0]
+    own_json = json.loads(Path(own["row"]["data_path"]).read_text(encoding="utf-8"))["ephemeris"]["period_days"]
+    assert own["period_days"] == pytest.approx(own_json)
+
+
 def test_coincident_transits_counts_the_longer_periods_overlaps():
     short = {"period_days": 10.0, "t0_bkjd": 100.0, "duration_h": 4.0}
     long = {"period_days": 31.0, "t0_bkjd": 100.0, "duration_h": 4.0}       # epochs 0 and 10 coincide exactly

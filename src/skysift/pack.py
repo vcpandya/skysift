@@ -3017,6 +3017,18 @@ def _out_reason(row: dict) -> str | None:
     return None
 
 
+def _stored_period(row: dict, fallback: float) -> float:
+    """The period the dossier's JSON gives (``ephemeris.period_days``, the one ``_candidate_name`` and the note print),
+    or ``fallback``, the signal row's, when the file is missing, unreadable or without one: the two can differ at the
+    fourth decimal, and a candidate must carry one name."""
+    try:
+        data = json.loads(Path(row["data_path"]).read_text(encoding="utf-8"))
+        period = _num((data.get("ephemeris") or {}).get("period_days"))
+    except (KeyError, TypeError, OSError, ValueError, AttributeError):
+        return fallback
+    return fallback if period is None or period <= 0 else float(period)
+
+
 def _scan(store, target_id: str) -> tuple[list[dict], list[dict], set[int]]:
     """(the candidates, the texts for the further dossiers left out, the signal ids of every further dossier) in one
     pass, so the list and the texts agree even when a file disappears while a pack is built."""
@@ -3024,17 +3036,18 @@ def _scan(store, target_id: str) -> tuple[list[dict], list[dict], set[int]]:
     if own is None:
         return [], [], set()
     first = ds.pick_signal(store, target_id, int(own["signal_id"]))
-    cands = [{"ordinal": 1, "signal_id": int(own["signal_id"]), "period_days": float(first["period"]), "row": own,
-              "further": False}]
+    cands = [{"ordinal": 1, "signal_id": int(own["signal_id"]),
+              "period_days": _stored_period(own, float(first["period"])), "row": own, "further": False}]
     out: list[dict] = []
     rows = store.further_dossiers(target_id)
     for row in rows:
         sid = int(row["signal_id"])
         why = _out_reason(row)
         blocks = False
+        period = _stored_period(row, float(row["period"]))
         if why is None:
             for c in cands:
-                ratio = ds.alias_of(c["period_days"], float(row["period"]))
+                ratio = ds.alias_of(c["period_days"], period)
                 if ratio is not None:
                     said = {1.0: "1", 2.0: "2", 3.0: "3", 0.5: "1/2"}.get(ratio, "1/3")
                     why = f"its period is within 2 percent of {said} times the {c['period_days']:.3f} d candidate's"
@@ -3043,8 +3056,8 @@ def _scan(store, target_id: str) -> tuple[list[dict], list[dict], set[int]]:
             why = "the note shape holds two candidates, and a third needs its own shape (spec section 2)"
             blocks = True
         if why is None:
-            cands.append({"ordinal": len(cands) + 1, "signal_id": sid, "period_days": float(row["period"]),
-                          "row": row, "further": True})
+            cands.append({"ordinal": len(cands) + 1, "signal_id": sid, "period_days": period, "row": row,
+                          "further": True})
         else:
             out.append({"text": f"signal {sid}'s further dossier is left out: {why}", "blocks_live": blocks})
     return cands, out, {int(r["signal_id"]) for r in rows}
