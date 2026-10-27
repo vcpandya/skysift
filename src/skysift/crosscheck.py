@@ -178,6 +178,9 @@ def _stored(store, target_id: str, signal_id: int | None = None) -> dict:
                    f"{target_id} --signal {signal_id} --further first")
     if row is None or not row.get("data_path") or not Path(row["data_path"]).is_file():
         raise NoDossier(missing)
+    if signal_id is not None and row.get("target_id") != target_id:
+        raise NoDossier(f"signal {signal_id} belongs to target {row.get('target_id')}, not {target_id}; run skysift "
+                        f"crosscheck --target {row.get('target_id')} --signal {signal_id}")
     return json.loads(Path(row["data_path"]).read_text(encoding="utf-8"))
 
 

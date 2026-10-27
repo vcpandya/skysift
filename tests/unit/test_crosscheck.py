@@ -173,6 +173,17 @@ def test_export_and_import_with_a_signal_use_the_further_dossier(env_two_dossier
     assert own["current"] is False                                        # the further inputs are not the target's
 
 
+def test_a_signal_of_another_target_is_refused(env_two_dossiers, tmp_path):
+    env, second = env_two_dossiers
+    with pytest.raises(cc.NoDossier, match="belongs to target " + STAGE2_TARGET):
+        cc.export_inputs(env.store, env.blob, env.settings, "kic-000000001", tmp_path / "cc", fetch=env.xfetch,
+                         signal_id=second)
+    with pytest.raises(cc.NoDossier, match="belongs to"):
+        cc.import_result(env.store, "kic-000000001", _write(tmp_path / "r.json", fake_result("0" * 64)),
+                         signal_id=second)
+    assert env.store.further_dossier(second)["cross_check"] is None
+
+
 def test_a_signal_without_a_further_dossier_is_refused(env, tmp_path):
     with pytest.raises(cc.NoDossier, match="--further"):
         cc.export_inputs(env.store, env.blob, env.settings, STAGE2_TARGET, tmp_path / "cc", fetch=env.xfetch,
