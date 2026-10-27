@@ -248,14 +248,15 @@ The ExoFOP planet files: `params_planet_<date>_001.txt` with target `TIC<tic>.01
 2. The first candidate is always the target's own dossier signal, whatever its period; further candidates follow in increasing period (4.1). For KIC 6699887 this is also increasing period.
 3. The alias statement is the search's 2 percent ratio rule in words, with a transit-coincidence count in the README and in the note only when it is not zero (4.2).
 4. The figure drops the odd-even and difference-image panels for two fold panels (5.1, C10); the pack's figures keep them per candidate.
-5. The cuts C1 to C18 (5.4), and the rule that a cut shortens wording, shares a method clause or moves a secondary number to the README, and never drops a quantity the note promises in section 1.
-6. The `_02` suffix on the second candidate's files and `.02` on its ExoFOP target, with the first candidate's names unchanged (6.1).
+5. The cuts C1 to C27 (5.4; C22 to C27 came from Task 6's measurement, the first five ratified in review, C27 after the coincidence sentence was forced into the measurement), and the rule that a cut shortens wording, shares a method clause or moves a secondary number to the README, and never drops a quantity the note promises in section 1.
+6. The `_02` suffix on the second candidate's files and `.02` on its ExoFOP target, with the first candidate's names unchanged (6.1); the ExoFOP upload names spell it `-02`, since their content rule allows no underscore.
 7. The TESS sentence, the FAP sentence and the TRICERATOPS sentence pair the numbers in one sentence each rather than repeating the sentence (5.1, C7 to C9).
 8. A third candidate is left out of the list by period order, named in the README, and refused by the live gate until a shape is designed (4.1, 5.6); a plain pack is still built.
 10. The abstract's three cuts C19 to C21, chosen over dropping the "other targets' pixels" clause, since each moved number is stated in the body and the opening sentence is what a reader of the abstract alone keeps (5.1).
 11. A prior claim belongs to the candidate whose period it matches within 2 percent, and a claim without a period to the target's own dossier (4.3).
 12. A further dossier stores no hand-built localisation (4.3).
-9. The TRICERATOPS run for 3480 is made again in this plan since the round-4 file is lost (9.3), in the background during the implementation tasks.
+9. The TRICERATOPS run for 3480 was not made again: the round-4 merged result was found in the referee-pack plan's workspace, its inputs hash equals the regenerated further dossier's fingerprint, and `skysift crosscheck --signal 3480 --import` stored it as current (9.3). The rerun recipe stays in the plan for a star whose inputs have changed.
+13. The names as implemented differ from the sketch at the end of 5.4: the shared sentences are `pack_two.shared` and the pairs `fap_pair`, `triceratops_pair`, `in_house_pair`, `tess_pair`; the abstract and caption are `pack_two.abstract` and `pack_two.caption`; `_approval` is not changed, each candidate's approval is read by `pack.candidate_approval`; the gate is `gate_problems(raw, others, span)` with the light curve's span for the coincidence count.
 
 ## 11. Follow-ups, not in this plan
 
