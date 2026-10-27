@@ -2756,12 +2756,12 @@ def test_the_author_block_comes_from_docs_author_json(env_with_dossier, tmp_path
 
 def test_the_repository_author_file_carries_the_author_block():
     """docs/author.json carries the name of CITATION.cff, the affiliation and the email Vikram gave on 26 October
-    2026; the ORCID is still his to fill in."""
+    2026 and the ORCID he gave on 27 October."""
     author = pack_module.load_author()
     assert author["name"] == "Vikram Pandya"
     assert author["affiliation"] == "SP Jain School of Global Management, Mumbai, India"
     assert author["email"] and "@" in author["email"]
-    assert author["orcid"] == ""
+    assert author["orcid"] == "0009-0007-5173-8477"
 
 
 def test_final_refuses_without_the_live_draft_and_with_any_placeholder(env_with_dossier, fake_session, tmp_path,

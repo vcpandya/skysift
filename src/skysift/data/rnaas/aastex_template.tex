@@ -12,3 +12,14 @@
 % is figure1.pdf when the pack was built with matplotlib; otherwise convert figure1.svg to PDF first
 % (Inkscape: inkscape figure1.svg --export-type=pdf).
 \usepackage{graphicx}
+% AASTeX 7.0.1 prints "Draft version <today>" (its default \journalinfo) and a "Typeset using" line above the
+% title. A Research Note is published from the author's own PDF, so the first is blanked with the class's own
+% command and the second is patched out of the default style's header; a class without that macro leaves the note
+% as it is, and the log says which (a SKYSIFT line).
+\journalinfo{}
+\usepackage{etoolbox}
+\makeatletter
+\ifcsname frontmatter@title@above\endcsname
+\patchcmd{\frontmatter@title@above}{{\footnotesize Typeset using \LaTeX\ {\bf default} style in AASTeX7.0.1}}{}{\typeout{SKYSIFT: typeset line removed}}{\typeout{SKYSIFT: typeset line not patched}}
+\fi
+\makeatother
