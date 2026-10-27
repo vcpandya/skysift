@@ -469,7 +469,7 @@ def test_the_names_the_title_and_the_summary_of_two_candidates():
 def test_a_star_that_could_not_be_characterised_gets_one_sentence_and_no_planet_sentences():
     a, b = two_live(prior=False)
     a["star"] = {**a["star"], "route": "none"}
-    assert pack_two.planet_sentence(a, True, False) is None
+    assert pack_two.planet_sentence(a, True) is None
     tex = render_note(a, others=[b], span=SPAN)
     assert tex.count("could not be characterised") == 1 and "candidate's radius is" not in tex
 
@@ -477,12 +477,12 @@ def test_a_star_that_could_not_be_characterised_gets_one_sentence_and_no_planet_
 def test_the_planet_sentences_follow_the_pinned_form():
     a, _b = two_live(prior=False)
     n = numbers(a, tex=True)
-    sentence = pack_two.planet_sentence(a, True, True)
+    sentence = pack_two.planet_sentence(a, True)
     earth = r"$R_\oplus$"
     assert sentence == (f"The {pack_two.period_word(a)} d candidate's radius is {n['rp']} {earth} (ratio "
                         f"{n['fit_k']}), on an orbit of {n['a']} AU at an equilibrium temperature of {n['teq']} K "
-                        f"and {n['insolation']} times Earth's insolation at a Bond albedo of 0.3.")
-    assert "Bond albedo" not in pack_two.planet_sentence(a, True, False)
+                        f"and {n['insolation']} times Earth's insolation.")           # the albedo is the README's (C26)
+    assert "Bond albedo" not in sentence
 
 
 def test_a_prior_claim_both_candidates_carry_is_told_once():

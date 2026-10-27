@@ -28,13 +28,6 @@ ALIAS_PERCENT = 2                                                          # and
 
 NUMBER_WORDS = ("zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine")
 
-# cut C23 (amending spec 5.4): the sentence that neither candidate matches a catalogued object is the README's; a
-# candidate that does match one still says so in its own vetting sentence
-CATALOGUE_IN_NOTE = False
-# cut C26 (spec 5.2's second fallback): "at a Bond albedo of 0.3" after the second planet is the README's, which gives
-# the equilibrium temperature with its assumption
-ALBEDO_IN_NOTE = False
-SOLE_CANDIDATE_TEXT = "Neither matches a Kepler KOI, DR25 TCE, TESS TOI or Kepler eclipsing binary entry."
 NO_MATCH_TEXT = "It matches no Kepler KOI, DR25 TCE, TESS TOI or Kepler eclipsing binary entry."
 VETTED_SINGLY = "The two candidates were vetted singly; no joint fit was made."
 CATALOGUE_NAMES = {"cumulative": "the Kepler cumulative KOI table", "q1_q17_dr25_tce": "the Q1 to Q17 DR25 TCE list",
@@ -296,7 +289,7 @@ def vetting_sentence(data: dict, tex: bool) -> str:
     fit clause is "the fit gives a radius ratio of k (+e, -e)" with b and a/R* in the words of
     ``pack._geometry_words`` (a degenerate b says so), and there is none when the shape carries no error. A rung that
     did not pass says so in the words of the single note, and a catalogue match is named; the clean case is the
-    shared catalogue sentence."""
+    README's (cut C23)."""
     ev = _metrics(data, "rung1_events")
     failed = _failed_checks(data)
     clauses: list[list] = []
@@ -332,15 +325,6 @@ def ladder_sentence(datas: list[dict], tex: bool) -> str:
     else:
         model = [pack.LEGACY_MODEL_CLAUSE]
     return _joined(tex, "SkySift vets each signal through a fixed ladder of checks; the shape fit is ", *model, ".")
-
-
-def catalogue_sentence(datas: list[dict]) -> str | None:
-    """"Neither matches a Kepler KOI, DR25 TCE, TESS TOI or Kepler eclipsing binary entry." when both were searched and
-    neither matched; None otherwise (a candidate that matches says so in its own sentence)."""
-    checked = [_catalogue(d) for d in datas]
-    if all(c for c, _hits in checked) and not any(hits for _c, hits in checked):
-        return SOLE_CANDIDATE_TEXT
-    return None
 
 
 # ---------------------------------------------------------------------------------------------------- the pixels
@@ -429,12 +413,12 @@ def photometry_sentence(datas: list[dict]) -> str:
 # ---------------------------------------------------------------------------------------------------- the planets
 
 
-def planet_sentence(data: dict, tex: bool, albedo: bool, *, bracket: bool = False) -> str | None:
+def planet_sentence(data: dict, tex: bool, *, bracket: bool = False) -> str | None:
     """"The 15.11 d candidate's radius is 2.85 (+0.19, -0.15) R_earth (radius ratio 0.0357), on an orbit of 0.1087 ±
-    0.0018 AU at an equilibrium temperature of 536 K and 19.7 times Earth's insolation", with " at a Bond albedo of
-    0.3" when ``albedo`` (said once, on the last); None when the star could not be characterised (the single note's
-    "could not be characterised" sentence prints once instead) or the planet has no radius. ``bracket`` adds the
-    radius bracket of the reddening (the star's, so the first candidate's alone)."""
+    0.0018 AU at an equilibrium temperature of 536 K and 19.7 times Earth's insolation" (the Bond albedo is the
+    README's, cut C26); None when the star could not be characterised (the single note's "could not be characterised"
+    sentence prints once instead) or the planet has no radius. ``bracket`` adds the radius bracket of the reddening
+    (the star's, so the first candidate's alone)."""
     planet = data.get("planet") or {}
     rp = value_text(planet.get("rp_rearth"), tex)
     if not star_characterized(data) or rp is None:
@@ -456,8 +440,6 @@ def planet_sentence(data: dict, tex: bool, albedo: bool, *, bracket: bool = Fals
         parts += [" at an equilibrium temperature of ", teq, " K"]
     elif insolation:
         parts += [" with ", insolation, " times Earth's insolation"]
-    if albedo and teq:
-        parts.append(" at a Bond albedo of 0.3")
     return _joined(tex, *parts, ".")
 
 
@@ -789,6 +771,7 @@ def _coincidence(datas: list[dict], span: tuple[float, float] | None, note: bool
     short, long_ = sorted(datas[:2], key=lambda d: _period(d) or 0.0)
     try:
         count, n_long = pack.coincident_transits(short["ephemeris"], long_["ephemeris"], span[0], span[1])
+    # a dossier without ``duration_h`` is malformed: the sentence is dropped rather than the pack failing (M4, parked)
     except (KeyError, TypeError, ValueError):
         return None
     return coincidence_sentence(count, n_long, period_word(short), period_word(long_), note=note)
@@ -797,9 +780,9 @@ def _coincidence(datas: list[dict], span: tuple[float, float] | None, note: bool
 def shared(datas: list[dict], tex: bool, span: tuple[float, float] | None, panels: bool = True) -> dict:
     """What ``note_two.tex.j2`` prints beside the per-candidate numbers: the title, the ratio and coincidence sentences,
     the signal, vetting and centroid sentences per candidate, the planet sentences, the probability sentences, the
-    caveats, the caption, the abstract, the ladder sentence, the catalogue sentence (None when a candidate matches
-    one), the photometry sentences and the fold clause. ``span`` is the light curve's (min, max) in BKJD, which the
-    coincidence count runs on; without it that sentence is left out."""
+    caveats, the caption, the abstract, the ladder sentence, the photometry sentences and the fold clause. ``span`` is
+    the light curve's (min, max) in BKJD, which the coincidence count runs on; without it that sentence is left
+    out."""
     periods = [_period(d) for d in datas]
     signals, told = [], set()
     for i, d in enumerate(datas):
@@ -809,17 +792,13 @@ def shared(datas: list[dict], tex: bool, span: tuple[float, float] | None, panel
         bare = [{**c, "development_note": "", "development_note_short": ""} for c in new]
         prior = pack.prior_claim_sentence({**d, "prior_claims": bare}, tex)
         signals.append(_joined(tex, sentence, " ", prior) if prior else sentence)
-    catalogue = catalogue_sentence(datas) if CATALOGUE_IN_NOTE else None
     vettings = [vetting_sentence(d, tex) for d in datas]
     checked = [_catalogue(d) for d in datas]
-    if catalogue is None and any(hits for _c, hits in checked):
+    if any(hits for _c, hits in checked):          # a clean pair says nothing here: that sentence is the README's (C23)
         vettings = [v if (hits or not c) else _joined(tex, v, " ", NO_MATCH_TEXT)
                     for v, (c, hits) in zip(vettings, checked, strict=True)]
     centroids = [centroid_sentence(d, tex, after=datas[i - 1] if i else None) for i, d in enumerate(datas)]
-    with_teq = [i for i, d in enumerate(datas) if value_text((d.get("planet") or {}).get("teq_k"))]
-    planets = [p for i, d in enumerate(datas)
-               if (p := planet_sentence(d, tex, albedo=ALBEDO_IN_NOTE and bool(with_teq) and i == with_teq[-1],
-                                        bracket=i == 0))]
+    planets = [p for i, d in enumerate(datas) if (p := planet_sentence(d, tex, bracket=i == 0))]
     return {"title": title(datas),
             "ratio": ratio_sentence(min(periods), max(periods)),
             "coincidence": _coincidence(datas, span),
@@ -827,5 +806,5 @@ def shared(datas: list[dict], tex: bool, span: tuple[float, float] | None, panel
             "fap": fap_pair(datas, tex), "triceratops": triceratops_pair(datas, tex),
             "in_house": in_house_pair(datas), "tess": tess_pair(datas, tex),
             "caveats": caveat_union(datas), "caption": caption(datas, panels), "abstract": abstract(datas),
-            "ladder": ladder_sentence(datas, tex), "catalogue": catalogue,
+            "ladder": ladder_sentence(datas, tex),
             "photometry": photometry_sentence(datas), "fold_clause": fold_clause(datas)}
