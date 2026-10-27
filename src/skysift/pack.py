@@ -885,13 +885,14 @@ def fap_method_text(data: dict) -> str | None:
 
 # M-1 of the Task 13 review: where the note's wording is shorter than the specification's, the README says so; every
 # number and claim is in both
-def note_forms(data: dict) -> str | None:
+def note_forms(data: dict, nearest_in_note: bool = True) -> str | None:
     """The README's sentence on where the Research Note words a statement more briefly than this README, with the
     same numbers (Task 13 review M-1): the nearest Gaia source by distance and magnitude, a/R* without its label
     where the quoted values follow the host's density, the short class clause, the claim's short development
-    note; only the ones this note carries. None when it carries none."""
+    note; only the ones this note carries. None when it carries none. The two-candidate note leaves the nearest Gaia
+    source out (cut C14), so ``nearest_in_note`` is False there."""
     items = []
-    if offset_block(data) and (offset_block(data).get("nearest_beyond") or {}).get("source_id"):
+    if nearest_in_note and offset_block(data) and (offset_block(data).get("nearest_beyond") or {}).get("source_id"):
         items.append("it names the nearest Gaia source beyond the exclusion radius by its distance and G magnitude "
                      "(its Gaia DR3 id is in the pixel offset paragraph)")
     cmp = (data.get("shape") or {}).get("comparison") if isinstance(data.get("shape"), dict) else None
@@ -3301,7 +3302,7 @@ def _readme_context(data: dict, others: list[dict], f: dict, n: dict) -> dict:
         name = _candidate_name(d)
         c.update(ordinal=i, name_label=name, label=f"**{_capital(name)}.** ", label_colon=f"**{_capital(name)}:** ",
                  period_label=f"{c['period_title']} d", signal_arg="" if i == 1 else f" --signal {c['signal_id']}",
-                 catalogue=_catalogue_cell(d))
+                 catalogue=_catalogue_cell(d), note_forms=note_forms(d, nearest_in_note=False))
     for c in cands[1:]:
         c["hand_built_text"] = None            # a further dossier stores no hand-built localisation (spec 4.3)
     span = f.get("span")

@@ -676,6 +676,9 @@ def test_the_readme_table_and_methods_for_two_candidates_come_from_each_json():
         a, _fields_two(), [hit])
     assert pack_two.VETTED_SINGLY in readme.split("## What is not yet known")[1]
     assert "## The candidate in numbers" not in readme
+    nearest = "it names the nearest Gaia source beyond the exclusion radius"
+    assert "Note wording:" in readme and nearest not in readme      # the two-candidate note drops it (C14)
+    assert nearest in pack.render_readme(a, _fields_two())                    # the single note still names it
 
 
 def test_the_readme_prints_a_method_once_when_both_candidates_share_it_and_labelled_when_they_differ():
