@@ -174,6 +174,7 @@ Task 6 measured the real template on the margin test's pair (the golden's live s
 - C25 The TRICERATOPS pair leaves the dominant-scenario sentence (a median at or above 0.5, the README's owner flag) and the count of degenerate runs to the README; and the body names the TRICERATOPS version once, in the abstract and the `\software` line, when both runs share it (a differing version is named in the body).
 - C26 "at a Bond albedo of 0.3" after the second planet is the README's (spec 5.2's second fallback).
 - C27 "For both, the depth and shape below use the linear-fit ephemeris." (11 words) leaves the signals section when the candidates fold alike: the figure caption names the ephemeris of both panels and the README prints it per candidate beside the depth ("on the linear-fit ephemeris"). Candidates that fold differently still say so for each. Measured on the margin test's pair with the coincidence sentence present: 1,441 words without a prior claim, 1,480 with one (abstract 125 and 130).
+- C28 When only one candidate carries a current TRICERATOPS cross-check, the abstract's headline names the candidate by period ("gives a false-positive probability of X for the P1 d candidate and none for the P2 d one (Giacalone et al. 2021)") and leaves the "no validation class applies at 30-minute cadence" clause to the body, which always carries it; the both-cross-check abstract keeps the clause (C19). Four words for the period names against three over the 130-word margin on the test pair.
 
 ### 5.5 Single-candidate identity
 
