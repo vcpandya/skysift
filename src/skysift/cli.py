@@ -390,10 +390,14 @@ def crosscheck_command(target: str = typer.Option(..., "--target", help="The tar
                        export: str | None = typer.Option(None, "--export", help="Write the TRICERATOPS inputs from "
                                                          "the stored dossier into this folder."),
                        result: str | None = typer.Option(None, "--import", help="Store this result file of "
-                                                         "tools/triceratops_check.py on the dossier.")):
+                                                         "tools/triceratops_check.py on the dossier."),
+                       signal: int | None = typer.Option(None, "--signal", help="The signal id of a further dossier "
+                                                         "(skysift dossier --further); default the target's own "
+                                                         "dossier.")):
     """The TRICERATOPS false-positive cross-check. --export writes inputs.json, lightcurve.csv and the pixel files
     for tools/triceratops_check.py, which runs under .venv-triceratops; --import checks its result file and stores it
-    on the dossier with whether it was made for the stored dossier's inputs. Prints JSON. Exits 1 without a dossier,
+    on the dossier with whether it was made for the stored dossier's inputs. --signal works on the further dossier of
+    that signal (skysift dossier --further) instead of the target's own. Prints JSON. Exits 1 without a dossier,
     2 for a bad result file, an export that found no pixel file or a dossier below the current version."""
     from skysift import crosscheck as cc
     from skysift import dossier as ds
@@ -404,17 +408,19 @@ def crosscheck_command(target: str = typer.Option(..., "--target", help="The tar
     s, store, blob = _ctx()
     try:
         if export is not None:
-            out = cc.export_inputs(store, blob, s, target, Path(export))
+            out = cc.export_inputs(store, blob, s, target, Path(export), signal_id=signal)
             inputs = json.loads((out / "inputs.json").read_text(encoding="utf-8"))
             report = {"target_id": target, "inputs": str(out), "fingerprint": inputs["fingerprint"],
                       "quarters": inputs["quarters"], "lightcurve_points": inputs["lightcurve"]["n"]}
         else:
-            block = cc.import_result(store, target, Path(result))
+            block = cc.import_result(store, target, Path(result), signal_id=signal)
             report = {"target_id": target,
                       **{k: block[k] for m in ("fpp", "fpp_no_stp", "nfpp") for k in (m, f"{m}_p16", f"{m}_p84")},
                       "n_runs": block["n_runs"], "n_degenerate": block["n_degenerate"], "class": block["class"],
                       "current": block["current"], "blocks_live_gate": cc.verdict(block)[0],
                       "live_gate_reason": cc.verdict(block)[1]}
+        if signal is not None:
+            report["signal_id"] = signal
     except cc.NoDossier as e:
         _plain(console, str(e))
         raise typer.Exit(1) from None
