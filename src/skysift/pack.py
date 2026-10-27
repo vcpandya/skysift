@@ -2655,24 +2655,21 @@ def _exofop_list(target_id, date, png: bool, pixels_figure: bool) -> list[tuple[
     return out
 
 
-def gate_problems(raw: dict) -> list[str]:
-    """Why a live Zenodo draft is refused on the stored dossier JSON (with its stored cross-check merged in as
-    ``cross_check``), one sentence per problem: the ephemeris carries no error (no timing block, or its fit is not
-    ok), the transit shape carries no error (no shape block, or it is not ok), and ``crosscheck.verdict``'s reason
-    (no cross-check, one stored by an earlier version of the tool or one made for an earlier dossier; its numbers
-    never block, ruling t), and a stored
-    commit that is dirty or unknown (the software statement could not name archived code; ruling g), a pixel verdict
-    made under an older pixel rule (``dossier.pixel_rule_stale``), a pixel rerun that disagrees with the reviewer
-    (``dossier.pixel_verdict_disagrees``), prior claims that were not checked (``dossier.prior_claims_unchecked``)
-    and a rendered Research Note over the RNAAS limit of 1,500 words (``note_words``; the TESS statement itself never
-    blocks), or over another RNAAS limit (``note_limit_problems``); and, after spec 11.1 and 11.2, a prior claim
-    without a relationship, a prior claim whose period, epoch or depth sits more than ``PRIOR_MISMATCH_SIGMA`` from
-    ours (``PRIOR_MISMATCH``) or, with no error on either side, a period over 1 percent or an epoch over 0.1 d from
-    ours (``PRIOR_MISMATCH_NO_ERROR``), a ``FORBIDDEN_WORDS`` match in the Research Note, the abstract, the archive
-    email, the ExoFOP notes field or the Zenodo title and description (the README and the upload note print the same
-    sentence functions), and an abstract or a Zenodo description without the TRICERATOPS probability ahead of the in-house
-    one when a current cross-check is stored (a stale one is refused once, by ``crosscheck.verdict``). Empty when the
-    dossier may go to zenodo.org."""
+def _candidate_name(data: dict) -> str:
+    """"the 47.690 d candidate", a candidate named by its period (the project's word is candidate, never b and c)."""
+    period = _num((data.get("ephemeris") or {}).get("period_days")) or _num((data.get("signal") or {}).get("period"))
+    return f"the {period:.3f} d candidate" if period else "the candidate"
+
+
+def _named(data: dict, others, problems: list[str]) -> list[str]:
+    """``problems`` of one candidate's JSON, each prefixed with the candidate's name when the pack holds more than
+    one (``others``)."""
+    return [f"{_candidate_name(data)}: {p}" for p in problems] if others else problems
+
+
+def _ephemeris_problems(raw: dict) -> list[str]:
+    """The per-candidate checks of ``gate_problems`` that come before the note's: the ephemeris and shape errors, the
+    cross-check verdict, the stored commit, the pixel rule and the pixel verdict."""
     out = []
     for key, what in (("timing", "the ephemeris"), ("shape", "the transit shape")):
         block = raw.get(key)
@@ -2691,14 +2688,13 @@ def gate_problems(raw: dict) -> list[str]:
         out.append(f"{stale}; the recheck reruns the pixel step first")
     if ds.pixel_verdict_disagrees(raw):
         out.append("the pixel rerun disagrees with the reviewer's decision; a reviewer looks again first")
-    note = render_note(raw)
-    counts = note_words(note)
-    if counts["total"] > NOTE_LIMITS["total"]:
-        out.append(f"the Research Note has {counts['total']:,} words, over the RNAAS limit of "
-                   f"{NOTE_LIMITS['total']:,}; shorten it first")
-    # every other RNAAS limit (the abstract's 150 words, one figure or table), picked by limit, not by its words
-    out.extend(f"the Research Note breaks an RNAAS limit: {p}"
-               for limit, p in note_limit_problems(counts, note) if limit != "total")
+    return out
+
+
+def _prior_problems(raw: dict) -> list[str]:
+    """The per-candidate checks of ``gate_problems`` on its prior claims: not checked, no relationship, and numbers
+    that sit far from the candidate's."""
+    out = []
     if ds.prior_claims_unchecked(raw):
         out.append("prior claims on the signal were not checked (no docs/candidates folder)")
     # spec 11.1: every prior claim states how SkySift's result stands to it, and no text calls it blind
@@ -2713,6 +2709,46 @@ def gate_problems(raw: dict) -> list[str]:
     # polish round 2: a quantity neither side gives an error for has no sigma, so the rule is its plain difference
     if any(_unerred_mismatch(k, cmp.get(k)) for k in ("period", "epoch")):
         out.append(PRIOR_MISMATCH_NO_ERROR)
+    return out
+
+
+def gate_problems(raw: dict, others: list[dict] | None = None) -> list[str]:
+    """Why a live Zenodo draft is refused on the stored dossier JSON (with its stored cross-check merged in as
+    ``cross_check``), one sentence per problem: the ephemeris carries no error (no timing block, or its fit is not
+    ok), the transit shape carries no error (no shape block, or it is not ok), and ``crosscheck.verdict``'s reason
+    (no cross-check, one stored by an earlier version of the tool or one made for an earlier dossier; its numbers
+    never block, ruling t), and a stored
+    commit that is dirty or unknown (the software statement could not name archived code; ruling g), a pixel verdict
+    made under an older pixel rule (``dossier.pixel_rule_stale``), a pixel rerun that disagrees with the reviewer
+    (``dossier.pixel_verdict_disagrees``), prior claims that were not checked (``dossier.prior_claims_unchecked``)
+    and a rendered Research Note over the RNAAS limit of 1,500 words (``note_words``; the TESS statement itself never
+    blocks), or over another RNAAS limit (``note_limit_problems``); and, after spec 11.1 and 11.2, a prior claim
+    without a relationship, a prior claim whose period, epoch or depth sits more than ``PRIOR_MISMATCH_SIGMA`` from
+    ours (``PRIOR_MISMATCH``) or, with no error on either side, a period over 1 percent or an epoch over 0.1 d from
+    ours (``PRIOR_MISMATCH_NO_ERROR``), a ``FORBIDDEN_WORDS`` match in the Research Note, the abstract, the archive
+    email, the ExoFOP notes field or the Zenodo title and description (the README and the upload note print the same
+    sentence functions), and an abstract or a Zenodo description without the TRICERATOPS probability ahead of the in-house
+    one when a current cross-check is stored (a stale one is refused once, by ``crosscheck.verdict``). Empty when the
+    dossier may go to zenodo.org.
+
+    ``others`` are the stored JSONs of the target's further candidates (``load_candidate``): the per-candidate checks
+    (the ephemeris and shape errors, the cross-check, the commit, the pixel rule and verdict, the prior claims) run on
+    each of them too, every problem naming its candidate by period ("the 47.690 d candidate: ..."); the note-level
+    checks run once, on the first candidate's texts until the two-candidate note exists."""
+    out: list[str] = []
+    datas = [raw, *(others or [])]
+    for data in datas:
+        out.extend(_named(data, others, _ephemeris_problems(data)))
+    note = render_note(raw)
+    counts = note_words(note)
+    if counts["total"] > NOTE_LIMITS["total"]:
+        out.append(f"the Research Note has {counts['total']:,} words, over the RNAAS limit of "
+                   f"{NOTE_LIMITS['total']:,}; shorten it first")
+    # every other RNAAS limit (the abstract's 150 words, one figure or table), picked by limit, not by its words
+    out.extend(f"the Research Note breaks an RNAAS limit: {p}"
+               for limit, p in note_limit_problems(counts, note) if limit != "total")
+    for data in datas:
+        out.extend(_named(data, others, _prior_problems(data)))
     abstract = abstract_text(raw)
     zenodo = metadata_from(raw, None, prior=zenodo_prior(raw))
     description = re.sub(r"<[^>]+>", " ", zenodo["description"])
@@ -2789,29 +2825,154 @@ def independent_periods(period: float, others, tolerance: float = 0.02) -> list[
     return sorted(out)
 
 
-def other_signal_periods(store, target_id: str, signal_id: int) -> list[float]:
-    """The periods of the target's other stage 2 signals (store status ``candidate_stage2``); [] without a store or
-    when the signal table cannot be read."""
+def other_signals(store, target_id: str, reported_ids: set[int]) -> list[dict]:
+    """``{"id", "period"}`` of the target's stage 2 signals (store status ``candidate_stage2``) that the pack does not
+    report: not one of ``reported_ids`` and independent (``independent_periods``) of each period reported and of each
+    one listed before it, by period; [] without a store or when the signal table cannot be read."""
     if store is None:
         return []
     try:
         with store.session() as s:
-            return [float(p) for p in s.scalars(select(SignalRow.period).where(
-                SignalRow.target_id == target_id, SignalRow.id != signal_id,
-                SignalRow.final_status == "candidate_stage2"))]
+            rows = [(int(i), float(p), status) for i, p, status in s.execute(
+                select(SignalRow.id, SignalRow.period, SignalRow.final_status).where(
+                    SignalRow.target_id == target_id).order_by(SignalRow.period))]
     except SQLAlchemyError:
         return []
+    reported = [p for i, p, _ in rows if i in reported_ids]
+    out: list[dict] = []
+    for i, p, status in rows:
+        if i in reported_ids or status != "candidate_stage2":
+            continue
+        if all(independent_periods(q, [p]) for q in [*reported, *(o["period"] for o in out)]):
+            out.append({"id": i, "period": p})
+    return out
 
 
-def other_signals_sentence(periods: list[float]) -> str:
-    """The README's sentence for a star with another independent stage 2 signal; "" without one."""
-    if not periods:
+def other_signals_sentence(signals: list[dict], target_id: str, n_reported: int = 1) -> str:
+    """The README's sentence for a star with another independent stage 2 signal the pack does not report (spec 6.3);
+    "" without one. It names the signal and the command that gives it a dossier of its own, after which the next
+    pack reports both candidates. With a second candidate already reported (``n_reported`` 2) there is no such
+    command: the note holds two candidates."""
+    if not signals:
         return ""
-    listed = [f"{p:.3f}" for p in periods]
-    what = (f"another stage 2 signal at {listed[0]} days" if len(listed) == 1
-            else f"other stage 2 signals at {', '.join(listed[:-1])} and {listed[-1]} days")
-    return (f"This star also has {what}, at a period unrelated to this one; this pack covers one candidate only, so "
-            "that signal needs its own dossier and pack.")
+    listed = [f"{s['period']:.3f} days (signal {s['id']})" for s in signals]
+    what = (f"another stage 2 signal at {listed[0]}" if len(listed) == 1
+            else f"other stage 2 signals at {', '.join(listed[:-1])} and {listed[-1]}")
+    if n_reported >= 2:
+        return (f"This star also has {what}, at a period unrelated to these, which this pack does not report; the "
+                "note holds two candidates, so it stays out.")
+    which = signals[0]["id"] if len(signals) == 1 else "<id>"
+    lead = "run" if len(signals) == 1 else "choose one, run"
+    return (f"This star also has {what}, at a period unrelated to this one, which this pack does not report; "
+            f"{lead} `skysift dossier --target {target_id} --signal {which} --further`, then build the pack again, "
+            "and the note reports both candidates.")
+
+
+CANDIDATE_MAX = 2          # the note shape holds two candidates (spec section 2)
+
+
+def _out_reason(row: dict) -> str | None:
+    """Why a further dossier row cannot be a candidate whatever else is listed: its signal's status is now not a
+    candidate's, or its data file is gone; None when it can."""
+    rejected = row.get("decision") == "reject" or row.get("candidate_status") == "rejected"
+    alive = (row.get("final_status") == "candidate_stage2" or row.get("candidate_status") in ("approved", "published")
+             or row.get("decision") == "approve")
+    if rejected or not alive:
+        return f"its status is now {'rejected' if rejected else row.get('final_status')}"
+    path = row.get("data_path")
+    if not path or not Path(path).is_file():
+        shown = "/".join(Path(path).parts[-4:]) if path else "(none stored)"
+        return (f"its data file {shown} is missing; run `skysift dossier --target {row['target_id']} --signal "
+                f"{row['signal_id']} --further`")
+    return None
+
+
+def _scan(store, target_id: str) -> tuple[list[dict], list[dict]]:
+    """(the candidates, the texts for the further dossiers left out) in one pass, in the order of ``candidates`` and
+    ``left_out``."""
+    own = store.dossier(target_id)
+    if own is None:
+        return [], []
+    first = ds.pick_signal(store, target_id, int(own["signal_id"]))
+    cands = [{"ordinal": 1, "signal_id": int(own["signal_id"]), "period_days": float(first["period"]), "row": own,
+              "further": False}]
+    out: list[dict] = []
+    for row in store.further_dossiers(target_id):
+        sid = int(row["signal_id"])
+        why = _out_reason(row)
+        blocks = False
+        if why is None:
+            for c in cands:
+                ratio = ds.alias_of(c["period_days"], float(row["period"]))
+                if ratio is not None:
+                    said = {1.0: "1", 2.0: "2", 3.0: "3", 0.5: "1/2"}.get(ratio, "1/3")
+                    why = f"its period is within 2 percent of {said} times the {c['period_days']:.3f} d candidate's"
+                    break
+        if why is None and len(cands) >= CANDIDATE_MAX:
+            why = "the note shape holds two candidates, and a third needs its own shape (spec section 2)"
+            blocks = True
+        if why is None:
+            cands.append({"ordinal": len(cands) + 1, "signal_id": sid, "period_days": float(row["period"]),
+                          "row": row, "further": True})
+        else:
+            out.append({"text": f"signal {sid}'s further dossier is left out: {why}", "blocks_live": blocks})
+    return cands, out
+
+
+def candidates(store, target_id: str) -> list[dict]:
+    """The candidates the pack reports, at most two (spec 4.1): the target's own dossier first, then the target's
+    further dossiers in period order whose signal is still a candidate (stage 2, or approved, and not rejected), whose
+    file is on disk and whose period is independent of every candidate already listed. Each is ``{"ordinal",
+    "signal_id", "period_days", "row", "further"}``; empty without a dossier of the target's own."""
+    return _scan(store, target_id)[0]
+
+
+def left_out(store, target_id: str) -> list[dict]:
+    """One ``{"text", "blocks_live"}`` for each further dossier of the target that ``candidates`` leaves out, with its
+    reason. A third candidate has ``blocks_live`` True: the plain pack is still a correct two-candidate pack, and no
+    live draft is made of it."""
+    return _scan(store, target_id)[1]
+
+
+def load_candidate(cand: dict) -> dict:
+    """The stored dossier JSON of a candidate, with its row's cross-check merged in as ``cross_check``."""
+    row = cand["row"]
+    raw = json.loads(Path(row["data_path"]).read_text(encoding="utf-8"))
+    raw["cross_check"] = cc.with_current(row.get("cross_check"), raw)
+    return raw
+
+
+def candidate_approval(store: Store, target_id: str, cand: dict, data_dir) -> tuple[bool, str | None]:
+    """(approved, stale reason) of one candidate: for the target's own, ``_approval``; for a further one the same
+    fingerprint check against its further row, the reason naming the candidate and its signal."""
+    if not cand["further"]:
+        return _approval(store, target_id, cand["signal_id"], data_dir)
+    sig = ds.pick_signal(store, target_id, cand["signal_id"])
+    approved = sig.get("decision") == "approve" or sig.get("candidate_status") in ("approved", "published")
+    source = ds._target_dict(store, target_id).get("source")
+    fp = ds.fingerprint(store.latest_tests(cand["signal_id"]), sig["final_status"], sig.get("decision"),
+                        ds.calibration_rows(data_dir, source), ds.sweep_size_of(store, sig, source),
+                        **ds.extinction_keys(target_id))
+    if cand["row"].get("tests_fingerprint") != fp:
+        return approved, (f"the {cand['period_days']:.3f} d candidate's dossier (signal {cand['signal_id']}) is "
+                          "stale: the signal's tests, status or reviewer decision, the null calibration or the "
+                          "stored extinction changed since it was generated")
+    return approved, None
+
+
+def coincident_transits(eph_short: dict, eph_long: dict, t_start: float, t_end: float) -> tuple[int, int]:
+    """``(count, n_long)``: the predicted mid-times of the longer-period ephemeris within ``[t_start, t_end]`` (BKJD,
+    from ``t0_bkjd`` and ``period_days``), and how many of them fall within half the sum of the two durations
+    (``duration_h``) of a predicted mid-time of the shorter-period one. A coincidence can bias a depth (spec 4.2)."""
+    ps, ts = float(eph_short["period_days"]), float(eph_short["t0_bkjd"])
+    pl, tl = float(eph_long["period_days"]), float(eph_long["t0_bkjd"])
+    if ps <= 0 or pl <= 0 or t_end < t_start:
+        return 0, 0
+    tolerance = (float(eph_short["duration_h"]) + float(eph_long["duration_h"])) / 48.0
+    first, last = math.ceil((t_start - tl) / pl), math.floor((t_end - tl) / pl)
+    times = [tl + k * pl for k in range(first, last + 1)]
+    count = sum(1 for t in times if abs(t - (ts + round((t - ts) / ps) * ps)) <= tolerance + 1e-9)
+    return count, len(times)
 
 
 def zip_name(target_id: str, date: str) -> str:
@@ -2849,6 +3010,9 @@ def _fields(data: dict, f: dict) -> dict:
     f.setdefault("after_bjd", julian_date(day))
     f.setdefault("after_words", date_words(day))
     f.setdefault("other_signals", "")
+    f.setdefault("left_out", [])
+    if not f.get("stale_commands"):
+        f["stale_commands"] = [f"skysift dossier --target {target_id} --force"]
     stellar = EXOFOP_STELLAR_TEMPLATE.format(date=f["date"]) if star_characterized(data) else None
     f.setdefault("exofop_stellar", stellar)
     f.setdefault("exofop_planet", EXOFOP_PLANET_TEMPLATE.format(date=f["date"]))
@@ -3472,9 +3636,12 @@ def build_pack(store, blob, settings, target_id: str, *, out_dir: Path | None = 
     uploaded. The draft is never published, and a live draft is refused for a candidate no reviewer has approved,
     while the FPP is provisional (``fpp.SIGNED_OFF`` False), for a stale dossier and for one whose ephemeris or
     shape carries no error or whose TRICERATOPS cross-check is missing, stored by an earlier version of the tool or
-    made for an earlier dossier (``gate_problems``), so a provisional number never reaches a live record. The README
-    names the target's other stage 2 signals whose periods are independent of this one (``independent_periods``).
-    Records the folder on the dossiers row and the candidate row.
+    made for an earlier dossier (``gate_problems``), so a provisional number never reaches a live record. The
+    candidates are the target's own and, from its further dossiers, a second (``candidates``); each is checked for a
+    reviewer's approval and for a stale dossier, and the README names the further dossiers left out
+    (``left_out``) and the target's other stage 2 signals whose periods are independent of these
+    (``other_signals``). A third further dossier blocks a live draft. Records the folder on the dossiers row and
+    on the candidate row of every candidate.
 
     Raises NoDossier, ``dossier.LightCurveReleased`` (nothing is downloaded), PackError (bad TIC id, tag or folder; a
     live draft before approval, before the FPP sign-off, for a stale dossier, or for one ``gate_problems`` refuses,
@@ -3504,7 +3671,14 @@ def build_pack(store, blob, settings, target_id: str, *, out_dir: Path | None = 
     date = now.strftime("%Y%m%d")
     out_dir = Path(out_dir if out_dir is not None else Path(settings.data_dir) / "packs" / target_id / date).resolve()
     _check_out(out_dir)
-    approved, stale = _approval(store, target_id, sid, settings.data_dir)
+    cands = candidates(store, target_id)
+    others = [load_candidate(c) for c in cands[1:]]
+    checks = [(c, *candidate_approval(store, target_id, c, settings.data_dir)) for c in cands]
+    approved = all(ok for _c, ok, _why in checks)
+    stale = "; ".join(why for _c, _ok, why in checks if why) or None
+    remedies = [f"skysift dossier --target {target_id} --signal {c['signal_id']} --further" if c["further"]
+                else f"skysift dossier --target {target_id} --force" for c, _ok, why in checks if why]
+    out_texts = left_out(store, target_id)
     if zenodo is not None and not zenodo.sandbox and not approved:
         raise PackError(f"{target_id} is not yet approved by a reviewer, so no draft is made on zenodo.org; use "
                         "--zenodo for a sandbox rehearsal")
@@ -3516,13 +3690,14 @@ def build_pack(store, blob, settings, target_id: str, *, out_dir: Path | None = 
                         f"draft is made on zenodo.org; run skysift dossier --target {target_id} --force first")
     if zenodo is not None and not zenodo.sandbox and stale:
         raise PackError(f"the stored dossier of {target_id} is stale ({stale}), so no draft is made on zenodo.org; "
-                        f"run skysift dossier --target {target_id} first")
-    problems = gate_problems(raw)
+                        f"run {' and '.join(remedies)} first")
+    problems = [*gate_problems(raw, others), *(o["text"] for o in out_texts if o["blocks_live"])]
     if zenodo is not None and not zenodo.sandbox and problems:
         raise PackError(f"the stored dossier of {target_id} is not ready for zenodo.org: {'; '.join(problems)}. No "
                         "draft is made there; use --zenodo for a sandbox rehearsal")
-    period = _num((raw.get("ephemeris") or {}).get("period_days")) or _num((raw.get("signal") or {}).get("period"))
-    others = independent_periods(period, other_signal_periods(store, target_id, sid)) if period else []
+    # a signal with a further dossier of its own is named under "left out" or stale, not offered a second time
+    named = {c["signal_id"] for c in cands} | {int(r["signal_id"]) for r in store.further_dossiers(target_id)}
+    signals = other_signals(store, target_id, named)
     say("loading the light curve")
     target = ds._target_dict(store, target_id)
     lc = LightCurveLoader(store, blob, source_factory=ds._offline_factory(target_id, sid)).load(target, pin=True)
@@ -3539,14 +3714,16 @@ def build_pack(store, blob, settings, target_id: str, *, out_dir: Path | None = 
         zip_file, metadata, fields, words = _write_pack(
             out_dir, data, raw, row, lc, fnorm, target_id, date, now, settings, citation, creators_source,
             {"approved": approved, "stale_reason": stale, "tic": tic, "tag": observer_tag, "tag_seq": tag_seq,
-             "other_signals": other_signals_sentence(others)}, say)
+             "stale_commands": remedies or None, "left_out": [o["text"] for o in out_texts],
+             "other_signals": other_signals_sentence(signals, target_id, len(cands))}, say)
     except BaseException:
         shutil.rmtree(out_dir, ignore_errors=True)
         raise
     _move_into_place(out_dir, place, say)
     out_dir, zip_path = place, place / zip_file
     store.set_pack(target_id, str(out_dir), now.replace(tzinfo=None))
-    store.set_candidate_pack(sid, str(out_dir))
+    for c in cands:
+        store.set_candidate_pack(c["signal_id"], str(out_dir))
     say(f"wrote {zip_path}")
     zinfo = None
     if zenodo is not None:

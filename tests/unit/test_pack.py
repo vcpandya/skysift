@@ -1480,8 +1480,9 @@ def test_the_readme_names_another_independent_signal(env_with_dossier):
         env.store.set_signal_status(sid, "candidate_stage2")
     text = (_build(env).out_dir / "README.md").read_text(encoding="utf-8")
     step2 = text.split("## Step 2.")[1].split("## Step 3.")[0]
-    assert "27.300 days" in step2 and "80.580" not in step2 and "covers one candidate only" in step2
-    assert pack_module.other_signal_periods(None, STAGE2_TARGET, 1) == []
+    assert "27.300 days (signal" in step2 and "80.580" not in step2
+    assert "--further`, then build the pack again" in step2 and "covers one candidate only" not in step2
+    assert pack_module.other_signals(None, STAGE2_TARGET, set()) == []
 
 
 def test_a_live_draft_refuses_a_dossier_without_ephemeris_errors(env_with_dossier, fake_session, monkeypatch):
