@@ -1341,11 +1341,10 @@ def test_generate_stores_the_prior_claims(env):
                       .data_path.read_text(encoding="utf-8"))["prior_claims"] == []
     folder = dossier_module.CANDIDATES_DIR / STAGE2_TARGET
     folder.mkdir(parents=True)
-    claim = {**PRIOR_CLAIM, "period_days": PERIOD}      # the target's own dossier keeps the claims at its period
-    (folder / "prior_claims.json").write_text(json.dumps([claim]), encoding="utf-8")
+    (folder / "prior_claims.json").write_text(json.dumps([PRIOR_CLAIM]), encoding="utf-8")
     data = json.loads(generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch, force=True)
                       .data_path.read_text(encoding="utf-8"))
-    stored = {k: claim[k] for k in dossier_module.PRIOR_CLAIM_PUBLIC}           # status and note stay in the file
+    stored = {k: PRIOR_CLAIM[k] for k in dossier_module.PRIOR_CLAIM_PUBLIC}     # status and note stay in the file
     assert data["prior_claims"] == [stored] and data["dossier_version"] == DOSSIER_VERSION
     assert "prior_claims_unchecked" not in [c.get("key") for c in data["caveats"]]
 
@@ -1856,9 +1855,9 @@ def test_a_further_dossier_is_written_beside_the_targets_own(env):
 
 def test_claims_follow_the_candidate_whose_period_they_match():
     claims = [{"doi": "a", "period_days": 15.12}, {"doi": "b", "period_days": 47.7}, {"doi": "c", "period_days": None}]
-    assert [c["doi"] for c in claims_for(claims, 15.1137, own=True)] == ["a", "c"]
+    assert [c["doi"] for c in claims_for(claims, 15.1137, own=True, other_periods=(47.6905,))] == ["a", "c"]
+    assert [c["doi"] for c in claims_for(claims, 15.1137, own=True)] == ["a", "b", "c"]      # no other signal
     assert [c["doi"] for c in claims_for(claims, 47.6905, own=False)] == ["b"]
-    assert claims_for(claims, 47.6905, own=True) == [claims[1], claims[2]]
 
 
 def test_a_further_dossier_stores_only_its_claims_and_no_hand_built_study(env):
@@ -1869,8 +1868,8 @@ def test_a_further_dossier_stores_only_its_claims_and_no_hand_built_study(env):
               {"doi": "10.1/further", "date": "2021-01-02", "author": "B", "title": "T2",
                "period_days": first_period * 3.156}]
     (folder / "prior_claims.json").write_text(json.dumps(claims), encoding="utf-8")
+    second = _second_signal(env)        # a stage 2 signal at 3.156 times the period: the target's own drops its claim
     first = generate(env.store, env.blob, env.settings, STAGE2_TARGET, fetch=env.fetch)
-    second = _second_signal(env)
     rep = generate(env.store, env.blob, env.settings, STAGE2_TARGET, signal_id=second, further=True, fetch=env.fetch)
     assert [c["doi"] for c in _data(first)["prior_claims"]] == ["10.1/own"]
     further = _data(rep)
@@ -1901,7 +1900,7 @@ def test_further_is_refused_for_the_best_signal_an_alias_and_a_target_without_a_
         generate(env.store, env.blob, env.settings, STAGE2_TARGET, signal_id=env.ids["stage2"], further=True,
                  fetch=env.fetch)
     alias = _second_signal(env, period_factor=2.01)
-    with pytest.raises(FurtherRefused, match="within 2 percent of 2.0 times"):
+    with pytest.raises(FurtherRefused, match="within 2 percent of 2 times"):
         generate(env.store, env.blob, env.settings, STAGE2_TARGET, signal_id=alias, further=True, fetch=env.fetch)
     with pytest.raises(FurtherRefused, match="one named signal"):
         generate(env.store, env.blob, env.settings, STAGE2_TARGET, further=True, fetch=env.fetch)

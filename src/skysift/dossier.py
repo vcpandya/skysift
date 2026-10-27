@@ -44,6 +44,7 @@ from pathlib import Path, PureWindowsPath
 
 import numpy as np
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 
 from skysift import calibrate as cal
 from skysift import crosscheck as cc
@@ -1825,19 +1826,27 @@ def public_claims(data: dict) -> dict:
     return {**data, "prior_claims": [{k: c.get(k) for k in PRIOR_CLAIM_PUBLIC} for c in claims if isinstance(c, dict)]}
 
 
-def claims_for(claims: list[dict], period: float, own: bool) -> list[dict]:
-    """The claims that belong to the candidate at ``period``: those whose ``period_days`` is within 2 percent of it
-    (``alias_of`` names the ratio 1), and, when ``own``, those that name no period (a claim of the target's own
-    candidate unless it says otherwise). A further dossier takes ``own=False``."""
-    out = []
-    for claim in claims:
-        claim_period = _num(claim, "period_days")
-        if claim_period is None:
-            if own:
-                out.append(claim)
-        elif alias_of(period, claim_period) == 1.0:
-            out.append(claim)
-    return out
+def claims_for(claims: list[dict], period: float, own: bool, other_periods: tuple[float, ...] = ()) -> list[dict]:
+    """The claims that belong to a candidate. A further dossier (``own`` False) keeps those whose ``period_days`` is
+    within 2 percent of its ``period`` (``alias_of`` names the ratio 1). The target's own dossier (``own`` True) keeps
+    every claim except those within 2 percent of one of ``other_periods``, the periods of the target's other
+    candidates: a claim that matches no signal stays, so the live gate still flags it as a prior mismatch."""
+    if not own:
+        return [c for c in claims if (p := _num(c, "period_days")) is not None and alias_of(period, p) == 1.0]
+    return [c for c in claims
+            if (p := _num(c, "period_days")) is None or not any(alias_of(q, p) == 1.0 for q in other_periods)]
+
+
+def _other_candidate_periods(store: Store, target_id: str, signal_id: int) -> tuple[float, ...]:
+    """The periods of the target's other stage 2 signals (``final_status`` ``candidate_stage2``); () when the signal
+    table cannot be read."""
+    try:
+        with store.session() as s:
+            return tuple(float(p) for p in s.scalars(select(SignalRow.period).where(
+                SignalRow.target_id == target_id, SignalRow.id != signal_id,
+                SignalRow.final_status == "candidate_stage2")))
+    except SQLAlchemyError:
+        return ()
 
 
 def hand_built_localisation(target_id: str, rung5_metrics: dict, root: Path | None = None) -> dict | None:
@@ -1972,7 +1981,7 @@ def _refuse_unless_second_candidate(store: Store, target_id: str, signal: dict) 
         p0 = float(pick_signal(store, target_id, own["signal_id"])["period"])
     ratio = alias_of(p0, float(signal["period"]))
     if ratio is not None:
-        said = f"{ratio:g}" if "." in f"{ratio:g}" else f"{ratio:g}.0"
+        said = {1.0: "1", 2.0: "2", 3.0: "3", 0.5: "1/2"}.get(ratio, "1/3")
         raise FurtherRefused(f"signal {sid} at {float(signal['period']):.4f} d is within 2 percent of {said} times "
                              f"the target's dossier period {p0:.4f} d, an alias, not a second candidate")
 
@@ -2023,7 +2032,8 @@ def generate(store: Store, blob, settings, target_id: str, *, signal_id: int | N
     claims = (public_claims({"prior_claims": prior_claims(target_id)})["prior_claims"]
               if Path(CANDIDATES_DIR).is_dir() else None)
     if claims is not None:      # the claims on this candidate's period; the target's own also keeps those without one
-        claims = claims_for(claims, float(signal["period"]), own=not further)
+        claims = claims_for(claims, float(signal["period"]), own=not further,
+                            other_periods=() if further else _other_candidate_periods(store, target_id, sid))
     target = _target_dict(store, target_id)
     say(f"signal {sid} ({signal['final_status']}, SDE {signal['sde']:.1f}); loading the light curve")
     lc = LightCurveLoader(store, blob, source_factory=_offline_factory(target_id, sid)).load(target, pin=True)

@@ -284,6 +284,9 @@ def dossier(target: str = typer.Option(..., "--target", help="The target id, e.g
     from skysift import dossier as ds
     from skysift import net
     console = _console(stderr=True)
+    if further and export:
+        _plain(console, "--export writes the target's own page; a further dossier has none yet")
+        raise typer.Exit(2)
     s, store, blob = _ctx()
     try:
         rep = ds.generate(store, blob, s, target, signal_id=signal, force=force, fetch=net.fetch,
