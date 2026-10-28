@@ -178,10 +178,15 @@ def test_summary_from_pretty_block_and_only_on_clean_exit(tmp_path):
     assert rec["exit_code"] == 3 and rec["summary"] is None
 
 
-# a stand-in engine: runs until the stop file (argv[1]) appears, then prints a summary like a graceful exit
+# a stand-in engine: runs until the stop file (argv[1]) appears, then winds down like an engine finishing its in-flight
+# targets (it says so, then holds until the release file argv[2] appears) and prints a summary like a graceful exit
 POLLER_SCRIPT = """import os, sys, time; print('started', flush=True)
 for _ in range(600):
     if os.path.exists(sys.argv[1]): break
+    time.sleep(0.05)
+print('winding down', flush=True)
+for _ in range(600):
+    if os.path.exists(sys.argv[2]): break
     time.sleep(0.05)
 print('{"processed": 2, "stopped": "graceful"}')
 """
@@ -192,17 +197,27 @@ def stop_path(tmp_path):
     return tmp_path / "ui" / "sweeps" / "stop.request"
 
 
+def wait_for(condition, what, timeout=30.0):
+    """Poll until ``condition()`` is truthy; fail loudly (naming ``what``) instead of falling through on a timeout."""
+    deadline = time.monotonic() + timeout
+    while not condition():
+        assert time.monotonic() < deadline, f"timed out waiting for {what}"
+        time.sleep(0.05)
+
+
 def test_request_stop_writes_the_stop_file_and_the_child_finishes_on_its_own(tmp_path):
-    launcher = SweepLauncher(tmp_path, command=POLLER + [str(stop_path(tmp_path))])
+    release = tmp_path / "release"
+    launcher = SweepLauncher(tmp_path, command=POLLER + [str(stop_path(tmp_path)), str(release)])
     launcher.start(SweepRequest(source="kbonus_bkg"))
-    for _ in range(50):
-        if launcher.tail() == ["started"]: break
-        time.sleep(0.1)
+    wait_for(lambda: launcher.tail() == ["started"], "the child to start")
     assert launcher.request_stop() is True
     assert stop_path(tmp_path).exists()
+    # the child reacts to the stop file by itself, and holds in its wind-down so the lock is observably still live
+    wait_for(lambda: launcher.tail()[-1:] == ["winding down"], "the child to notice the stop file")
     active = launcher.active()
     assert active is not None and active["stop_requested_at"]            # still running: the lock stays until it exits
-    wait_finished(launcher)
+    release.write_text("go", encoding="utf-8")                            # the in-flight work is done: let the child finish
+    wait_for(lambda: launcher.active() is None, "the child to exit and its lock to retire")
     rec = launcher.history()[0]
     assert rec["exit_code"] == 0 and rec["reason"] == "exited" and rec["summary"]["stopped"] == "graceful"
     assert rec["stop_requested_at"] == active["stop_requested_at"]
