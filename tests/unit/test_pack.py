@@ -846,6 +846,27 @@ def test_a_live_draft_needs_an_approved_candidate_and_writes_its_doi(env_with_do
     assert f"10.5281/zenodo.{DEPOSITION_ID}" in tex and SANDBOX_WORDS not in tex and "XXXXXXX" not in tex
 
 
+def test_a_pack_refills_the_named_draft_with_its_reserved_doi(env_with_dossier, fake_session, monkeypatch):
+    from skysift import fpp
+    monkeypatch.setattr(fpp, "SIGNED_OFF", True)
+    env = env_with_dossier
+    _approve(env)
+    _store_errors(env)
+    _store_cross_check(env)
+    live = ZenodoClient("t", sandbox=False, session=fake_session)
+    rep = _build(env, zenodo=live, deposition_id=23684431)
+    assert rep.zenodo["deposition_id"] == 23684431 and rep.zenodo["doi"] == "10.5281/zenodo.23684431"
+    assert rep.zenodo["draft_url"] == "https://zenodo.org/deposit/23684431"
+    tex = (rep.out_dir / "note" / "note.tex").read_text(encoding="utf-8")
+    assert "10.5281/zenodo.23684431" in tex and f"zenodo.{DEPOSITION_ID}" not in tex
+    assert [m for m, _u, _b in fake_session.calls] == ["GET", "DELETE", "PUT", "PUT"]     # no new draft
+    metadata = fake_session.calls[2][2]["metadata"]
+    assert metadata["notes"] == "kept by hand" and "doi" not in metadata
+    assert [r["relation"] for r in metadata["related_identifiers"]][:1] == ["isDerivedFrom"]
+    assert any(r["scheme"] == "url" for r in metadata["related_identifiers"])     # the draft's own kept
+    assert fake_session.calls[3][1] == f"https://zenodo.org/api/files/bucket-23684431/{rep.zip_path.name}"
+
+
 def test_a_refused_folder_leaves_no_draft(env_with_dossier, fake_session, tmp_path):
     foreign = tmp_path / "busy"
     foreign.mkdir()
@@ -923,6 +944,13 @@ def test_cli_pack_with_a_token_makes_a_draft_and_prints_its_url(cli_env, monkeyp
     assert live.exit_code == 0, live.output
     assert cli_env.session.calls[3][1] == "https://zenodo.org/api/deposit/depositions"
     assert json.loads(live.stdout)["zenodo"]["sandbox"] is False
+    alone = runner.invoke(app, ["pack", "--target", STAGE2_TARGET, "--deposition", "23684431"])
+    assert alone.exit_code == 2 and "needs --zenodo or --zenodo-live" in alone.output
+    n = len(cli_env.session.calls)
+    again = runner.invoke(app, ["pack", "--target", STAGE2_TARGET, "--zenodo-live", "--deposition", "23684431"])
+    assert again.exit_code == 0, again.output
+    assert [m for m, _u, _b in cli_env.session.calls[n:]] == ["GET", "DELETE", "PUT", "PUT"]
+    assert json.loads(again.stdout)["zenodo"]["doi"] == "10.5281/zenodo.23684431"
 
 
 def test_cli_pack_reports_a_zenodo_error_with_the_right_path(cli_env, monkeypatch, tmp_path):

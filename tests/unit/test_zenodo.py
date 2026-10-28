@@ -23,10 +23,12 @@ class FakeSession:
     """Records (method, url, body) for every request; ``body`` is the JSON for a POST or a metadata PUT and the bytes
     read from the file object for an upload. Answers like the Zenodo deposit API, on the host it was asked."""
 
-    def __init__(self, status: int = 200, fail: Exception | None = None, fail_on: str | None = None):
+    def __init__(self, status: int = 200, fail: Exception | None = None, fail_on: str | None = None,
+                 submitted: bool = False):
         self.calls: list[tuple[str, str, object]] = []
         self.headers: dict[str, str] = {}
         self.status, self.fail, self.fail_on = status, fail, fail_on      # fail_on: only "/files/" requests fail
+        self.submitted = submitted                                        # what a GET says of an existing draft
 
     def _host(self, url: str) -> str:
         return url.split("/api/")[0]
@@ -47,6 +49,23 @@ class FakeSession:
                           "html": f"{host}/deposit/{DEPOSITION_ID}",
                           "publish": f"{host}/api/deposit/depositions/{DEPOSITION_ID}/actions/publish"},
                 "metadata": {"prereserve_doi": {"doi": f"{prefix}/zenodo.{DEPOSITION_ID}", "recid": DEPOSITION_ID}}})
+        if method == "GET":                     # an existing draft with one file and a DOI already reserved
+            dep_id = int(url.rsplit("/", 1)[1])
+            return FakeResponse(200, {
+                "id": dep_id, "submitted": self.submitted, "state": "done" if self.submitted else "unsubmitted",
+                "links": {"self": f"{host}/api/deposit/depositions/{dep_id}",
+                          "bucket": f"{host}/api/files/bucket-{dep_id}", "html": f"{host}/deposit/{dep_id}"},
+                "files": [{"id": "file-1", "filename": "old pack.zip", "filesize": 3}],
+                "metadata": {"prereserve_doi": {"doi": f"{prefix}/zenodo.{dep_id}", "recid": dep_id},
+                             "doi": f"{prefix}/zenodo.{dep_id}", "title": "old title", "version": "1",
+                             "language": "eng", "notes": "kept by hand",
+                             "related_identifiers": [
+                                 {"identifier": KBONUS_DOI, "relation": "isDerivedFrom", "scheme": "doi",
+                                  "resource_type": "dataset"},
+                                 {"identifier": "https://github.com/vcpandya/skysift/releases/tag/v0.1.0",
+                                  "relation": "isCompiledBy", "scheme": "url", "resource_type": "software"}]}})
+        if method == "DELETE":
+            return FakeResponse(204, None)
         if "/files/" in url:
             return FakeResponse(201, {"key": url.rsplit("/", 1)[1], "size": len(body)})
         return FakeResponse(200, {"id": DEPOSITION_ID, "metadata": body["metadata"]})
@@ -56,6 +75,12 @@ class FakeSession:
 
     def put(self, url, json=None, data=None, timeout=None, headers=None, **_kw):
         return self._answer("PUT", url, json if data is None else data.read())
+
+    def get(self, url, timeout=None, **_kw):
+        return self._answer("GET", url, None)
+
+    def delete(self, url, timeout=None, **_kw):
+        return self._answer("DELETE", url, None)
 
 
 @pytest.fixture
@@ -94,6 +119,44 @@ def test_zenodo_client_never_publishes(fake_session, tmp_file):
     assert method == "PUT" and url == f"https://sandbox.zenodo.org/api/files/bucket-{DEPOSITION_ID}/kic-006146676%20pack.zip"
     assert body == b"PK zip bytes"                                      # the file object itself, streamed
     assert c.draft_url(d) == f"https://sandbox.zenodo.org/deposit/{DEPOSITION_ID}"
+
+
+def test_an_unpublished_draft_is_reused_emptied_of_its_files_and_keeps_its_doi(fake_session, tmp_file):
+    c = ZenodoClient("tok", sandbox=False, session=fake_session)
+    d = c.reuse_deposition(23684431)
+    assert ZenodoClient.reserved_doi(d) == "10.5281/zenodo.23684431"
+    assert [(m, u) for m, u, _b in fake_session.calls] == [
+        ("GET", "https://zenodo.org/api/deposit/depositions/23684431"),
+        ("DELETE", "https://zenodo.org/api/deposit/depositions/23684431/files/file-1")]
+    c.upload(d, tmp_file)
+    assert fake_session.calls[-1][1] == "https://zenodo.org/api/files/bucket-23684431/kic-006146676%20pack.zip"
+    assert c.draft_url(d) == "https://zenodo.org/deposit/23684431"
+    # a DOI the metadata carries without the prereserve block still counts
+    assert ZenodoClient.reserved_doi({"metadata": {"doi": "10.5281/zenodo.1"}}) == "10.5281/zenodo.1"
+    assert ZenodoClient.reserved_doi({"metadata": {}}) is None
+
+
+def test_a_published_record_is_never_refilled():
+    session = FakeSession(submitted=True)
+    c = ZenodoClient("tok", sandbox=False, session=session)
+    with pytest.raises(ZenodoError, match="is published, so it cannot be refilled"):
+        c.reuse_deposition(7)
+    assert [m for m, _u, _b in session.calls] == ["GET"]                 # nothing deleted or written
+
+
+def test_merged_metadata_keeps_what_the_draft_had_and_unions_the_related_identifiers():
+    existing = {"doi": "10.5281/zenodo.5", "prereserve_doi": {"doi": "10.5281/zenodo.5"}, "title": "old",
+                "notes": "kept", "version": "1",
+                "related_identifiers": [
+                    {"identifier": KBONUS_DOI, "relation": "isDerivedFrom", "scheme": "doi", "resource_type": "dataset"},
+                    {"identifier": "https://example.org/tag", "relation": "isCompiledBy", "scheme": "url"}]}
+    generated = metadata_from(DATA, {"authors": [{"name": "A. Person"}], "doi": "10.5281/zenodo.777"})
+    m = zenodo.merge_metadata(existing, generated)
+    assert m["title"] == generated["title"] and m["notes"] == "kept" and m["version"] == "1"
+    assert "doi" not in m and m["prereserve_doi"] is True
+    assert [r["identifier"] for r in m["related_identifiers"]] == [KBONUS_DOI, "10.5281/zenodo.777",
+                                                                   "https://example.org/tag"]
+    assert zenodo.merge_metadata({}, generated) == generated
 
 
 def test_zenodo_live_flag_switches_the_host(fake_session):
@@ -138,7 +201,12 @@ def test_metadata_from_citation():
     assert m["access_right"] == "open" and m["license"] == "cc-by-4.0" and m["prereserve_doi"] is True
     assert m["related_identifiers"] == [{"identifier": KBONUS_DOI, "relation": "isDerivedFrom", "scheme": "doi",
                                          "resource_type": "dataset"}]
-    assert KBONUS_DOI == "10.17909/7jbr-w430"
+    assert KBONUS_DOI == "10.17909/7jbr-w430" and m["version"] == "1" and m["language"] == "eng"
+    # with the archived code's DOI in CITATION.cff the record says what compiled it; a blank one is left out
+    cited = metadata_from(DATA, {"authors": [{"name": "A. Person"}], "doi": "10.5281/zenodo.23717586"})
+    assert cited["related_identifiers"][1] == {"identifier": "10.5281/zenodo.23717586", "relation": "isCompiledBy",
+                                               "scheme": "doi", "resource_type": "software"}
+    assert len(metadata_from(DATA, {"authors": [{"name": "A. Person"}], "doi": " "})["related_identifiers"]) == 1
     text = m["description"]
     assert DATA["summary"] in text and "1 in 440" in text and "gives 1 in 370,000, a lower bound" in text
     assert "provisional" in text

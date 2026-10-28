@@ -137,6 +137,10 @@ sandbox, with the personal access token in `SKYSIFT_ZENODO_TOKEN`. `--zenodo-liv
 is refused before a reviewer approves the candidate, and while `fpp.SIGNED_OFF` is False (the factor tables of
 spec 4.2 were signed off on 21 October 2026). The draft is never published: publishing is your click on
 Zenodo. With `--zenodo` and no token the pack is still built, without a deposition, and the command exits with code 2.
+`--deposition <id>` refills an unpublished draft of an earlier run instead of making a new one: its files are
+removed, the zip takes their place, and the DOI it reserved is the one the texts carry (a published record is
+refused). The record names the KBonus HLSP it is derived from and, with a `doi` in `CITATION.cff`, the archived
+code it was compiled by.
 
 The one-time check of the generated numbers against the hand-built KIC 6146676 study is
 `docs/superpowers/notes/2026-10-21-dossier-comparison.md`, made with `python -m tools.dossier_compare`.

@@ -333,7 +333,11 @@ def pack_command(target: str = typer.Option(..., "--target", help="The target id
                                                   "estimate is provisional, and while the stored dossier's "
                                                   "ephemeris or transit shape carries no error."),
                  final: bool = typer.Option(False, "--final", help="Refuse empty author fields and any placeholder "
-                                            "DOI (needs --zenodo-live).")):
+                                            "DOI (needs --zenodo-live)."),
+                 deposition: int | None = typer.Option(None, "--deposition", help="Refill this unpublished Zenodo "
+                                                       "draft of an earlier run (its id) instead of making a new "
+                                                       "one, keeping the DOI it reserved (needs --zenodo or "
+                                                       "--zenodo-live).")):
     """Build the submission pack from the target's stored dossier: the README's five steps, the Research Note draft,
     the data files, figures, provenance and the ExoFOP copies, and a zip. With --zenodo, also a Zenodo draft
     deposition holding the zip, made after every file is written; publishing it is your click on Zenodo. Prints the
@@ -350,13 +354,16 @@ def pack_command(target: str = typer.Option(..., "--target", help="The target id
         _plain(console, "--zenodo-live is refused while the false-positive estimate is provisional (spec 4.2's factor "
                         "tables are not signed off); use --zenodo for a sandbox rehearsal")
         raise typer.Exit(2)
+    if deposition is not None and not (zenodo_draft or zenodo_live):
+        _plain(console, "--deposition names the Zenodo draft to refill, so it needs --zenodo or --zenodo-live")
+        raise typer.Exit(2)
     s, store, blob = _ctx()
     want_zenodo = zenodo_draft or zenodo_live
     token = zn.token_from_env() if want_zenodo else None
     client = zn.ZenodoClient(token, sandbox=not zenodo_live, session=zn.new_session()) if token else None
     try:
         rep = pk.build_pack(store, blob, s, target, out_dir=Path(out) if out else None, tic=tic, observer_tag=tag,
-                            tag_seq=tag_seq, zenodo=client, final=final,
+                            tag_seq=tag_seq, zenodo=client, final=final, deposition_id=deposition,
                             log=lambda text: _plain(console, text))
     except (pk.NoDossier, ds.NoSignal) as e:
         _plain(console, str(e))
