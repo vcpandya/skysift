@@ -859,7 +859,8 @@ def shape_fit_text(data: dict) -> str | None:
     free = (shape.get("fits") or {}).get("free") or {}
     delta = _num(shape["comparison"].get("delta_chi2"))
     b_prior = shape.get("b") or {}
-    b_text = pm_text(b_prior.get("median"), b_prior.get("minus"), b_prior.get("plus"))
+    b_row = {"value": b_prior.get("median"), "minus": b_prior.get("minus"), "plus": b_prior.get("plus"), "nd": 2}
+    b_text = b_bound_text(b_row) or pm_text(b_prior.get("median"), b_prior.get("minus"), b_prior.get("plus"))
     a_text = value_text((data.get("planet") or {}).get("a_over_r")) or value_text(shape.get("a_over_r"))
     fb, fa, frho = (_num(free.get(k)) for k in ("b", "a_over_r", "density_gcc"))
     if free.get("ok") is not True or None in (fb, fa, delta) or b_text is None:

@@ -1458,7 +1458,10 @@ def test_readme_says_the_archive_needs_a_refereed_paper(env_with_dossier):
     assert "refereed paper" in first and "Research Note" in first
     assert "once it is published" not in pack_module.STEP_TEXTS["4"] and "refereed" in pack_module.STEP_TEXTS["4"]
     provenance = text.split("## Provenance")[1]
-    assert "doi:10.5281/zenodo.SOFTWARE (to be minted)" in provenance and "triceratops" not in provenance
+    # the code DOI is the one CITATION.cff carries (10.5281/zenodo.23717586 since v0.1.0), never the placeholder
+    citation, _source = pack_module.load_citation()
+    assert citation and citation["doi"] and pack_module.code_doi(citation) in provenance
+    assert "to be minted" not in provenance and "triceratops" not in provenance
 
 
 def test_independent_periods():
@@ -2785,8 +2788,11 @@ def test_final_refuses_without_the_live_draft_and_with_any_placeholder(env_with_
     assert fake_session.calls == []                                  # refused before anything is written
     path.write_text(json.dumps({"name": "A. Person", "affiliation": "Somewhere", "email": "a@example.org",
                                 "orcid": "0000-0002-1825-0097"}), encoding="utf-8")
+    # a CITATION.cff without a software DOI (the repository's carries one since v0.1.0, so a stub stands in)
+    monkeypatch.setattr(pack_module, "load_citation",
+                        lambda path=None: ({"authors": [{"name": "A. Person"}], "doi": None}, "test"))
     with pytest.raises(ZenodoError, match=r"still says '10\.5281/zenodo\.SOFTWARE'.*unfinished"):
-        _build(env, zenodo=live, final=True)                         # CITATION.cff carries no software DOI yet
+        _build(env, zenodo=live, final=True)
     assert [c[0] for c in fake_session.calls] == ["POST"]            # reserved, never filled or uploaded
     monkeypatch.setattr(pack_module, "load_citation",
                         lambda path=None: ({"authors": [{"name": "A. Person"}], "doi": "10.5281/zenodo.777"}, "test"))
@@ -3825,6 +3831,17 @@ UNPINNED_B = {"median": 0.0000015, "minus": 0.0000015, "plus": 0.157396, "point"
 def test_b_prints_as_a_bound_only_when_the_posterior_cannot_pin_it(b, text):
     row = {"value": b["median"], "minus": b["minus"], "plus": b["plus"], "nd": 2}
     assert pack_module.b_bound_text(row) == text
+
+
+def test_the_readme_shape_fit_sentence_prints_an_unpinned_b_as_its_bound():
+    """The README's shape-fit sentence (I-4) quotes an unpinned b the way the note does: its 84th percentile,
+    not a median of 0.0000015 with errors; a bounded b (the golden's 0.457) keeps its errors."""
+    golden = _golden()
+    assert pack_module.shape_fit_text(golden).startswith("Shape fit: with the density prior b is 0.457 +0.054/-0.061")
+    unpinned = json.loads(json.dumps(golden))
+    unpinned["shape"]["b"] = dict(UNPINNED_B)
+    assert pack_module.shape_fit_text(unpinned).startswith(
+        "Shape fit: with the density prior b is below 0.16 (84th percentile) and a/R* ")
 
 
 def test_an_unpinned_b_in_the_note_is_its_84th_percentile_and_a_pinned_one_keeps_its_errors(env_with_dossier):
