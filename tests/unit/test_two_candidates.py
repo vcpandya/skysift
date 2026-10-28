@@ -830,3 +830,16 @@ def test_the_single_candidate_exofop_heading_is_pinned():
         a, _b = two_live(prior=prior)
         assert pack._render_plain("exofop_note.txt.j2", a, f).splitlines()[0] == heading
         assert pack._render_plain("exofop_note.txt.j2", a, f, []).splitlines()[0] == heading
+
+
+def test_a_candidate_whose_b_the_fit_cannot_pin_prints_its_84th_percentile_and_the_other_keeps_its_errors():
+    """KIC 6699887's 47.69 d candidate: the posterior of b piles against zero, so the note quotes "below 0.16 (84th
+    percentile)" in place of the median with errors, and the other candidate's b is worded as before."""
+    a, b = two_live(prior=False)
+    a["shape"]["b"] = {"median": 0.0000015, "minus": 0.0000015, "plus": 0.157396, "point": 0.0}
+    tex = render_note(a, others=[b], span=SPAN)
+    flat = " ".join(tex.split())
+    assert "b is below 0.16 (84th percentile)" in flat and flat.count("84th percentile") == 1
+    assert "0.0000015" not in flat and "0.1573960" not in flat
+    assert B_VALUES[1] in flat and A_VALUES[1] not in flat
+    assert note_words(tex)["total"] <= 1480

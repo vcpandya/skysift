@@ -3809,3 +3809,43 @@ def test_one_null_search_of_a_kind_is_singular():
     inverted = pack_module.fap_method_text({**golden, "fap": {**fap, "k": 1, "k_by_kind": {"inverted": 1}}})
     assert inverted.endswith("the 1 null search that reached the signal's SDE is an inverted light curve, so "
                              "systematics, not white noise, set the tail.")
+
+
+UNPINNED_B = {"median": 0.0000015, "minus": 0.0000015, "plus": 0.157396, "point": 0.0}      # KIC 6699887's 47.69 d fit
+
+
+@pytest.mark.parametrize("b, text", [
+    (UNPINNED_B, "below 0.16 (84th percentile)"),                                           # lower error is the median
+    ({"median": 0.004, "minus": 0.002, "plus": 0.08}, "below 0.08 (84th percentile)"),      # under 0.01, upper > 10x
+    ({"median": 0.457, "minus": 0.061, "plus": 0.054}, None),                                # KIC 6146676: bounded
+    ({"median": 0.582, "minus": 0.056, "plus": 0.044}, None),                                # KIC 5689121: bounded
+    ({"median": 0.02, "minus": 0.015, "plus": 0.06}, None),                                  # small, but not piled at 0
+    ({"median": 0.31, "minus": None, "plus": None}, None),                                   # no errors: the value alone
+])
+def test_b_prints_as_a_bound_only_when_the_posterior_cannot_pin_it(b, text):
+    row = {"value": b["median"], "minus": b["minus"], "plus": b["plus"], "nd": 2}
+    assert pack_module.b_bound_text(row) == text
+
+
+def test_an_unpinned_b_in_the_note_is_its_84th_percentile_and_a_pinned_one_keeps_its_errors(env_with_dossier):
+    """The prior-fit clause (``unconstrained at this cadence``) is set for both; the posterior decides the wording:
+    KIC 6699887's b of 0.0000015 +0.157/-0.0000015 prints as its bound, a b of 0.457 +0.054/-0.061 as before, and the
+    bound costs the longest test shape no word (it has no b error) while the note stays inside the limit."""
+    data = _with_errors(env_with_dossier.data)
+    data["shape"]["b"] = {"median": 0.457, "minus": 0.061, "plus": 0.054, "point": 0.46}
+    pinned = " ".join(render_note(data).split())
+    assert ("b and a/R* are unconstrained at this cadence (the quoted values follow the host's density): "
+            "b is 0.457$^{+0.054}_{-0.061}$ and a/R* ") in pinned
+    unpinned_data = json.loads(json.dumps(data))
+    unpinned_data["shape"]["b"] = dict(UNPINNED_B)
+    tex = render_note(unpinned_data)
+    unpinned = " ".join(tex.split())
+    assert ("b and a/R* are unconstrained at this cadence (the quoted values follow the host's density): "
+            "b is below 0.16 (84th percentile) and a/R* ") in unpinned
+    assert "0.0000015" not in unpinned and "0.1573960" not in unpinned
+    assert note_words(tex)["total"] <= LIVE_SHAPE_LIMIT
+    assert "below 0.16" in pack_module.shape_sentence(unpinned_data)             # the README's plain text says it too
+    free = json.loads(json.dumps(unpinned_data))                                   # a quoted free fit uses the same rule
+    free["shape"]["comparison"] = {**free["shape"]["comparison"], "quoted": "free", "constrained": True,
+                                   "density_tension_sigma": -1.3, "a_over_r_label": "fitted", "reason": None}
+    assert "b is below 0.16 (84th percentile) and a/R*" in " ".join(render_note(free).split())

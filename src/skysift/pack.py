@@ -824,6 +824,28 @@ def b_set_by_prior(data: dict) -> bool:
     return cmp.get("quoted") == "prior" and cmp.get("constrained") is False
 
 
+def b_upper_bound(row: dict) -> float | None:
+    """The 84th percentile of a b the fit cannot pin, or None when the posterior holds b away from zero or carries no
+    errors. Unpinned means the 16th percentile prints as zero at the row's decimals (the lower error equals the
+    median within rounding), or the median is under 0.01 with the upper error more than ten times it: the posterior
+    then piles against b = 0 and its median and lower error say nothing, so the note quotes the bound alone. The
+    density-prior clause (``b_set_by_prior``) is the flag the fit sets; this reads the posterior, so a prior-fit b
+    that the data do bound (0.46 +0.05/-0.06) keeps its errors."""
+    median, minus, plus = (_num(row.get(k)) for k in ("value", "minus", "plus"))
+    if median is None or minus is None or plus is None or plus <= 0:
+        return None
+    nd = row.get("nd", 2)
+    pinned = abs(median - minus) < 0.5 * 10 ** -nd or (median < 0.01 and plus > 10 * median)
+    bound = median + plus
+    return bound if pinned and round(bound, nd) > 0 else None
+
+
+def b_bound_text(row: dict) -> str | None:
+    """"below 0.16 (84th percentile)" for a b ``b_upper_bound`` finds unpinned, at the decimals the row prints b at."""
+    bound = b_upper_bound(row)
+    return None if bound is None else f"below {bound:.{row.get('nd', 2)}f} (84th percentile)"
+
+
 def shape_fit_text(data: dict) -> str | None:
     """The README's evidence for the shape call (round-2 final review, I-4): the density-prior fit's b and a/R*, the
     free fit's b, a/R* and stellar density beside the host's, the chi-square difference against the rule of
@@ -1070,6 +1092,7 @@ def _geometry_words(data: dict, rows: dict, val, cmp: dict, tex: bool) -> list:
     free b without errors names its reason. Before version 5 the old wording: b and a/R* with their errors, or alone
     with the degeneracy reason."""
     b_note = f" ({rows['b']['note']})" if rows["b"]["minus"] is None and rows["b"].get("note") else ""
+    b_val = b_bound_text(rows["b"]) or val("b")        # an unpinned b prints as its bound, not as a median with errors
     if not cmp:
         if rows["b"]["minus"] is None:
             return ["; the impact parameter is ", val("b"), " and a/R* is ", val("a_over_r"), b_note]
@@ -1080,9 +1103,9 @@ def _geometry_words(data: dict, rows: dict, val, cmp: dict, tex: bool) -> list:
         why = UNCONSTRAINED if cmp.get("constrained") is False else FREE_FAILED
         # UNCONSTRAINED already names the host's density, so the note leaves out the label (Task 13)
         label = "" if tex and why == UNCONSTRAINED else f" {A_LABEL_STELLAR}"
-        return [f"; b and a/R* are {why}: b is ", val("b"), " and a/R* ", a_text, label]
+        return [f"; b and a/R* are {why}: b is ", b_val, " and a/R* ", a_text, label]
     tension = _num(cmp.get("density_tension_sigma")) if cmp.get("constrained") is True else None
-    words = ["; b is ", val("b"), " and a/R* ", val("a_over_r"), f" {A_LABEL_FITTED}"]
+    words = ["; b is ", b_val, " and a/R* ", val("a_over_r"), f" {A_LABEL_FITTED}"]
     if tension is not None:
         words.append(f", {abs(tension):.1f} sigma from the host's density")
     return [*words, b_note]
