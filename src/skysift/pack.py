@@ -117,6 +117,7 @@ from skysift.zenodo import (
     ZenodoError,
     fap_rate_clause,
     in_house_text,
+    merge_metadata,
     metadata_from,
     probability_sentences,
 )
@@ -3996,7 +3997,8 @@ def _write_texts(out_dir: Path, zip_path: Path, data: dict, fields: dict, citati
 
 def build_pack(store, blob, settings, target_id: str, *, out_dir: Path | None = None, tic: str | None = None,
                observer_tag: str = "skysift", tag_seq: int = 1, zenodo: ZenodoClient | None = None,
-               final: bool = False, log: Callable[[str], None] | None = None) -> PackReport:
+               final: bool = False, deposition_id: int | None = None,
+               log: Callable[[str], None] | None = None) -> PackReport:
     """Write the submission pack of ``target_id`` from its stored dossier and zip it inside the folder as
     ``<target>_<yyyymmdd>_skysift_pack.zip``; the default folder is ``<data_dir>/packs/<target_id>/<UTC yyyymmdd>/`` (an
     earlier pack there is replaced only once the new one is complete: it is written in a hidden sibling folder and
@@ -4021,7 +4023,11 @@ def build_pack(store, blob, settings, target_id: str, *, out_dir: Path | None = 
     ``final`` (spec 11.6) is the pack to submit: it needs a live client (``FINAL_NEEDS_LIVE``), refuses an author
     block with an empty or malformed field (``author_problems``) before anything is written, and after the draft
     reserves its DOI and the texts carry it, refuses any placeholder left in a public text (``final_problems``) with
-    the unfinished-draft error, before the draft is filled or the zip uploaded."""
+    the unfinished-draft error, before the draft is filled or the zip uploaded.
+
+    ``deposition_id`` names an unpublished draft of an earlier run to refill instead of making a new one
+    (``ZenodoClient.reuse_deposition``): its files are removed, its reserved DOI is the one the texts carry, and its
+    metadata is the pack's with what the draft already had (``zenodo.merge_metadata``)."""
     say = log or (lambda _text: None)
     if final and (zenodo is None or zenodo.sandbox):
         raise PackError(FINAL_NEEDS_LIVE)
@@ -4114,8 +4120,13 @@ def build_pack(store, blob, settings, target_id: str, *, out_dir: Path | None = 
     if zenodo is not None:
         deposition = None
         try:
-            say("creating the Zenodo draft")
-            deposition = zenodo.create_deposition()
+            if deposition_id is not None:
+                say(f"reusing the Zenodo draft {deposition_id}: removing its files")
+                deposition = zenodo.reuse_deposition(deposition_id)
+                metadata = merge_metadata(deposition.get("metadata") or {}, metadata)
+            else:
+                say("creating the Zenodo draft")
+                deposition = zenodo.create_deposition()
             zinfo = {"deposition_id": deposition.get("id"), "draft_url": zenodo.draft_url(deposition),
                      "sandbox": zenodo.sandbox, "doi": zenodo.reserved_doi(deposition)}
             doi = zinfo["doi"] or DOI_PLACEHOLDER
@@ -4130,9 +4141,10 @@ def build_pack(store, blob, settings, target_id: str, *, out_dir: Path | None = 
         except Exception as e:  # any failure after the files exist is reported with the draft
             if deposition is None:
                 raise ZenodoError(f"{e}; the pack at {out_dir} was built without a Zenodo draft") from e
+            again = (f"run the command again with --deposition {deposition.get('id')}" if deposition_id is not None
+                     else "discard it on Zenodo, then run the command again")
             raise ZenodoError(f"{e}; the pack at {out_dir} was built, but the unpublished Zenodo draft "
-                              f"{deposition.get('id')} ({zenodo.draft_url(deposition)}) is unfinished: discard it on "
-                              "Zenodo, then run the command again") from e
+                              f"{deposition.get('id')} ({zenodo.draft_url(deposition)}) is unfinished: {again}") from e
     return PackReport(target_id, out_dir, zip_path, _rel(out_dir), approved, zinfo, stale, words)
 
 

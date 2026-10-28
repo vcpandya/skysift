@@ -75,6 +75,27 @@ class ZenodoClient:
         reserved DOI under ``metadata.prereserve_doi``."""
         return self._call("POST", f"{self.base}/deposit/depositions", json={"metadata": {"prereserve_doi": True}})
 
+    def get_deposition(self, deposition_id: int) -> dict:
+        """The deposition's JSON as Zenodo holds it: ``id``, ``submitted``, ``links``, ``files`` and ``metadata``."""
+        return self._call("GET", f"{self.base}/deposit/depositions/{deposition_id}")
+
+    def delete_file(self, deposition: dict, file: dict) -> dict:
+        """Remove one of the draft's files (an entry of its ``files`` list, by its ``id``)."""
+        return self._call("DELETE", f"{self.base}/deposit/depositions/{deposition['id']}/files/{file['id']}")
+
+    def reuse_deposition(self, deposition_id: int) -> dict:
+        """An existing unpublished draft, emptied of its files so the pack's zip can take their place, with the DOI it
+        already reserved (``reserved_doi``). A published record cannot be reused: its files are frozen, so a new
+        version would be another deposition, and this raises ``ZenodoError`` instead of touching it."""
+        deposition = self.get_deposition(deposition_id)
+        if deposition.get("submitted") or deposition.get("state") == "done":
+            raise ZenodoError(f"Zenodo deposition {deposition_id} is published, so it cannot be refilled; leave "
+                              "--deposition out to make a new draft")
+        for file in deposition.get("files") or []:
+            if isinstance(file, dict) and file.get("id"):
+                self.delete_file(deposition, file)
+        return deposition
+
     def set_metadata(self, deposition: dict, metadata: dict) -> dict:
         return self._call("PUT", f"{self.base}/deposit/depositions/{deposition['id']}", json={"metadata": metadata})
 
@@ -95,7 +116,24 @@ class ZenodoClient:
 
     @staticmethod
     def reserved_doi(deposition: dict) -> str | None:
-        return ((deposition.get("metadata") or {}).get("prereserve_doi") or {}).get("doi")
+        """The DOI the draft reserved (``metadata.prereserve_doi.doi``), or the one its metadata already carries."""
+        metadata = deposition.get("metadata") or {}
+        return (metadata.get("prereserve_doi") or {}).get("doi") or metadata.get("doi") or None
+
+
+def merge_metadata(existing: dict, generated: dict) -> dict:
+    """The metadata a reused draft is refilled with: the pack's own (``metadata_from``) first, every field the draft
+    already had that the pack does not set kept (a publication date or notes added on Zenodo), the related
+    identifiers the union of both (the pack's first, then the draft's not already named by identifier and
+    relation). The draft's ``doi`` and ``prereserve_doi`` are left out: Zenodo refuses a PUT that sends its own
+    reserved DOI back, and the generated ``prereserve_doi`` flag keeps the one it holds."""
+    merged = {k: v for k, v in (existing or {}).items() if k not in ("doi", "prereserve_doi")}
+    merged.update(generated)
+    named = {(r.get("identifier"), r.get("relation")) for r in generated.get("related_identifiers") or []}
+    extra = [r for r in (existing or {}).get("related_identifiers") or []
+             if isinstance(r, dict) and (r.get("identifier"), r.get("relation")) not in named]
+    merged["related_identifiers"] = [*(generated.get("related_identifiers") or []), *extra]
+    return merged
 
 
 def _message(r) -> str:
@@ -282,12 +320,18 @@ def metadata_from(data: dict, citation: dict | None, prior: str | None = None,
     caveats = [c.get("title") for c in data.get("caveats") or [] if isinstance(c, dict) and c.get("title")]
     if caveats:
         paragraphs.append("What is not yet known: " + "; ".join(caveats) + ".")
-    return _deposit(title, creators, paragraphs, name)
+    return _deposit(title, creators, paragraphs, name, software_doi=(citation or {}).get("doi"))
 
 
-def _deposit(title: str, creators: list[dict], paragraphs: list[str], name) -> dict:
-    """The deposition metadata around a description (``paragraphs``, each one HTML paragraph)."""
+def _deposit(title: str, creators: list[dict], paragraphs: list[str], name, software_doi: str | None = None) -> dict:
+    """The deposition metadata around a description (``paragraphs``, each one HTML paragraph): a dataset in English,
+    version 1, derived from the KBonus HLSP and, with ``software_doi`` (the archived code's DOI, ``CITATION.cff``),
+    compiled by that software."""
     description = "".join(f"<p>{_html(p)}</p>" for p in paragraphs if p)
+    related = [{"identifier": KBONUS_DOI, "relation": "isDerivedFrom", "scheme": "doi", "resource_type": "dataset"}]
+    if software_doi and str(software_doi).strip():
+        related.append({"identifier": str(software_doi).strip(), "relation": "isCompiledBy", "scheme": "doi",
+                        "resource_type": "software"})
     return {
         "upload_type": "dataset",
         "title": title,
@@ -296,8 +340,9 @@ def _deposit(title: str, creators: list[dict], paragraphs: list[str], name) -> d
         "keywords": [*KEYWORDS, str(name)],
         "access_right": "open",
         "license": "cc-by-4.0",
-        "related_identifiers": [{"identifier": KBONUS_DOI, "relation": "isDerivedFrom", "scheme": "doi",
-                                 "resource_type": "dataset"}],
+        "version": "1",
+        "language": "eng",
+        "related_identifiers": related,
         "prereserve_doi": True,
     }
 
@@ -346,7 +391,7 @@ def _metadata_two(datas: list[dict], citation: dict | None, prior: str | None) -
                     and c["title"] not in caveats]
     if caveats:
         paragraphs.append("What is not yet known: " + "; ".join(caveats) + f". {pack_two.VETTED_SINGLY}")
-    return _deposit(title, creators, paragraphs, name)
+    return _deposit(title, creators, paragraphs, name, software_doi=(citation or {}).get("doi"))
 
 
 def _html(text: str) -> str:
