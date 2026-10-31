@@ -309,5 +309,5 @@ The ordinary suite excludes them: `python -m pytest -m "not golden and not slow"
 
 ## Licence and citation
 
-MIT licence, see `LICENSE`. If you use SkySift, please cite it using `CITATION.cff`; the v0.1.0 release is archived
-at [doi:10.5281/zenodo.23717586](https://doi.org/10.5281/zenodo.23717586).
+MIT licence, see `LICENSE`. If you use SkySift, please cite it using `CITATION.cff`; each tagged release is
+archived on Zenodo through its GitHub integration.

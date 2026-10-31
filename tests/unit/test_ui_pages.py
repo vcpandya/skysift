@@ -5,6 +5,7 @@ import pytest
 from fastapi import Request
 from fastapi.testclient import TestClient
 
+import skysift
 from skysift.store.blob import blob_from_url
 from skysift.store.db import Store
 from skysift.ui.app import create_app
@@ -845,7 +846,7 @@ def test_about_has_every_section_in_order(settings):
         assert step in main
     assert main.count("<dt>") >= len(explain.GLOSSARY) and "<dl" in main
     assert "sde_min" in main and '<td class="num">12</td>' in main and "0.5 to 200 days" in main
-    assert "Vikram Pandya" in main and "0.1.0" in main
+    assert "Vikram Pandya" in main and skysift.__version__ in main and skysift.__version__ == "0.1.1"
     assert "—" not in html and "discover" not in html.lower() and "style=" not in main
 
 

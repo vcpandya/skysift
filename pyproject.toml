@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "skysift"
-version = "0.1.0"
+version = "0.1.1"
 description = "Archival time-series search and vetting engine for transit, eclipse and lensing candidates"
 readme = "README.md"
 requires-python = ">=3.12"

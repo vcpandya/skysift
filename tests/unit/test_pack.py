@@ -1486,10 +1486,11 @@ def test_readme_says_the_archive_needs_a_refereed_paper(env_with_dossier):
     assert "refereed paper" in first and "Research Note" in first
     assert "once it is published" not in pack_module.STEP_TEXTS["4"] and "refereed" in pack_module.STEP_TEXTS["4"]
     provenance = text.split("## Provenance")[1]
-    # the code DOI is the one CITATION.cff carries (10.5281/zenodo.23717586 since v0.1.0), never the placeholder
+    # the code DOI is whatever CITATION.cff carries: the concept DOI once a release is archived, the placeholder
+    # with "(to be minted)" before that; the README never prints anything else
     citation, _source = pack_module.load_citation()
-    assert citation and citation["doi"] and pack_module.code_doi(citation) in provenance
-    assert "to be minted" not in provenance and "triceratops" not in provenance
+    assert citation and pack_module.code_doi(citation) in provenance and "triceratops" not in provenance
+    assert ("to be minted" in provenance) == (not citation["doi"])
 
 
 def test_independent_periods():
@@ -2816,7 +2817,7 @@ def test_final_refuses_without_the_live_draft_and_with_any_placeholder(env_with_
     assert fake_session.calls == []                                  # refused before anything is written
     path.write_text(json.dumps({"name": "A. Person", "affiliation": "Somewhere", "email": "a@example.org",
                                 "orcid": "0000-0002-1825-0097"}), encoding="utf-8")
-    # a CITATION.cff without a software DOI (the repository's carries one since v0.1.0, so a stub stands in)
+    # a CITATION.cff without a software DOI (a stub, so the test does not depend on the repository's own file)
     monkeypatch.setattr(pack_module, "load_citation",
                         lambda path=None: ({"authors": [{"name": "A. Person"}], "doi": None}, "test"))
     with pytest.raises(ZenodoError, match=r"still says '10\.5281/zenodo\.SOFTWARE'.*unfinished"):
