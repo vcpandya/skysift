@@ -897,3 +897,19 @@ class Store:
                 return False
             row.pack_path = pack_path
             return True
+
+    def set_candidate_doi(self, signal_id: int, doi: str) -> bool:
+        """Record the DOI of the Zenodo record that holds the signal's submission pack on its candidate row, as
+        ``set_candidate_pack`` records the folder: nothing is written without a candidate row (False)."""
+        with self.session() as s:
+            row = s.scalars(select(CandidateRow).where(CandidateRow.signal_id == signal_id)).first()
+            if row is None:
+                return False
+            row.doi = doi
+            return True
+
+    def candidate_doi(self, signal_id: int) -> str:
+        """The DOI recorded on the signal's candidate row, "" without one."""
+        with self.session() as s:
+            row = s.scalars(select(CandidateRow).where(CandidateRow.signal_id == signal_id)).first()
+            return (row.doi if row is not None else "") or ""

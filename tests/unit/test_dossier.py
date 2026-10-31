@@ -1489,6 +1489,20 @@ def test_the_export_embeds_only_the_public_fields_of_a_prior_claim():
     assert data["prior_claims"] == [PRIOR_CLAIM]                              # the caller's dict is not changed
 
 
+def test_the_export_names_the_zenodo_record_it_is_given():
+    """With ``record`` (the pack's published DOI) the page embeds it and draws its line; without one, no key."""
+    data = {"target": {"name": "KIC 6146676"}}
+    record = {"doi": "10.5281/zenodo.23684431", "url": "https://doi.org/10.5281/zenodo.23684431"}
+    page = export_html(data, record=record)
+    blob = page.split('<script id="dossier-data" type="application/json">')[1].split("</script>")[0]
+    assert json.loads(blob.replace("\\/", "/"))["record"] == record
+    assert "dossier-record" in page and "Submission pack archived on Zenodo" in page
+    plain = export_html(data)
+    blob = plain.split('<script id="dossier-data" type="application/json">')[1].split("</script>")[0]
+    assert "record" not in json.loads(blob.replace("\\/", "/"))
+    assert "record" not in data
+
+
 # ---------------------------------------------------------------------------------------------------- version 5
 
 

@@ -77,11 +77,13 @@
 .dossier-sections a { flex: none; padding: 4px 10px; color: var(--fg-2); font-size: var(--fs-13); text-decoration: none; white-space: nowrap; background: var(--surface); border: 1px solid var(--line); border-radius: 999px; }
 .dossier-sections a:hover { color: var(--fg); border-color: var(--muted); }
 .dossier-sections .mono { color: var(--muted); margin-right: 4px; }
+/* the sticky side index belongs to the dashboard's two-column layout only: the standalone export has no
+   .dossier-layout, and a sticky column in its flow would float over the sections as the reader scrolls */
 @media (min-width: 1080px) {
   .dossier-layout { display: grid; grid-template-columns: 210px minmax(0, 1fr); gap: 32px; align-items: start; }
-  .dossier-sections { position: sticky; top: calc(var(--topbar-h) + 16px); flex-direction: column; overflow: visible; padding: 0; }
-  .dossier-sections a { border: 0; border-left: 2px solid var(--line); border-radius: 0; background: transparent; padding: 6px 12px; white-space: normal; }
-  .dossier-sections a:hover { border-left-color: var(--ion); }
+  .dossier-layout .dossier-sections { position: sticky; top: calc(var(--topbar-h) + 16px); flex-direction: column; overflow: visible; padding: 0; }
+  .dossier-layout .dossier-sections a { border: 0; border-left: 2px solid var(--line); border-radius: 0; background: transparent; padding: 6px 12px; white-space: normal; }
+  .dossier-layout .dossier-sections a:hover { border-left-color: var(--ion); }
 }
 .dossier-section { margin: 0 0 40px; scroll-margin-top: calc(var(--topbar-h) + 16px); }
 .dossier-sec-head h2 { margin-top: 0; }
@@ -168,8 +170,12 @@
 
 /* ---- The standalone export ---- */
 .dossier-standalone { margin: 0; background: var(--bg); color: var(--fg); font-family: var(--font-body); }
-.dossier { max-width: 1080px; margin: 0 auto; padding: 24px 16px 64px; }
+/* width 100%: the page is an item of the body's column flex, and its auto margins turn the cross-axis stretch off,
+   so without a set width it takes its fit-content width (the section strip's unwrapped chips push that up to the
+   1080 px cap, and the hero and the tiles run off a phone's screen) */
+.dossier { width: 100%; max-width: 1080px; min-width: 0; margin: 0 auto; padding: 24px 16px 64px; }
 .dossier-status { color: var(--fg-2); }
+.dossier-record { margin: 4px 0 0; color: var(--fg-2); }
 .dossier-toggle { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; }
 .dossier-toggle button { border: 0; border-radius: 0; padding: 6px 14px; background: var(--surface); color: var(--fg); }
 .dossier-toggle button[aria-pressed="true"] { background: var(--ion); color: var(--surface); }

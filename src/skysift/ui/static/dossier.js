@@ -415,7 +415,15 @@
     const head = h("header", "dossier-hero");
     const st = D.status || {};
     head.append(h("p", "dossier-kicker", `Candidate dossier · ${(D.target || {}).target_id || ""}`), h("h1", null, name),
-      h("p", "hero-summary", D.summary), h("p", "dossier-status", st.headline || st.label || ""), toggle);
+      h("p", "hero-summary", D.summary), h("p", "dossier-status", st.headline || st.label || ""));
+    const rec = D.record || {};
+    if (rec.doi && rec.url) {               // the Zenodo record that holds the submission pack (pack.pack_record)
+      const line = h("p", "dossier-record", "Submission pack archived on Zenodo: ");
+      const a = h("a", null, `doi:${rec.doi}`);
+      a.href = rec.url; a.target = "_blank"; a.rel = "noreferrer";
+      line.appendChild(a); head.appendChild(line);
+    }
+    head.appendChild(toggle);
     const tiles = h("div", "tiles dossier-tiles");
     const hd = isNum(E.period_err_days) ? Math.max(4, errDigits(E.period_err_days)) : 4;
     [["period, days", fmt(E.period_days, hd), pmErr(E.period_err_days, hd)],

@@ -2599,6 +2599,15 @@ def _authors(citation: dict | None) -> list[dict]:
     return out or [{"name": "AUTHOR NAME TO FILL IN", "orcid": None, "affiliation": "", "email": ""}]
 
 
+def pack_record(doi: str | None) -> dict | None:
+    """The Zenodo record a dossier page names, ``{"doi", "url"}``, for a real DOI; None for no DOI, the placeholder
+    or a sandbox DOI (which never resolves)."""
+    doi = (doi or "").strip()
+    if not doi or doi == DOI_PLACEHOLDER or "XXXXXXX" in doi or doi.startswith(SANDBOX_DOI_PREFIX):
+        return None
+    return {"doi": doi, "url": f"https://doi.org/{doi}"}
+
+
 def doi_shown(doi: str | None) -> str:
     """The DOI as the plain texts print it: the placeholder without one, and a sandbox DOI (``10.5072/``, which never
     resolves) only with the words that it must be replaced."""
@@ -3180,6 +3189,7 @@ def _fields(data: dict, f: dict, others: list[dict] | None = None) -> dict:
     doi = (f.get("zenodo") or {}).get("doi")
     f.setdefault("doi", doi or DOI_PLACEHOLDER)
     f.setdefault("doi_shown", doi_shown(doi))
+    f.setdefault("doi_stored", False)         # True only when the build prints a published record's DOI
     f.setdefault("candidates", _candidate_list(datas))
     f.setdefault("not_approved", [])
     f.setdefault("span", None)
@@ -3989,6 +3999,10 @@ def _write_texts(out_dir: Path, zip_path: Path, data: dict, fields: dict, citati
     _write(out_dir / "archive_email.txt", _render_plain("archive_email.txt.j2", data, fields, others))
     files = sorted({*_rel(out_dir), "README.md", "provenance/hashes.json"})
     _write(out_dir / "README.md", render_readme(data, {**fields, "files": files}, others))
+    record = pack_record(fields.get("doi"))
+    if record is not None:                 # a real DOI: each candidate's dossier page names the record
+        for i, d in enumerate([data, *(others or [])], start=1):
+            _write(out_dir / suffixed("dossier.html", i), ds.export_html(d, record=record))
     hashes = {name: _sha(out_dir / name) for name in _rel(out_dir) if name != "provenance/hashes.json"}
     _write(out_dir / "provenance" / "hashes.json", jsonutil.dumps(hashes, indent=1))
     _zip(out_dir, zip_path, zip_path.stem)
@@ -4098,6 +4112,9 @@ def build_pack(store, blob, settings, target_id: str, *, out_dir: Path | None = 
         say("no CITATION.cff or package author found; the creators are placeholders")
     data = ds.public_claims(public_paths(raw, settings.data_dir))     # the pack embeds and uploads this JSON
     shown = [ds.public_claims(public_paths(o, settings.data_dir)) for o in others]
+    # a pack rebuilt after its record was published prints that record's DOI: the candidate rows carry it
+    stored = {store.candidate_doi(c["signal_id"]) for c in cands}
+    stored_doi = next(iter(stored)) if len(stored) == 1 and pack_record(next(iter(stored))) else None
     place = out_dir                    # the pack's folder (``final`` is the --final flag)
     out_dir = _building(place)
     try:
@@ -4106,7 +4123,8 @@ def build_pack(store, blob, settings, target_id: str, *, out_dir: Path | None = 
             {"approved": approved, "stale_reason": stale, "tic": tic, "tag": observer_tag, "tag_seq": tag_seq,
              "stale_commands": remedies or None, "left_out": [o["text"] for o in out_texts],
              "other_signals": other_signals_sentence(signals, target_id, len(cands)),
-             "not_approved": not_approved, "span": span}, say, others=shown, others_raw=others, cands=cands)
+             "not_approved": not_approved, "span": span}, say, others=shown, others_raw=others, cands=cands,
+            doi=stored_doi)
     except BaseException:
         shutil.rmtree(out_dir, ignore_errors=True)
         raise
@@ -4138,6 +4156,9 @@ def build_pack(store, blob, settings, target_id: str, *, out_dir: Path | None = 
             say("filling the Zenodo draft and uploading the zip")
             zenodo.set_metadata(deposition, metadata)
             zenodo.upload(deposition, zip_path)
+            if not zenodo.sandbox and zinfo["doi"]:        # the record's DOI stays with the candidate rows
+                for c in cands:
+                    store.set_candidate_doi(c["signal_id"], zinfo["doi"])
         except Exception as e:  # any failure after the files exist is reported with the draft
             if deposition is None:
                 raise ZenodoError(f"{e}; the pack at {out_dir} was built without a Zenodo draft") from e
@@ -4148,7 +4169,8 @@ def build_pack(store, blob, settings, target_id: str, *, out_dir: Path | None = 
     return PackReport(target_id, out_dir, zip_path, _rel(out_dir), approved, zinfo, stale, words)
 
 
-def _write_candidate(out_dir: Path, ordinal: int, data: dict, raw: dict, lc, fnorm, settings) -> None:
+def _write_candidate(out_dir: Path, ordinal: int, data: dict, raw: dict, lc, fnorm, settings,
+                     record: dict | None = None) -> None:
     """The files one candidate has of its own (``PER_CANDIDATE``, the second's named with ``suffixed``) except the SVG
     figures and the ExoFOP copies, which ``_write_pack`` makes after the folders are there: the whitened light curve,
     the ephemeris and parameters, the transit times, shape, events, stellar provenance, periodogram, rung metrics, the
@@ -4186,7 +4208,7 @@ def _write_candidate(out_dir: Path, ordinal: int, data: dict, raw: dict, lc, fno
     _write(name("data/rung_metrics.json"), jsonutil.dumps(data.get("tests") or [], indent=1))
     if data.get("cross_check"):
         _write(name("data/cross_check.json"), jsonutil.dumps(data["cross_check"], indent=1))
-    _write(name("dossier.html"), ds.export_html(data))
+    _write(name("dossier.html"), ds.export_html(data, record=record))
     _write(name("provenance/calibration.json"),
            jsonutil.dumps(_calibration(raw, data, settings.data_dir), indent=1))
 
@@ -4194,8 +4216,9 @@ def _write_candidate(out_dir: Path, ordinal: int, data: dict, raw: dict, lc, fno
 def _write_pack(out_dir: Path, data: dict, raw: dict, row: dict, lc, fnorm, target_id: str, date: str,
                 now: datetime, settings, citation: dict | None, creators_source: str, review: dict, say,
                 others: list[dict] | None = None, others_raw: list[dict] | None = None,
-                cands: list[dict] | None = None):
-    """Every file of the pack into ``out_dir`` (the building folder) and its zip there, with the DOI placeholder.
+                cands: list[dict] | None = None, doi: str | None = None):
+    """Every file of the pack into ``out_dir`` (the building folder) and its zip there, with the DOI placeholder, or
+    with ``doi`` (the published record's, from the candidate rows) when the pack is rebuilt after its publication.
     ``others`` are the further candidates' JSONs as the pack embeds them and ``others_raw`` as stored (the whitened
     flux and the calibration counts come from the stored signal); ``cands`` is ``candidates()`` (versions.json lists
     them). Each further candidate's own files carry ``_02`` (``suffixed``), its ExoFOP copies ``-02`` and its planet
@@ -4210,7 +4233,7 @@ def _write_pack(out_dir: Path, data: dict, raw: dict, row: dict, lc, fnorm, targ
     fnorms = [fnorm, *(ds.whitened(lc, r["signal"]) for r in others_raw)]
     # data and the dossier page, for each candidate
     for ordinal, (one, one_raw, flux) in enumerate(zip(datas, raws, fnorms, strict=True), start=1):
-        _write_candidate(out_dir, ordinal, one, one_raw, lc, flux, settings)
+        _write_candidate(out_dir, ordinal, one, one_raw, lc, flux, settings, record=pack_record(doi))
     study = Path(ds.CANDIDATES_DIR) / target_id / "localisation" / "results.json"
     if study.is_file():             # the file the README's hand-built sentence compares with (spec 11.5)
         shutil.copyfile(study, out_dir / HAND_BUILT_FILE)
@@ -4256,8 +4279,9 @@ def _write_pack(out_dir: Path, data: dict, raw: dict, row: dict, lc, fnorm, targ
         _write(out_dir / "exofop" / EXOFOP_STELLAR_TEMPLATE.format(date=date), stellar)
     fields = {**review, "date": date, "png": png, "zenodo": None, "pixels_figure": pixels_figure,
               "after_bjd": julian_date(now), "after_words": date_words(now),
-              "zip_name": zip_path.name, "built_words": date_words(now), "doi": DOI_PLACEHOLDER,
-              "doi_shown": DOI_PLACEHOLDER, "creators_source": creators_source}
+              "zip_name": zip_path.name, "built_words": date_words(now), "doi": doi or DOI_PLACEHOLDER,
+              "doi_shown": doi_shown(doi), "doi_stored": pack_record(doi) is not None,
+              "creators_source": creators_source}
     words = _write_texts(out_dir, zip_path, data, fields, citation, others)
     return zip_path.name, metadata, fields, words
 

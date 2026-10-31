@@ -2278,19 +2278,22 @@ def _ephemeris_words(data: dict) -> str | None:
     return f"Ephemeris: {text}" + (f"; the star has G = {gmag:.1f}" if gmag is not None else "") + "."
 
 
-def export_html(data: dict, static_dir: Path = STATIC_DIR, data_dir: Path | None = None) -> str:
+def export_html(data: dict, static_dir: Path = STATIC_DIR, data_dir: Path | None = None,
+                record: dict | None = None) -> str:
     """One standalone file: the dashboard's stylesheet (tokens and components) with the fonts as data URIs,
     ``dossier.css``, the JSON in ``<script id="dossier-data" type="application/json">`` (every ``/`` escaped, so no
     ``</`` and no URL appears in the markup) and ``dossier.js``, which draws the page and its own level toggle. Nothing
     is loaded from anywhere else. Prior claims are cut to their public fields (``public_claims``), and with
     ``data_dir`` every local path in the data is cut first (``public_paths``), as the pack does: the file is meant for
-    someone outside the laptop. ``page_texts`` (the pack's sentences the page prints, spec 11.2) joins the JSON."""
+    someone outside the laptop. ``page_texts`` (the pack's sentences the page prints, spec 11.2) joins the JSON, and
+    so does ``record`` (``pack.pack_record``: the Zenodo record that holds the pack, ``{"doi", "url"}``), which the
+    page names under its status line."""
     static_dir = Path(static_dir)
     texts = page_texts(data)
     data = public_claims(data)
     if data_dir is not None:
         data = public_paths(data, data_dir)
-    data = {**data, "page_texts": texts}
+    data = {**data, "page_texts": texts, **({"record": dict(record)} if record else {})}
     app_css = _inline_fonts((static_dir / "app.css").read_text(encoding="utf-8"), static_dir / "fonts")
     css = (static_dir / "dossier.css").read_text(encoding="utf-8")
     js = (static_dir / "dossier.js").read_text(encoding="utf-8")

@@ -488,6 +488,7 @@
   {%- if (r and r.group == "approved") or dz.pack_path %}
   <h3 id="pack-title">The submission pack</h3>
   <p>No portal takes a new Kepler candidate from outside a mission, so the pack holds what each route needs. Tick a step when you have done it.{% if dz.pack_path %} The pack is at <code>{{ dz.pack_path }}</code>.{% endif %}</p>
+  {%- if r and r.doi %}<p>The pack is archived on Zenodo as <a href="https://doi.org/{{ r.doi }}" rel="noreferrer">doi:{{ r.doi }}</a>.</p>{% endif %}
   {%- if dz.pack_path and dz.pack_built and dz.generated and dz.pack_built < dz.generated %}
   <p class="dossier-caveat">The pack was built from an earlier dossier. Build it again for this one.</p>
   {%- endif %}

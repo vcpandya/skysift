@@ -844,6 +844,20 @@ def test_a_live_draft_needs_an_approved_candidate_and_writes_its_doi(env_with_do
     rep = _build(env, zenodo=live)
     tex = (rep.out_dir / "note" / "note.tex").read_text(encoding="utf-8")
     assert f"10.5281/zenodo.{DEPOSITION_ID}" in tex and SANDBOX_WORDS not in tex and "XXXXXXX" not in tex
+    # the dossier page names the record, and the DOI stays with the candidate row
+    dossier = (rep.out_dir / "dossier.html").read_text(encoding="utf-8")
+    assert f"zenodo.{DEPOSITION_ID}" in dossier and "dossier-record" in dossier
+    assert env.store.candidate_doi(env.report.signal_id) == f"10.5281/zenodo.{DEPOSITION_ID}"
+    again = _build(env)                            # rebuilt after publication, without Zenodo: the DOI stays
+    tex2 = (again.out_dir / "note" / "note.tex").read_text(encoding="utf-8")
+    assert f"10.5281/zenodo.{DEPOSITION_ID}" in tex2 and "XXXXXXX" not in tex2
+    assert f"zenodo.{DEPOSITION_ID}" in (again.out_dir / "dossier.html").read_text(encoding="utf-8")
+    readme = (again.out_dir / "README.md").read_text(encoding="utf-8")
+    assert f"Check that 10.5281/zenodo.{DEPOSITION_ID}, the DOI of the published record" in readme
+    assert f"The texts already carry the DOI of the published record, 10.5281/zenodo.{DEPOSITION_ID}" in readme
+    assert "XXXXXXX" not in readme
+    assert pack_module.pack_record(f"10.5072/zenodo.{DEPOSITION_ID}") is None       # a sandbox DOI never
+    assert pack_module.pack_record("10.5281/zenodo.XXXXXXX") is None and pack_module.pack_record("") is None
 
 
 def test_a_pack_refills_the_named_draft_with_its_reserved_doi(env_with_dossier, fake_session, monkeypatch):

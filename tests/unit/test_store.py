@@ -582,6 +582,20 @@ def test_set_candidate_pack_writes_only_an_existing_candidate_row(tmp_path):
         assert row.pack_path == "/packs/kic-1/20261021" and row.status == "approved"
 
 
+def test_set_candidate_doi_writes_only_an_existing_candidate_row(tmp_path):
+    """The published record's DOI goes on the candidate row the same way; a signal without a row keeps none."""
+    s = make_store(tmp_path)
+    s.upsert_target(Target(source="kbonus_bkg", target_id="kic-1", ra=1.0, dec=2.0))
+    rid = s.start_run(make_job_key("kic-1", "box_dip", "1", "4"), "kic-1", "box_dip", "1", "4")
+    sid = s.add_signal(Signal(target_id="kic-1", detector="box_dip", detector_version="1", period=10.0, t0=1.0,
+                              duration=0.1, depth_ppm=1000, snr=20, sde=12, n_events=40), rid)
+    assert s.set_candidate_doi(sid, "10.5281/zenodo.1") is False and s.candidate_doi(sid) == ""
+    s.decide(sid, "approve", "clean")
+    assert s.candidate_doi(sid) == ""
+    assert s.set_candidate_doi(sid, "10.5281/zenodo.23684431") is True
+    assert s.candidate_doi(sid) == "10.5281/zenodo.23684431" and s.candidate_doi(sid + 99) == ""
+
+
 def test_sweep_size_counts_the_done_sweep_runs_of_one_source_and_search(tmp_path):
     s = make_store(tmp_path)
     for tid, source in (("a", "kbonus_bkg"), ("b", "kbonus_bkg"), ("c", "kbonus_bkg"), ("d", "kbonus_bkg"),
