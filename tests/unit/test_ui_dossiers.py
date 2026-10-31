@@ -355,6 +355,21 @@ def test_the_pack_is_offered_and_started_only_for_an_approved_candidate(seeded_d
     assert r.status_code == 200 and fake_jobs.active()["request"]["kind"] == "pack"
 
 
+def test_the_dossier_page_names_the_published_record_once_the_candidate_carries_its_doi(seeded_dossier, settings):
+    """The pack paragraph prints the record's DOI from the candidate row (set after a live upload); before that it
+    still asks for the deposit."""
+    client, app, ids, _data = seeded_dossier
+    store = app.state.store
+    store.decide(ids["stage2"], "approve", "clean")
+    seed_dossier(store, settings.data_dir, target_id=STAGE2_TARGET)
+    line = 'archived on Zenodo as <a href="https://doi.org/10.5281/zenodo.23684431"'
+    page = client.get(f"/dossiers/{STAGE2_TARGET}").text
+    assert line not in page and "Deposit the pack on Zenodo" in page
+    assert store.set_candidate_doi(ids["stage2"], "10.5281/zenodo.23684431")
+    page = client.get(f"/dossiers/{STAGE2_TARGET}").text
+    assert line in page and "doi:10.5281/zenodo.23684431</a>" in page
+
+
 def test_pack_steps_toggle_with_the_token(seeded_dossier):
     client, app, _ids, _data = seeded_dossier
     url = f"/dossiers/{STAGE2_TARGET}/steps"

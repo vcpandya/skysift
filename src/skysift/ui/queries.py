@@ -644,7 +644,8 @@ def final_set(store: Store, version: str | None, target_id: str | None = None) -
     signals qualifies, so a stage-1 candidate's tile can be drawn while its first dossier is generated)."""
     from skysift import dossier as ds
     latest = _latest_decision_subquery()
-    base = (select(SignalRow, TargetRow, latest.c.decision, CandidateRow.status).select_from(SignalRow)
+    base = (select(SignalRow, TargetRow, latest.c.decision, CandidateRow.status, CandidateRow.doi)
+            .select_from(SignalRow)
             .join(TargetRow, TargetRow.target_id == SignalRow.target_id)
             .outerjoin(CandidateRow, CandidateRow.signal_id == SignalRow.id)
             .outerjoin(latest, latest.c.signal_id == SignalRow.id))
@@ -662,14 +663,15 @@ def final_set(store: Store, version: str | None, target_id: str | None = None) -
         if dossiers:
             found += list(s.execute(base.where(SignalRow.target_id.in_(list(dossiers)))))
         rows, have = [], set()
-        for sig, t, decision, cand in found:
+        for sig, t, decision, cand, doi in found:
             if sig.id in have:
                 continue
             have.add(sig.id)
             target = {c.name: getattr(t, c.name) for c in TargetRow.__table__.columns}
             signal = {c.name: getattr(sig, c.name) for c in SignalRow.__table__.columns}
             rows.append({"target_id": sig.target_id, "signal_id": sig.id, "final_status": sig.final_status,
-                         "decision": decision, "candidate_status": cand, "sde": sig.sde, "signal": signal,
+                         "decision": decision, "candidate_status": cand, "doi": doi or "", "sde": sig.sde,
+                         "signal": signal,
                          "target": {**target, "name": ds.target_name(target)},
                          "group": _group(sig.final_status, decision, cand)})
         tests = _tests_by_signal(s, [r["signal_id"] for r in rows])
